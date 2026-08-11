@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "694889896033",
+    "project_id": "mygoatfarms-5813a",
+    "storage_bucket": "mygoatfarms-5813a.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:694889896033:android:bf988055daf2eb739df220",
+        "android_client_info": {
+          "package_name": "com.example.mygoatfarms"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBgySo795nAnFphY8H7vXmdW7cUoT7UL-A"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

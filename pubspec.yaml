@@ -1,0 +1,48 @@
+name: mygoatfarms
+description: "A new Flutter project."
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: ^3.11.0
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  google_fonts: ^6.2.1
+  image_picker: ^1.1.2
+  cupertino_icons: ^1.0.8
+  provider: ^6.1.2
+  firebase_core: ^3.6.0
+  firebase_auth: ^5.3.1
+  cloud_firestore: ^5.4.4
+  firebase_storage: ^12.3.4
+
+  # Added for splash/login/register/home screen animations
+  animate_do: ^3.3.4
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+
+flutter:
+  uses-material-design: true
+
+  assets:
+    - assets/images/logo.png
+
+  fonts:
+    - family: Amaranth
+      fonts:
+        - asset: assets/fonts/Amaranth-Regular.ttf
+        - asset: assets/fonts/Amaranth-Bold.ttf
+          weight: 700
+    - family: Baloo2
+      fonts:
+        - asset: assets/fonts/Baloo2-Regular.ttf
+        - asset: assets/fonts/Baloo2-SemiBold.ttf
+          weight: 600
+        - asset: assets/fonts/Baloo2-Bold.ttf
+          weight: 700
