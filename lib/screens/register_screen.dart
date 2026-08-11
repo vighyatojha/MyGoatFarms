@@ -9,9 +9,7 @@ import '../app_theme.dart';
 import '../services/firestore_service.dart';
 import 'home/home_screen.dart';
 
-/// Registration screen. Collects Farm Name, Owner Name, Mobile Number,
-/// Email, Password + Confirm Password, creates a Firebase Auth user and
-/// stores the farm profile in the `farms` Firestore collection.
+
 class RegisterScreen extends StatefulWidget {
   const RegisterScreen({super.key});
 

@@ -89,7 +89,7 @@ class _LoginScreenState extends State<LoginScreen> {
           transitionsBuilder: (_, animation, __, child) =>
               FadeTransition(opacity: animation, child: child),
         ),
-        (route) => false,
+            (route) => false,
       );
     } on TimeoutException {
       _showSnack('This is taking too long. Check your connection and try again.');

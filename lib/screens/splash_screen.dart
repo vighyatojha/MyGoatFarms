@@ -4,8 +4,6 @@ import 'package:animate_do/animate_do.dart';
 
 import '../app_theme.dart';
 
-/// Splash screen: shows the farm logo + welcome text, then checks whether
-/// a user is already logged in (Firebase Auth) and routes accordingly.
 class SplashScreen extends StatefulWidget {
   const SplashScreen({super.key});
 

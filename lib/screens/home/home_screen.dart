@@ -4,11 +4,20 @@ import 'package:animate_do/animate_do.dart';
 
 import '../../app_theme.dart';
 import '../../models/farm_model.dart';
+import '../../models/activity_model.dart';
+import '../../models/palai_models.dart';
 import '../../services/firestore_service.dart';
+import '../../widgets/app_bottom_nav.dart';
+import 'widgets/home_widgets.dart';
+import '../palai/palai_screen.dart';
+import '../stocks/stock_screen.dart';
+import 'notification_screen.dart';
+import 'total_goats_screen.dart';
+import 'income_detail_screen.dart';
 import '../login_screen.dart';
 
-/// Home / dashboard screen. Shows the farm's stats, the four main
-/// modules, quick actions and recent activity, matching the mockup.
+/// Home / dashboard screen. Quick, at-a-glance view of the whole farm —
+/// live totals, the four main modules, quick actions and recent activity.
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
 
@@ -17,9 +26,12 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> {
-  int _selectedTab = 0;
+  static const int _navIndex = 0;
+
   FarmModel? _farm;
   bool _loadingFarm = true;
+  String? _farmId;
+  final TextEditingController _searchController = TextEditingController();
 
   @override
   void initState() {
@@ -35,6 +47,7 @@ class _HomeScreenState extends State<HomeScreen> {
     if (mounted) {
       setState(() {
         _farm = farm;
+        _farmId = farm?.id;
         _loadingFarm = false;
       });
     }
@@ -53,6 +66,24 @@ class _HomeScreenState extends State<HomeScreen> {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text('$feature module coming soon'), backgroundColor: AppColors.darkGreen),
     );
+  }
+
+  void _onNavTap(int index) {
+    if (index == _navIndex) return;
+    switch (index) {
+      case 1:
+        Navigator.of(context).pushReplacement(MaterialPageRoute(builder: (_) => const PalaiScreen()));
+        break;
+      case 2:
+        Navigator.of(context).pushReplacement(MaterialPageRoute(builder: (_) => const StockScreen()));
+        break;
+      case 3:
+        _comingSoon('Reports');
+        break;
+      case 4:
+        _showProfileMenu(context);
+        break;
+    }
   }
 
   @override
@@ -81,30 +112,9 @@ class _HomeScreenState extends State<HomeScreen> {
                 const SizedBox(height: 20),
                 Text('Alhamdulillah for everything', style: AppTheme.body(size: 13, weight: FontWeight.w500)),
                 const SizedBox(height: 14),
-                FadeInUp(
-                  delay: const Duration(milliseconds: 150),
-                  child: Row(
-                    children: [
-                      Expanded(
-                        child: _StatCard(
-                          icon: Icons.pets,
-                          label: 'Total Goats',
-                          value: _loadingFarm ? '—' : '245',
-                          color: AppColors.primaryGreen,
-                        ),
-                      ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: _StatCard(
-                          icon: Icons.currency_rupee,
-                          label: "Today's Income",
-                          value: _loadingFarm ? '—' : '₹24,850',
-                          color: AppColors.warning,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
+                _buildSearchBar(),
+                const SizedBox(height: 16),
+                if (_farmId != null) _buildStatGrid(_farmId!) else _buildStatGridLoading(),
                 const SizedBox(height: 24),
                 Text('Main Modules', style: AppTheme.heading(size: 16)),
                 const SizedBox(height: 12),
@@ -118,33 +128,35 @@ class _HomeScreenState extends State<HomeScreen> {
                     crossAxisSpacing: 10,
                     childAspectRatio: 0.8,
                     children: [
-                      _ModuleTile(
+                      ModuleTile(
                         icon: Icons.home_work_outlined,
                         label: 'Palai',
                         sub: 'Boarding & Care',
                         color: AppColors.primaryGreen,
-                        onTap: () => _comingSoon('Palai'),
+                        onTap: () => Navigator.of(context)
+                            .push(MaterialPageRoute(builder: (_) => const PalaiScreen())),
                       ),
-                      _ModuleTile(
+                      ModuleTile(
                         icon: Icons.swap_horiz,
                         label: 'Trading',
                         sub: 'Buy & Sell',
-                        color: const Color(0xFF64B5F6),
+                        color: AppColors.tradingBlue,
                         onTap: () => _comingSoon('Trading'),
                       ),
-                      _ModuleTile(
+                      ModuleTile(
                         icon: Icons.biotech_outlined,
                         label: 'Breeding',
                         sub: 'Records',
-                        color: const Color(0xFFBA68C8),
+                        color: AppColors.breedingPurple,
                         onTap: () => _comingSoon('Breeding'),
                       ),
-                      _ModuleTile(
+                      ModuleTile(
                         icon: Icons.inventory_2_outlined,
                         label: 'Stock',
                         sub: 'Feed & Med',
-                        color: const Color(0xFF4DB6AC),
-                        onTap: () => _comingSoon('Stock'),
+                        color: AppColors.stockTeal,
+                        onTap: () => Navigator.of(context)
+                            .push(MaterialPageRoute(builder: (_) => const StockScreen())),
                       ),
                     ],
                   ),
@@ -152,38 +164,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 const SizedBox(height: 24),
                 Text('Quick Actions', style: AppTheme.heading(size: 16)),
                 const SizedBox(height: 12),
-                FadeInUp(
-                  delay: const Duration(milliseconds: 350),
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      _QuickAction(
-                        icon: Icons.add,
-                        label: 'Add Goat',
-                        color: AppColors.primaryGreen,
-                        onTap: () => _comingSoon('Add Goat'),
-                      ),
-                      _QuickAction(
-                        icon: Icons.payments_outlined,
-                        label: 'Receive\nPayment',
-                        color: AppColors.success,
-                        onTap: () => _comingSoon('Receive Payment'),
-                      ),
-                      _QuickAction(
-                        icon: Icons.remove,
-                        label: 'Add\nExpense',
-                        color: AppColors.error,
-                        onTap: () => _comingSoon('Add Expense'),
-                      ),
-                      _QuickAction(
-                        icon: Icons.grass_outlined,
-                        label: 'Add Feed\nStock',
-                        color: const Color(0xFF4FC3F7),
-                        onTap: () => _comingSoon('Add Feed Stock'),
-                      ),
-                    ],
-                  ),
-                ),
+                if (_farmId != null) _buildQuickActions(_farmId!),
                 const SizedBox(height: 24),
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -199,52 +180,192 @@ class _HomeScreenState extends State<HomeScreen> {
                   ],
                 ),
                 const SizedBox(height: 12),
-                FadeInUp(
-                  delay: const Duration(milliseconds: 450),
-                  child: Column(
-                    children: const [
-                      _ActivityTile(
-                        icon: Icons.payments_outlined,
-                        color: AppColors.success,
-                        title: 'Payment Received',
-                        subtitle: 'Received ₹5,000 from Rameshbhai',
-                        time: '10:30 AM',
-                      ),
-                      _ActivityTile(
-                        icon: Icons.sell_outlined,
-                        color: AppColors.warning,
-                        title: 'Goat Sold',
-                        subtitle: '1 goat sold to Maheshbhai',
-                        time: 'Yesterday',
-                      ),
-                    ],
-                  ),
-                ),
+                if (_farmId != null) _buildActivities(_farmId!),
               ],
             ),
           ),
         ),
       ),
-      bottomNavigationBar: BottomNavigationBar(
-        currentIndex: _selectedTab,
-        selectedItemColor: AppColors.primaryGreen,
-        unselectedItemColor: AppColors.textGrey,
-        showUnselectedLabels: true,
-        type: BottomNavigationBarType.fixed,
-        onTap: (index) {
-          if (index == 4) {
-            _showProfileMenu(context);
-            return;
-          }
-          setState(() => _selectedTab = index);
-        },
-        items: const [
-          BottomNavigationBarItem(icon: Icon(Icons.home_outlined), activeIcon: Icon(Icons.home), label: 'Home'),
-          BottomNavigationBarItem(icon: Icon(Icons.search), label: 'Scan'),
-          BottomNavigationBarItem(icon: Icon(Icons.notifications_none), label: 'Alerts'),
-          BottomNavigationBarItem(icon: Icon(Icons.bar_chart_outlined), label: 'Reports'),
-          BottomNavigationBarItem(icon: Icon(Icons.person_outline), label: 'Profile'),
+      bottomNavigationBar: AppBottomNav(currentIndex: _navIndex, onTap: _onNavTap),
+    );
+  }
+
+  Widget _buildSearchBar() {
+    return Container(
+      decoration: AppTheme.card(radius: 14),
+      padding: const EdgeInsets.symmetric(horizontal: 14),
+      child: Row(
+        children: [
+          Icon(Icons.search, color: AppColors.textGrey, size: 20),
+          const SizedBox(width: 8),
+          Expanded(
+            child: TextField(
+              controller: _searchController,
+              decoration: InputDecoration(
+                hintText: 'Search Goat ID, Customer, Batch, Invoice...',
+                hintStyle: AppTheme.body(size: 12),
+                border: InputBorder.none,
+                isDense: true,
+                contentPadding: const EdgeInsets.symmetric(vertical: 14),
+              ),
+              style: AppTheme.body(size: 13, color: AppColors.textDark),
+            ),
+          ),
+          Icon(Icons.tune, color: AppColors.primaryGreen, size: 20),
         ],
+      ),
+    );
+  }
+
+  Widget _buildStatGridLoading() {
+    return Row(
+      children: const [
+        Expanded(child: SizedBox(height: 90)),
+        SizedBox(width: 12),
+        Expanded(child: SizedBox(height: 90)),
+      ],
+    );
+  }
+
+  Widget _buildStatGrid(String farmId) {
+    return FadeInUp(
+      delay: const Duration(milliseconds: 150),
+      child: Column(
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: StreamBuilder<List<PalaiGoat>>(
+                  stream: FirestoreService.instance.allActiveGoatsStream(farmId),
+                  builder: (context, snap) {
+                    final count = snap.data?.length ?? 0;
+                    return StatCard(
+                      icon: Icons.pets,
+                      label: 'Total Goats',
+                      value: snap.hasData ? '$count' : '—',
+                      color: AppColors.primaryGreen,
+                      onTap: () => Navigator.of(context)
+                          .push(MaterialPageRoute(builder: (_) => const TotalGoatsScreen())),
+                    );
+                  },
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: StreamBuilder<double>(
+                  stream: FirestoreService.instance.todaysIncomeStream(farmId),
+                  builder: (context, snap) {
+                    final value = snap.data ?? 0;
+                    return StatCard(
+                      icon: Icons.currency_rupee,
+                      label: "Today's Income",
+                      value: snap.hasData ? '₹${value.toStringAsFixed(0)}' : '—',
+                      color: AppColors.warning,
+                      onTap: () => Navigator.of(context)
+                          .push(MaterialPageRoute(builder: (_) => const IncomeDetailScreen())),
+                    );
+                  },
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              Expanded(
+                child: StreamBuilder<double>(
+                  stream: FirestoreService.instance.totalPendingPaymentsStream(farmId),
+                  builder: (context, snap) {
+                    final value = snap.data ?? 0;
+                    return StatCard(
+                      icon: Icons.credit_card_outlined,
+                      label: 'Pending Payments',
+                      value: snap.hasData ? '₹${value.toStringAsFixed(0)}' : '—',
+                      color: AppColors.error,
+                    );
+                  },
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: StreamBuilder<List<dynamic>>(
+                  stream: FirestoreService.instance.stockItemsStream(farmId),
+                  builder: (context, snap) {
+                    final totalKg = (snap.data ?? [])
+                        .fold<double>(0, (sum, item) => sum + (item.quantity as double));
+                    return StatCard(
+                      icon: Icons.grass_outlined,
+                      label: 'Feed in Stock',
+                      value: snap.hasData ? '${totalKg.toStringAsFixed(0)} kg' : '—',
+                      color: AppColors.stockTeal,
+                      onTap: () => Navigator.of(context)
+                          .push(MaterialPageRoute(builder: (_) => const StockScreen())),
+                    );
+                  },
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildQuickActions(String farmId) {
+    return FadeInUp(
+      delay: const Duration(milliseconds: 350),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          QuickAction(
+            icon: Icons.add,
+            label: 'Add Goat',
+            color: AppColors.primaryGreen,
+            onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const PalaiScreen())),
+          ),
+          QuickAction(
+            icon: Icons.payments_outlined,
+            label: 'Receive\nPayment',
+            color: AppColors.success,
+            onTap: () => _comingSoon('Receive Payment'),
+          ),
+          QuickAction(
+            icon: Icons.remove,
+            label: 'Add\nExpense',
+            color: AppColors.error,
+            onTap: () => _comingSoon('Add Expense'),
+          ),
+          QuickAction(
+            icon: Icons.grass_outlined,
+            label: 'Add Feed\nStock',
+            color: AppColors.info,
+            onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const StockScreen())),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildActivities(String farmId) {
+    return FadeInUp(
+      delay: const Duration(milliseconds: 450),
+      child: StreamBuilder<List<ActivityLog>>(
+        stream: FirestoreService.instance.activitiesStream(farmId, limit: 5),
+        builder: (context, snap) {
+          if (!snap.hasData) {
+            return const Padding(
+              padding: EdgeInsets.symmetric(vertical: 20),
+              child: Center(child: CircularProgressIndicator(color: AppColors.primaryGreen)),
+            );
+          }
+          final activities = snap.data!;
+          if (activities.isEmpty) {
+            return Text('No recent activity yet.', style: AppTheme.body(size: 12));
+          }
+          return Column(
+            children: activities.map((a) => ActivityTile(activity: a)).toList(),
+          );
+        },
       ),
     );
   }
@@ -269,7 +390,7 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
         ),
         IconButton(
-          onPressed: () => _comingSoon('Notifications'),
+          onPressed: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const NotificationScreen())),
           icon: const Icon(Icons.notifications_none, color: AppColors.textDark),
         ),
         GestureDetector(
@@ -312,171 +433,6 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
         );
       },
-    );
-  }
-}
-
-class _StatCard extends StatelessWidget {
-  final IconData icon;
-  final String label;
-  final String value;
-  final Color color;
-
-  const _StatCard({required this.icon, required this.label, required this.value, required this.color});
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(18),
-        boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.04), blurRadius: 10, offset: const Offset(0, 4))],
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Container(
-            padding: const EdgeInsets.all(8),
-            decoration: BoxDecoration(color: color.withOpacity(0.12), shape: BoxShape.circle),
-            child: Icon(icon, color: color, size: 20),
-          ),
-          const SizedBox(height: 10),
-          Text(value, style: AppTheme.heading(size: 18)),
-          const SizedBox(height: 2),
-          Text(label, style: AppTheme.body(size: 11)),
-        ],
-      ),
-    );
-  }
-}
-
-class _ModuleTile extends StatelessWidget {
-  final IconData icon;
-  final String label;
-  final String sub;
-  final Color color;
-  final VoidCallback onTap;
-
-  const _ModuleTile({
-    required this.icon,
-    required this.label,
-    required this.sub,
-    required this.color,
-    required this.onTap,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(16),
-          boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.04), blurRadius: 8, offset: const Offset(0, 3))],
-        ),
-        padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 4),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(icon, color: color, size: 20),
-            const SizedBox(height: 5),
-            Text(
-              label,
-              style: AppTheme.heading(size: 11),
-              textAlign: TextAlign.center,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-            ),
-            Text(
-              sub,
-              style: AppTheme.body(size: 8),
-              textAlign: TextAlign.center,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _QuickAction extends StatelessWidget {
-  final IconData icon;
-  final String label;
-  final Color color;
-  final VoidCallback onTap;
-
-  const _QuickAction({required this.icon, required this.label, required this.color, required this.onTap});
-
-  @override
-  Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: onTap,
-      child: Column(
-        children: [
-          Container(
-            width: 50,
-            height: 50,
-            decoration: BoxDecoration(color: color.withOpacity(0.12), shape: BoxShape.circle),
-            child: Icon(icon, color: color),
-          ),
-          const SizedBox(height: 6),
-          Text(label, style: AppTheme.body(size: 10), textAlign: TextAlign.center),
-        ],
-      ),
-    );
-  }
-}
-
-class _ActivityTile extends StatelessWidget {
-  final IconData icon;
-  final Color color;
-  final String title;
-  final String subtitle;
-  final String time;
-
-  const _ActivityTile({
-    required this.icon,
-    required this.color,
-    required this.title,
-    required this.subtitle,
-    required this.time,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      margin: const EdgeInsets.only(bottom: 10),
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(14),
-        boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.03), blurRadius: 6, offset: const Offset(0, 2))],
-      ),
-      child: Row(
-        children: [
-          Container(
-            padding: const EdgeInsets.all(10),
-            decoration: BoxDecoration(color: color.withOpacity(0.12), shape: BoxShape.circle),
-            child: Icon(icon, color: color, size: 18),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(title, style: AppTheme.heading(size: 13)),
-                Text(subtitle, style: AppTheme.body(size: 11)),
-              ],
-            ),
-          ),
-          Text(time, style: AppTheme.body(size: 10)),
-        ],
-      ),
     );
   }
 }

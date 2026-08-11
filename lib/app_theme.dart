@@ -1,8 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 
-/// App-wide color palette. Kept here (not inside a screen file) because
-/// colors are shared visual constants, not screen-specific logic.
 class AppColors {
   static const Color primaryGreen = Color(0xFF4CAF50);
   static const Color darkGreen = Color(0xFF2E7D32);
@@ -13,22 +11,47 @@ class AppColors {
   static const Color textDark = Color(0xFF223322);
   static const Color textGrey = Color(0xFF7C8B7C);
 
+  // Status colors
   static const Color error = Color(0xFFE53935);
   static const Color warning = Color(0xFFFFA726);
   static const Color success = Color(0xFF43A047);
+  static const Color info = Color(0xFF1976D2);
 
-  static const List<Color> splashGradient = [Color(0xFF66BB6A), Color(0xFF2E7D32)];
-  static const List<Color> headerGradient = [Color(0xFF66BB6A), Color(0xFF2E7D32)];
+  // Gradients
+  static const List<Color> splashGradient = [
+    Color(0xFF66BB6A),
+    Color(0xFF2E7D32),
+  ];
+
+  static const List<Color> headerGradient = [
+    Color(0xFF66BB6A),
+    Color(0xFF2E7D32),
+  ];
+
+  // Module accent colors
+  static const Color tradingBlue = Color(0xFF64B5F6);
+  static const Color breedingPurple = Color(0xFFBA68C8);
+  static const Color stockTeal = Color(0xFF4DB6AC);
+
+  // Generic surface colors
+  static const Color cardWhite = Color(0xFFFFFFFF);
+  static const Color divider = Color(0xFFE0E0E0);
 }
 
-/// Small helper functions for consistent typography across screens.
+/// Small helper functions for consistent typography and styling
+/// across the application.
 class AppTheme {
   static TextStyle heading({
     double size = 24,
     Color color = AppColors.textDark,
     FontWeight weight = FontWeight.w700,
   }) {
-    return TextStyle(fontFamily: 'Baloo2', fontSize: size, fontWeight: weight, color: color);
+    return TextStyle(
+      fontFamily: 'Baloo2',
+      fontSize: size,
+      fontWeight: weight,
+      color: color,
+    );
   }
 
   static TextStyle brand({
@@ -36,7 +59,12 @@ class AppTheme {
     Color color = Colors.white,
     FontWeight weight = FontWeight.w700,
   }) {
-    return TextStyle(fontFamily: 'Amaranth', fontSize: size, fontWeight: weight, color: color);
+    return TextStyle(
+      fontFamily: 'Amaranth',
+      fontSize: size,
+      fontWeight: weight,
+      color: color,
+    );
   }
 
   static TextStyle body({
@@ -44,48 +72,110 @@ class AppTheme {
     Color color = AppColors.textGrey,
     FontWeight weight = FontWeight.w400,
   }) {
-    return GoogleFonts.poppins(fontSize: size, color: color, fontWeight: weight);
+    return GoogleFonts.poppins(
+      fontSize: size,
+      color: color,
+      fontWeight: weight,
+    );
+  }
+
+  /// White rounded-corner card decoration with a soft shadow.
+  ///
+  /// Used by Home / Palai / Stock stat cards,
+  /// module tiles and list rows.
+  static BoxDecoration card({
+    double radius = 16,
+  }) {
+    return BoxDecoration(
+      color: AppColors.cardWhite,
+      borderRadius: BorderRadius.circular(radius),
+      boxShadow: [
+        BoxShadow(
+          color: Colors.black.withOpacity(0.04),
+          blurRadius: 10,
+          offset: const Offset(0, 4),
+        ),
+      ],
+    );
   }
 
   static ThemeData get lightTheme {
     return ThemeData(
       useMaterial3: true,
+
+      // App colors
       scaffoldBackgroundColor: AppColors.paleGreen,
       primaryColor: AppColors.primaryGreen,
-      colorScheme: ColorScheme.fromSeed(seedColor: AppColors.primaryGreen),
+
+      colorScheme: ColorScheme.fromSeed(
+        seedColor: AppColors.primaryGreen,
+      ),
+
+      // Default application font
       fontFamily: 'Baloo2',
+
+      // AppBar
       appBarTheme: const AppBarTheme(
         backgroundColor: Colors.transparent,
         elevation: 0,
-        iconTheme: IconThemeData(color: Colors.white),
+        iconTheme: IconThemeData(
+          color: Colors.white,
+        ),
       ),
+
+      // Checkbox
       checkboxTheme: CheckboxThemeData(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(4)),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(4),
+        ),
       ),
+
+      // Text fields
       inputDecorationTheme: InputDecorationTheme(
         filled: true,
         fillColor: Colors.white,
-        hintStyle: body(size: 14),
-        contentPadding: const EdgeInsets.symmetric(horizontal: 18, vertical: 16),
+
+        hintStyle: body(
+          size: 14,
+        ),
+
+        contentPadding: const EdgeInsets.symmetric(
+          horizontal: 18,
+          vertical: 16,
+        ),
+
         border: OutlineInputBorder(
           borderRadius: BorderRadius.circular(16),
           borderSide: BorderSide.none,
         ),
+
         enabledBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(16),
           borderSide: BorderSide.none,
         ),
+
         focusedBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(16),
-          borderSide: const BorderSide(color: AppColors.primaryGreen, width: 1.5),
+          borderSide: const BorderSide(
+            color: AppColors.primaryGreen,
+            width: 1.5,
+          ),
         ),
+
         errorBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(16),
-          borderSide: const BorderSide(color: AppColors.error, width: 1.2),
+          borderSide: const BorderSide(
+            color: AppColors.error,
+            width: 1.2,
+          ),
         ),
+
         focusedErrorBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(16),
-          borderSide: const BorderSide(color: AppColors.error, width: 1.5),
+          borderSide: const BorderSide(
+            color: AppColors.error,
+            width: 1.5,
+          ),
         ),
       ),
     );
