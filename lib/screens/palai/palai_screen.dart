@@ -1,0 +1,368 @@
+import 'package:flutter/material.dart';
+import 'package:animate_do/animate_do.dart';
+
+import '../../app_theme.dart';
+import '../../models/activity_model.dart';
+import '../../models/palai_models.dart';
+import '../../services/firestore_service.dart';
+import '../../widgets/app_bottom_nav.dart';
+import '../home/home_screen.dart';
+import '../home/widgets/home_widgets.dart';
+import '../stocks/stock_screen.dart';
+import 'add_customer_screen.dart';
+import 'check_in_screen.dart';
+import 'check_out_screen.dart';
+import 'health_records_screen.dart';
+import 'billing_screen.dart';
+
+/// Palai (Goat Boarding & Care) module dashboard.
+///
+/// Manages customers, goat check-in/check-out, health records, monthly
+/// billing, payment collection and (eventually) automatic report generation
+/// — matching the "Palai (Goat Boarding & Care)" spec.
+class PalaiScreen extends StatefulWidget {
+  const PalaiScreen({super.key});
+
+  @override
+  State<PalaiScreen> createState() => _PalaiScreenState();
+}
+
+class _PalaiScreenState extends State<PalaiScreen> {
+  static const int _navIndex = 1;
+  String? _farmId;
+
+  @override
+  void initState() {
+    super.initState();
+    FirestoreService.instance.currentFarmId().then((id) {
+      if (mounted) setState(() => _farmId = id);
+    });
+  }
+
+  void _comingSoon(String feature) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('$feature coming soon'), backgroundColor: AppColors.darkGreen),
+    );
+  }
+
+  void _onNavTap(int index) {
+    if (index == _navIndex) return;
+    switch (index) {
+      case 0:
+        Navigator.of(context).pushReplacement(MaterialPageRoute(builder: (_) => const HomeScreen()));
+        break;
+      case 2:
+        Navigator.of(context).pushReplacement(MaterialPageRoute(builder: (_) => const StockScreen()));
+        break;
+      case 3:
+        _comingSoon('Reports');
+        break;
+      case 4:
+        _comingSoon('Profile');
+        break;
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: AppColors.paleGreen,
+      body: SafeArea(
+        child: _farmId == null
+            ? const Center(child: CircularProgressIndicator(color: AppColors.primaryGreen))
+            : SingleChildScrollView(
+                padding: const EdgeInsets.fromLTRB(20, 12, 20, 24),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    FadeInDown(duration: const Duration(milliseconds: 400), child: _buildHeader()),
+                    const SizedBox(height: 18),
+                    _buildDashboard(_farmId!),
+                    const SizedBox(height: 24),
+                    Text('Quick Actions', style: AppTheme.heading(size: 16)),
+                    const SizedBox(height: 12),
+                    _buildQuickActions(_farmId!),
+                    const SizedBox(height: 24),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Text('Recent Activities', style: AppTheme.heading(size: 16)),
+                        GestureDetector(
+                          onTap: () => _comingSoon('Full activity list'),
+                          child: Text('View All', style: AppTheme.body(size: 13, color: AppColors.darkGreen, weight: FontWeight.w600)),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 12),
+                    _buildActivities(_farmId!),
+                    const SizedBox(height: 20),
+                    _buildGenerateReportBanner(),
+                  ],
+                ),
+              ),
+      ),
+      bottomNavigationBar: AppBottomNav(currentIndex: _navIndex, onTap: _onNavTap),
+    );
+  }
+
+  Widget _buildHeader() {
+    return Row(
+      children: [
+        Container(
+          width: 42,
+          height: 42,
+          decoration: const BoxDecoration(color: AppColors.lightGreen, shape: BoxShape.circle),
+          child: const Icon(Icons.home_work, color: AppColors.primaryGreen),
+        ),
+        const SizedBox(width: 12),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('Palai', style: AppTheme.heading(size: 17)),
+              Text('Goat Boarding & Care', style: AppTheme.body(size: 12)),
+            ],
+          ),
+        ),
+        IconButton(onPressed: () => _comingSoon('Notifications'), icon: const Icon(Icons.notifications_none, color: AppColors.textDark)),
+        ElevatedButton.icon(
+          onPressed: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const CheckInGoatScreen())),
+          icon: const Icon(Icons.add, size: 16),
+          label: const Text('Add Goat'),
+          style: ElevatedButton.styleFrom(
+            backgroundColor: AppColors.primaryGreen,
+            foregroundColor: Colors.white,
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+            textStyle: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildDashboard(String farmId) {
+    return FadeInUp(
+      delay: const Duration(milliseconds: 150),
+      child: Column(
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: StreamBuilder<List<PalaiGoat>>(
+                  stream: FirestoreService.instance.allActiveGoatsStream(farmId),
+                  builder: (context, snap) => StatCard(
+                    icon: Icons.pets,
+                    label: 'Total Goats in Palai',
+                    value: snap.hasData ? '${snap.data!.length}' : '—',
+                    color: AppColors.primaryGreen,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: StreamBuilder<List<PalaiCustomer>>(
+                  stream: FirestoreService.instance.customersStream(farmId),
+                  builder: (context, snap) => StatCard(
+                    icon: Icons.people_outline,
+                    label: 'Total Customers',
+                    value: snap.hasData ? '${snap.data!.length}' : '—',
+                    color: AppColors.info,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              Expanded(
+                child: StreamBuilder<double>(
+                  stream: FirestoreService.instance.todaysIncomeStream(farmId),
+                  builder: (context, snap) => StatCard(
+                    icon: Icons.currency_rupee,
+                    label: 'Monthly Income',
+                    value: snap.hasData ? '₹${snap.data!.toStringAsFixed(0)}' : '—',
+                    color: AppColors.warning,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: StreamBuilder<double>(
+                  stream: FirestoreService.instance.totalPendingPaymentsStream(farmId),
+                  builder: (context, snap) => StatCard(
+                    icon: Icons.credit_card_outlined,
+                    label: 'Pending Payments',
+                    value: snap.hasData ? '₹${snap.data!.toStringAsFixed(0)}' : '—',
+                    color: AppColors.error,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              Expanded(
+                child: StreamBuilder<List<PalaiGoat>>(
+                  stream: FirestoreService.instance.allActiveGoatsStream(farmId),
+                  builder: (context, snap) {
+                    final today = DateTime.now();
+                    final checkInsToday = (snap.data ?? [])
+                        .where((g) =>
+                            g.checkInDate.year == today.year &&
+                            g.checkInDate.month == today.month &&
+                            g.checkInDate.day == today.day)
+                        .length;
+                    return StatCard(
+                      icon: Icons.login,
+                      label: "Today's Check-In",
+                      value: snap.hasData ? '$checkInsToday' : '—',
+                      color: AppColors.success,
+                    );
+                  },
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: StatCard(
+                  icon: Icons.logout,
+                  label: "Today's Check-Out",
+                  value: '0',
+                  color: AppColors.error,
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildQuickActions(String farmId) {
+    return FadeInUp(
+      delay: const Duration(milliseconds: 250),
+      child: GridView.count(
+        crossAxisCount: 4,
+        shrinkWrap: true,
+        physics: const NeverScrollableScrollPhysics(),
+        mainAxisSpacing: 10,
+        crossAxisSpacing: 10,
+        childAspectRatio: 0.85,
+        children: [
+          ModuleTile(
+            icon: Icons.person_add_alt,
+            label: 'Add Customer',
+            sub: 'New',
+            color: AppColors.primaryGreen,
+            onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const AddCustomerScreen())),
+          ),
+          ModuleTile(
+            icon: Icons.login,
+            label: 'Check-In',
+            sub: 'Goat',
+            color: AppColors.success,
+            onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const CheckInGoatScreen())),
+          ),
+          ModuleTile(
+            icon: Icons.logout,
+            label: 'Check-Out',
+            sub: 'Goat',
+            color: AppColors.error,
+            onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const CheckOutGoatScreen())),
+          ),
+          ModuleTile(
+            icon: Icons.favorite_border,
+            label: 'Health',
+            sub: 'Records',
+            color: AppColors.breedingPurple,
+            onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const HealthRecordsScreen())),
+          ),
+          ModuleTile(
+            icon: Icons.receipt_long_outlined,
+            label: 'Billing',
+            sub: 'Generate',
+            color: AppColors.warning,
+            onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const BillingScreen())),
+          ),
+          ModuleTile(
+            icon: Icons.local_shipping_outlined,
+            label: 'Delivery',
+            sub: 'Return',
+            color: AppColors.info,
+            onTap: () => _comingSoon('Delivery / Return'),
+          ),
+          ModuleTile(
+            icon: Icons.summarize_outlined,
+            label: 'Report',
+            sub: 'Monthly',
+            color: AppColors.stockTeal,
+            onTap: () => _comingSoon('Monthly report generator'),
+          ),
+          ModuleTile(
+            icon: Icons.more_horiz,
+            label: 'More',
+            sub: '',
+            color: AppColors.textGrey,
+            onTap: () => _comingSoon('More options'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildActivities(String farmId) {
+    return FadeInUp(
+      delay: const Duration(milliseconds: 350),
+      child: StreamBuilder<List<ActivityLog>>(
+        stream: FirestoreService.instance.activitiesStream(farmId, module: 'palai', limit: 6),
+        builder: (context, snap) {
+          if (!snap.hasData) {
+            return const Padding(
+              padding: EdgeInsets.symmetric(vertical: 16),
+              child: Center(child: CircularProgressIndicator(color: AppColors.primaryGreen)),
+            );
+          }
+          final activities = snap.data!;
+          if (activities.isEmpty) {
+            return Text('No Palai activity yet.', style: AppTheme.body(size: 12));
+          }
+          return Column(children: activities.map((a) => ActivityTile(activity: a)).toList());
+        },
+      ),
+    );
+  }
+
+  Widget _buildGenerateReportBanner() {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(color: AppColors.darkGreen, borderRadius: BorderRadius.circular(16)),
+      child: Row(
+        children: [
+          const Icon(Icons.description_outlined, color: Colors.white),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('Generate Monthly Report & Bill', style: AppTheme.heading(size: 13, color: Colors.white)),
+                Text('Send goat report with photos, weight & bill to customer',
+                    style: AppTheme.body(size: 11, color: Colors.white70)),
+              ],
+            ),
+          ),
+          ElevatedButton(
+            onPressed: () => _comingSoon('Report generator'),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.white,
+              foregroundColor: AppColors.darkGreen,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+            ),
+            child: const Text('Generate', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
+          ),
+        ],
+      ),
+    );
+  }
+}
