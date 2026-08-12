@@ -5,10 +5,8 @@ import 'package:intl/intl.dart';
 import '../../app_theme.dart';
 import '../../models/stock_model.dart';
 import '../../services/firestore_service.dart';
-import '../../widgets/app_bottom_nav.dart';
-import '../home/home_screen.dart';
+import '../../widgets/fast_route.dart';
 import '../home/widgets/home_widgets.dart';
-import '../palai/palai_screen.dart';
 import 'add_feed_stock_screen.dart';
 import 'add_medicine_screen.dart';
 import 'feed_used_screen.dart';
@@ -22,7 +20,6 @@ class StockScreen extends StatefulWidget {
 }
 
 class _StockScreenState extends State<StockScreen> {
-  static const int _navIndex = 2;
   String? _farmId;
 
   @override
@@ -39,24 +36,6 @@ class _StockScreenState extends State<StockScreen> {
     );
   }
 
-  void _onNavTap(int index) {
-    if (index == _navIndex) return;
-    switch (index) {
-      case 0:
-        Navigator.of(context).pushReplacement(MaterialPageRoute(builder: (_) => const HomeScreen()));
-        break;
-      case 1:
-        Navigator.of(context).pushReplacement(MaterialPageRoute(builder: (_) => const PalaiScreen()));
-        break;
-      case 3:
-        _comingSoon('Reports');
-        break;
-      case 4:
-        _comingSoon('Profile');
-        break;
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -65,34 +44,33 @@ class _StockScreenState extends State<StockScreen> {
         child: _farmId == null
             ? const Center(child: CircularProgressIndicator(color: AppColors.primaryGreen))
             : SingleChildScrollView(
-                padding: const EdgeInsets.fromLTRB(20, 12, 20, 24),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    FadeInDown(duration: const Duration(milliseconds: 400), child: _buildHeader()),
-                    const SizedBox(height: 18),
-                    _buildSummary(_farmId!),
-                    const SizedBox(height: 24),
-                    Text('Quick Actions', style: AppTheme.heading(size: 16)),
-                    const SizedBox(height: 12),
-                    _buildQuickActions(),
-                    const SizedBox(height: 24),
-                    Text('Feed Stock', style: AppTheme.heading(size: 16)),
-                    const SizedBox(height: 12),
-                    _buildStockList(_farmId!, StockType.feed),
-                    const SizedBox(height: 24),
-                    Text('Medicine Stock', style: AppTheme.heading(size: 16)),
-                    const SizedBox(height: 12),
-                    _buildStockList(_farmId!, StockType.medicine),
-                    const SizedBox(height: 24),
-                    Text('Recent Stock Activity', style: AppTheme.heading(size: 16)),
-                    const SizedBox(height: 12),
-                    _buildMovements(_farmId!),
-                  ],
-                ),
-              ),
+          padding: const EdgeInsets.fromLTRB(20, 12, 20, 24),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              FadeInDown(duration: const Duration(milliseconds: 180), child: _buildHeader()),
+              const SizedBox(height: 18),
+              _buildSummary(_farmId!),
+              const SizedBox(height: 24),
+              Text('Quick Actions', style: AppTheme.heading(size: 16)),
+              const SizedBox(height: 12),
+              _buildQuickActions(),
+              const SizedBox(height: 24),
+              Text('Feed Stock', style: AppTheme.heading(size: 16)),
+              const SizedBox(height: 12),
+              _buildStockList(_farmId!, StockType.feed),
+              const SizedBox(height: 24),
+              Text('Medicine Stock', style: AppTheme.heading(size: 16)),
+              const SizedBox(height: 12),
+              _buildStockList(_farmId!, StockType.medicine),
+              const SizedBox(height: 24),
+              Text('Recent Stock Activity', style: AppTheme.heading(size: 16)),
+              const SizedBox(height: 12),
+              _buildMovements(_farmId!),
+            ],
+          ),
+        ),
       ),
-      bottomNavigationBar: AppBottomNav(currentIndex: _navIndex, onTap: _onNavTap),
     );
   }
 
@@ -122,7 +100,8 @@ class _StockScreenState extends State<StockScreen> {
 
   Widget _buildSummary(String farmId) {
     return FadeInUp(
-      delay: const Duration(milliseconds: 150),
+      delay: const Duration(milliseconds: 38),
+      duration: const Duration(milliseconds: 220),
       child: Row(
         children: [
           Expanded(
@@ -161,7 +140,8 @@ class _StockScreenState extends State<StockScreen> {
 
   Widget _buildQuickActions() {
     return FadeInUp(
-      delay: const Duration(milliseconds: 250),
+      delay: const Duration(milliseconds: 62),
+      duration: const Duration(milliseconds: 220),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
@@ -169,19 +149,19 @@ class _StockScreenState extends State<StockScreen> {
             icon: Icons.add,
             label: 'Add Feed\nStock',
             color: AppColors.stockTeal,
-            onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const AddFeedStockScreen())),
+            onTap: () => Navigator.of(context).push(fastRoute(const AddFeedStockScreen())),
           ),
           QuickAction(
             icon: Icons.medication_outlined,
             label: 'Add\nMedicine',
             color: AppColors.breedingPurple,
-            onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const AddMedicineScreen())),
+            onTap: () => Navigator.of(context).push(fastRoute(const AddMedicineScreen())),
           ),
           QuickAction(
             icon: Icons.remove,
             label: 'Feed Used\nToday',
             color: AppColors.warning,
-            onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const FeedUsedScreen())),
+            onTap: () => Navigator.of(context).push(fastRoute(const FeedUsedScreen())),
           ),
         ],
       ),
@@ -190,7 +170,8 @@ class _StockScreenState extends State<StockScreen> {
 
   Widget _buildStockList(String farmId, StockType type) {
     return FadeInUp(
-      delay: const Duration(milliseconds: 300),
+      delay: const Duration(milliseconds: 75),
+      duration: const Duration(milliseconds: 220),
       child: StreamBuilder<List<StockItem>>(
         stream: FirestoreService.instance.stockItemsStream(farmId, type: type),
         builder: (context, snap) {
@@ -251,7 +232,8 @@ class _StockScreenState extends State<StockScreen> {
 
   Widget _buildMovements(String farmId) {
     return FadeInUp(
-      delay: const Duration(milliseconds: 400),
+      delay: const Duration(milliseconds: 100),
+      duration: const Duration(milliseconds: 220),
       child: StreamBuilder<List<StockMovement>>(
         stream: FirestoreService.instance.stockMovementsStream(farmId, limit: 10),
         builder: (context, snap) {

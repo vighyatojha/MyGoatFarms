@@ -19,7 +19,9 @@ class _SplashScreenState extends State<SplashScreen> {
   }
 
   Future<void> _navigateNext() async {
-    await Future.delayed(const Duration(milliseconds: 2600));
+    // Trimmed from 2600ms — just enough for the logo to register without
+    // making people wait on every cold start.
+    await Future.delayed(const Duration(milliseconds: 1100));
     if (!mounted) return;
 
     final user = FirebaseAuth.instance.currentUser;
@@ -44,7 +46,7 @@ class _SplashScreenState extends State<SplashScreen> {
             children: [
               const Spacer(flex: 3),
               ZoomIn(
-                duration: const Duration(milliseconds: 900),
+                duration: const Duration(milliseconds: 400),
                 child: Container(
                   padding: const EdgeInsets.all(6),
                   decoration: BoxDecoration(
@@ -75,14 +77,14 @@ class _SplashScreenState extends State<SplashScreen> {
               ),
               const Spacer(flex: 3),
               FadeInUp(
-                delay: const Duration(milliseconds: 500),
-                duration: const Duration(milliseconds: 700),
+                delay: const Duration(milliseconds: 200),
+                duration: const Duration(milliseconds: 300),
                 child: Text('My Goat Farm', style: AppTheme.brand(size: 32)),
               ),
               const SizedBox(height: 14),
               FadeInUp(
-                delay: const Duration(milliseconds: 750),
-                duration: const Duration(milliseconds: 700),
+                delay: const Duration(milliseconds: 300),
+                duration: const Duration(milliseconds: 300),
                 child: Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 44),
                   child: Text(
@@ -98,7 +100,7 @@ class _SplashScreenState extends State<SplashScreen> {
               ),
               const Spacer(flex: 2),
               FadeIn(
-                delay: const Duration(milliseconds: 1100),
+                delay: const Duration(milliseconds: 420),
                 child: const SizedBox(
                   width: 26,
                   height: 26,

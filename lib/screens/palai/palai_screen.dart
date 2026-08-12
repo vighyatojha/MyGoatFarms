@@ -5,10 +5,8 @@ import '../../app_theme.dart';
 import '../../models/activity_model.dart';
 import '../../models/palai_models.dart';
 import '../../services/firestore_service.dart';
-import '../../widgets/app_bottom_nav.dart';
-import '../home/home_screen.dart';
+import '../../widgets/fast_route.dart';
 import '../home/widgets/home_widgets.dart';
-import '../stocks/stock_screen.dart';
 import 'add_customer_screen.dart';
 import 'check_in_screen.dart';
 import 'check_out_screen.dart';
@@ -28,7 +26,6 @@ class PalaiScreen extends StatefulWidget {
 }
 
 class _PalaiScreenState extends State<PalaiScreen> {
-  static const int _navIndex = 1;
   String? _farmId;
 
   @override
@@ -45,24 +42,6 @@ class _PalaiScreenState extends State<PalaiScreen> {
     );
   }
 
-  void _onNavTap(int index) {
-    if (index == _navIndex) return;
-    switch (index) {
-      case 0:
-        Navigator.of(context).pushReplacement(MaterialPageRoute(builder: (_) => const HomeScreen()));
-        break;
-      case 2:
-        Navigator.of(context).pushReplacement(MaterialPageRoute(builder: (_) => const StockScreen()));
-        break;
-      case 3:
-        _comingSoon('Reports');
-        break;
-      case 4:
-        _comingSoon('Profile');
-        break;
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -71,37 +50,36 @@ class _PalaiScreenState extends State<PalaiScreen> {
         child: _farmId == null
             ? const Center(child: CircularProgressIndicator(color: AppColors.primaryGreen))
             : SingleChildScrollView(
-                padding: const EdgeInsets.fromLTRB(20, 12, 20, 24),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    FadeInDown(duration: const Duration(milliseconds: 400), child: _buildHeader()),
-                    const SizedBox(height: 18),
-                    _buildDashboard(_farmId!),
-                    const SizedBox(height: 24),
-                    Text('Quick Actions', style: AppTheme.heading(size: 16)),
-                    const SizedBox(height: 12),
-                    _buildQuickActions(_farmId!),
-                    const SizedBox(height: 24),
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        Text('Recent Activities', style: AppTheme.heading(size: 16)),
-                        GestureDetector(
-                          onTap: () => _comingSoon('Full activity list'),
-                          child: Text('View All', style: AppTheme.body(size: 13, color: AppColors.darkGreen, weight: FontWeight.w600)),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 12),
-                    _buildActivities(_farmId!),
-                    const SizedBox(height: 20),
-                    _buildGenerateReportBanner(),
-                  ],
-                ),
+          padding: const EdgeInsets.fromLTRB(20, 12, 20, 24),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              FadeInDown(duration: const Duration(milliseconds: 180), child: _buildHeader()),
+              const SizedBox(height: 18),
+              _buildDashboard(_farmId!),
+              const SizedBox(height: 24),
+              Text('Quick Actions', style: AppTheme.heading(size: 16)),
+              const SizedBox(height: 12),
+              _buildQuickActions(_farmId!),
+              const SizedBox(height: 24),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text('Recent Activities', style: AppTheme.heading(size: 16)),
+                  GestureDetector(
+                    onTap: () => _comingSoon('Full activity list'),
+                    child: Text('View All', style: AppTheme.body(size: 13, color: AppColors.darkGreen, weight: FontWeight.w600)),
+                  ),
+                ],
               ),
+              const SizedBox(height: 12),
+              _buildActivities(_farmId!),
+              const SizedBox(height: 20),
+              _buildGenerateReportBanner(),
+            ],
+          ),
+        ),
       ),
-      bottomNavigationBar: AppBottomNav(currentIndex: _navIndex, onTap: _onNavTap),
     );
   }
 
@@ -126,7 +104,7 @@ class _PalaiScreenState extends State<PalaiScreen> {
         ),
         IconButton(onPressed: () => _comingSoon('Notifications'), icon: const Icon(Icons.notifications_none, color: AppColors.textDark)),
         ElevatedButton.icon(
-          onPressed: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const CheckInGoatScreen())),
+          onPressed: () => Navigator.of(context).push(fastRoute(const CheckInGoatScreen())),
           icon: const Icon(Icons.add, size: 16),
           label: const Text('Add Goat'),
           style: ElevatedButton.styleFrom(
@@ -143,7 +121,8 @@ class _PalaiScreenState extends State<PalaiScreen> {
 
   Widget _buildDashboard(String farmId) {
     return FadeInUp(
-      delay: const Duration(milliseconds: 150),
+      delay: const Duration(milliseconds: 38),
+      duration: const Duration(milliseconds: 220),
       child: Column(
         children: [
           Row(
@@ -211,9 +190,9 @@ class _PalaiScreenState extends State<PalaiScreen> {
                     final today = DateTime.now();
                     final checkInsToday = (snap.data ?? [])
                         .where((g) =>
-                            g.checkInDate.year == today.year &&
-                            g.checkInDate.month == today.month &&
-                            g.checkInDate.day == today.day)
+                    g.checkInDate.year == today.year &&
+                        g.checkInDate.month == today.month &&
+                        g.checkInDate.day == today.day)
                         .length;
                     return StatCard(
                       icon: Icons.login,
@@ -242,7 +221,8 @@ class _PalaiScreenState extends State<PalaiScreen> {
 
   Widget _buildQuickActions(String farmId) {
     return FadeInUp(
-      delay: const Duration(milliseconds: 250),
+      delay: const Duration(milliseconds: 62),
+      duration: const Duration(milliseconds: 220),
       child: GridView.count(
         crossAxisCount: 4,
         shrinkWrap: true,
@@ -256,35 +236,35 @@ class _PalaiScreenState extends State<PalaiScreen> {
             label: 'Add Customer',
             sub: 'New',
             color: AppColors.primaryGreen,
-            onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const AddCustomerScreen())),
+            onTap: () => Navigator.of(context).push(fastRoute(const AddCustomerScreen())),
           ),
           ModuleTile(
             icon: Icons.login,
             label: 'Check-In',
             sub: 'Goat',
             color: AppColors.success,
-            onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const CheckInGoatScreen())),
+            onTap: () => Navigator.of(context).push(fastRoute(const CheckInGoatScreen())),
           ),
           ModuleTile(
             icon: Icons.logout,
             label: 'Check-Out',
             sub: 'Goat',
             color: AppColors.error,
-            onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const CheckOutGoatScreen())),
+            onTap: () => Navigator.of(context).push(fastRoute(const CheckOutGoatScreen())),
           ),
           ModuleTile(
             icon: Icons.favorite_border,
             label: 'Health',
             sub: 'Records',
             color: AppColors.breedingPurple,
-            onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const HealthRecordsScreen())),
+            onTap: () => Navigator.of(context).push(fastRoute(const HealthRecordsScreen())),
           ),
           ModuleTile(
             icon: Icons.receipt_long_outlined,
             label: 'Billing',
             sub: 'Generate',
             color: AppColors.warning,
-            onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const BillingScreen())),
+            onTap: () => Navigator.of(context).push(fastRoute(const BillingScreen())),
           ),
           ModuleTile(
             icon: Icons.local_shipping_outlined,
@@ -314,7 +294,8 @@ class _PalaiScreenState extends State<PalaiScreen> {
 
   Widget _buildActivities(String farmId) {
     return FadeInUp(
-      delay: const Duration(milliseconds: 350),
+      delay: const Duration(milliseconds: 88),
+      duration: const Duration(milliseconds: 220),
       child: StreamBuilder<List<ActivityLog>>(
         stream: FirestoreService.instance.activitiesStream(farmId, module: 'palai', limit: 6),
         builder: (context, snap) {

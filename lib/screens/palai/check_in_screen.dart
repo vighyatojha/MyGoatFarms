@@ -3,6 +3,7 @@ import '../../app_theme.dart';
 import '../../models/palai_models.dart';
 import '../../models/activity_model.dart';
 import '../../services/firestore_service.dart';
+import '../../widgets/fast_route.dart';
 import 'add_customer_screen.dart';
 
 /// Records a new goat check-in for Palai boarding: Goat ID, breed, gender,
@@ -110,76 +111,76 @@ class _CheckInGoatScreenState extends State<CheckInGoatScreen> {
       body: _farmId == null
           ? const Center(child: CircularProgressIndicator(color: AppColors.primaryGreen))
           : SingleChildScrollView(
-              padding: const EdgeInsets.all(20),
-              child: Form(
-                key: _formKey,
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    _label('Owner (Customer)'),
-                    _customerPicker(_farmId!),
-                    const SizedBox(height: 16),
-                    _label('Goat ID'),
-                    _textField(_goatCodeController, hint: 'e.g. G-1001'),
-                    const SizedBox(height: 16),
-                    _label('Breed'),
-                    _textField(_breedController, hint: 'e.g. Sojat, Jamnapari'),
-                    const SizedBox(height: 16),
-                    Row(
+        padding: const EdgeInsets.all(20),
+        child: Form(
+          key: _formKey,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              _label('Owner (Customer)'),
+              _customerPicker(_farmId!),
+              const SizedBox(height: 16),
+              _label('Goat ID'),
+              _textField(_goatCodeController, hint: 'e.g. G-1001'),
+              const SizedBox(height: 16),
+              _label('Breed'),
+              _textField(_breedController, hint: 'e.g. Sojat, Jamnapari'),
+              const SizedBox(height: 16),
+              Row(
+                children: [
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              _label('Gender'),
-                              _dropdown(_gender, _genders, (v) => setState(() => _gender = v)),
-                            ],
-                          ),
-                        ),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              _label('Color'),
-                              _textField(_colorController, hint: 'e.g. Brown & White'),
-                            ],
-                          ),
-                        ),
+                        _label('Gender'),
+                        _dropdown(_gender, _genders, (v) => setState(() => _gender = v)),
                       ],
                     ),
-                    const SizedBox(height: 16),
-                    _label('Weight (kg)'),
-                    _textField(_weightController, hint: 'e.g. 35', keyboardType: TextInputType.number),
-                    const SizedBox(height: 16),
-                    _label('Health Status'),
-                    _dropdown(_healthStatus, _healthOptions, (v) => setState(() => _healthStatus = v)),
-                    const SizedBox(height: 16),
-                    _label('Monthly Package'),
-                    _dropdown(_monthlyPackage, _packages, (v) => setState(() => _monthlyPackage = v)),
-                    const SizedBox(height: 16),
-                    _label('Notes'),
-                    _textField(_notesController, hint: 'Optional notes', maxLines: 3, optional: true),
-                    const SizedBox(height: 28),
-                    SizedBox(
-                      width: double.infinity,
-                      child: ElevatedButton(
-                        onPressed: _saving ? null : _save,
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: AppColors.primaryGreen,
-                          foregroundColor: Colors.white,
-                          padding: const EdgeInsets.symmetric(vertical: 16),
-                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                        ),
-                        child: _saving
-                            ? const SizedBox(height: 18, width: 18, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
-                            : const Text('Save & Check-In Goat', style: TextStyle(fontWeight: FontWeight.w600)),
-                      ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        _label('Color'),
+                        _textField(_colorController, hint: 'e.g. Brown & White'),
+                      ],
                     ),
-                  ],
+                  ),
+                ],
+              ),
+              const SizedBox(height: 16),
+              _label('Weight (kg)'),
+              _textField(_weightController, hint: 'e.g. 35', keyboardType: TextInputType.number),
+              const SizedBox(height: 16),
+              _label('Health Status'),
+              _dropdown(_healthStatus, _healthOptions, (v) => setState(() => _healthStatus = v)),
+              const SizedBox(height: 16),
+              _label('Monthly Package'),
+              _dropdown(_monthlyPackage, _packages, (v) => setState(() => _monthlyPackage = v)),
+              const SizedBox(height: 16),
+              _label('Notes'),
+              _textField(_notesController, hint: 'Optional notes', maxLines: 3, optional: true),
+              const SizedBox(height: 28),
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton(
+                  onPressed: _saving ? null : _save,
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: AppColors.primaryGreen,
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(vertical: 16),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                  ),
+                  child: _saving
+                      ? const SizedBox(height: 18, width: 18, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                      : const Text('Save & Check-In Goat', style: TextStyle(fontWeight: FontWeight.w600)),
                 ),
               ),
-            ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 
@@ -207,7 +208,7 @@ class _CheckInGoatScreenState extends State<CheckInGoatScreen> {
                 ),
               ),
               TextButton(
-                onPressed: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const AddCustomerScreen())),
+                onPressed: () => Navigator.of(context).push(fastRoute(const AddCustomerScreen())),
                 child: Text('+ New', style: AppTheme.body(size: 12, color: AppColors.primaryGreen, weight: FontWeight.w600)),
               ),
             ],
@@ -218,9 +219,9 @@ class _CheckInGoatScreenState extends State<CheckInGoatScreen> {
   }
 
   Widget _label(String text) => Padding(
-        padding: const EdgeInsets.only(bottom: 6),
-        child: Text(text, style: AppTheme.heading(size: 13)),
-      );
+    padding: const EdgeInsets.only(bottom: 6),
+    child: Text(text, style: AppTheme.heading(size: 13)),
+  );
 
   Widget _dropdown(String value, List<String> options, ValueChanged<String> onChanged) {
     return Container(
@@ -238,12 +239,12 @@ class _CheckInGoatScreenState extends State<CheckInGoatScreen> {
   }
 
   Widget _textField(
-    TextEditingController controller, {
-    String? hint,
-    TextInputType? keyboardType,
-    int maxLines = 1,
-    bool optional = false,
-  }) {
+      TextEditingController controller, {
+        String? hint,
+        TextInputType? keyboardType,
+        int maxLines = 1,
+        bool optional = false,
+      }) {
     return Container(
       decoration: AppTheme.card(radius: 12),
       child: TextFormField(

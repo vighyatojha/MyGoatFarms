@@ -118,56 +118,57 @@ class _NotificationScreenState extends State<NotificationScreen> {
       body: _notifications.isEmpty
           ? Center(child: Text('No notifications yet.', style: AppTheme.body(size: 13)))
           : ListView.builder(
-              padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
-              itemCount: _notifications.length,
-              itemBuilder: (context, index) {
-                final n = _notifications[index];
-                return FadeInUp(
-                  delay: Duration(milliseconds: 80 * index),
-                  child: Container(
-                    margin: const EdgeInsets.only(bottom: 10),
-                    padding: const EdgeInsets.all(14),
-                    decoration: BoxDecoration(
-                      color: n.isRead ? Colors.white : AppColors.lightGreen.withOpacity(0.35),
-                      borderRadius: BorderRadius.circular(14),
-                      boxShadow: [
-                        BoxShadow(color: Colors.black.withOpacity(0.03), blurRadius: 6, offset: const Offset(0, 2)),
-                      ],
-                    ),
-                    child: Row(
+        padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
+        itemCount: _notifications.length,
+        itemBuilder: (context, index) {
+          final n = _notifications[index];
+          return FadeInUp(
+            delay: Duration(milliseconds: 25 * index),
+            duration: const Duration(milliseconds: 180),
+            child: Container(
+              margin: const EdgeInsets.only(bottom: 10),
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                color: n.isRead ? Colors.white : AppColors.lightGreen.withOpacity(0.35),
+                borderRadius: BorderRadius.circular(14),
+                boxShadow: [
+                  BoxShadow(color: Colors.black.withOpacity(0.03), blurRadius: 6, offset: const Offset(0, 2)),
+                ],
+              ),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(10),
+                    decoration: BoxDecoration(color: _colorFor(n.kind).withOpacity(0.12), shape: BoxShape.circle),
+                    child: Icon(_iconFor(n.kind), color: _colorFor(n.kind), size: 18),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Container(
-                          padding: const EdgeInsets.all(10),
-                          decoration: BoxDecoration(color: _colorFor(n.kind).withOpacity(0.12), shape: BoxShape.circle),
-                          child: Icon(_iconFor(n.kind), color: _colorFor(n.kind), size: 18),
-                        ),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(n.title, style: AppTheme.heading(size: 13)),
-                              const SizedBox(height: 2),
-                              Text(n.message, style: AppTheme.body(size: 12)),
-                              const SizedBox(height: 4),
-                              Text(n.time, style: AppTheme.body(size: 10)),
-                            ],
-                          ),
-                        ),
-                        if (!n.isRead)
-                          Container(
-                            margin: const EdgeInsets.only(top: 4),
-                            width: 8,
-                            height: 8,
-                            decoration: const BoxDecoration(color: AppColors.primaryGreen, shape: BoxShape.circle),
-                          ),
+                        Text(n.title, style: AppTheme.heading(size: 13)),
+                        const SizedBox(height: 2),
+                        Text(n.message, style: AppTheme.body(size: 12)),
+                        const SizedBox(height: 4),
+                        Text(n.time, style: AppTheme.body(size: 10)),
                       ],
                     ),
                   ),
-                );
-              },
+                  if (!n.isRead)
+                    Container(
+                      margin: const EdgeInsets.only(top: 4),
+                      width: 8,
+                      height: 8,
+                      decoration: const BoxDecoration(color: AppColors.primaryGreen, shape: BoxShape.circle),
+                    ),
+                ],
+              ),
             ),
+          );
+        },
+      ),
     );
   }
 }

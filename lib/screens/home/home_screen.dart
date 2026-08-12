@@ -7,7 +7,7 @@ import '../../models/farm_model.dart';
 import '../../models/activity_model.dart';
 import '../../models/palai_models.dart';
 import '../../services/firestore_service.dart';
-import '../../widgets/app_bottom_nav.dart';
+import '../../widgets/fast_route.dart';
 import 'widgets/home_widgets.dart';
 import '../palai/palai_screen.dart';
 import '../stocks/stock_screen.dart';
@@ -26,8 +26,6 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> {
-  static const int _navIndex = 0;
-
   FarmModel? _farm;
   bool _loadingFarm = true;
   String? _farmId;
@@ -58,7 +56,7 @@ class _HomeScreenState extends State<HomeScreen> {
     if (!mounted) return;
     Navigator.of(context).pushAndRemoveUntil(
       MaterialPageRoute(builder: (_) => const LoginScreen()),
-      (route) => false,
+          (route) => false,
     );
   }
 
@@ -66,24 +64,6 @@ class _HomeScreenState extends State<HomeScreen> {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text('$feature module coming soon'), backgroundColor: AppColors.darkGreen),
     );
-  }
-
-  void _onNavTap(int index) {
-    if (index == _navIndex) return;
-    switch (index) {
-      case 1:
-        Navigator.of(context).pushReplacement(MaterialPageRoute(builder: (_) => const PalaiScreen()));
-        break;
-      case 2:
-        Navigator.of(context).pushReplacement(MaterialPageRoute(builder: (_) => const StockScreen()));
-        break;
-      case 3:
-        _comingSoon('Reports');
-        break;
-      case 4:
-        _showProfileMenu(context);
-        break;
-    }
   }
 
   @override
@@ -106,7 +86,7 @@ class _HomeScreenState extends State<HomeScreen> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 FadeInDown(
-                  duration: const Duration(milliseconds: 500),
+                  duration: const Duration(milliseconds: 225),
                   child: _buildHeader(farmName, ownerName),
                 ),
                 const SizedBox(height: 20),
@@ -119,7 +99,8 @@ class _HomeScreenState extends State<HomeScreen> {
                 Text('Main Modules', style: AppTheme.heading(size: 16)),
                 const SizedBox(height: 12),
                 FadeInUp(
-                  delay: const Duration(milliseconds: 250),
+                  delay: const Duration(milliseconds: 62),
+                  duration: const Duration(milliseconds: 220),
                   child: GridView.count(
                     crossAxisCount: 4,
                     shrinkWrap: true,
@@ -134,7 +115,7 @@ class _HomeScreenState extends State<HomeScreen> {
                         sub: 'Boarding & Care',
                         color: AppColors.primaryGreen,
                         onTap: () => Navigator.of(context)
-                            .push(MaterialPageRoute(builder: (_) => const PalaiScreen())),
+                            .push(fastRoute(const PalaiScreen())),
                       ),
                       ModuleTile(
                         icon: Icons.swap_horiz,
@@ -156,7 +137,7 @@ class _HomeScreenState extends State<HomeScreen> {
                         sub: 'Feed & Med',
                         color: AppColors.stockTeal,
                         onTap: () => Navigator.of(context)
-                            .push(MaterialPageRoute(builder: (_) => const StockScreen())),
+                            .push(fastRoute(const StockScreen())),
                       ),
                     ],
                   ),
@@ -186,7 +167,6 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
         ),
       ),
-      bottomNavigationBar: AppBottomNav(currentIndex: _navIndex, onTap: _onNavTap),
     );
   }
 
@@ -229,7 +209,8 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Widget _buildStatGrid(String farmId) {
     return FadeInUp(
-      delay: const Duration(milliseconds: 150),
+      delay: const Duration(milliseconds: 38),
+      duration: const Duration(milliseconds: 220),
       child: Column(
         children: [
           Row(
@@ -245,7 +226,7 @@ class _HomeScreenState extends State<HomeScreen> {
                       value: snap.hasData ? '$count' : '—',
                       color: AppColors.primaryGreen,
                       onTap: () => Navigator.of(context)
-                          .push(MaterialPageRoute(builder: (_) => const TotalGoatsScreen())),
+                          .push(fastRoute(const TotalGoatsScreen())),
                     );
                   },
                 ),
@@ -262,7 +243,7 @@ class _HomeScreenState extends State<HomeScreen> {
                       value: snap.hasData ? '₹${value.toStringAsFixed(0)}' : '—',
                       color: AppColors.warning,
                       onTap: () => Navigator.of(context)
-                          .push(MaterialPageRoute(builder: (_) => const IncomeDetailScreen())),
+                          .push(fastRoute(const IncomeDetailScreen())),
                     );
                   },
                 ),
@@ -299,7 +280,7 @@ class _HomeScreenState extends State<HomeScreen> {
                       value: snap.hasData ? '${totalKg.toStringAsFixed(0)} kg' : '—',
                       color: AppColors.stockTeal,
                       onTap: () => Navigator.of(context)
-                          .push(MaterialPageRoute(builder: (_) => const StockScreen())),
+                          .push(fastRoute(const StockScreen())),
                     );
                   },
                 ),
@@ -313,7 +294,8 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Widget _buildQuickActions(String farmId) {
     return FadeInUp(
-      delay: const Duration(milliseconds: 350),
+      delay: const Duration(milliseconds: 88),
+      duration: const Duration(milliseconds: 220),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
@@ -321,7 +303,7 @@ class _HomeScreenState extends State<HomeScreen> {
             icon: Icons.add,
             label: 'Add Goat',
             color: AppColors.primaryGreen,
-            onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const PalaiScreen())),
+            onTap: () => Navigator.of(context).push(fastRoute(const PalaiScreen())),
           ),
           QuickAction(
             icon: Icons.payments_outlined,
@@ -339,7 +321,7 @@ class _HomeScreenState extends State<HomeScreen> {
             icon: Icons.grass_outlined,
             label: 'Add Feed\nStock',
             color: AppColors.info,
-            onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const StockScreen())),
+            onTap: () => Navigator.of(context).push(fastRoute(const StockScreen())),
           ),
         ],
       ),
@@ -348,7 +330,8 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Widget _buildActivities(String farmId) {
     return FadeInUp(
-      delay: const Duration(milliseconds: 450),
+      delay: const Duration(milliseconds: 112),
+      duration: const Duration(milliseconds: 220),
       child: StreamBuilder<List<ActivityLog>>(
         stream: FirestoreService.instance.activitiesStream(farmId, limit: 5),
         builder: (context, snap) {
@@ -390,7 +373,7 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
         ),
         IconButton(
-          onPressed: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const NotificationScreen())),
+          onPressed: () => Navigator.of(context).push(fastRoute(const NotificationScreen())),
           icon: const Icon(Icons.notifications_none, color: AppColors.textDark),
         ),
         GestureDetector(

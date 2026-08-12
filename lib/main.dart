@@ -8,7 +8,7 @@ import 'firebase_options.dart';
 import 'screens/splash_screen.dart';
 import 'screens/login_screen.dart';
 import 'screens/register_screen.dart';
-import 'screens/home/home_screen.dart';
+import 'screens/main_shell.dart';
 
 void main() {
   // runZonedGuarded + a try/catch around Firebase.initializeApp() means that
@@ -58,7 +58,7 @@ class MyGoatFarmsApp extends StatelessWidget {
         '/': (context) => const SplashScreen(),
         '/login': (context) => const LoginScreen(),
         '/register': (context) => const RegisterScreen(),
-        '/home': (context) => const HomeScreen(),
+        '/home': (context) => const MainShell(),
       },
     );
   }
@@ -88,7 +88,7 @@ class _FirebaseSetupErrorScreen extends StatelessWidget {
               const SizedBox(height: 12),
               Text(
                 'Check your internet connection and that the Firebase project '
-                'is still active, then restart the app.',
+                    'is still active, then restart the app.',
                 textAlign: TextAlign.center,
                 style: AppTheme.body(size: 14),
               ),

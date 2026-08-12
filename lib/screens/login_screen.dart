@@ -8,7 +8,6 @@ import 'package:animate_do/animate_do.dart';
 import '../app_theme.dart';
 import '../services/firestore_service.dart';
 import 'register_screen.dart';
-import 'home/home_screen.dart';
 
 /// Login screen. Accepts either an email or a 10-digit mobile number.
 /// If a mobile number is entered, we look up the linked email in the
@@ -83,14 +82,7 @@ class _LoginScreenState extends State<LoginScreen> {
           .timeout(FirestoreService.timeout);
 
       if (!mounted) return;
-      Navigator.of(context).pushAndRemoveUntil(
-        PageRouteBuilder(
-          pageBuilder: (_, __, ___) => const HomeScreen(),
-          transitionsBuilder: (_, animation, __, child) =>
-              FadeTransition(opacity: animation, child: child),
-        ),
-            (route) => false,
-      );
+      Navigator.of(context).pushNamedAndRemoveUntil('/home', (route) => false);
     } on TimeoutException {
       _showSnack('This is taking too long. Check your connection and try again.');
     } on FirebaseAuthException catch (e) {
@@ -173,7 +165,7 @@ class _LoginScreenState extends State<LoginScreen> {
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             FadeInDown(
-              duration: const Duration(milliseconds: 600),
+              duration: const Duration(milliseconds: 250),
               child: Container(
                 padding: const EdgeInsets.only(top: 60, bottom: 30, left: 24, right: 24),
                 decoration: const BoxDecoration(
@@ -215,7 +207,8 @@ class _LoginScreenState extends State<LoginScreen> {
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
                     FadeInUp(
-                      delay: const Duration(milliseconds: 150),
+                      delay: const Duration(milliseconds: 60),
+                      duration: const Duration(milliseconds: 250),
                       child: TextFormField(
                         controller: _identifierController,
                         validator: _validateIdentifier,
@@ -227,7 +220,8 @@ class _LoginScreenState extends State<LoginScreen> {
                     ),
                     const SizedBox(height: 16),
                     FadeInUp(
-                      delay: const Duration(milliseconds: 250),
+                      delay: const Duration(milliseconds: 100),
+                      duration: const Duration(milliseconds: 250),
                       child: TextFormField(
                         controller: _passwordController,
                         obscureText: _obscurePassword,
@@ -247,7 +241,8 @@ class _LoginScreenState extends State<LoginScreen> {
                     ),
                     const SizedBox(height: 8),
                     FadeInUp(
-                      delay: const Duration(milliseconds: 330),
+                      delay: const Duration(milliseconds: 130),
+                      duration: const Duration(milliseconds: 250),
                       child: Row(
                         children: [
                           SizedBox(
@@ -274,7 +269,8 @@ class _LoginScreenState extends State<LoginScreen> {
                     ),
                     const SizedBox(height: 24),
                     FadeInUp(
-                      delay: const Duration(milliseconds: 420),
+                      delay: const Duration(milliseconds: 160),
+                      duration: const Duration(milliseconds: 250),
                       child: SizedBox(
                         height: 54,
                         child: ElevatedButton(
@@ -295,7 +291,8 @@ class _LoginScreenState extends State<LoginScreen> {
                     ),
                     const SizedBox(height: 14),
                     FadeInUp(
-                      delay: const Duration(milliseconds: 500),
+                      delay: const Duration(milliseconds: 190),
+                      duration: const Duration(milliseconds: 250),
                       child: SizedBox(
                         height: 54,
                         child: OutlinedButton(
@@ -310,7 +307,8 @@ class _LoginScreenState extends State<LoginScreen> {
                     ),
                     const SizedBox(height: 24),
                     FadeInUp(
-                      delay: const Duration(milliseconds: 580),
+                      delay: const Duration(milliseconds: 220),
+                      duration: const Duration(milliseconds: 250),
                       child: Row(
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: [

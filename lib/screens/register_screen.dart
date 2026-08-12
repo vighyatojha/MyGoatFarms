@@ -7,8 +7,6 @@ import 'package:animate_do/animate_do.dart';
 
 import '../app_theme.dart';
 import '../services/firestore_service.dart';
-import 'home/home_screen.dart';
-
 
 class RegisterScreen extends StatefulWidget {
   const RegisterScreen({super.key});
@@ -93,9 +91,9 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
       final credential = await FirebaseAuth.instance
           .createUserWithEmailAndPassword(
-            email: _emailController.text.trim(),
-            password: _passwordController.text,
-          )
+        email: _emailController.text.trim(),
+        password: _passwordController.text,
+      )
           .timeout(FirestoreService.timeout);
 
       try {
@@ -116,14 +114,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
       }
 
       if (!mounted) return;
-      Navigator.of(context).pushAndRemoveUntil(
-        PageRouteBuilder(
-          pageBuilder: (_, __, ___) => const HomeScreen(),
-          transitionsBuilder: (_, animation, __, child) =>
-              FadeTransition(opacity: animation, child: child),
-        ),
-        (route) => false,
-      );
+      Navigator.of(context).pushNamedAndRemoveUntil('/home', (route) => false);
     } on TimeoutException {
       _showSnack('This is taking too long. Check your connection and Firestore setup, then try again.');
     } on FirebaseAuthException catch (e) {
@@ -165,7 +156,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             FadeInDown(
-              duration: const Duration(milliseconds: 550),
+              duration: const Duration(milliseconds: 250),
               child: Container(
                 padding: const EdgeInsets.only(top: 46, bottom: 26, left: 24, right: 24),
                 decoration: const BoxDecoration(
@@ -211,7 +202,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
                     Text('Farm Details', style: AppTheme.heading(size: 15, color: AppColors.darkGreen)),
                     const SizedBox(height: 12),
                     FadeInUp(
-                      delay: const Duration(milliseconds: 120),
+                      delay: const Duration(milliseconds: 40),
+                      duration: const Duration(milliseconds: 220),
                       child: TextFormField(
                         controller: _farmNameController,
                         decoration: const InputDecoration(
@@ -223,7 +215,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
                     ),
                     const SizedBox(height: 14),
                     FadeInUp(
-                      delay: const Duration(milliseconds: 190),
+                      delay: const Duration(milliseconds: 60),
+                      duration: const Duration(milliseconds: 220),
                       child: TextFormField(
                         controller: _ownerNameController,
                         decoration: const InputDecoration(
@@ -235,7 +228,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
                     ),
                     const SizedBox(height: 14),
                     FadeInUp(
-                      delay: const Duration(milliseconds: 260),
+                      delay: const Duration(milliseconds: 80),
+                      duration: const Duration(milliseconds: 220),
                       child: TextFormField(
                         controller: _mobileController,
                         keyboardType: TextInputType.phone,
@@ -254,7 +248,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
                     ),
                     const SizedBox(height: 14),
                     FadeInUp(
-                      delay: const Duration(milliseconds: 330),
+                      delay: const Duration(milliseconds: 100),
+                      duration: const Duration(milliseconds: 220),
                       child: TextFormField(
                         controller: _emailController,
                         keyboardType: TextInputType.emailAddress,
@@ -274,7 +269,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
                     Text('Security', style: AppTheme.heading(size: 15, color: AppColors.darkGreen)),
                     const SizedBox(height: 12),
                     FadeInUp(
-                      delay: const Duration(milliseconds: 400),
+                      delay: const Duration(milliseconds: 120),
+                      duration: const Duration(milliseconds: 220),
                       child: TextFormField(
                         controller: _passwordController,
                         obscureText: _obscurePassword,
@@ -306,7 +302,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
                     ],
                     const SizedBox(height: 14),
                     FadeInUp(
-                      delay: const Duration(milliseconds: 470),
+                      delay: const Duration(milliseconds: 140),
+                      duration: const Duration(milliseconds: 220),
                       child: TextFormField(
                         controller: _confirmPasswordController,
                         obscureText: _obscureConfirm,
@@ -330,7 +327,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
                     ),
                     const SizedBox(height: 26),
                     FadeInUp(
-                      delay: const Duration(milliseconds: 550),
+                      delay: const Duration(milliseconds: 160),
+                      duration: const Duration(milliseconds: 220),
                       child: SizedBox(
                         height: 54,
                         child: ElevatedButton(
@@ -351,7 +349,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
                     ),
                     const SizedBox(height: 20),
                     FadeInUp(
-                      delay: const Duration(milliseconds: 620),
+                      delay: const Duration(milliseconds: 180),
+                      duration: const Duration(milliseconds: 220),
                       child: Row(
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: [
@@ -405,7 +404,7 @@ class _PasswordStrengthBar extends StatelessWidget {
                 child: Align(
                   alignment: Alignment.centerLeft,
                   child: AnimatedContainer(
-                    duration: const Duration(milliseconds: 300),
+                    duration: const Duration(milliseconds: 200),
                     curve: Curves.easeOut,
                     height: 8,
                     width: constraints.maxWidth * strength,

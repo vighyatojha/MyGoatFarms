@@ -5,10 +5,10 @@ import '../app_theme.dart';
 ///
 /// Order: Home | Palai | Stock (center, raised, brand color) | Reports | Profile
 ///
-/// Use [currentIndex] 0..4 to highlight the active tab. Navigation between
-/// top-level tabs is handled by the caller via [onTap] — each module screen
-/// (Home/Palai/Stock) owns pushReplacement logic so we don't build a stack
-/// of duplicate module screens.
+/// Use [currentIndex] 0..4 to highlight the active tab. A single instance
+/// of this widget lives in `MainShell`, which owns an `IndexedStack` of
+/// Home/Palai/Stock — [onTap] just flips which tab is visible, so switching
+/// tabs never rebuilds, refetches, or animates a page transition.
 class AppBottomNav extends StatelessWidget {
   final int currentIndex;
   final ValueChanged<int> onTap;
