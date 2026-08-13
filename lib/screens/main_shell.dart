@@ -1,12 +1,12 @@
 import 'package:flutter/material.dart';
-import 'package:firebase_auth/firebase_auth.dart';
 
 import '../app_theme.dart';
 import '../widgets/app_bottom_nav.dart';
+import '../widgets/fast_route.dart';
 import 'home/home_screen.dart';
 import 'palai/palai_screen.dart';
 import 'stocks/stock_screen.dart';
-import 'login_screen.dart';
+import 'profile/profile_screen.dart';
 
 /// Persistent app shell for the three main tabs (Home, Palai, Stock).
 ///
@@ -41,51 +41,10 @@ class _MainShellState extends State<MainShell> {
     );
   }
 
-  Future<void> _logout() async {
-    await FirebaseAuth.instance.signOut();
-    if (!mounted) return;
-    Navigator.of(context).pushAndRemoveUntil(
-      MaterialPageRoute(builder: (_) => const LoginScreen()),
-          (route) => false,
-    );
-  }
-
-  void _showProfileMenu() {
-    showModalBottomSheet(
-      context: context,
-      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
-      builder: (sheetContext) {
-        return SafeArea(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const SizedBox(height: 12),
-              Container(
-                width: 40,
-                height: 4,
-                decoration: BoxDecoration(color: Colors.grey[300], borderRadius: BorderRadius.circular(4)),
-              ),
-              const SizedBox(height: 16),
-              ListTile(
-                leading: const Icon(Icons.logout, color: AppColors.error),
-                title: Text('Logout', style: AppTheme.heading(size: 15, color: AppColors.error)),
-                onTap: () {
-                  Navigator.pop(sheetContext);
-                  _logout();
-                },
-              ),
-              const SizedBox(height: 8),
-            ],
-          ),
-        );
-      },
-    );
-  }
-
-  /// Tabs 0–2 (Home/Palai/Stock) just flip the visible child. Reports and
-  /// Profile aren't tabs with their own persisted content, so they behave
-  /// the same as before (a "coming soon" toast / the profile sheet) rather
-  /// than becoming a 4th and 5th IndexedStack child.
+  /// Tabs 0–2 (Home/Palai/Stock) just flip the visible child. Reports isn't
+  /// a tab with its own persisted content yet, so it stays a "coming soon"
+  /// toast. Profile is a real screen — it opens on top of the shell so
+  /// backing out returns to whichever tab was showing.
   void _onNavTap(int index) {
     switch (index) {
       case 0:
@@ -97,7 +56,7 @@ class _MainShellState extends State<MainShell> {
         _comingSoon('Reports');
         break;
       case 4:
-        _showProfileMenu();
+        Navigator.of(context).push(fastRoute(const ProfileScreen()));
         break;
     }
   }

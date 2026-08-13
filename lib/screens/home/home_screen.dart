@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:animate_do/animate_do.dart';
@@ -6,15 +8,17 @@ import '../../app_theme.dart';
 import '../../models/farm_model.dart';
 import '../../models/activity_model.dart';
 import '../../models/palai_models.dart';
+import '../../models/partner_model.dart';
 import '../../services/firestore_service.dart';
 import '../../widgets/fast_route.dart';
+import '../../widgets/profile_completion_dialog.dart';
 import 'widgets/home_widgets.dart';
 import '../palai/palai_screen.dart';
 import '../stocks/stock_screen.dart';
+import '../profile/profile_screen.dart';
 import 'notification_screen.dart';
 import 'total_goats_screen.dart';
 import 'income_detail_screen.dart';
-import '../login_screen.dart';
 
 /// Home / dashboard screen. Quick, at-a-glance view of the whole farm —
 /// live totals, the four main modules, quick actions and recent activity.
@@ -29,7 +33,16 @@ class _HomeScreenState extends State<HomeScreen> {
   FarmModel? _farm;
   bool _loadingFarm = true;
   String? _farmId;
+  List<PartnerModel> _partners = [];
   final TextEditingController _searchController = TextEditingController();
+
+  StreamSubscription<FarmModel?>? _farmSub;
+  StreamSubscription<List<PartnerModel>>? _partnerSub;
+
+  /// Shown once per app session while incomplete; re-armed after the
+  /// person backs out of Profile without finishing it, so it keeps
+  /// nudging them without stacking multiple popups on top of each other.
+  bool _popupPending = false;
 
   @override
   void initState() {
@@ -37,27 +50,69 @@ class _HomeScreenState extends State<HomeScreen> {
     _loadFarmData();
   }
 
+  @override
+  void dispose() {
+    _farmSub?.cancel();
+    _partnerSub?.cancel();
+    super.dispose();
+  }
+
   Future<void> _loadFarmData() async {
     final uid = FirebaseAuth.instance.currentUser?.uid;
     if (uid == null) return;
 
     final farm = await FirestoreService.instance.getFarmByAuthUid(uid);
-    if (mounted) {
-      setState(() {
-        _farm = farm;
-        _farmId = farm?.id;
-        _loadingFarm = false;
-      });
-    }
+    if (!mounted) return;
+    setState(() {
+      _farm = farm;
+      _farmId = farm?.id;
+      _loadingFarm = false;
+    });
+
+    if (farm == null) return;
+
+    _popupPending = true; // arm the popup for this fresh load
+
+    _farmSub?.cancel();
+    _farmSub = FirestoreService.instance.farmDocStream(farm.id).listen((f) {
+      if (f == null || !mounted) return;
+      setState(() => _farm = f);
+      _maybeShowCompletionPopup();
+    });
+
+    _partnerSub?.cancel();
+    _partnerSub = FirestoreService.instance.partnersStream(farm.id).listen((partners) {
+      if (!mounted) return;
+      setState(() => _partners = partners);
+      _maybeShowCompletionPopup();
+    });
   }
 
-  Future<void> _logout() async {
-    await FirebaseAuth.instance.signOut();
-    if (!mounted) return;
-    Navigator.of(context).pushAndRemoveUntil(
-      MaterialPageRoute(builder: (_) => const LoginScreen()),
-          (route) => false,
-    );
+  void _maybeShowCompletionPopup() {
+    final farm = _farm;
+    if (farm == null || !_popupPending) return;
+    final percent = farm.completionPercent(partnerCount: _partners.length);
+    if (percent >= 100) {
+      _popupPending = false;
+      return;
+    }
+    _popupPending = false;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      showProfileCompletionDialog(
+        context,
+        percent: percent,
+        onCompleteNow: () {
+          Navigator.of(context).push(fastRoute(const ProfileScreen())).then((_) {
+            _popupPending = true;
+            _maybeShowCompletionPopup();
+          });
+        },
+        onLater: () {
+          // Will nudge again next time the app is opened while incomplete.
+        },
+      );
+    });
   }
 
   void _comingSoon(String feature) {
@@ -377,45 +432,19 @@ class _HomeScreenState extends State<HomeScreen> {
           icon: const Icon(Icons.notifications_none, color: AppColors.textDark),
         ),
         GestureDetector(
-          onTap: () => _showProfileMenu(context),
-          child: const CircleAvatar(
+          onTap: () => Navigator.of(context).push(fastRoute(const ProfileScreen())).then((_) {
+            _popupPending = true;
+            _maybeShowCompletionPopup();
+          }),
+          child: CircleAvatar(
             backgroundColor: AppColors.lightGreen,
-            child: Icon(Icons.person, color: AppColors.primaryGreen),
+            backgroundImage: _farm?.profileImage != null ? MemoryImage(_farm!.profileImage!) : null,
+            child: _farm?.profileImage == null
+                ? const Icon(Icons.person, color: AppColors.primaryGreen)
+                : null,
           ),
         ),
       ],
-    );
-  }
-
-  void _showProfileMenu(BuildContext context) {
-    showModalBottomSheet(
-      context: context,
-      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
-      builder: (sheetContext) {
-        return SafeArea(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const SizedBox(height: 12),
-              Container(
-                width: 40,
-                height: 4,
-                decoration: BoxDecoration(color: Colors.grey[300], borderRadius: BorderRadius.circular(4)),
-              ),
-              const SizedBox(height: 16),
-              ListTile(
-                leading: const Icon(Icons.logout, color: AppColors.error),
-                title: Text('Logout', style: AppTheme.heading(size: 15, color: AppColors.error)),
-                onTap: () {
-                  Navigator.pop(sheetContext);
-                  _logout();
-                },
-              ),
-              const SizedBox(height: 8),
-            ],
-          ),
-        );
-      },
     );
   }
 }

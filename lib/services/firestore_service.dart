@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:typed_data';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
@@ -8,6 +9,7 @@ import '../models/farm_model.dart';
 import '../models/palai_models.dart';
 import '../models/stock_model.dart';
 import '../models/activity_model.dart';
+import '../models/partner_model.dart';
 
 /// Single point of contact with Firestore for the whole app.
 ///
@@ -20,7 +22,12 @@ import '../models/activity_model.dart';
 ///   farms/{farmId}/stockItems/{itemId}/movements/{movementId}
 ///   farms/{farmId}/transactions/{txnId}      (income / expense, used for dashboard totals)
 ///   farms/{farmId}/activities/{activityId}   (shared recent-activity feed)
+///   farms/{farmId}/partners/{authUid}        (farm partners, doc id == their own Auth uid)
 ///   counters/farms                            (sequential farm-id counter)
+///
+/// The farm document itself also carries `profileImage` (a Firestore
+/// `Blob` of compressed photo bytes — see ImageService), `profileImageContentType`
+/// and `preferredLanguage`, used by the Profile screen.
 ///
 /// Notifications are NOT stored in Firestore — see NotificationScreen.
 class FirestoreService {
@@ -443,5 +450,97 @@ class FirestoreService {
         .where((d) => d.reference.path.startsWith('farms/$farmId/'))
         .map(StockMovement.fromDoc)
         .toList());
+  }
+
+  // ---------------------------------------------------------------------
+  // Profile — realtime farm doc, basic details, and photo storage
+  // ---------------------------------------------------------------------
+
+  /// Realtime farm document. Home (for the completion popup) and Profile
+  /// both listen to this so a change on either screen shows up instantly
+  /// on the other, with no manual refresh.
+  Stream<FarmModel?> farmDocStream(String farmId) {
+    return _farms.doc(farmId).snapshots().map((doc) => doc.exists ? FarmModel.fromDoc(doc) : null);
+  }
+
+  Future<void> updateFarmBasics(
+      String farmId, {
+        String? farmName,
+        String? ownerName,
+        String? address,
+      }) async {
+    final updates = <String, dynamic>{};
+    if (farmName != null && farmName.trim().isNotEmpty) updates['farmName'] = farmName.trim();
+    if (ownerName != null && ownerName.trim().isNotEmpty) updates['ownerName'] = ownerName.trim();
+    if (address != null) updates['address'] = address.trim();
+    if (updates.isEmpty) return;
+    updates['updatedAt'] = FieldValue.serverTimestamp();
+    await _farms.doc(farmId).update(updates).timeout(timeout);
+  }
+
+  /// Stores the already-compressed photo as raw bytes directly on the farm
+  /// document, using Firestore's native `Blob` type — no Storage bucket,
+  /// no public URL, just binary data scoped to this farm/owner. Retrieving
+  /// it later (on any device, once signed in as the same user) is just a
+  /// normal document read; see [farmDocStream] / [FarmModel.fromDoc].
+  Future<void> updateProfileImage(String farmId, Uint8List bytes, String contentType) async {
+    await _farms.doc(farmId).update({
+      'profileImage': Blob(bytes),
+      'profileImageContentType': contentType,
+      'updatedAt': FieldValue.serverTimestamp(),
+    }).timeout(timeout);
+  }
+
+  Future<void> removeProfileImage(String farmId) async {
+    await _farms.doc(farmId).update({
+      'profileImage': FieldValue.delete(),
+      'profileImageContentType': FieldValue.delete(),
+      'updatedAt': FieldValue.serverTimestamp(),
+    }).timeout(timeout);
+  }
+
+  Future<void> updatePreferredLanguage(String farmId, String languageCode) async {
+    await _farms.doc(farmId).update({
+      'preferredLanguage': languageCode,
+      'updatedAt': FieldValue.serverTimestamp(),
+    }).timeout(timeout);
+  }
+
+  // ---------------------------------------------------------------------
+  // Partners
+  // ---------------------------------------------------------------------
+
+  CollectionReference<Map<String, dynamic>> _partners(String farmId) =>
+      _farms.doc(farmId).collection('partners');
+
+  Stream<List<PartnerModel>> partnersStream(String farmId) {
+    return _partners(farmId)
+        .orderBy('createdAt', descending: true)
+        .snapshots()
+        .map((s) => s.docs.map(PartnerModel.fromDoc).toList());
+  }
+
+  /// Adds a partner. The document id is deliberately the partner's own
+  /// Firebase Auth uid (created beforehand via [PartnerAuthService]) rather
+  /// than an auto-id — this lets Firestore security rules grant a partner
+  /// access with a simple `exists()` check instead of a query.
+  Future<void> addPartner(
+      String farmId, {
+        required String name,
+        required String mobileNumber,
+        required String email,
+        required String authUid,
+      }) async {
+    await _partners(farmId).doc(authUid).set({
+      'name': name.trim(),
+      'mobileNumber': mobileNumber.trim(),
+      'email': email.trim(),
+      'authUid': authUid,
+      'createdAt': FieldValue.serverTimestamp(),
+    }).timeout(timeout);
+  }
+
+  Future<void> deletePartner(String farmId, String partnerId) async {
+    await _partners(farmId).doc(partnerId).delete().timeout(timeout);
   }
 }

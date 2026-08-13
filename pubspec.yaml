@@ -23,6 +23,12 @@ dependencies:
   # Added for splash/login/register/home screen animations
   animate_do: ^3.3.4
 
+  # Added for Profile screen: pure-Dart image resize/compression before
+  # storing photo bytes in Firestore, and local persistence of the
+  # chosen app language.
+  image: ^4.2.0
+  shared_preferences: ^2.3.3
+
 dev_dependencies:
   flutter_test:
     sdk: flutter

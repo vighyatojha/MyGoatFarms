@@ -2,9 +2,11 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
+import 'package:provider/provider.dart';
 
 import 'app_theme.dart';
 import 'firebase_options.dart';
+import 'services/locale_provider.dart';
 import 'screens/splash_screen.dart';
 import 'screens/login_screen.dart';
 import 'screens/register_screen.dart';
@@ -26,7 +28,13 @@ void main() {
       initError = e.toString();
     }
 
-    runApp(MyGoatFarmsApp(firebaseError: initError));
+    // Loaded up-front (from SharedPreferences) so the chosen app language
+    // is already correct on the very first frame, not just after Profile
+    // has fetched the farm document.
+    final localeProvider = LocaleProvider();
+    await localeProvider.init();
+
+    runApp(MyGoatFarmsApp(firebaseError: initError, localeProvider: localeProvider));
   }, (error, stack) {
     // Catches anything else that slips through so the app never just
     // goes black with no clue why.
@@ -37,7 +45,13 @@ void main() {
 class MyGoatFarmsApp extends StatelessWidget {
   final String? firebaseError;
 
-  const MyGoatFarmsApp({super.key, this.firebaseError});
+  /// Optional so `MyGoatFarmsApp()` (e.g. from the default
+  /// `test/widget_test.dart`) still compiles without wiring up Firebase +
+  /// locale init. `main()` always passes a real, pre-initialized one; if
+  /// none is given, a fresh default-language provider is created here.
+  final LocaleProvider? localeProvider;
+
+  const MyGoatFarmsApp({super.key, this.firebaseError, this.localeProvider});
 
   @override
   Widget build(BuildContext context) {
@@ -49,17 +63,20 @@ class MyGoatFarmsApp extends StatelessWidget {
       );
     }
 
-    return MaterialApp(
-      title: 'My Goat Farm',
-      debugShowCheckedModeBanner: false,
-      theme: AppTheme.lightTheme,
-      initialRoute: '/',
-      routes: {
-        '/': (context) => const SplashScreen(),
-        '/login': (context) => const LoginScreen(),
-        '/register': (context) => const RegisterScreen(),
-        '/home': (context) => const MainShell(),
-      },
+    return ChangeNotifierProvider<LocaleProvider>.value(
+      value: localeProvider ?? LocaleProvider(),
+      child: MaterialApp(
+        title: 'My Goat Farm',
+        debugShowCheckedModeBanner: false,
+        theme: AppTheme.lightTheme,
+        initialRoute: '/',
+        routes: {
+          '/': (context) => const SplashScreen(),
+          '/login': (context) => const LoginScreen(),
+          '/register': (context) => const RegisterScreen(),
+          '/home': (context) => const MainShell(),
+        },
+      ),
     );
   }
 }
