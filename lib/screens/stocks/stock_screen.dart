@@ -10,6 +10,7 @@ import '../home/widgets/home_widgets.dart';
 import 'add_feed_stock_screen.dart';
 import 'add_medicine_screen.dart';
 import 'feed_used_screen.dart';
+import 'medicine_used_screen.dart';
 
 /// Stock (Feed, Medicine & Expenses) module dashboard.
 class StockScreen extends StatefulWidget {
@@ -36,6 +37,35 @@ class _StockScreenState extends State<StockScreen> {
     );
   }
 
+  Future<void> _confirmDelete(StockItem item) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: Colors.white,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: Text('Remove ${item.name}?', style: AppTheme.heading(size: 16)),
+        content: Text(
+          'This removes the stock item from tracking. Its past add/use history stays in Recent Stock Activity.',
+          style: AppTheme.body(size: 13),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.of(ctx).pop(false), child: Text('Cancel', style: AppTheme.body(size: 13, color: AppColors.textGrey))),
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: Text('Remove', style: AppTheme.body(size: 13, color: AppColors.error, weight: FontWeight.w600)),
+          ),
+        ],
+      ),
+    );
+    if (confirmed == true && _farmId != null) {
+      await FirestoreService.instance.deleteStockItem(_farmId!, item.id);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('${item.name} removed'), backgroundColor: AppColors.darkGreen),
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -43,33 +73,42 @@ class _StockScreenState extends State<StockScreen> {
       body: SafeArea(
         child: _farmId == null
             ? const Center(child: CircularProgressIndicator(color: AppColors.primaryGreen))
-            : SingleChildScrollView(
-          padding: const EdgeInsets.fromLTRB(20, 12, 20, 24),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              FadeInDown(duration: const Duration(milliseconds: 180), child: _buildHeader()),
-              const SizedBox(height: 18),
-              _buildSummary(_farmId!),
-              const SizedBox(height: 24),
-              Text('Quick Actions', style: AppTheme.heading(size: 16)),
-              const SizedBox(height: 12),
-              _buildQuickActions(),
-              const SizedBox(height: 24),
-              Text('Feed Stock', style: AppTheme.heading(size: 16)),
-              const SizedBox(height: 12),
-              _buildStockList(_farmId!, StockType.feed),
-              const SizedBox(height: 24),
-              Text('Medicine Stock', style: AppTheme.heading(size: 16)),
-              const SizedBox(height: 12),
-              _buildStockList(_farmId!, StockType.medicine),
-              const SizedBox(height: 24),
-              Text('Recent Stock Activity', style: AppTheme.heading(size: 16)),
-              const SizedBox(height: 12),
-              _buildMovements(_farmId!),
-            ],
-          ),
-        ),
+            : RefreshIndicator(
+                color: AppColors.primaryGreen,
+                onRefresh: () async {
+                  // Streams keep everything live; this just gives the
+                  // person a tactile "yep, up to date" gesture on pull.
+                  await Future.delayed(const Duration(milliseconds: 400));
+                },
+                child: SingleChildScrollView(
+                  physics: const AlwaysScrollableScrollPhysics(),
+                  padding: const EdgeInsets.fromLTRB(20, 12, 20, 24),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      FadeInDown(duration: const Duration(milliseconds: 180), child: _buildHeader()),
+                      const SizedBox(height: 18),
+                      _buildSummary(_farmId!),
+                      const SizedBox(height: 20),
+                      Text('Quick Actions', style: AppTheme.heading(size: 16)),
+                      const SizedBox(height: 12),
+                      _buildQuickActions(),
+                      const SizedBox(height: 24),
+                      Text('Feed Stock', style: AppTheme.heading(size: 16)),
+                      const SizedBox(height: 12),
+                      _buildStockList(_farmId!, StockType.feed),
+                      const SizedBox(height: 24),
+                      Text('Medicine Stock', style: AppTheme.heading(size: 16)),
+                      const SizedBox(height: 12),
+                      _buildStockList(_farmId!, StockType.medicine),
+                      const SizedBox(height: 24),
+                      Text('Recent Stock Activity', style: AppTheme.heading(size: 16)),
+                      const SizedBox(height: 12),
+                      _buildMovements(_farmId!),
+                    ],
+                  ),
+                ),
+              ),
       ),
     );
   }
@@ -102,38 +141,87 @@ class _StockScreenState extends State<StockScreen> {
     return FadeInUp(
       delay: const Duration(milliseconds: 38),
       duration: const Duration(milliseconds: 220),
-      child: Row(
-        children: [
-          Expanded(
-            child: StreamBuilder<List<StockItem>>(
-              stream: FirestoreService.instance.stockItemsStream(farmId, type: StockType.feed),
-              builder: (context, snap) {
-                final total = (snap.data ?? []).fold<double>(0, (s, i) => s + i.quantity);
-                return StatCard(
-                  icon: Icons.grass_outlined,
-                  label: 'Total Feed Stock',
-                  value: snap.hasData ? '${total.toStringAsFixed(0)} kg' : '—',
-                  color: AppColors.stockTeal,
-                );
-              },
-            ),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: StreamBuilder<List<StockItem>>(
-              stream: FirestoreService.instance.stockItemsStream(farmId, type: StockType.medicine),
-              builder: (context, snap) {
-                final total = (snap.data ?? []).fold<double>(0, (s, i) => s + i.quantity);
-                return StatCard(
-                  icon: Icons.medication_outlined,
-                  label: 'Medicine Units',
-                  value: snap.hasData ? total.toStringAsFixed(0) : '—',
-                  color: AppColors.breedingPurple,
-                );
-              },
-            ),
-          ),
-        ],
+      child: StreamBuilder<List<StockItem>>(
+        stream: FirestoreService.instance.stockItemsStream(farmId),
+        builder: (context, snap) {
+          final items = snap.data ?? [];
+          final feedTotal = items.where((i) => i.type == StockType.feed).fold<double>(0, (s, i) => s + i.quantity);
+          final medicineCount = items.where((i) => i.type == StockType.medicine).length;
+          final lowStockItems = items.where((i) => i.isLowStock).toList();
+
+          return Column(
+            children: [
+              Row(
+                children: [
+                  Expanded(
+                    child: StatCard(
+                      icon: Icons.grass_outlined,
+                      label: 'Total Feed Stock',
+                      value: snap.hasData ? '${feedTotal.toStringAsFixed(0)} kg' : '—',
+                      color: AppColors.stockTeal,
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: StatCard(
+                      icon: Icons.medication_outlined,
+                      label: 'Medicines Tracked',
+                      value: snap.hasData ? '$medicineCount' : '—',
+                      color: AppColors.breedingPurple,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              Row(
+                children: [
+                  Expanded(
+                    child: StatCard(
+                      icon: Icons.inventory_outlined,
+                      label: 'Items Tracked',
+                      value: snap.hasData ? '${items.length}' : '—',
+                      color: AppColors.info,
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: StatCard(
+                      icon: Icons.warning_amber_outlined,
+                      label: 'Low Stock Alerts',
+                      value: snap.hasData ? '${lowStockItems.length}' : '—',
+                      color: lowStockItems.isEmpty ? AppColors.success : AppColors.error,
+                    ),
+                  ),
+                ],
+              ),
+              if (snap.hasData && lowStockItems.isNotEmpty) ...[
+                const SizedBox(height: 12),
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(14),
+                  decoration: BoxDecoration(
+                    color: AppColors.error.withOpacity(0.08),
+                    borderRadius: BorderRadius.circular(14),
+                    border: Border.all(color: AppColors.error.withOpacity(0.25)),
+                  ),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Icon(Icons.error_outline, color: AppColors.error, size: 18),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Text(
+                          'Running low: ${lowStockItems.map((i) => i.name).join(', ')}',
+                          style: AppTheme.body(size: 12, color: AppColors.error, weight: FontWeight.w600),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ],
+          );
+        },
       ),
     );
   }
@@ -163,6 +251,12 @@ class _StockScreenState extends State<StockScreen> {
             color: AppColors.warning,
             onTap: () => Navigator.of(context).push(fastRoute(const FeedUsedScreen())),
           ),
+          QuickAction(
+            icon: Icons.medical_information_outlined,
+            label: 'Medicine\nUsed',
+            color: AppColors.error,
+            onTap: () => Navigator.of(context).push(fastRoute(const MedicineUsedScreen())),
+          ),
         ],
       ),
     );
@@ -183,17 +277,39 @@ class _StockScreenState extends State<StockScreen> {
           }
           final items = snap.data!;
           if (items.isEmpty) {
-            return Text(
-              type == StockType.feed ? 'No feed stock added yet.' : 'No medicine stock added yet.',
-              style: AppTheme.body(size: 12),
+            return Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(vertical: 22),
+              decoration: AppTheme.card(radius: 14),
+              child: Column(
+                children: [
+                  Icon(
+                    type == StockType.feed ? Icons.grass_outlined : Icons.medication_outlined,
+                    color: AppColors.textGrey,
+                    size: 26,
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    type == StockType.feed ? 'No feed stock added yet.' : 'No medicine stock added yet.',
+                    style: AppTheme.body(size: 12),
+                  ),
+                ],
+              ),
             );
           }
           return Column(
             children: items.map((item) {
               return Container(
                 margin: const EdgeInsets.only(bottom: 10),
-                padding: const EdgeInsets.all(14),
-                decoration: AppTheme.card(radius: 14),
+                padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 14),
+                decoration: BoxDecoration(
+                  color: AppColors.cardWhite,
+                  borderRadius: BorderRadius.circular(14),
+                  border: item.isLowStock ? Border.all(color: AppColors.error.withOpacity(0.35)) : null,
+                  boxShadow: [
+                    BoxShadow(color: Colors.black.withOpacity(0.04), blurRadius: 10, offset: const Offset(0, 4)),
+                  ],
+                ),
                 child: Row(
                   children: [
                     Container(
@@ -215,11 +331,31 @@ class _StockScreenState extends State<StockScreen> {
                         children: [
                           Text(item.name, style: AppTheme.heading(size: 13)),
                           if (item.isLowStock)
-                            Text('Low stock', style: AppTheme.body(size: 11, color: AppColors.error)),
+                            Container(
+                              margin: const EdgeInsets.only(top: 2),
+                              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                              decoration: BoxDecoration(
+                                color: AppColors.error.withOpacity(0.12),
+                                borderRadius: BorderRadius.circular(6),
+                              ),
+                              child: Text('Low stock', style: AppTheme.body(size: 10, color: AppColors.error, weight: FontWeight.w600)),
+                            )
+                          else
+                            Text('Updated ${DateFormat('dd MMM').format(item.lastUpdated)}', style: AppTheme.body(size: 11)),
                         ],
                       ),
                     ),
                     Text('${item.quantity.toStringAsFixed(0)} ${item.unit}', style: AppTheme.heading(size: 13)),
+                    PopupMenuButton<String>(
+                      padding: EdgeInsets.zero,
+                      icon: const Icon(Icons.more_vert, color: AppColors.textGrey, size: 18),
+                      onSelected: (v) {
+                        if (v == 'delete') _confirmDelete(item);
+                      },
+                      itemBuilder: (ctx) => const [
+                        PopupMenuItem(value: 'delete', child: Text('Remove item')),
+                      ],
+                    ),
                   ],
                 ),
               );
@@ -274,7 +410,14 @@ class _StockScreenState extends State<StockScreen> {
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(m.itemName, style: AppTheme.heading(size: 13)),
-                          Text(DateFormat('dd MMM, hh:mm a').format(m.date), style: AppTheme.body(size: 11)),
+                          Text(
+                            m.notes.isEmpty
+                                ? DateFormat('dd MMM, hh:mm a').format(m.date)
+                                : '${DateFormat('dd MMM, hh:mm a').format(m.date)} · ${m.notes}',
+                            style: AppTheme.body(size: 11),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
                         ],
                       ),
                     ),

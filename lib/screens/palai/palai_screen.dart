@@ -9,7 +9,7 @@ import '../../widgets/fast_route.dart';
 import '../home/widgets/home_widgets.dart';
 import 'add_customer_screen.dart';
 import 'check_in_screen.dart';
-import 'check_out_screen.dart';
+import 'goat_list_screen.dart';
 import 'health_records_screen.dart';
 import 'billing_screen.dart';
 
@@ -250,7 +250,10 @@ class _PalaiScreenState extends State<PalaiScreen> {
             label: 'Check-Out',
             sub: 'Goat',
             color: AppColors.error,
-            onTap: () => Navigator.of(context).push(fastRoute(const CheckOutGoatScreen())),
+            // Check-Out now starts from the goat list — each goat carries
+            // its own "Before Palai" photo, so the goat must be picked
+            // there before opening its Check-Out page.
+            onTap: () => Navigator.of(context).push(fastRoute(const GoatListScreen())),
           ),
           ModuleTile(
             icon: Icons.favorite_border,

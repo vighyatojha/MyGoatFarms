@@ -4,15 +4,16 @@ import '../../models/stock_model.dart';
 import '../../models/activity_model.dart';
 import '../../services/firestore_service.dart';
 
-/// Records feed consumed today, deducting it from the matching stock item.
-class FeedUsedScreen extends StatefulWidget {
-  const FeedUsedScreen({super.key});
+/// Records medicine used (e.g. given to a goat), deducting it from the
+/// matching medicine stock item. Mirrors [FeedUsedScreen] for medicine.
+class MedicineUsedScreen extends StatefulWidget {
+  const MedicineUsedScreen({super.key});
 
   @override
-  State<FeedUsedScreen> createState() => _FeedUsedScreenState();
+  State<MedicineUsedScreen> createState() => _MedicineUsedScreenState();
 }
 
-class _FeedUsedScreenState extends State<FeedUsedScreen> {
+class _MedicineUsedScreenState extends State<MedicineUsedScreen> {
   String? _farmId;
   StockItem? _selectedItem;
   final _quantityController = TextEditingController();
@@ -37,7 +38,7 @@ class _FeedUsedScreenState extends State<FeedUsedScreen> {
   Future<void> _save() async {
     if (_selectedItem == null || _farmId == null) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Please select a feed item'), backgroundColor: AppColors.error),
+        const SnackBar(content: Text('Please select a medicine'), backgroundColor: AppColors.error),
       );
       return;
     }
@@ -64,8 +65,8 @@ class _FeedUsedScreenState extends State<FeedUsedScreen> {
       _farmId!,
       ActivityLog(
         id: '',
-        type: ActivityType.feedUsed,
-        title: 'Feed Used Today',
+        type: ActivityType.medicineUsed,
+        title: 'Medicine Used',
         subtitle: '${quantity.toStringAsFixed(0)} ${_selectedItem!.unit} of ${_selectedItem!.name} used'
             '${_notesController.text.trim().isEmpty ? '' : ' — ${_notesController.text.trim()}'}',
         module: 'stock',
@@ -77,7 +78,7 @@ class _FeedUsedScreenState extends State<FeedUsedScreen> {
     setState(() => _saving = false);
     Navigator.of(context).pop();
     ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Feed usage recorded'), backgroundColor: AppColors.primaryGreen),
+      const SnackBar(content: Text('Medicine usage recorded'), backgroundColor: AppColors.primaryGreen),
     );
   }
 
@@ -89,7 +90,7 @@ class _FeedUsedScreenState extends State<FeedUsedScreen> {
         backgroundColor: AppColors.paleGreen,
         elevation: 0,
         foregroundColor: AppColors.textDark,
-        title: Text('Feed Used Today', style: AppTheme.heading(size: 17)),
+        title: Text('Medicine Used', style: AppTheme.heading(size: 17)),
       ),
       body: _farmId == null
           ? const Center(child: CircularProgressIndicator(color: AppColors.primaryGreen))
@@ -98,13 +99,13 @@ class _FeedUsedScreenState extends State<FeedUsedScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  _label('Select Feed Item'),
+                  _label('Select Medicine'),
                   StreamBuilder<List<StockItem>>(
-                    stream: FirestoreService.instance.stockItemsStream(_farmId!, type: StockType.feed),
+                    stream: FirestoreService.instance.stockItemsStream(_farmId!, type: StockType.medicine),
                     builder: (context, snap) {
                       final items = snap.data ?? [];
                       if (snap.hasData && items.isEmpty) {
-                        return Text('No feed stock yet — add some first.', style: AppTheme.body(size: 12));
+                        return Text('No medicine stock yet — add some first.', style: AppTheme.body(size: 12));
                       }
                       // If the previously selected item was deleted or its
                       // reference is now stale, drop the selection instead
@@ -117,7 +118,7 @@ class _FeedUsedScreenState extends State<FeedUsedScreen> {
                           child: DropdownButton<StockItem>(
                             value: selected,
                             isExpanded: true,
-                            hint: Text('Choose feed item', style: AppTheme.body(size: 13)),
+                            hint: Text('Choose medicine', style: AppTheme.body(size: 13)),
                             items: items
                                 .map((i) => DropdownMenuItem(
                                     value: i,
@@ -131,18 +132,18 @@ class _FeedUsedScreenState extends State<FeedUsedScreen> {
                     },
                   ),
                   const SizedBox(height: 16),
-                  _label('Quantity Used (${_selectedItem?.unit ?? 'kg'})'),
-                  _field(_quantityController, hint: 'e.g. 15', keyboardType: TextInputType.number),
+                  _label('Quantity Used (${_selectedItem?.unit ?? 'unit'})'),
+                  _field(_quantityController, hint: 'e.g. 2', keyboardType: TextInputType.number),
                   const SizedBox(height: 16),
                   _label('Notes'),
-                  _field(_notesController, hint: 'Optional', maxLines: 2, optional: true),
+                  _field(_notesController, hint: 'e.g. Given to Goat G-1004 for deworming', maxLines: 2, optional: true),
                   const SizedBox(height: 28),
                   SizedBox(
                     width: double.infinity,
                     child: ElevatedButton(
                       onPressed: _saving ? null : _save,
                       style: ElevatedButton.styleFrom(
-                        backgroundColor: AppColors.warning,
+                        backgroundColor: AppColors.breedingPurple,
                         foregroundColor: Colors.white,
                         padding: const EdgeInsets.symmetric(vertical: 16),
                         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),

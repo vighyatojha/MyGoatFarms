@@ -9,6 +9,7 @@ import '../../models/farm_model.dart';
 import '../../models/activity_model.dart';
 import '../../models/palai_models.dart';
 import '../../models/partner_model.dart';
+import '../../models/stock_model.dart';
 import '../../services/firestore_service.dart';
 import '../../widgets/fast_route.dart';
 import '../../widgets/profile_completion_dialog.dart';
@@ -324,11 +325,11 @@ class _HomeScreenState extends State<HomeScreen> {
               ),
               const SizedBox(width: 12),
               Expanded(
-                child: StreamBuilder<List<dynamic>>(
-                  stream: FirestoreService.instance.stockItemsStream(farmId),
+                child: StreamBuilder<List<StockItem>>(
+                  stream: FirestoreService.instance.stockItemsStream(farmId, type: StockType.feed),
                   builder: (context, snap) {
                     final totalKg = (snap.data ?? [])
-                        .fold<double>(0, (sum, item) => sum + (item.quantity as double));
+                        .fold<double>(0, (sum, item) => sum + item.quantity);
                     return StatCard(
                       icon: Icons.grass_outlined,
                       label: 'Feed in Stock',

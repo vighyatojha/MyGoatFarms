@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 import 'package:cloud_firestore/cloud_firestore.dart';
 
 /// A customer who boards goats under the Palai (boarding & care) service.
@@ -47,6 +49,15 @@ class PalaiCustomer {
 }
 
 /// A goat that is checked into Palai boarding, belonging to a customer.
+///
+/// Carries two optional photos, stored as raw bytes directly on the
+/// document (Firestore `Blob`s) the same way the farm profile photo is
+/// stored — no Storage bucket required:
+///   - [beforeImage] — taken at check-in ("Before Palai").
+///   - [afterImage]  — taken at check-out ("After Palai").
+/// Each is compressed to a tighter budget than the farm profile photo
+/// (see `ImageService.goatPhotoMaxStoredBytes`) since both can live on
+/// the same ~1 MiB document at once.
 class PalaiGoat {
   final String id;
   final String customerId;
@@ -63,6 +74,14 @@ class PalaiGoat {
   final String notes;
   final bool isCheckedOut;
 
+  /// "Before Palai" photo, taken at check-in time.
+  final Uint8List? beforeImage;
+  final String? beforeImageContentType;
+
+  /// "After Palai" photo, taken at check-out time.
+  final Uint8List? afterImage;
+  final String? afterImageContentType;
+
   PalaiGoat({
     required this.id,
     required this.customerId,
@@ -78,10 +97,16 @@ class PalaiGoat {
     required this.monthlyPackage,
     required this.notes,
     this.isCheckedOut = false,
+    this.beforeImage,
+    this.beforeImageContentType,
+    this.afterImage,
+    this.afterImageContentType,
   });
 
   factory PalaiGoat.fromDoc(DocumentSnapshot<Map<String, dynamic>> doc) {
     final data = doc.data() ?? {};
+    final beforeField = data['beforeImage'];
+    final afterField = data['afterImage'];
     return PalaiGoat(
       id: doc.id,
       customerId: data['customerId'] ?? '',
@@ -97,11 +122,15 @@ class PalaiGoat {
       monthlyPackage: data['monthlyPackage'] ?? '',
       notes: data['notes'] ?? '',
       isCheckedOut: data['isCheckedOut'] ?? false,
+      beforeImage: beforeField is Blob ? beforeField.bytes : null,
+      beforeImageContentType: data['beforeImageContentType'] as String?,
+      afterImage: afterField is Blob ? afterField.bytes : null,
+      afterImageContentType: data['afterImageContentType'] as String?,
     );
   }
 
   Map<String, dynamic> toMap() {
-    return {
+    final map = <String, dynamic>{
       'customerId': customerId,
       'goatCode': goatCode,
       'breed': breed,
@@ -117,6 +146,15 @@ class PalaiGoat {
       'isCheckedOut': isCheckedOut,
       'createdAt': FieldValue.serverTimestamp(),
     };
+    if (beforeImage != null) {
+      map['beforeImage'] = Blob(beforeImage!);
+      map['beforeImageContentType'] = beforeImageContentType ?? 'image/jpeg';
+    }
+    if (afterImage != null) {
+      map['afterImage'] = Blob(afterImage!);
+      map['afterImageContentType'] = afterImageContentType ?? 'image/jpeg';
+    }
+    return map;
   }
 }
 

@@ -115,12 +115,20 @@ class AppTheme {
       fontFamily: 'Baloo2',
 
       // AppBar
+      //
+      // NOTE: iconTheme is intentionally left unset here. AppBar resolves
+      // its back-button color from (in order) the widget's own `iconTheme`,
+      // then `appBarTheme.iconTheme`, and only falls back to a screen's
+      // `foregroundColor` if neither of those is set. Every screen in this
+      // app sets `foregroundColor: AppColors.textDark` on a pale background,
+      // expecting a dark back arrow — but a hardcoded white `iconTheme` here
+      // used to win every time, rendering the back button invisible against
+      // the light background. Leaving it unset lets each screen's
+      // `foregroundColor` take effect as intended.
       appBarTheme: const AppBarTheme(
         backgroundColor: Colors.transparent,
         elevation: 0,
-        iconTheme: IconThemeData(
-          color: Colors.white,
-        ),
+        foregroundColor: AppColors.textDark,
       ),
 
       // Checkbox

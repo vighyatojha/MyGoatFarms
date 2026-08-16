@@ -1,6 +1,8 @@
 import 'dart:typed_data';
 import 'package:cloud_firestore/cloud_firestore.dart';
 
+import 'bill_settings_model.dart';
+
 class FarmModel {
   final String id;
   final String farmName;
@@ -20,6 +22,11 @@ class FarmModel {
   /// profile across devices.
   final String preferredLanguage;
 
+  /// What gets printed on the Palai check-out bill — see Profile > Bill
+  /// Details. Falls back to this farm's own name/address/mobile number
+  /// until the owner customizes it.
+  final BillSettings billSettings;
+
   FarmModel({
     required this.id,
     required this.farmName,
@@ -32,23 +39,33 @@ class FarmModel {
     this.profileImage,
     this.profileImageContentType,
     this.preferredLanguage = 'en',
-  });
+    BillSettings? billSettings,
+  }) : billSettings = billSettings ?? const BillSettings();
 
   factory FarmModel.fromDoc(DocumentSnapshot<Map<String, dynamic>> doc) {
     final data = doc.data() ?? {};
     final imageField = data['profileImage'];
+    final farmName = data['farmName'] ?? '';
+    final address = data['address'] ?? '';
+    final mobileNumber = data['mobileNumber'] ?? '';
     return FarmModel(
       id: doc.id,
-      farmName: data['farmName'] ?? '',
+      farmName: farmName,
       ownerName: data['ownerName'] ?? '',
-      mobileNumber: data['mobileNumber'] ?? '',
+      mobileNumber: mobileNumber,
       email: data['email'] ?? '',
-      address: data['address'] ?? '',
+      address: address,
       logoUrl: data['logoUrl'] ?? '',
       authUid: data['authUid'] ?? '',
       profileImage: imageField is Blob ? imageField.bytes : null,
       profileImageContentType: data['profileImageContentType'] as String?,
       preferredLanguage: data['preferredLanguage'] as String? ?? 'en',
+      billSettings: BillSettings.fromMap(
+        data['billSettings'] as Map<String, dynamic>?,
+        fallbackName: farmName.toString().trim().isNotEmpty ? farmName : 'My Goat Farms',
+        fallbackAddress: address,
+        fallbackPhone: mobileNumber,
+      ),
     );
   }
 

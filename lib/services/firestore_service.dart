@@ -5,31 +5,13 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart';
 
+import '../models/bill_settings_model.dart';
 import '../models/farm_model.dart';
 import '../models/palai_models.dart';
 import '../models/stock_model.dart';
 import '../models/activity_model.dart';
 import '../models/partner_model.dart';
 
-/// Single point of contact with Firestore for the whole app.
-///
-/// Data layout (per farm):
-///   farms/{farmId}
-///   farms/{farmId}/palaiCustomers/{customerId}
-///   farms/{farmId}/palaiCustomers/{customerId}/goats/{goatId}
-///   farms/{farmId}/palaiCustomers/{customerId}/goats/{goatId}/healthRecords/{entryId}
-///   farms/{farmId}/stockItems/{itemId}
-///   farms/{farmId}/stockItems/{itemId}/movements/{movementId}
-///   farms/{farmId}/transactions/{txnId}      (income / expense, used for dashboard totals)
-///   farms/{farmId}/activities/{activityId}   (shared recent-activity feed)
-///   farms/{farmId}/partners/{authUid}        (farm partners, doc id == their own Auth uid)
-///   counters/farms                            (sequential farm-id counter)
-///
-/// The farm document itself also carries `profileImage` (a Firestore
-/// `Blob` of compressed photo bytes — see ImageService), `profileImageContentType`
-/// and `preferredLanguage`, used by the Profile screen.
-///
-/// Notifications are NOT stored in Firestore — see NotificationScreen.
 class FirestoreService {
   FirestoreService._();
   static final FirestoreService instance = FirestoreService._();
@@ -96,20 +78,25 @@ class FirestoreService {
     return farm?.id;
   }
 
+  /// One-off fetch of a farm document by its id (as opposed to
+  /// [farmDocStream], which stays subscribed). Used where a screen just
+  /// needs a snapshot of current settings — e.g. reading [BillSettings]
+  /// before generating a check-out bill PDF.
+  Future<FarmModel?> getFarmById(String farmId) async {
+    try {
+      final doc = await _farms.doc(farmId).get().timeout(timeout);
+      if (!doc.exists) return null;
+      return FarmModel.fromDoc(doc);
+    } catch (e) {
+      debugPrint('FirestoreService.getFarmById error: $e');
+      return null;
+    }
+  }
+
   // ---------------------------------------------------------------------
   // Farm — ID generation & creation
   // ---------------------------------------------------------------------
 
-  /// Atomically hands out the next sequential farm ID (FRM1, FRM2, FRM3...).
-  ///
-  /// Deliberately NOT using runTransaction() here. On a brand-new, never-
-  /// written-to Firestore database, transactions can intermittently throw
-  /// `not-found` the first time they touch a document, even with a plain
-  /// set() and even though the doc is being created, not read. Firestore's
-  /// FieldValue.increment() is the built-in atomic-counter primitive: it
-  /// needs no prior read, no transaction, and works fine even if the field
-  /// (or the whole document) has never existed — so it sidesteps that bug
-  /// completely while still being safe for concurrent registrations.
   Future<String> _nextFarmId() async {
     await _farmCounterDoc
         .set({'lastId': FieldValue.increment(1)}, SetOptions(merge: true))
@@ -308,19 +295,30 @@ class FirestoreService {
     return ref.id;
   }
 
+  /// Records a goat's check-out. When an "After Palai" [afterImage] is
+  /// supplied, it's stored as a Firestore `Blob` directly on the goat
+  /// document — the same way the "Before Palai" (check-in) photo and the
+  /// farm profile photo are stored, with no Storage bucket required.
   Future<void> checkOutGoat(
       String farmId,
       String customerId,
       String goatId, {
         required double finalWeight,
         required String healthStatus,
+        Uint8List? afterImage,
+        String? afterImageContentType,
       }) {
-    return _goats(farmId, customerId).doc(goatId).update({
+    final data = <String, dynamic>{
       'isCheckedOut': true,
       'checkOutDate': FieldValue.serverTimestamp(),
       'currentWeight': finalWeight,
       'healthStatus': healthStatus,
-    });
+    };
+    if (afterImage != null) {
+      data['afterImage'] = Blob(afterImage);
+      data['afterImageContentType'] = afterImageContentType ?? 'image/jpeg';
+    }
+    return _goats(farmId, customerId).doc(goatId).update(data);
   }
 
   Future<void> addHealthRecord(
@@ -356,6 +354,19 @@ class FirestoreService {
   CollectionReference<Map<String, dynamic>> _stockItems(String farmId) =>
       _farms.doc(farmId).collection('stockItems');
 
+  /// Flat, farm-level movement log (`farms/{farmId}/stockMovements/{id}`).
+  ///
+  /// Movements used to live nested under each stock item
+  /// (`stockItems/{itemId}/movements`) and were read back with a
+  /// `collectionGroup('movements')` query filtered by farm *after* Firestore
+  /// applied `limit()`. That silently dropped or missed this farm's most
+  /// recent movements whenever any other farm also had `movements` docs, and
+  /// needed a composite index this project never configured. A flat
+  /// per-farm collection can be queried directly with a single `orderBy`,
+  /// which Firestore indexes automatically — no composite index needed.
+  CollectionReference<Map<String, dynamic>> _stockMovements(String farmId) =>
+      _farms.doc(farmId).collection('stockMovements');
+
   Stream<List<StockItem>> stockItemsStream(String farmId, {StockType? type}) {
     Query<Map<String, dynamic>> q = _stockItems(farmId);
     if (type != null) {
@@ -364,7 +375,9 @@ class FirestoreService {
     return q.snapshots().map((s) => s.docs.map(StockItem.fromDoc).toList());
   }
 
-  /// Adds stock (creates the item if it doesn't exist yet) and logs the movement.
+  /// Adds stock (creates the item if it doesn't exist yet, matching on name
+  /// + type so a feed item and a medicine item can share the same name) and
+  /// logs the movement.
   Future<void> addStock(
       String farmId, {
         required String itemName,
@@ -374,7 +387,12 @@ class FirestoreService {
         double lowStockThreshold = 0,
         String notes = '',
       }) async {
-    final existing = await _stockItems(farmId).where('name', isEqualTo: itemName).limit(1).get();
+    final typeStr = type == StockType.medicine ? 'medicine' : 'feed';
+    final existing = await _stockItems(farmId)
+        .where('name', isEqualTo: itemName)
+        .where('type', isEqualTo: typeStr)
+        .limit(1)
+        .get();
 
     String itemId;
     if (existing.docs.isEmpty) {
@@ -393,11 +411,15 @@ class FirestoreService {
       final currentQty = (existing.docs.first.data()['quantity'] ?? 0).toDouble();
       await _stockItems(farmId).doc(itemId).update({
         'quantity': currentQty + quantity,
+        // Keep the latest threshold/unit if the person changes them next
+        // time they add stock for this item.
+        'lowStockThreshold': lowStockThreshold,
+        'unit': unit,
         'lastUpdated': FieldValue.serverTimestamp(),
       });
     }
 
-    await _stockItems(farmId).doc(itemId).collection('movements').add(StockMovement(
+    await _stockMovements(farmId).add(StockMovement(
       id: '',
       stockItemId: itemId,
       itemName: itemName,
@@ -409,7 +431,9 @@ class FirestoreService {
     ).toMap());
   }
 
-  /// Deducts stock used (e.g. "Feed Used Today") and logs the movement.
+  /// Deducts stock used (e.g. "Feed Used Today" / "Medicine Used") and logs
+  /// the movement. Runs as a transaction so concurrent usage entries can't
+  /// race each other and corrupt the running quantity.
   Future<void> useStock(
       String farmId, {
         required String itemId,
@@ -428,7 +452,7 @@ class FirestoreService {
       });
     });
 
-    await _stockItems(farmId).doc(itemId).collection('movements').add(StockMovement(
+    await _stockMovements(farmId).add(StockMovement(
       id: '',
       stockItemId: itemId,
       itemName: itemName,
@@ -440,16 +464,18 @@ class FirestoreService {
     ).toMap());
   }
 
+  /// Removes a stock item entirely (e.g. discontinued feed/medicine). Past
+  /// movement history is kept for the activity log.
+  Future<void> deleteStockItem(String farmId, String itemId) {
+    return _stockItems(farmId).doc(itemId).delete();
+  }
+
   Stream<List<StockMovement>> stockMovementsStream(String farmId, {int limit = 20}) {
-    return _db
-        .collectionGroup('movements')
+    return _stockMovements(farmId)
         .orderBy('date', descending: true)
         .limit(limit)
         .snapshots()
-        .map((s) => s.docs
-        .where((d) => d.reference.path.startsWith('farms/$farmId/'))
-        .map(StockMovement.fromDoc)
-        .toList());
+        .map((s) => s.docs.map(StockMovement.fromDoc).toList());
   }
 
   // ---------------------------------------------------------------------
@@ -502,6 +528,15 @@ class FirestoreService {
   Future<void> updatePreferredLanguage(String farmId, String languageCode) async {
     await _farms.doc(farmId).update({
       'preferredLanguage': languageCode,
+      'updatedAt': FieldValue.serverTimestamp(),
+    }).timeout(timeout);
+  }
+
+  /// Saves the customizable fields that get printed on the Palai
+  /// check-out bill — see Profile > Bill Details.
+  Future<void> updateBillSettings(String farmId, BillSettings settings) async {
+    await _farms.doc(farmId).update({
+      'billSettings': settings.toMap(),
       'updatedAt': FieldValue.serverTimestamp(),
     }).timeout(timeout);
   }

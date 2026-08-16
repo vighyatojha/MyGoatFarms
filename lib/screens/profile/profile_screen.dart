@@ -7,6 +7,7 @@ import 'package:animate_do/animate_do.dart';
 
 import '../../app_theme.dart';
 import '../../l10n/app_strings.dart';
+import '../../models/bill_settings_model.dart';
 import '../../models/farm_model.dart';
 import '../../models/partner_model.dart';
 import '../../services/firestore_service.dart';
@@ -18,6 +19,7 @@ import '../../widgets/fast_route.dart';
 import '../login_screen.dart';
 import '../palai/palai_screen.dart';
 import '../stocks/stock_screen.dart';
+import 'bill_settings_screen.dart';
 
 /// Profile screen — the home of everything needed to get a farm profile
 /// to 100%: farm photo, address, partners, and the app-language toggle.
@@ -327,6 +329,12 @@ class _ProfileScreenState extends State<ProfileScreen> {
                       delay: const Duration(milliseconds: 100),
                       duration: const Duration(milliseconds: 200),
                       child: _buildCompleteProfileSection(farm),
+                    ),
+                    const SizedBox(height: 20),
+                    FadeInUp(
+                      delay: const Duration(milliseconds: 115),
+                      duration: const Duration(milliseconds: 200),
+                      child: _buildBillDetailsCard(farm),
                     ),
                     const SizedBox(height: 28),
                     FadeInUp(
@@ -665,6 +673,70 @@ class _ProfileScreenState extends State<ProfileScreen> {
           Text(AppStrings.t(context, 'language'), style: AppTheme.heading(size: 14)),
           const SizedBox(height: 10),
           _buildLanguageToggle(),
+        ],
+      ),
+    );
+  }
+
+  // -------------------------------------------------------------------
+  // Bill Details — what gets printed on the Palai check-out bill
+  // -------------------------------------------------------------------
+
+  Widget _buildBillDetailsCard(FarmModel? farm) {
+    final settings = farm?.billSettings ?? const BillSettings();
+    return Container(
+      decoration: AppTheme.card(radius: 18),
+      padding: const EdgeInsets.all(18),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.receipt_long_outlined, color: AppColors.primaryGreen),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text('Bill Details', style: AppTheme.heading(size: 15, color: AppColors.darkGreen)),
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          Text(
+            'Customize what shows on the Palai check-out bill — business name, address, phone, UPI payment info, thank-you note and terms.',
+            style: AppTheme.body(size: 12),
+          ),
+          const SizedBox(height: 14),
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(color: const Color(0xFFF1F3F1), borderRadius: BorderRadius.circular(14)),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(settings.businessName, style: AppTheme.body(size: 13, color: AppColors.textDark, weight: FontWeight.w700)),
+                if (settings.address.trim().isNotEmpty) Text(settings.address, style: AppTheme.body(size: 11)),
+                if (settings.phone.trim().isNotEmpty) Text('Phone: ${settings.phone}', style: AppTheme.body(size: 11)),
+                if (settings.upiId.trim().isNotEmpty) Text('UPI: ${settings.upiId}', style: AppTheme.body(size: 11)),
+              ],
+            ),
+          ),
+          const SizedBox(height: 14),
+          SizedBox(
+            width: double.infinity,
+            height: 48,
+            child: OutlinedButton.icon(
+              onPressed: _farmId == null
+                  ? null
+                  : () => Navigator.of(context).push(
+                        fastRoute(BillSettingsScreen(farmId: _farmId!, initialSettings: settings)),
+                      ),
+              icon: const Icon(Icons.edit_outlined, color: AppColors.primaryGreen),
+              label: Text('Edit Bill Details', style: AppTheme.heading(size: 13, color: AppColors.primaryGreen)),
+              style: OutlinedButton.styleFrom(
+                side: const BorderSide(color: AppColors.primaryGreen),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(30)),
+              ),
+            ),
+          ),
         ],
       ),
     );

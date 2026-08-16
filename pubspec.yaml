@@ -29,6 +29,12 @@ dependencies:
   image: ^4.2.0
   shared_preferences: ^2.3.3
 
+  # Added for Palai Check-Out: generating, sharing and saving the final
+  # goat bill as a PDF.
+  pdf: ^3.11.1
+  printing: ^5.13.4
+  path_provider: ^2.1.4
+
 dev_dependencies:
   flutter_test:
     sdk: flutter

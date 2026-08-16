@@ -1,13 +1,26 @@
+import 'dart:typed_data';
+
 import 'package:flutter/material.dart';
+
 import '../../app_theme.dart';
+import '../../models/bill_settings_model.dart';
 import '../../models/palai_models.dart';
 import '../../models/activity_model.dart';
 import '../../services/firestore_service.dart';
+import '../../services/image_service.dart';
+import '../../widgets/fast_route.dart';
+import '../../widgets/image_source_sheet.dart';
+import 'checkout_success_screen.dart';
+import 'fullscreen_image_viewer.dart';
 
-/// Records a goat check-out: final weight, health status, total/pending
-/// charges and delivery status — per the Palai spec.
+/// Check-out page for one specific goat (opened by tapping it in the
+/// Palai goat list). Shows the "Before Palai" photo taken at check-in and
+/// lets the owner add an "After Palai" photo; both can be tapped to view
+/// full-screen. After filling in the final details, "Confirm Check-Out"
+/// records the check-out and moves to the success screen.
 class CheckOutGoatScreen extends StatefulWidget {
-  const CheckOutGoatScreen({super.key});
+  final PalaiGoat goat;
+  const CheckOutGoatScreen({super.key, required this.goat});
 
   @override
   State<CheckOutGoatScreen> createState() => _CheckOutGoatScreenState();
@@ -15,12 +28,21 @@ class CheckOutGoatScreen extends StatefulWidget {
 
 class _CheckOutGoatScreenState extends State<CheckOutGoatScreen> {
   String? _farmId;
-  PalaiGoat? _selectedGoat;
   final _finalWeightController = TextEditingController();
   final _totalChargesController = TextEditingController();
   String _healthStatus = 'Healthy';
   String _deliveryStatus = 'Picked up by Owner';
   bool _saving = false;
+
+  // "After Palai" photo, taken/picked at check-out time.
+  Uint8List? _afterImageBytes;
+  String? _afterImageContentType;
+
+  // What gets printed on the bill (business name, address, UPI, terms,
+  // etc.) — customized from Profile > Bill Details. Loaded once so the
+  // Checked-Out success/details screens can build the same PDF without
+  // each one having to fetch the farm document again.
+  BillSettings _billSettings = const BillSettings();
 
   static const List<String> _healthOptions = ['Healthy', 'Under Observation', 'Sick'];
   static const List<String> _deliveryOptions = ['Picked up by Owner', 'Delivered to Owner', 'Pending Delivery'];
@@ -28,8 +50,13 @@ class _CheckOutGoatScreenState extends State<CheckOutGoatScreen> {
   @override
   void initState() {
     super.initState();
-    FirestoreService.instance.currentFarmId().then((id) {
-      if (mounted) setState(() => _farmId = id);
+    _finalWeightController.text = (widget.goat.currentWeight ?? widget.goat.weightAtCheckIn).toString();
+    FirestoreService.instance.currentFarmId().then((id) async {
+      if (!mounted) return;
+      setState(() => _farmId = id);
+      if (id == null) return;
+      final farm = await FirestoreService.instance.getFarmById(id);
+      if (mounted && farm != null) setState(() => _billSettings = farm.billSettings);
     });
   }
 
@@ -40,23 +67,47 @@ class _CheckOutGoatScreenState extends State<CheckOutGoatScreen> {
     super.dispose();
   }
 
-  Future<void> _save() async {
-    if (_selectedGoat == null || _farmId == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Please select a goat to check out'), backgroundColor: AppColors.error),
-      );
-      return;
+  Future<void> _pickAfterPhoto() async {
+    try {
+      final picked = await showImageSourceSheet(context, isGoatPhoto: true);
+      if (picked == null) return; // user cancelled
+      setState(() {
+        _afterImageBytes = picked.bytes;
+        _afterImageContentType = picked.contentType;
+      });
+    } on ImageTooLargeException catch (e) {
+      _showSnack(e.message, isError: true);
+    } catch (_) {
+      _showSnack('Could not add photo. Please try again.', isError: true);
     }
+  }
+
+  void _openFullscreen(Uint8List bytes, String title) {
+    Navigator.of(context).push(fastRoute(FullscreenImageViewer(imageBytes: bytes, title: title)));
+  }
+
+  void _showSnack(String message, {bool isError = false}) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(message), backgroundColor: isError ? AppColors.error : AppColors.darkGreen),
+    );
+  }
+
+  Future<void> _save() async {
+    if (_farmId == null) return;
     setState(() => _saving = true);
 
-    final finalWeight = double.tryParse(_finalWeightController.text.trim()) ?? _selectedGoat!.weightAtCheckIn;
+    final finalWeight = double.tryParse(_finalWeightController.text.trim()) ?? widget.goat.weightAtCheckIn;
+    final totalCharges = double.tryParse(_totalChargesController.text.trim()) ?? 0;
 
     await FirestoreService.instance.checkOutGoat(
       _farmId!,
-      _selectedGoat!.customerId,
-      _selectedGoat!.id,
+      widget.goat.customerId,
+      widget.goat.id,
       finalWeight: finalWeight,
       healthStatus: _healthStatus,
+      afterImage: _afterImageBytes,
+      afterImageContentType: _afterImageContentType,
     );
 
     await FirestoreService.instance.logActivity(
@@ -65,7 +116,7 @@ class _CheckOutGoatScreenState extends State<CheckOutGoatScreen> {
         id: '',
         type: ActivityType.goatCheckOut,
         title: 'Goat Check-Out',
-        subtitle: '${_selectedGoat!.goatCode} · $_deliveryStatus',
+        subtitle: '${widget.goat.goatCode} · $_deliveryStatus',
         module: 'palai',
         timestamp: DateTime.now(),
       ),
@@ -73,21 +124,29 @@ class _CheckOutGoatScreenState extends State<CheckOutGoatScreen> {
 
     if (!mounted) return;
     setState(() => _saving = false);
-    Navigator.of(context).pop();
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Goat checked out successfully'), backgroundColor: AppColors.primaryGreen),
-    );
+
+    Navigator.of(context).pushReplacement(fastRoute(CheckoutSuccessScreen(
+      goat: widget.goat,
+      finalWeight: finalWeight,
+      healthStatus: _healthStatus,
+      deliveryStatus: _deliveryStatus,
+      totalCharges: totalCharges,
+      beforeImage: widget.goat.beforeImage,
+      afterImage: _afterImageBytes,
+      billSettings: _billSettings,
+    )));
   }
 
   @override
   Widget build(BuildContext context) {
+    final goat = widget.goat;
     return Scaffold(
       backgroundColor: AppColors.paleGreen,
       appBar: AppBar(
         backgroundColor: AppColors.paleGreen,
         elevation: 0,
         foregroundColor: AppColors.textDark,
-        title: Text('Goat Check-Out', style: AppTheme.heading(size: 17)),
+        title: Text('Check-Out · ${goat.goatCode}', style: AppTheme.heading(size: 16)),
       ),
       body: _farmId == null
           ? const Center(child: CircularProgressIndicator(color: AppColors.primaryGreen))
@@ -96,35 +155,33 @@ class _CheckOutGoatScreenState extends State<CheckOutGoatScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  _label('Select Goat'),
-                  StreamBuilder<List<PalaiGoat>>(
-                    stream: FirestoreService.instance.allActiveGoatsStream(_farmId!),
-                    builder: (context, snap) {
-                      final goats = snap.data ?? [];
-                      if (snap.hasData && goats.isEmpty) {
-                        return Text('No active goats to check out.', style: AppTheme.body(size: 12));
-                      }
-                      return Container(
-                        decoration: AppTheme.card(radius: 12),
-                        padding: const EdgeInsets.symmetric(horizontal: 12),
-                        child: DropdownButtonHideUnderline(
-                          child: DropdownButton<PalaiGoat>(
-                            value: _selectedGoat,
-                            isExpanded: true,
-                            hint: Text('Choose a goat', style: AppTheme.body(size: 13)),
-                            items: goats
-                                .map((g) => DropdownMenuItem(value: g, child: Text('${g.goatCode} · ${g.breed}', style: AppTheme.body(size: 13, color: AppColors.textDark))))
-                                .toList(),
-                            onChanged: (v) => setState(() {
-                              _selectedGoat = v;
-                              _finalWeightController.text = (v?.currentWeight ?? v?.weightAtCheckIn ?? 0).toString();
-                            }),
-                          ),
+                  _label('Palai Photos'),
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Expanded(
+                        child: _photoTile(
+                          label: 'Before Palai',
+                          bytes: goat.beforeImage,
+                          onTap: goat.beforeImage != null
+                              ? () => _openFullscreen(goat.beforeImage!, 'Before Palai · ${goat.goatCode}')
+                              : null,
                         ),
-                      );
-                    },
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: _photoTile(
+                          label: 'After Palai',
+                          bytes: _afterImageBytes,
+                          onTap: _afterImageBytes != null
+                              ? () => _openFullscreen(_afterImageBytes!, 'After Palai · ${goat.goatCode}')
+                              : null,
+                          onAdd: _pickAfterPhoto,
+                        ),
+                      ),
+                    ],
                   ),
-                  const SizedBox(height: 16),
+                  const SizedBox(height: 20),
                   _label('Final Weight (kg)'),
                   _textField(_finalWeightController, hint: 'e.g. 40', keyboardType: TextInputType.number),
                   const SizedBox(height: 16),
@@ -155,6 +212,51 @@ class _CheckOutGoatScreenState extends State<CheckOutGoatScreen> {
                 ],
               ),
             ),
+    );
+  }
+
+  /// A single Before/After photo box. Tapping a filled photo opens it
+  /// full-screen ([onTap]); tapping an empty "After Palai" box (or its
+  /// "+ Add Photo" label, [onAdd]) opens the camera/gallery picker.
+  Widget _photoTile({
+    required String label,
+    Uint8List? bytes,
+    VoidCallback? onTap,
+    VoidCallback? onAdd,
+  }) {
+    return Container(
+      decoration: AppTheme.card(radius: 14),
+      padding: const EdgeInsets.all(12),
+      child: Column(
+        children: [
+          Text(label, style: AppTheme.body(size: 12, weight: FontWeight.w600)),
+          const SizedBox(height: 8),
+          GestureDetector(
+            onTap: bytes != null ? onTap : onAdd,
+            child: Container(
+              height: 110,
+              width: double.infinity,
+              decoration: BoxDecoration(
+                color: AppColors.lightGreen,
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: bytes != null
+                  ? ClipRRect(borderRadius: BorderRadius.circular(10), child: Image.memory(bytes, fit: BoxFit.cover))
+                  : Icon(onAdd != null ? Icons.add_a_photo_outlined : Icons.pets, color: AppColors.primaryGreen, size: 30),
+            ),
+          ),
+          if (onAdd != null) ...[
+            const SizedBox(height: 6),
+            TextButton(
+              onPressed: onAdd,
+              child: Text(
+                bytes == null ? '+ Add Photo' : 'Change Photo',
+                style: AppTheme.body(size: 11, color: AppColors.primaryGreen, weight: FontWeight.w600),
+              ),
+            ),
+          ],
+        ],
+      ),
     );
   }
 

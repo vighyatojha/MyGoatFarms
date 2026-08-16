@@ -6,10 +6,12 @@ enum ActivityType {
   paymentReceived,
   goatSold,
   feedStockAdded,
+  feedUsed,
   goatCheckIn,
   goatCheckOut,
   expenseAdded,
   medicineAdded,
+  medicineUsed,
   goatDelivered,
   reportGenerated,
 }
@@ -64,6 +66,8 @@ class ActivityLog {
         return Icons.sell_outlined;
       case ActivityType.feedStockAdded:
         return Icons.grass_outlined;
+      case ActivityType.feedUsed:
+        return Icons.outbox_outlined;
       case ActivityType.goatCheckIn:
         return Icons.login;
       case ActivityType.goatCheckOut:
@@ -72,6 +76,8 @@ class ActivityLog {
         return Icons.remove_circle_outline;
       case ActivityType.medicineAdded:
         return Icons.medication_outlined;
+      case ActivityType.medicineUsed:
+        return Icons.medical_information_outlined;
       case ActivityType.goatDelivered:
         return Icons.local_shipping_outlined;
       case ActivityType.reportGenerated:
@@ -87,6 +93,8 @@ class ActivityLog {
         return AppColors.warning;
       case ActivityType.feedStockAdded:
         return AppColors.stockTeal;
+      case ActivityType.feedUsed:
+        return AppColors.warning;
       case ActivityType.goatCheckIn:
         return AppColors.info;
       case ActivityType.goatCheckOut:
@@ -95,6 +103,8 @@ class ActivityLog {
         return AppColors.error;
       case ActivityType.medicineAdded:
         return AppColors.breedingPurple;
+      case ActivityType.medicineUsed:
+        return AppColors.warning;
       case ActivityType.goatDelivered:
         return AppColors.info;
       case ActivityType.reportGenerated:

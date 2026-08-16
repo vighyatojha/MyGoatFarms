@@ -1,14 +1,21 @@
+import 'dart:typed_data';
+
 import 'package:flutter/material.dart';
+
 import '../../app_theme.dart';
 import '../../models/palai_models.dart';
 import '../../models/activity_model.dart';
 import '../../services/firestore_service.dart';
+import '../../services/image_service.dart';
 import '../../widgets/fast_route.dart';
+import '../../widgets/image_source_sheet.dart';
+import '../../widgets/photo_upload_circle.dart';
 import 'add_customer_screen.dart';
 
-/// Records a new goat check-in for Palai boarding: Goat ID, breed, gender,
-/// age/weight, color, health status, owner (customer), check-in date,
-/// monthly package and notes — per the Palai spec.
+/// Records a new goat check-in for Palai boarding: a "Before Palai" photo
+/// (camera or device storage — same picker as the Profile photo), Goat
+/// ID, breed, gender, age/weight, color, health status, owner (customer),
+/// check-in date, monthly package and notes — per the Palai spec.
 class CheckInGoatScreen extends StatefulWidget {
   const CheckInGoatScreen({super.key});
 
@@ -30,6 +37,10 @@ class _CheckInGoatScreenState extends State<CheckInGoatScreen> {
   bool _saving = false;
   String? _farmId;
 
+  // "Before Palai" photo, taken/picked at check-in time.
+  Uint8List? _beforeImageBytes;
+  String? _beforeImageContentType;
+
   static const List<String> _genders = ['Male', 'Female'];
   static const List<String> _healthOptions = ['Healthy', 'Under Observation', 'Sick'];
   static const List<String> _packages = ['Basic Palai', 'Standard Palai', 'Special Palai'];
@@ -50,6 +61,28 @@ class _CheckInGoatScreenState extends State<CheckInGoatScreen> {
     _weightController.dispose();
     _notesController.dispose();
     super.dispose();
+  }
+
+  Future<void> _pickBeforePhoto() async {
+    try {
+      final picked = await showImageSourceSheet(context, isGoatPhoto: true);
+      if (picked == null) return; // user cancelled
+      setState(() {
+        _beforeImageBytes = picked.bytes;
+        _beforeImageContentType = picked.contentType;
+      });
+    } on ImageTooLargeException catch (e) {
+      _showSnack(e.message, isError: true);
+    } catch (_) {
+      _showSnack('Could not add photo. Please try again.', isError: true);
+    }
+  }
+
+  void _showSnack(String message, {bool isError = false}) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(message), backgroundColor: isError ? AppColors.error : AppColors.primaryGreen),
+    );
   }
 
   Future<void> _save() async {
@@ -75,6 +108,8 @@ class _CheckInGoatScreenState extends State<CheckInGoatScreen> {
       checkInDate: DateTime.now(),
       monthlyPackage: _monthlyPackage,
       notes: _notesController.text.trim(),
+      beforeImage: _beforeImageBytes,
+      beforeImageContentType: _beforeImageContentType,
     );
 
     await FirestoreService.instance.checkInGoat(_farmId!, _selectedCustomer!.id, goat);
@@ -117,6 +152,14 @@ class _CheckInGoatScreenState extends State<CheckInGoatScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
+              Center(
+                child: PhotoUploadCircle(
+                  imageBytes: _beforeImageBytes,
+                  label: 'Before Palai Photo',
+                  onTap: _pickBeforePhoto,
+                ),
+              ),
+              const SizedBox(height: 22),
               _label('Owner (Customer)'),
               _customerPicker(_farmId!),
               const SizedBox(height: 16),
