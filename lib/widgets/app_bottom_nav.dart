@@ -3,7 +3,7 @@ import '../app_theme.dart';
 
 /// App-wide bottom navigation.
 ///
-/// Order: Home | Palai | Stock (center, raised, brand color) | Reports | Profile
+/// Order: Home | Palai | Stock (center, raised, brand color) | Customers | Profile
 ///
 /// Use [currentIndex] 0..4 to highlight the active tab. A single instance
 /// of this widget lives in `MainShell`, which owns an `IndexedStack` of
@@ -19,7 +19,7 @@ class AppBottomNav extends StatelessWidget {
     _NavItemData(icon: Icons.home_outlined, activeIcon: Icons.home, label: 'Home'),
     _NavItemData(icon: Icons.home_work_outlined, activeIcon: Icons.home_work, label: 'Palai'),
     _NavItemData(icon: Icons.inventory_2, activeIcon: Icons.inventory_2, label: 'Stock'),
-    _NavItemData(icon: Icons.bar_chart_outlined, activeIcon: Icons.bar_chart, label: 'Reports'),
+    _NavItemData(icon: Icons.people_outline, activeIcon: Icons.people, label: 'Customers'),
     _NavItemData(icon: Icons.person_outline, activeIcon: Icons.person, label: 'Profile'),
   ];
 

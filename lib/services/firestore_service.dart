@@ -169,7 +169,11 @@ class FirestoreService {
   // ---------------------------------------------------------------------
 
   Future<void> logActivity(String farmId, ActivityLog activity) async {
-    await _farms.doc(farmId).collection('activities').add(activity.toMap());
+    await _farms
+        .doc(farmId)
+        .collection('activities')
+        .add(activity.toMap())
+        .timeout(timeout);
   }
 
   Stream<List<ActivityLog>> activitiesStream(String farmId, {String? module, int limit = 20}) {
@@ -392,7 +396,8 @@ class FirestoreService {
         .where('name', isEqualTo: itemName)
         .where('type', isEqualTo: typeStr)
         .limit(1)
-        .get();
+        .get()
+        .timeout(timeout);
 
     String itemId;
     if (existing.docs.isEmpty) {
@@ -404,7 +409,7 @@ class FirestoreService {
         unit: unit,
         lowStockThreshold: lowStockThreshold,
         lastUpdated: DateTime.now(),
-      ).toMap());
+      ).toMap()).timeout(timeout);
       itemId = ref.id;
     } else {
       itemId = existing.docs.first.id;
@@ -416,7 +421,7 @@ class FirestoreService {
         'lowStockThreshold': lowStockThreshold,
         'unit': unit,
         'lastUpdated': FieldValue.serverTimestamp(),
-      });
+      }).timeout(timeout);
     }
 
     await _stockMovements(farmId).add(StockMovement(
@@ -428,7 +433,7 @@ class FirestoreService {
       isAddition: true,
       date: DateTime.now(),
       notes: notes,
-    ).toMap());
+    ).toMap()).timeout(timeout);
   }
 
   /// Deducts stock used (e.g. "Feed Used Today" / "Medicine Used") and logs
@@ -450,7 +455,7 @@ class FirestoreService {
         'quantity': (currentQty - quantity).clamp(0, double.infinity),
         'lastUpdated': FieldValue.serverTimestamp(),
       });
-    });
+    }).timeout(timeout);
 
     await _stockMovements(farmId).add(StockMovement(
       id: '',
@@ -461,13 +466,13 @@ class FirestoreService {
       isAddition: false,
       date: DateTime.now(),
       notes: notes,
-    ).toMap());
+    ).toMap()).timeout(timeout);
   }
 
   /// Removes a stock item entirely (e.g. discontinued feed/medicine). Past
   /// movement history is kept for the activity log.
   Future<void> deleteStockItem(String farmId, String itemId) {
-    return _stockItems(farmId).doc(itemId).delete();
+    return _stockItems(farmId).doc(itemId).delete().timeout(timeout);
   }
 
   Stream<List<StockMovement>> stockMovementsStream(String farmId, {int limit = 20}) {

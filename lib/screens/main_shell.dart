@@ -41,7 +41,7 @@ class _MainShellState extends State<MainShell> {
     );
   }
 
-  /// Tabs 0–2 (Home/Palai/Stock) just flip the visible child. Reports isn't
+  /// Tabs 0–2 (Home/Palai/Stock) just flip the visible child. Customers isn't
   /// a tab with its own persisted content yet, so it stays a "coming soon"
   /// toast. Profile is a real screen — it opens on top of the shell so
   /// backing out returns to whichever tab was showing.
@@ -53,7 +53,7 @@ class _MainShellState extends State<MainShell> {
         if (index != _index) setState(() => _index = index);
         break;
       case 3:
-        _comingSoon('Reports');
+        _comingSoon('Customers');
         break;
       case 4:
         Navigator.of(context).push(fastRoute(const ProfileScreen()));

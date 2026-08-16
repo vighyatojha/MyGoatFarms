@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:animate_do/animate_do.dart';
 import 'package:intl/intl.dart';
@@ -58,11 +60,23 @@ class _StockScreenState extends State<StockScreen> {
       ),
     );
     if (confirmed == true && _farmId != null) {
-      await FirestoreService.instance.deleteStockItem(_farmId!, item.id);
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('${item.name} removed'), backgroundColor: AppColors.darkGreen),
-      );
+      try {
+        await FirestoreService.instance.deleteStockItem(_farmId!, item.id);
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('${item.name} removed'), backgroundColor: AppColors.darkGreen),
+        );
+      } on TimeoutException {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('This is taking too long. Check your connection and try again.'), backgroundColor: AppColors.error),
+        );
+      } catch (e) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(FirestoreService.instance.describeError(e)), backgroundColor: AppColors.error),
+        );
+      }
     }
   }
 
@@ -74,41 +88,41 @@ class _StockScreenState extends State<StockScreen> {
         child: _farmId == null
             ? const Center(child: CircularProgressIndicator(color: AppColors.primaryGreen))
             : RefreshIndicator(
-                color: AppColors.primaryGreen,
-                onRefresh: () async {
-                  // Streams keep everything live; this just gives the
-                  // person a tactile "yep, up to date" gesture on pull.
-                  await Future.delayed(const Duration(milliseconds: 400));
-                },
-                child: SingleChildScrollView(
-                  physics: const AlwaysScrollableScrollPhysics(),
-                  padding: const EdgeInsets.fromLTRB(20, 12, 20, 24),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      FadeInDown(duration: const Duration(milliseconds: 180), child: _buildHeader()),
-                      const SizedBox(height: 18),
-                      _buildSummary(_farmId!),
-                      const SizedBox(height: 20),
-                      Text('Quick Actions', style: AppTheme.heading(size: 16)),
-                      const SizedBox(height: 12),
-                      _buildQuickActions(),
-                      const SizedBox(height: 24),
-                      Text('Feed Stock', style: AppTheme.heading(size: 16)),
-                      const SizedBox(height: 12),
-                      _buildStockList(_farmId!, StockType.feed),
-                      const SizedBox(height: 24),
-                      Text('Medicine Stock', style: AppTheme.heading(size: 16)),
-                      const SizedBox(height: 12),
-                      _buildStockList(_farmId!, StockType.medicine),
-                      const SizedBox(height: 24),
-                      Text('Recent Stock Activity', style: AppTheme.heading(size: 16)),
-                      const SizedBox(height: 12),
-                      _buildMovements(_farmId!),
-                    ],
-                  ),
-                ),
-              ),
+          color: AppColors.primaryGreen,
+          onRefresh: () async {
+            // Streams keep everything live; this just gives the
+            // person a tactile "yep, up to date" gesture on pull.
+            await Future.delayed(const Duration(milliseconds: 400));
+          },
+          child: SingleChildScrollView(
+            physics: const AlwaysScrollableScrollPhysics(),
+            padding: const EdgeInsets.fromLTRB(20, 12, 20, 24),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                FadeInDown(duration: const Duration(milliseconds: 180), child: _buildHeader()),
+                const SizedBox(height: 18),
+                _buildSummary(_farmId!),
+                const SizedBox(height: 20),
+                Text('Quick Actions', style: AppTheme.heading(size: 16)),
+                const SizedBox(height: 12),
+                _buildQuickActions(),
+                const SizedBox(height: 24),
+                Text('Feed Stock', style: AppTheme.heading(size: 16)),
+                const SizedBox(height: 12),
+                _buildStockList(_farmId!, StockType.feed),
+                const SizedBox(height: 24),
+                Text('Medicine Stock', style: AppTheme.heading(size: 16)),
+                const SizedBox(height: 12),
+                _buildStockList(_farmId!, StockType.medicine),
+                const SizedBox(height: 24),
+                Text('Recent Stock Activity', style: AppTheme.heading(size: 16)),
+                const SizedBox(height: 12),
+                _buildMovements(_farmId!),
+              ],
+            ),
+          ),
+        ),
       ),
     );
   }

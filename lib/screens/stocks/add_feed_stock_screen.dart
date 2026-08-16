@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import '../../app_theme.dart';
 import '../../models/stock_model.dart';
@@ -28,46 +30,58 @@ class _AddFeedStockScreenState extends State<AddFeedStockScreen> {
     super.dispose();
   }
 
+  void _showSnack(String message, {bool isError = false}) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(message), backgroundColor: isError ? AppColors.error : AppColors.primaryGreen),
+    );
+  }
+
   Future<void> _save() async {
     if (!_formKey.currentState!.validate()) return;
     setState(() => _saving = true);
 
-    final farmId = await FirestoreService.instance.currentFarmId();
-    if (farmId == null) {
-      setState(() => _saving = false);
-      return;
+    try {
+      final farmId = await FirestoreService.instance.currentFarmId();
+      if (farmId == null) {
+        _showSnack('Could not find your farm profile. Please log in again.', isError: true);
+        return;
+      }
+
+      final quantity = double.tryParse(_quantityController.text.trim()) ?? 0;
+
+      await FirestoreService.instance.addStock(
+        farmId,
+        itemName: _nameController.text.trim(),
+        type: StockType.feed,
+        quantity: quantity,
+        unit: 'kg',
+        lowStockThreshold: double.tryParse(_thresholdController.text.trim()) ?? 0,
+        notes: _notesController.text.trim(),
+      );
+
+      await FirestoreService.instance.logActivity(
+        farmId,
+        ActivityLog(
+          id: '',
+          type: ActivityType.feedStockAdded,
+          title: 'Feed Stock Added',
+          subtitle: '${quantity.toStringAsFixed(0)} kg of ${_nameController.text.trim()} added',
+          module: 'stock',
+          timestamp: DateTime.now(),
+        ),
+      );
+
+      if (!mounted) return;
+      Navigator.of(context).pop();
+      _showSnack('Feed stock added');
+    } on TimeoutException {
+      _showSnack('This is taking too long. Check your connection and try again.', isError: true);
+    } catch (e) {
+      _showSnack(FirestoreService.instance.describeError(e), isError: true);
+    } finally {
+      if (mounted) setState(() => _saving = false);
     }
-
-    final quantity = double.tryParse(_quantityController.text.trim()) ?? 0;
-
-    await FirestoreService.instance.addStock(
-      farmId,
-      itemName: _nameController.text.trim(),
-      type: StockType.feed,
-      quantity: quantity,
-      unit: 'kg',
-      lowStockThreshold: double.tryParse(_thresholdController.text.trim()) ?? 0,
-      notes: _notesController.text.trim(),
-    );
-
-    await FirestoreService.instance.logActivity(
-      farmId,
-      ActivityLog(
-        id: '',
-        type: ActivityType.feedStockAdded,
-        title: 'Feed Stock Added',
-        subtitle: '${quantity.toStringAsFixed(0)} kg of ${_nameController.text.trim()} added',
-        module: 'stock',
-        timestamp: DateTime.now(),
-      ),
-    );
-
-    if (!mounted) return;
-    setState(() => _saving = false);
-    Navigator.of(context).pop();
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Feed stock added'), backgroundColor: AppColors.primaryGreen),
-    );
   }
 
   @override
@@ -122,17 +136,17 @@ class _AddFeedStockScreenState extends State<AddFeedStockScreen> {
   }
 
   Widget _label(String text) => Padding(
-        padding: const EdgeInsets.only(bottom: 6),
-        child: Text(text, style: AppTheme.heading(size: 13)),
-      );
+    padding: const EdgeInsets.only(bottom: 6),
+    child: Text(text, style: AppTheme.heading(size: 13)),
+  );
 
   Widget _field(
-    TextEditingController controller, {
-    String? hint,
-    TextInputType? keyboardType,
-    int maxLines = 1,
-    bool optional = false,
-  }) {
+      TextEditingController controller, {
+        String? hint,
+        TextInputType? keyboardType,
+        int maxLines = 1,
+        bool optional = false,
+      }) {
     return Container(
       decoration: AppTheme.card(radius: 12),
       child: TextFormField(
