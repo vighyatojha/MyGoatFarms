@@ -7,6 +7,7 @@ import '../../models/palai_models.dart';
 import '../../services/firestore_service.dart';
 import '../../widgets/fast_route.dart';
 import '../home/widgets/home_widgets.dart';
+import '../customers/customer_management_screen.dart';
 import 'add_customer_screen.dart';
 import 'check_in_screen.dart';
 import 'goat_list_screen.dart';
@@ -140,13 +141,16 @@ class _PalaiScreenState extends State<PalaiScreen> {
               ),
               const SizedBox(width: 12),
               Expanded(
-                child: StreamBuilder<List<PalaiCustomer>>(
-                  stream: FirestoreService.instance.customersStream(farmId),
-                  builder: (context, snap) => StatCard(
-                    icon: Icons.people_outline,
-                    label: 'Total Customers',
-                    value: snap.hasData ? '${snap.data!.length}' : '—',
-                    color: AppColors.info,
+                child: GestureDetector(
+                  onTap: () => Navigator.of(context).push(fastRoute(const CustomerManagementScreen())),
+                  child: StreamBuilder<List<PalaiCustomer>>(
+                    stream: FirestoreService.instance.customersStream(farmId),
+                    builder: (context, snap) => StatCard(
+                      icon: Icons.people_outline,
+                      label: 'Total Customers',
+                      value: snap.hasData ? '${snap.data!.length}' : '—',
+                      color: AppColors.info,
+                    ),
                   ),
                 ),
               ),

@@ -253,7 +253,7 @@ class FirestoreService {
       _farms.doc(farmId).collection('palaiCustomers');
 
   Future<String> addCustomer(String farmId, PalaiCustomer customer) async {
-    final ref = await _customers(farmId).add(customer.toMap());
+    final ref = await _customers(farmId).add(customer.toMap()).timeout(timeout);
     return ref.id;
   }
 
@@ -264,8 +264,49 @@ class FirestoreService {
         .map((s) => s.docs.map(PalaiCustomer.fromDoc).toList());
   }
 
+  /// Fetches a single customer once (not a stream) — used to prefill the
+  /// edit form when opening a customer straight from a deep link.
+  Future<PalaiCustomer?> getCustomer(String farmId, String customerId) async {
+    final doc = await _customers(farmId).doc(customerId).get().timeout(timeout);
+    if (!doc.exists) return null;
+    return PalaiCustomer.fromDoc(doc);
+  }
+
   Future<void> updateCustomerPendingAmount(String farmId, String customerId, double newPending) {
-    return _customers(farmId).doc(customerId).update({'pendingAmount': newPending});
+    return _customers(farmId).doc(customerId).update({'pendingAmount': newPending}).timeout(timeout);
+  }
+
+  /// Updates every editable field on a customer (name, mobile, address,
+  /// package, pending amount). Leaves `joiningDate` untouched.
+  Future<void> updateCustomer(String farmId, PalaiCustomer customer) {
+    return _customers(farmId).doc(customer.id).update(customer.toUpdateMap()).timeout(timeout);
+  }
+
+  /// True if this customer currently has any goat checked into Palai and
+  /// not yet checked out. Used to block deletion until goats are checked
+  /// out, since a customer record is what check-out/billing hangs off of.
+  Future<bool> customerHasActiveGoats(String farmId, String customerId) async {
+    final snap = await _goats(farmId, customerId)
+        .where('isCheckedOut', isEqualTo: false)
+        .limit(1)
+        .get()
+        .timeout(timeout);
+    return snap.docs.isNotEmpty;
+  }
+
+  /// Removes a customer record entirely. Past bills/activity referencing
+  /// them by name stay in the activity log; only the live customer
+  /// document (and their checked-out goat history under it) is deleted.
+  Future<void> deleteCustomer(String farmId, String customerId) async {
+    // Clean up the goats subcollection first — deleting a Firestore
+    // document does NOT cascade-delete its subcollections.
+    final goatsSnap = await _goats(farmId, customerId).get().timeout(timeout);
+    final batch = _db.batch();
+    for (final doc in goatsSnap.docs) {
+      batch.delete(doc.reference);
+    }
+    batch.delete(_customers(farmId).doc(customerId));
+    await batch.commit().timeout(timeout);
   }
 
   // ---------------------------------------------------------------------

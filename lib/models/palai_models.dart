@@ -46,6 +46,37 @@ class PalaiCustomer {
       'createdAt': FieldValue.serverTimestamp(),
     };
   }
+
+  /// Fields sent on an update — deliberately excludes `joiningDate` and
+  /// `createdAt` so editing a customer never rewrites when they joined.
+  Map<String, dynamic> toUpdateMap() {
+    return {
+      'name': name,
+      'mobileNumber': mobileNumber,
+      'address': address,
+      'package': package,
+      'pendingAmount': pendingAmount,
+    };
+  }
+
+  PalaiCustomer copyWith({
+    String? name,
+    String? mobileNumber,
+    String? address,
+    String? package,
+    DateTime? joiningDate,
+    double? pendingAmount,
+  }) {
+    return PalaiCustomer(
+      id: id,
+      name: name ?? this.name,
+      mobileNumber: mobileNumber ?? this.mobileNumber,
+      address: address ?? this.address,
+      package: package ?? this.package,
+      joiningDate: joiningDate ?? this.joiningDate,
+      pendingAmount: pendingAmount ?? this.pendingAmount,
+    );
+  }
 }
 
 /// A goat that is checked into Palai boarding, belonging to a customer.

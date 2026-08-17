@@ -14,6 +14,9 @@ enum ActivityType {
   medicineUsed,
   goatDelivered,
   reportGenerated,
+  customerAdded,
+  customerUpdated,
+  customerDeleted,
 }
 
 class ActivityLog {
@@ -82,6 +85,12 @@ class ActivityLog {
         return Icons.local_shipping_outlined;
       case ActivityType.reportGenerated:
         return Icons.description_outlined;
+      case ActivityType.customerAdded:
+        return Icons.person_add_alt;
+      case ActivityType.customerUpdated:
+        return Icons.edit_outlined;
+      case ActivityType.customerDeleted:
+        return Icons.person_remove_alt_1_outlined;
     }
   }
 
@@ -109,6 +118,12 @@ class ActivityLog {
         return AppColors.info;
       case ActivityType.reportGenerated:
         return AppColors.primaryGreen;
+      case ActivityType.customerAdded:
+        return AppColors.primaryGreen;
+      case ActivityType.customerUpdated:
+        return AppColors.info;
+      case ActivityType.customerDeleted:
+        return AppColors.error;
     }
   }
 }

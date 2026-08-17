@@ -6,9 +6,10 @@ import '../widgets/fast_route.dart';
 import 'home/home_screen.dart';
 import 'palai/palai_screen.dart';
 import 'stocks/stock_screen.dart';
+import 'customers/customer_management_screen.dart';
 import 'profile/profile_screen.dart';
 
-/// Persistent app shell for the three main tabs (Home, Palai, Stock).
+/// Persistent app shell for the four main tabs (Home, Palai, Stock, Customers).
 ///
 /// Previously each of these screens was its own full [Scaffold] with its
 /// own [AppBottomNav], so switching tabs meant destroying and rebuilding
@@ -33,27 +34,20 @@ class _MainShellState extends State<MainShell> {
     HomeScreen(),
     PalaiScreen(),
     StockScreen(),
+    CustomerManagementScreen(),
   ];
 
-  void _comingSoon(String feature) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('$feature coming soon'), backgroundColor: AppColors.darkGreen),
-    );
-  }
-
-  /// Tabs 0–2 (Home/Palai/Stock) just flip the visible child. Customers isn't
-  /// a tab with its own persisted content yet, so it stays a "coming soon"
-  /// toast. Profile is a real screen — it opens on top of the shell so
-  /// backing out returns to whichever tab was showing.
+  /// Tabs 0–3 (Home/Palai/Stock/Customers) just flip the visible child, so
+  /// switching between them never rebuilds or refetches. Profile is a real
+  /// screen — it opens on top of the shell so backing out returns to
+  /// whichever tab was showing.
   void _onNavTap(int index) {
     switch (index) {
       case 0:
       case 1:
       case 2:
-        if (index != _index) setState(() => _index = index);
-        break;
       case 3:
-        _comingSoon('Customers');
+        if (index != _index) setState(() => _index = index);
         break;
       case 4:
         Navigator.of(context).push(fastRoute(const ProfileScreen()));
