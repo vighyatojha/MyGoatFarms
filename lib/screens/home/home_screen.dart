@@ -14,8 +14,9 @@ import '../../services/firestore_service.dart';
 import '../../widgets/fast_route.dart';
 import '../../widgets/profile_completion_dialog.dart';
 import 'widgets/home_widgets.dart';
-import '../palai/palai_screen.dart';
+import '../palai/check_in_screen.dart';
 import '../stocks/stock_screen.dart';
+import '../stocks/add_feed_stock_screen.dart';
 import '../profile/profile_screen.dart';
 import 'notification_screen.dart';
 import 'total_goats_screen.dart';
@@ -151,53 +152,6 @@ class _HomeScreenState extends State<HomeScreen> {
                 _buildSearchBar(),
                 const SizedBox(height: 16),
                 if (_farmId != null) _buildStatGrid(_farmId!) else _buildStatGridLoading(),
-                const SizedBox(height: 24),
-                Text('Main Modules', style: AppTheme.heading(size: 16)),
-                const SizedBox(height: 12),
-                FadeInUp(
-                  delay: const Duration(milliseconds: 62),
-                  duration: const Duration(milliseconds: 220),
-                  child: GridView.count(
-                    crossAxisCount: 4,
-                    shrinkWrap: true,
-                    physics: const NeverScrollableScrollPhysics(),
-                    mainAxisSpacing: 10,
-                    crossAxisSpacing: 10,
-                    childAspectRatio: 0.8,
-                    children: [
-                      ModuleTile(
-                        icon: Icons.home_work_outlined,
-                        label: 'Palai',
-                        sub: 'Boarding & Care',
-                        color: AppColors.primaryGreen,
-                        onTap: () => Navigator.of(context)
-                            .push(fastRoute(const PalaiScreen())),
-                      ),
-                      ModuleTile(
-                        icon: Icons.swap_horiz,
-                        label: 'Trading',
-                        sub: 'Buy & Sell',
-                        color: AppColors.tradingBlue,
-                        onTap: () => _comingSoon('Trading'),
-                      ),
-                      ModuleTile(
-                        icon: Icons.biotech_outlined,
-                        label: 'Breeding',
-                        sub: 'Records',
-                        color: AppColors.breedingPurple,
-                        onTap: () => _comingSoon('Breeding'),
-                      ),
-                      ModuleTile(
-                        icon: Icons.inventory_2_outlined,
-                        label: 'Stock',
-                        sub: 'Feed & Med',
-                        color: AppColors.stockTeal,
-                        onTap: () => Navigator.of(context)
-                            .push(fastRoute(const StockScreen())),
-                      ),
-                    ],
-                  ),
-                ),
                 const SizedBox(height: 24),
                 Text('Quick Actions', style: AppTheme.heading(size: 16)),
                 const SizedBox(height: 12),
@@ -359,7 +313,7 @@ class _HomeScreenState extends State<HomeScreen> {
             icon: Icons.add,
             label: 'Add Goat',
             color: AppColors.primaryGreen,
-            onTap: () => Navigator.of(context).push(fastRoute(const PalaiScreen())),
+            onTap: () => Navigator.of(context).push(fastRoute(const CheckInGoatScreen())),
           ),
           QuickAction(
             icon: Icons.payments_outlined,
@@ -377,7 +331,7 @@ class _HomeScreenState extends State<HomeScreen> {
             icon: Icons.grass_outlined,
             label: 'Add Feed\nStock',
             color: AppColors.info,
-            onTap: () => Navigator.of(context).push(fastRoute(const StockScreen())),
+            onTap: () => Navigator.of(context).push(fastRoute(const AddFeedStockScreen())),
           ),
         ],
       ),

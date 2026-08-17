@@ -7,7 +7,6 @@ import '../../models/palai_models.dart';
 import '../../services/firestore_service.dart';
 import '../../widgets/fast_route.dart';
 import '../home/widgets/home_widgets.dart';
-import '../customers/customer_management_screen.dart';
 import 'add_customer_screen.dart';
 import 'check_in_screen.dart';
 import 'goat_list_screen.dart';
@@ -141,16 +140,13 @@ class _PalaiScreenState extends State<PalaiScreen> {
               ),
               const SizedBox(width: 12),
               Expanded(
-                child: GestureDetector(
-                  onTap: () => Navigator.of(context).push(fastRoute(const CustomerManagementScreen())),
-                  child: StreamBuilder<List<PalaiCustomer>>(
-                    stream: FirestoreService.instance.customersStream(farmId),
-                    builder: (context, snap) => StatCard(
-                      icon: Icons.people_outline,
-                      label: 'Total Customers',
-                      value: snap.hasData ? '${snap.data!.length}' : '—',
-                      color: AppColors.info,
-                    ),
+                child: StreamBuilder<List<PalaiCustomer>>(
+                  stream: FirestoreService.instance.customersStream(farmId),
+                  builder: (context, snap) => StatCard(
+                    icon: Icons.people_outline,
+                    label: 'Total Customers',
+                    value: snap.hasData ? '${snap.data!.length}' : '—',
+                    color: AppColors.info,
                   ),
                 ),
               ),
@@ -180,40 +176,6 @@ class _PalaiScreenState extends State<PalaiScreen> {
                     value: snap.hasData ? '₹${snap.data!.toStringAsFixed(0)}' : '—',
                     color: AppColors.error,
                   ),
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 12),
-          Row(
-            children: [
-              Expanded(
-                child: StreamBuilder<List<PalaiGoat>>(
-                  stream: FirestoreService.instance.allActiveGoatsStream(farmId),
-                  builder: (context, snap) {
-                    final today = DateTime.now();
-                    final checkInsToday = (snap.data ?? [])
-                        .where((g) =>
-                    g.checkInDate.year == today.year &&
-                        g.checkInDate.month == today.month &&
-                        g.checkInDate.day == today.day)
-                        .length;
-                    return StatCard(
-                      icon: Icons.login,
-                      label: "Today's Check-In",
-                      value: snap.hasData ? '$checkInsToday' : '—',
-                      color: AppColors.success,
-                    );
-                  },
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: StatCard(
-                  icon: Icons.logout,
-                  label: "Today's Check-Out",
-                  value: '0',
-                  color: AppColors.error,
                 ),
               ),
             ],
