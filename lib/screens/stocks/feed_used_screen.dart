@@ -121,10 +121,21 @@ class _FeedUsedScreenState extends State<FeedUsedScreen> {
                 if (snap.hasData && items.isEmpty) {
                   return Text('No feed stock yet — add some first.', style: AppTheme.body(size: 12));
                 }
-                // If the previously selected item was deleted or its
-                // reference is now stale, drop the selection instead
-                // of pointing the dropdown at a value it can't find.
-                final selected = items.any((i) => i.id == _selectedItem?.id) ? _selectedItem : null;
+                // Re-resolve the selection against the CURRENT items list
+                // rather than reusing the old StockItem instance — each
+                // stream snapshot rebuilds fresh objects, so pointing the
+                // dropdown's value at a stale instance (even one with a
+                // matching id) trips DropdownButton's "exactly one item
+                // with this value" assertion. If the item was deleted,
+                // drop the selection instead of pointing at a value that
+                // can't be found.
+                StockItem? selected;
+                for (final i in items) {
+                  if (i.id == _selectedItem?.id) {
+                    selected = i;
+                    break;
+                  }
+                }
                 return Container(
                   decoration: AppTheme.card(radius: 12),
                   padding: const EdgeInsets.symmetric(horizontal: 12),

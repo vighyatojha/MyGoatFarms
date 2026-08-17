@@ -11,6 +11,7 @@ class PalaiCustomer {
   final String package; // e.g. "Special Palai", "Basic Palai"
   final DateTime joiningDate;
   final double pendingAmount;
+  final double price; // Palai price for this customer (₹)
 
   PalaiCustomer({
     required this.id,
@@ -20,6 +21,7 @@ class PalaiCustomer {
     required this.package,
     required this.joiningDate,
     required this.pendingAmount,
+    this.price = 0,
   });
 
   factory PalaiCustomer.fromDoc(DocumentSnapshot<Map<String, dynamic>> doc) {
@@ -32,6 +34,7 @@ class PalaiCustomer {
       package: data['package'] ?? '',
       joiningDate: (data['joiningDate'] as Timestamp?)?.toDate() ?? DateTime.now(),
       pendingAmount: (data['pendingAmount'] ?? 0).toDouble(),
+      price: (data['price'] ?? 0).toDouble(),
     );
   }
 
@@ -43,6 +46,7 @@ class PalaiCustomer {
       'package': package,
       'joiningDate': Timestamp.fromDate(joiningDate),
       'pendingAmount': pendingAmount,
+      'price': price,
       'createdAt': FieldValue.serverTimestamp(),
     };
   }
@@ -56,6 +60,7 @@ class PalaiCustomer {
       'address': address,
       'package': package,
       'pendingAmount': pendingAmount,
+      'price': price,
     };
   }
 
@@ -66,6 +71,7 @@ class PalaiCustomer {
     String? package,
     DateTime? joiningDate,
     double? pendingAmount,
+    double? price,
   }) {
     return PalaiCustomer(
       id: id,
@@ -75,6 +81,7 @@ class PalaiCustomer {
       package: package ?? this.package,
       joiningDate: joiningDate ?? this.joiningDate,
       pendingAmount: pendingAmount ?? this.pendingAmount,
+      price: price ?? this.price,
     );
   }
 }

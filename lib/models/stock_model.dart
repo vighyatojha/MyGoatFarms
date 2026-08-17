@@ -24,6 +24,19 @@ class StockItem {
 
   bool get isLowStock => quantity <= lowStockThreshold;
 
+  // Firestore streams rebuild a brand-new StockItem instance on every
+  // snapshot, even when nothing meaningful changed. Without this override,
+  // Dart compares instances by identity, so a StockItem held onto from an
+  // older snapshot (e.g. a dropdown's selected value) stops matching any
+  // entry in a newer list even though it represents the same document —
+  // which breaks widgets like DropdownButton that match `value` against
+  // `items` using `==`.
+  @override
+  bool operator ==(Object other) => other is StockItem && other.id == id;
+
+  @override
+  int get hashCode => id.hashCode;
+
   factory StockItem.fromDoc(DocumentSnapshot<Map<String, dynamic>> doc) {
     final data = doc.data() ?? {};
     return StockItem(

@@ -29,12 +29,14 @@ class _AddCustomerScreenState extends State<AddCustomerScreen> {
   late final _mobileController = TextEditingController(text: widget.customer?.mobileNumber ?? '');
   late final _addressController = TextEditingController(text: widget.customer?.address ?? '');
   late final _pendingController =
-      TextEditingController(text: widget.customer != null ? _trimZero(widget.customer!.pendingAmount) : '0');
+  TextEditingController(text: widget.customer != null ? _trimZero(widget.customer!.pendingAmount) : '0');
+  late final _priceController =
+  TextEditingController(text: widget.customer != null ? _trimZero(widget.customer!.price) : '');
   late String _package = widget.customer?.package ?? 'Basic Palai';
   bool _saving = false;
   bool _deleting = false;
 
-  static const List<String> _packages = ['Basic Palai', 'Standard Palai', 'Special Palai'];
+  static const List<String> _packages = ['Basic Palai', 'Bharai Palai', 'Standard Palai'];
 
   static String _trimZero(double value) => value == value.roundToDouble() ? value.toStringAsFixed(0) : value.toString();
 
@@ -44,6 +46,7 @@ class _AddCustomerScreenState extends State<AddCustomerScreen> {
     _mobileController.dispose();
     _addressController.dispose();
     _pendingController.dispose();
+    _priceController.dispose();
     super.dispose();
   }
 
@@ -58,6 +61,7 @@ class _AddCustomerScreenState extends State<AddCustomerScreen> {
     }
 
     final pendingAmount = double.tryParse(_pendingController.text.trim()) ?? 0;
+    final price = double.tryParse(_priceController.text.trim()) ?? 0;
 
     try {
       if (widget.isEditing) {
@@ -67,6 +71,7 @@ class _AddCustomerScreenState extends State<AddCustomerScreen> {
           address: _addressController.text.trim(),
           package: _package,
           pendingAmount: pendingAmount,
+          price: price,
         );
         await FirestoreService.instance.updateCustomer(farmId, updated);
         await FirestoreService.instance.logActivity(
@@ -89,6 +94,7 @@ class _AddCustomerScreenState extends State<AddCustomerScreen> {
           package: _package,
           joiningDate: DateTime.now(),
           pendingAmount: pendingAmount,
+          price: price,
         );
         await FirestoreService.instance.addCustomer(farmId, customer);
         await FirestoreService.instance.logActivity(
@@ -262,7 +268,10 @@ class _AddCustomerScreenState extends State<AddCustomerScreen> {
                 ),
               ),
               const SizedBox(height: 16),
-              _label('Pending Amount (₹)'),
+              _label('Palai Price (₹)'),
+              _textField(_priceController, hint: 'e.g. 1500', keyboardType: const TextInputType.numberWithOptions(decimal: true), optional: true),
+              const SizedBox(height: 16),
+              _label('Old Pending Payments (₹)'),
               _textField(_pendingController, hint: '0', keyboardType: const TextInputType.numberWithOptions(decimal: true), optional: true),
               const SizedBox(height: 28),
               SizedBox(
@@ -288,17 +297,17 @@ class _AddCustomerScreenState extends State<AddCustomerScreen> {
   }
 
   Widget _label(String text) => Padding(
-        padding: const EdgeInsets.only(bottom: 6),
-        child: Text(text, style: AppTheme.heading(size: 13)),
-      );
+    padding: const EdgeInsets.only(bottom: 6),
+    child: Text(text, style: AppTheme.heading(size: 13)),
+  );
 
   Widget _textField(
-    TextEditingController controller, {
-    String? hint,
-    TextInputType? keyboardType,
-    int maxLines = 1,
-    bool optional = false,
-  }) {
+      TextEditingController controller, {
+        String? hint,
+        TextInputType? keyboardType,
+        int maxLines = 1,
+        bool optional = false,
+      }) {
     return Container(
       decoration: AppTheme.card(radius: 12),
       child: TextFormField(
