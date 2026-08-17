@@ -28,11 +28,33 @@ class PalaiScreen extends StatefulWidget {
 class _PalaiScreenState extends State<PalaiScreen> {
   String? _farmId;
 
+  // Created once, when the farm id resolves, and reused on every rebuild.
+  // Calling these FirestoreService methods directly inside `build()` would
+  // hand each StreamBuilder a brand-new stream instance on every rebuild
+  // (e.g. during the FadeIn animations below), forcing it to drop its
+  // subscription and flash back to the loading state — that's what caused
+  // the dashboard cards to keep "reloading".
+  Stream<List<PalaiGoat>>? _goatsStream;
+  Stream<List<PalaiCustomer>>? _customersStream;
+  Stream<double>? _incomeStream;
+  Stream<double>? _pendingStream;
+  Stream<List<ActivityLog>>? _activitiesStream;
+
   @override
   void initState() {
     super.initState();
     FirestoreService.instance.currentFarmId().then((id) {
-      if (mounted) setState(() => _farmId = id);
+      if (!mounted) return;
+      setState(() {
+        _farmId = id;
+        if (id != null) {
+          _goatsStream = FirestoreService.instance.allActiveGoatsStream(id);
+          _customersStream = FirestoreService.instance.customersStream(id);
+          _incomeStream = FirestoreService.instance.todaysIncomeStream(id);
+          _pendingStream = FirestoreService.instance.totalPendingPaymentsStream(id);
+          _activitiesStream = FirestoreService.instance.activitiesStream(id, module: 'palai', limit: 6);
+        }
+      });
     });
   }
 
@@ -56,7 +78,7 @@ class _PalaiScreenState extends State<PalaiScreen> {
             children: [
               FadeInDown(duration: const Duration(milliseconds: 180), child: _buildHeader()),
               const SizedBox(height: 18),
-              _buildDashboard(_farmId!),
+              _buildDashboard(),
               const SizedBox(height: 24),
               Text('Quick Actions', style: AppTheme.heading(size: 16)),
               const SizedBox(height: 12),
@@ -73,7 +95,7 @@ class _PalaiScreenState extends State<PalaiScreen> {
                 ],
               ),
               const SizedBox(height: 12),
-              _buildActivities(_farmId!),
+              _buildActivities(),
               const SizedBox(height: 20),
               _buildGenerateReportBanner(),
             ],
@@ -119,7 +141,7 @@ class _PalaiScreenState extends State<PalaiScreen> {
     );
   }
 
-  Widget _buildDashboard(String farmId) {
+  Widget _buildDashboard() {
     return FadeInUp(
       delay: const Duration(milliseconds: 38),
       duration: const Duration(milliseconds: 220),
@@ -129,19 +151,22 @@ class _PalaiScreenState extends State<PalaiScreen> {
             children: [
               Expanded(
                 child: StreamBuilder<List<PalaiGoat>>(
-                  stream: FirestoreService.instance.allActiveGoatsStream(farmId),
+                  stream: _goatsStream,
                   builder: (context, snap) => StatCard(
                     icon: Icons.pets,
                     label: 'Total Goats in Palai',
                     value: snap.hasData ? '${snap.data!.length}' : '—',
                     color: AppColors.primaryGreen,
+                    // Tapping the card takes you straight to the full
+                    // goat list, same as the "Check-Out" quick action.
+                    onTap: () => Navigator.of(context).push(fastRoute(const GoatListScreen())),
                   ),
                 ),
               ),
               const SizedBox(width: 12),
               Expanded(
                 child: StreamBuilder<List<PalaiCustomer>>(
-                  stream: FirestoreService.instance.customersStream(farmId),
+                  stream: _customersStream,
                   builder: (context, snap) => StatCard(
                     icon: Icons.people_outline,
                     label: 'Total Customers',
@@ -157,7 +182,7 @@ class _PalaiScreenState extends State<PalaiScreen> {
             children: [
               Expanded(
                 child: StreamBuilder<double>(
-                  stream: FirestoreService.instance.todaysIncomeStream(farmId),
+                  stream: _incomeStream,
                   builder: (context, snap) => StatCard(
                     icon: Icons.currency_rupee,
                     label: 'Monthly Income',
@@ -169,7 +194,7 @@ class _PalaiScreenState extends State<PalaiScreen> {
               const SizedBox(width: 12),
               Expanded(
                 child: StreamBuilder<double>(
-                  stream: FirestoreService.instance.totalPendingPaymentsStream(farmId),
+                  stream: _pendingStream,
                   builder: (context, snap) => StatCard(
                     icon: Icons.credit_card_outlined,
                     label: 'Pending Payments',
@@ -261,12 +286,12 @@ class _PalaiScreenState extends State<PalaiScreen> {
     );
   }
 
-  Widget _buildActivities(String farmId) {
+  Widget _buildActivities() {
     return FadeInUp(
       delay: const Duration(milliseconds: 88),
       duration: const Duration(milliseconds: 220),
       child: StreamBuilder<List<ActivityLog>>(
-        stream: FirestoreService.instance.activitiesStream(farmId, module: 'palai', limit: 6),
+        stream: _activitiesStream,
         builder: (context, snap) {
           if (!snap.hasData) {
             return const Padding(

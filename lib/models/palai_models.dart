@@ -38,6 +38,12 @@ class PalaiCustomer {
     );
   }
 
+  @override
+  bool operator ==(Object other) => other is PalaiCustomer && other.id == id;
+
+  @override
+  int get hashCode => id.hashCode;
+
   Map<String, dynamic> toMap() {
     return {
       'name': name,
