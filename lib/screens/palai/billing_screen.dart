@@ -40,6 +40,18 @@ class _BillingScreenState extends State<BillingScreen> {
   double get _totalBill => (_monthlyCharges + _transport + _previousBalance - _discount).clamp(0, double.infinity);
   double get _pendingAmount => (_totalBill - _paid).clamp(0, double.infinity);
 
+  /// Pre-fills Monthly Charges with the sum of the selected customer's
+  /// active goats' Palai pricing (set at check-in), so the person doesn't
+  /// have to re-total it by hand — they can still adjust it before saving.
+  Future<void> _prefillMonthlyCharges(PalaiCustomer customer) async {
+    if (_farmId == null) return;
+    final goats = await FirestoreService.instance.goatsForCustomerStream(_farmId!, customer.id).first;
+    final activePricingTotal = goats.where((g) => !g.isCheckedOut).fold<double>(0, (s, g) => s + g.pricing);
+    if (activePricingTotal > 0 && mounted) {
+      setState(() => _monthlyChargesController.text = activePricingTotal.toStringAsFixed(0));
+    }
+  }
+
   Future<void> _generateBill() async {
     if (_selectedCustomer == null || _farmId == null) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -114,7 +126,10 @@ class _BillingScreenState extends State<BillingScreen> {
                             items: customers
                                 .map((c) => DropdownMenuItem(value: c, child: Text(c.name, style: AppTheme.body(size: 13, color: AppColors.textDark))))
                                 .toList(),
-                            onChanged: (v) => setState(() => _selectedCustomer = v),
+                            onChanged: (v) => setState(() {
+                              _selectedCustomer = v;
+                              if (v != null) _prefillMonthlyCharges(v);
+                            }),
                           ),
                         ),
                       );

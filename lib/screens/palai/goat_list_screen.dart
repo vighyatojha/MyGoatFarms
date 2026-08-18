@@ -502,6 +502,10 @@ class _GoatListScreenState extends State<GoatListScreen> {
                     Text(goat.goatCode, style: AppTheme.heading(size: 14)),
                     const SizedBox(height: 3),
                     Text('${goat.breed} · ${goat.gender}', style: AppTheme.body(size: 12)),
+                    if (goat.pricing > 0) ...[
+                      const SizedBox(height: 2),
+                      Text('₹${goat.pricing.toStringAsFixed(0)}/mo', style: AppTheme.body(size: 11, color: AppColors.textGrey)),
+                    ],
                     const SizedBox(height: 6),
                     Container(
                       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),

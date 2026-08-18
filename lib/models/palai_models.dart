@@ -115,6 +115,7 @@ class PalaiGoat {
   final DateTime checkInDate;
   final DateTime? checkOutDate;
   final String monthlyPackage;
+  final double pricing; // Palai pricing for this check-in (₹)
   final String notes;
   final bool isCheckedOut;
 
@@ -139,6 +140,7 @@ class PalaiGoat {
     required this.checkInDate,
     this.checkOutDate,
     required this.monthlyPackage,
+    this.pricing = 0,
     required this.notes,
     this.isCheckedOut = false,
     this.beforeImage,
@@ -164,6 +166,7 @@ class PalaiGoat {
       checkInDate: (data['checkInDate'] as Timestamp?)?.toDate() ?? DateTime.now(),
       checkOutDate: (data['checkOutDate'] as Timestamp?)?.toDate(),
       monthlyPackage: data['monthlyPackage'] ?? '',
+      pricing: (data['pricing'] ?? 0).toDouble(),
       notes: data['notes'] ?? '',
       isCheckedOut: data['isCheckedOut'] ?? false,
       beforeImage: beforeField is Blob ? beforeField.bytes : null,
@@ -186,6 +189,7 @@ class PalaiGoat {
       'checkInDate': Timestamp.fromDate(checkInDate),
       'checkOutDate': checkOutDate != null ? Timestamp.fromDate(checkOutDate!) : null,
       'monthlyPackage': monthlyPackage,
+      'pricing': pricing,
       'notes': notes,
       'isCheckedOut': isCheckedOut,
       'createdAt': FieldValue.serverTimestamp(),

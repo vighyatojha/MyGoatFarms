@@ -17,6 +17,8 @@ enum ActivityType {
   customerAdded,
   customerUpdated,
   customerDeleted,
+  ownFarmGoatAdded,
+  ownFarmExpenseAdded,
 }
 
 class ActivityLog {
@@ -91,6 +93,10 @@ class ActivityLog {
         return Icons.edit_outlined;
       case ActivityType.customerDeleted:
         return Icons.person_remove_alt_1_outlined;
+      case ActivityType.ownFarmGoatAdded:
+        return Icons.pets;
+      case ActivityType.ownFarmExpenseAdded:
+        return Icons.remove_circle_outline;
     }
   }
 
@@ -123,6 +129,10 @@ class ActivityLog {
       case ActivityType.customerUpdated:
         return AppColors.info;
       case ActivityType.customerDeleted:
+        return AppColors.error;
+      case ActivityType.ownFarmGoatAdded:
+        return AppColors.primaryGreen;
+      case ActivityType.ownFarmExpenseAdded:
         return AppColors.error;
     }
   }

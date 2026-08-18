@@ -13,12 +13,24 @@ import 'goat_list_screen.dart';
 import 'health_records_screen.dart';
 import 'billing_screen.dart';
 import '../../models/palai_models.dart';
+import 'own_farm/own_farm_palai_content.dart';
 
-/// Palai (Goat Boarding & Care) module dashboard.
+/// Which kind of Palai this screen is showing.
 ///
-/// Manages customers, goat check-in/check-out, health records, monthly
-/// billing, payment collection and (eventually) automatic report generation
-/// — matching the "Palai (Goat Boarding & Care)" spec.
+/// - [customer]: goats boarded under Palai on behalf of a customer who
+///   owns them (boarding & care service, billed monthly).
+/// - [ownFarm]: goats owned outright by My Goat Farms — no customer,
+///   billing or check-in/out involved, just full lifecycle tracking.
+enum PalaiType { customer, ownFarm }
+
+/// Palai module dashboard — covers both "Customer Palai" (goat boarding &
+/// care for customers) and "Own Farm Palai" (goats owned by the farm
+/// itself), switchable via the toggle at the top of the screen.
+///
+/// Customer Palai manages customers, goat check-in/check-out, health
+/// records, monthly billing, payment collection and (eventually)
+/// automatic report generation. Own Farm Palai manages the farm's own
+/// herd: registration, growth, health, breeding and expenses.
 class PalaiScreen extends StatefulWidget {
   const PalaiScreen({super.key});
 
@@ -28,6 +40,7 @@ class PalaiScreen extends StatefulWidget {
 
 class _PalaiScreenState extends State<PalaiScreen> {
   String? _farmId;
+  PalaiType _palaiType = PalaiType.customer;
 
   // Created once, when the farm id resolves, and reused on every rebuild.
   // Calling these FirestoreService methods directly inside `build()` would
@@ -81,30 +94,76 @@ class _PalaiScreenState extends State<PalaiScreen> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               FadeInDown(duration: const Duration(milliseconds: 180), child: _buildHeader()),
+              const SizedBox(height: 14),
+              _buildPalaiTypeToggle(),
               const SizedBox(height: 18),
-              _buildDashboard(),
-              const SizedBox(height: 24),
-              Text('Quick Actions', style: AppTheme.heading(size: 16)),
-              const SizedBox(height: 12),
-              _buildQuickActions(_farmId!),
-              const SizedBox(height: 24),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Text('Recent Activities', style: AppTheme.heading(size: 16)),
-                  GestureDetector(
-                    onTap: () => _comingSoon('Full activity list'),
-                    child: Text('View All', style: AppTheme.body(size: 13, color: AppColors.darkGreen, weight: FontWeight.w600)),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 12),
-              _buildActivities(),
-              const SizedBox(height: 20),
-              _buildGenerateReportBanner(),
+              if (_palaiType == PalaiType.customer) ...[
+                _buildDashboard(),
+                const SizedBox(height: 24),
+                Text('Quick Actions', style: AppTheme.heading(size: 16)),
+                const SizedBox(height: 12),
+                _buildQuickActions(_farmId!),
+                const SizedBox(height: 24),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Text('Recent Activities', style: AppTheme.heading(size: 16)),
+                    GestureDetector(
+                      onTap: () => _comingSoon('Full activity list'),
+                      child: Text('View All', style: AppTheme.body(size: 13, color: AppColors.darkGreen, weight: FontWeight.w600)),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                _buildActivities(),
+                const SizedBox(height: 20),
+                _buildGenerateReportBanner(),
+              ] else
+                OwnFarmPalaiContent(farmId: _farmId!),
             ],
           ),
         ),
+      ),
+    );
+  }
+
+  /// Segmented control switching between "Customer Palai" (goats owned by
+  /// customers) and "Own Farm Palai" (goats owned by My Goat Farms).
+  Widget _buildPalaiTypeToggle() {
+    Widget segment(String label, PalaiType type) {
+      final selected = _palaiType == type;
+      return Expanded(
+        child: GestureDetector(
+          onTap: () => setState(() => _palaiType = type),
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 150),
+            padding: const EdgeInsets.symmetric(vertical: 10),
+            decoration: BoxDecoration(
+              color: selected ? AppColors.primaryGreen : Colors.transparent,
+              borderRadius: BorderRadius.circular(10),
+            ),
+            alignment: Alignment.center,
+            child: Text(
+              label,
+              style: AppTheme.body(
+                size: 12,
+                color: selected ? Colors.white : AppColors.textDark,
+                weight: FontWeight.w600,
+              ),
+            ),
+          ),
+        ),
+      );
+    }
+
+    return Container(
+      padding: const EdgeInsets.all(4),
+      decoration: BoxDecoration(color: AppColors.lightGreen, borderRadius: BorderRadius.circular(12)),
+      child: Row(
+        children: [
+          segment('Customer Palai', PalaiType.customer),
+          segment('Own Farm Palai', PalaiType.ownFarm),
+        ],
       ),
     );
   }
@@ -232,23 +291,6 @@ class _PalaiScreenState extends State<PalaiScreen> {
             sub: 'New',
             color: AppColors.primaryGreen,
             onTap: () => Navigator.of(context).push(fastRoute(const AddCustomerScreen())),
-          ),
-          ModuleTile(
-            icon: Icons.login,
-            label: 'Check-In',
-            sub: 'Goat',
-            color: AppColors.success,
-            onTap: () => Navigator.of(context).push(fastRoute(const CheckInGoatScreen())),
-          ),
-          ModuleTile(
-            icon: Icons.logout,
-            label: 'Check-Out',
-            sub: 'Goat',
-            color: AppColors.error,
-            // Check-Out now starts from the goat list — each goat carries
-            // its own "Before Palai" photo, so the goat must be picked
-            // there before opening its Check-Out page.
-            onTap: () => Navigator.of(context).push(fastRoute(const GoatListScreen())),
           ),
           ModuleTile(
             icon: Icons.favorite_border,

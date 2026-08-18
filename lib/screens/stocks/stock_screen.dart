@@ -159,7 +159,13 @@ class _StockScreenState extends State<StockScreen> {
         stream: FirestoreService.instance.stockItemsStream(farmId),
         builder: (context, snap) {
           final items = snap.data ?? [];
-          final feedTotal = items.where((i) => i.type == StockType.feed).fold<double>(0, (s, i) => s + i.quantity);
+          final feedItems = items.where((i) => i.type == StockType.feed).toList();
+          final feedTotal = feedItems.fold<double>(0, (s, i) => s + i.quantity);
+          // Feed can be tracked in Kg or Bag per item — only show a unit
+          // suffix on the summary card when every feed item agrees on one,
+          // otherwise the total would mix weight and bag counts.
+          final feedUnits = feedItems.map((i) => i.unit).toSet();
+          final feedUnitLabel = feedUnits.length == 1 ? feedUnits.first : '';
           final medicineCount = items.where((i) => i.type == StockType.medicine).length;
           final lowStockItems = items.where((i) => i.isLowStock).toList();
 
@@ -171,7 +177,9 @@ class _StockScreenState extends State<StockScreen> {
                     child: StatCard(
                       icon: Icons.grass_outlined,
                       label: 'Total Feed Stock',
-                      value: snap.hasData ? '${feedTotal.toStringAsFixed(0)} kg' : '—',
+                      value: snap.hasData
+                          ? '${feedTotal.toStringAsFixed(0)}${feedUnitLabel.isNotEmpty ? ' $feedUnitLabel' : ''}'
+                          : '—',
                       color: AppColors.stockTeal,
                     ),
                   ),

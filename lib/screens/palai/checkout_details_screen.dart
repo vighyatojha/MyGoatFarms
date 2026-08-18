@@ -99,6 +99,7 @@ class _CheckoutDetailsScreenState extends State<CheckoutDetailsScreen> {
                   _row('Health Status', widget.healthStatus),
                   _row('Delivery Status', widget.deliveryStatus),
                   _row('Monthly Package', goat.monthlyPackage),
+                  if (goat.pricing > 0) _row('Palai Pricing', '₹${goat.pricing.toStringAsFixed(0)}'),
                   const Divider(height: 24),
                   _row('Total Charges', '₹${widget.totalCharges.toStringAsFixed(0)}', bold: true),
                 ],

@@ -15,7 +15,7 @@ import 'add_customer_screen.dart';
 /// Records a new goat check-in for Palai boarding: a "Before Palai" photo
 /// (camera or device storage — same picker as the Profile photo), Goat
 /// ID, breed, gender, age/weight, color, health status, owner (customer),
-/// check-in date, monthly package and notes — per the Palai spec.
+/// check-in date, monthly package, pricing and notes — per the Palai spec.
 class CheckInGoatScreen extends StatefulWidget {
   /// When opened from a customer's profile, pre-fills the owner field so
   /// the person doesn't have to pick the same customer again.
@@ -32,6 +32,7 @@ class _CheckInGoatScreenState extends State<CheckInGoatScreen> {
   final _breedController = TextEditingController();
   final _colorController = TextEditingController();
   final _weightController = TextEditingController();
+  final _pricingController = TextEditingController();
   final _notesController = TextEditingController();
   String _gender = 'Male';
   String _healthStatus = 'Healthy';
@@ -63,6 +64,7 @@ class _CheckInGoatScreenState extends State<CheckInGoatScreen> {
     _breedController.dispose();
     _colorController.dispose();
     _weightController.dispose();
+    _pricingController.dispose();
     _notesController.dispose();
     super.dispose();
   }
@@ -111,6 +113,7 @@ class _CheckInGoatScreenState extends State<CheckInGoatScreen> {
       healthStatus: _healthStatus,
       checkInDate: DateTime.now(),
       monthlyPackage: _monthlyPackage,
+      pricing: double.tryParse(_pricingController.text.trim()) ?? 0,
       notes: _notesController.text.trim(),
       beforeImage: _beforeImageBytes,
       beforeImageContentType: _beforeImageContentType,
@@ -205,6 +208,9 @@ class _CheckInGoatScreenState extends State<CheckInGoatScreen> {
               const SizedBox(height: 16),
               _label('Monthly Package'),
               _dropdown(_monthlyPackage, _packages, (v) => setState(() => _monthlyPackage = v)),
+              const SizedBox(height: 16),
+              _label('Pricing (₹)'),
+              _textField(_pricingController, hint: 'e.g. 1500', keyboardType: TextInputType.number),
               const SizedBox(height: 16),
               _label('Notes'),
               _textField(_notesController, hint: 'Optional notes', maxLines: 3, optional: true),

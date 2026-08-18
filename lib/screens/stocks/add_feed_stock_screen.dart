@@ -21,6 +21,12 @@ class _AddFeedStockScreenState extends State<AddFeedStockScreen> {
   final _notesController = TextEditingController();
   bool _saving = false;
 
+  // In-stock quantity can be tracked either by weight (Kg) or by the
+  // number of feed bags on hand (Bag) — whichever matches how the farm
+  // actually receives/stores the feed.
+  String _unit = 'Kg';
+  static const List<String> _units = ['Kg', 'Bag'];
+
   @override
   void dispose() {
     _nameController.dispose();
@@ -55,7 +61,7 @@ class _AddFeedStockScreenState extends State<AddFeedStockScreen> {
         itemName: _nameController.text.trim(),
         type: StockType.feed,
         quantity: quantity,
-        unit: 'kg',
+        unit: _unit,
         lowStockThreshold: double.tryParse(_thresholdController.text.trim()) ?? 0,
         notes: _notesController.text.trim(),
       );
@@ -66,7 +72,7 @@ class _AddFeedStockScreenState extends State<AddFeedStockScreen> {
           id: '',
           type: ActivityType.feedStockAdded,
           title: 'Feed Stock Added',
-          subtitle: '${quantity.toStringAsFixed(0)} kg of ${_nameController.text.trim()} added',
+          subtitle: '${quantity.toStringAsFixed(0)} $_unit of ${_nameController.text.trim()} added',
           module: 'stock',
           timestamp: DateTime.now(),
         ),
@@ -104,10 +110,47 @@ class _AddFeedStockScreenState extends State<AddFeedStockScreen> {
               _label('Feed Name'),
               _field(_nameController, hint: 'e.g. Mix Feed, Green Fodder'),
               const SizedBox(height: 16),
-              _label('Quantity (kg)'),
-              _field(_quantityController, hint: 'e.g. 100', keyboardType: TextInputType.number),
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Expanded(
+                    flex: 2,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        _label('Quantity'),
+                        _field(_quantityController, hint: 'e.g. 100', keyboardType: TextInputType.number),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        _label('In Stock'),
+                        Container(
+                          decoration: AppTheme.card(radius: 12),
+                          padding: const EdgeInsets.symmetric(horizontal: 12),
+                          child: DropdownButtonHideUnderline(
+                            child: DropdownButton<String>(
+                              value: _unit,
+                              isExpanded: true,
+                              items: _units
+                                  .map((u) => DropdownMenuItem(
+                                      value: u, child: Text(u, style: AppTheme.body(size: 13, color: AppColors.textDark))))
+                                  .toList(),
+                              onChanged: (v) => setState(() => _unit = v ?? _unit),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
               const SizedBox(height: 16),
-              _label('Low Stock Alert Threshold (kg)'),
+              _label('Low Stock Alert Threshold ($_unit)'),
               _field(_thresholdController, hint: 'e.g. 20', keyboardType: TextInputType.number),
               const SizedBox(height: 16),
               _label('Notes'),
