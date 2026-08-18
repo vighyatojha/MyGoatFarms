@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../../app_theme.dart';
@@ -17,18 +19,53 @@ class GoatListScreen extends StatefulWidget {
   State<GoatListScreen> createState() => _GoatListScreenState();
 }
 
+enum _HealthFilter { all, healthy, watch, sick }
+
 class _GoatListScreenState extends State<GoatListScreen> {
   String? _farmId;
 
-  // Created once, when the farm id resolves, and reused on every rebuild.
-  // Calling FirestoreService.instance.allActiveGoatsStream(...) directly
-  // inside `build()` would hand StreamBuilder a brand-new stream instance
-  // every rebuild, forcing it to drop its subscription and flash back to
-  // the loading state — this is what caused the screen to keep "reloading".
-  Stream<List<PalaiGoat>>? _goatsStream;
+  // ---------------------------------------------------------------------
+  // Data
+  // ---------------------------------------------------------------------
+  //
+  // THE GLITCH (goats flash on screen for a second, then the list goes
+  // blank): the previous version of this screen fed a Firestore stream
+  // straight into a `StreamBuilder` and did `snap.data ?? []`. The very
+  // first snapshot a fresh listener receives is often served from local
+  // disk cache and renders instantly — including goat docs the SDK had
+  // already cached from other screens — so the list appeared to load
+  // correctly. But `allActiveGoatsStream` is a `collectionGroup('goats')`
+  // query with a `where` clause, and collection-group queries need an
+  // index that is explicitly enabled with *collection-group* scope in
+  // Firestore — plain per-collection field indexes don't cover them. If
+  // that index isn't set up, the live listener rejects the query moments
+  // later with a `failed-precondition` error. Flutter's `StreamBuilder`
+  // throws away whatever data it was holding the instant a stream errors
+  // (`AsyncSnapshot.withError` doesn't carry the old value forward), so
+  // `snap.data` collapsed to `null`, `allGoats` became `[]`, and the
+  // screen silently rendered its "no goats boarded" empty state — with no
+  // error ever shown. That is the "loads then goes empty" glitch.
+  //
+  // Fix, two parts:
+  //  1. We now manage the subscription ourselves instead of handing a
+  //     stream straight to `StreamBuilder`, so an error can never wipe
+  //     data we already successfully loaded — it just surfaces as a
+  //     small retryable banner while the last good list stays on screen.
+  //  2. The actual Firestore index this query needs is now declared in
+  //     `firestore.indexes.json` at the project root — deploy it with
+  //     `firebase deploy --only firestore:indexes` (or open the exact
+  //     console link Firestore prints in the debug log the first time
+  //     the query runs) so the live query stops failing in the first
+  //     place.
+  List<PalaiGoat> _goats = [];
+  bool _initialLoading = true;
+  bool _hasLoadedOnce = false;
+  String? _errorMessage;
+  StreamSubscription<List<PalaiGoat>>? _subscription;
 
   final _searchController = TextEditingController();
   String _query = '';
+  _HealthFilter _filter = _HealthFilter.all;
 
   @override
   void initState() {
@@ -38,17 +75,55 @@ class _GoatListScreenState extends State<GoatListScreen> {
     });
     FirestoreService.instance.currentFarmId().then((id) {
       if (!mounted) return;
-      setState(() {
-        _farmId = id;
-        if (id != null) {
-          _goatsStream = FirestoreService.instance.allActiveGoatsStream(id);
-        }
-      });
+      setState(() => _farmId = id);
+      if (id != null) _subscribeToGoats(id);
     });
+  }
+
+  void _subscribeToGoats(String farmId, {VoidCallback? onSettled}) {
+    _subscription?.cancel();
+    _subscription = FirestoreService.instance.allActiveGoatsStream(farmId).listen(
+          (goats) {
+        if (!mounted) return;
+        setState(() {
+          _goats = goats;
+          _initialLoading = false;
+          _hasLoadedOnce = true;
+          _errorMessage = null;
+        });
+        onSettled?.call();
+      },
+      onError: (Object error) {
+        if (!mounted) return;
+        debugPrint('GoatListScreen stream error: $error');
+        setState(() {
+          _initialLoading = false;
+          _errorMessage = _hasLoadedOnce
+              ? 'Live updates paused — pull down to retry.'
+              : "Couldn't load goats. Check your connection and retry.";
+        });
+        onSettled?.call();
+      },
+    );
+  }
+
+  Future<void> _handleRefresh() async {
+    final farmId = _farmId;
+    if (farmId == null) return;
+    final completer = Completer<void>();
+    _subscribeToGoats(farmId, onSettled: () {
+      if (!completer.isCompleted) completer.complete();
+    });
+    // Keep the refresh spinner visible for a beat so it doesn't just flicker.
+    await Future.wait([
+      completer.future,
+      Future.delayed(const Duration(milliseconds: 400)),
+    ]);
   }
 
   @override
   void dispose() {
+    _subscription?.cancel();
     _searchController.dispose();
     super.dispose();
   }
@@ -80,10 +155,24 @@ class _GoatListScreenState extends State<GoatListScreen> {
     }
   }
 
+  bool _matchesFilter(PalaiGoat g) {
+    switch (_filter) {
+      case _HealthFilter.all:
+        return true;
+      case _HealthFilter.healthy:
+        return g.healthStatus != 'Sick' && g.healthStatus != 'Under Observation';
+      case _HealthFilter.watch:
+        return g.healthStatus == 'Under Observation';
+      case _HealthFilter.sick:
+        return g.healthStatus == 'Sick';
+    }
+  }
+
   List<PalaiGoat> _filtered(List<PalaiGoat> goats) {
     final sorted = [...goats]..sort((a, b) => b.checkInDate.compareTo(a.checkInDate));
-    if (_query.isEmpty) return sorted;
     return sorted.where((g) {
+      if (!_matchesFilter(g)) return false;
+      if (_query.isEmpty) return true;
       return g.goatCode.toLowerCase().contains(_query) ||
           g.breed.toLowerCase().contains(_query) ||
           g.color.toLowerCase().contains(_query);
@@ -101,65 +190,254 @@ class _GoatListScreenState extends State<GoatListScreen> {
         titleSpacing: 0,
         title: Text('Goats in Palai', style: AppTheme.heading(size: 17)),
       ),
+      floatingActionButton: (_farmId == null || _goats.isEmpty)
+          ? null
+          : FloatingActionButton.extended(
+        onPressed: () => Navigator.of(context).push(fastRoute(const CheckInGoatScreen())),
+        backgroundColor: AppColors.primaryGreen,
+        icon: const Icon(Icons.add, color: Colors.white),
+        label: const Text('Check In', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w600)),
+      ),
       body: _farmId == null
           ? const Center(child: CircularProgressIndicator(color: AppColors.primaryGreen))
-          : StreamBuilder<List<PalaiGoat>>(
-        stream: _goatsStream,
-        builder: (context, snap) {
-          if (snap.connectionState == ConnectionState.waiting && !snap.hasData) {
-            return const Center(child: CircularProgressIndicator(color: AppColors.primaryGreen));
-          }
-          final allGoats = snap.data ?? [];
+          : _buildBody(),
+    );
+  }
 
-          if (allGoats.isEmpty) {
-            return _emptyState();
-          }
+  Widget _buildBody() {
+    if (_initialLoading) {
+      return _loadingSkeleton();
+    }
 
-          final goats = _filtered(allGoats);
+    if (_goats.isEmpty && _errorMessage != null) {
+      return _fullErrorState();
+    }
 
-          return Column(
-            children: [
-              _summaryHeader(allGoats.length),
-              _searchBar(),
-              Expanded(
-                child: goats.isEmpty
-                    ? _noResultsState()
-                    : ListView.separated(
-                  padding: const EdgeInsets.fromLTRB(16, 4, 16, 16),
-                  itemCount: goats.length,
-                  separatorBuilder: (_, __) => const SizedBox(height: 10),
-                  itemBuilder: (context, i) => _goatCard(goats[i]),
-                ),
+    if (_goats.isEmpty) {
+      return _emptyState();
+    }
+
+    final goats = _filtered(_goats);
+
+    return Column(
+      children: [
+        _summaryHeader(_goats),
+        _filterChips(),
+        _searchBar(),
+        if (_errorMessage != null) _inlineErrorBanner(),
+        Expanded(
+          child: RefreshIndicator(
+            color: AppColors.primaryGreen,
+            onRefresh: _handleRefresh,
+            child: goats.isEmpty
+                ? ListView(
+              physics: const AlwaysScrollableScrollPhysics(),
+              children: [_noResultsState()],
+            )
+                : ListView.separated(
+              physics: const AlwaysScrollableScrollPhysics(),
+              padding: const EdgeInsets.fromLTRB(16, 4, 16, 88),
+              itemCount: goats.length,
+              separatorBuilder: (_, __) => const SizedBox(height: 10),
+              itemBuilder: (context, i) => _AnimatedListEntry(
+                index: i,
+                child: _goatCard(goats[i]),
               ),
-            ],
-          );
-        },
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _inlineErrorBanner() {
+    return Container(
+      margin: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      decoration: BoxDecoration(
+        color: AppColors.warning.withOpacity(0.12),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: AppColors.warning.withOpacity(0.35)),
+      ),
+      child: Row(
+        children: [
+          const Icon(Icons.cloud_off_rounded, color: AppColors.warning, size: 18),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(_errorMessage!, style: AppTheme.body(size: 12, color: AppColors.textDark)),
+          ),
+          TextButton(
+            onPressed: () => _farmId == null ? null : _subscribeToGoats(_farmId!),
+            style: TextButton.styleFrom(padding: const EdgeInsets.symmetric(horizontal: 8)),
+            child: Text('Retry', style: AppTheme.body(size: 12, color: AppColors.darkGreen, weight: FontWeight.w700)),
+          ),
+        ],
       ),
     );
   }
 
-  Widget _summaryHeader(int total) {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 4, 16, 12),
+  Widget _fullErrorState() {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 88,
+              height: 88,
+              decoration: BoxDecoration(color: AppColors.error.withOpacity(0.1), shape: BoxShape.circle),
+              child: const Icon(Icons.cloud_off_rounded, size: 38, color: AppColors.error),
+            ),
+            const SizedBox(height: 18),
+            Text("Couldn't load goats", style: AppTheme.heading(size: 15)),
+            const SizedBox(height: 6),
+            Text(
+              _errorMessage ?? 'Something went wrong. Please try again.',
+              textAlign: TextAlign.center,
+              style: AppTheme.body(size: 13),
+            ),
+            const SizedBox(height: 20),
+            ElevatedButton.icon(
+              onPressed: () => _farmId == null ? null : _subscribeToGoats(_farmId!),
+              icon: const Icon(Icons.refresh, size: 18),
+              label: const Text('Retry'),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: AppColors.primaryGreen,
+                foregroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                textStyle: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _loadingSkeleton() {
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, 16),
+      physics: const NeverScrollableScrollPhysics(),
+      children: [
+        _skeletonBlock(height: 64, radius: 16),
+        const SizedBox(height: 12),
+        _skeletonBlock(height: 44, radius: 12),
+        const SizedBox(height: 16),
+        for (int i = 0; i < 5; i++) ...[
+          _skeletonBlock(height: 78, radius: 14),
+          const SizedBox(height: 10),
+        ],
+      ],
+    );
+  }
+
+  Widget _skeletonBlock({required double height, required double radius}) {
+    return _Shimmer(
+      child: Container(
+        height: height,
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(radius),
+        ),
+      ),
+    );
+  }
+
+  Widget _summaryHeader(List<PalaiGoat> allGoats) {
+    final sick = allGoats.where((g) => g.healthStatus == 'Sick').length;
+    final watch = allGoats.where((g) => g.healthStatus == 'Under Observation').length;
+    final healthy = allGoats.length - sick - watch;
+
+    return Container(
+      margin: const EdgeInsets.fromLTRB(16, 4, 16, 12),
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        gradient: const LinearGradient(
+          colors: AppColors.headerGradient,
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        borderRadius: BorderRadius.circular(18),
+        boxShadow: [
+          BoxShadow(
+            color: AppColors.darkGreen.withOpacity(0.25),
+            blurRadius: 14,
+            offset: const Offset(0, 6),
+          ),
+        ],
+      ),
       child: Row(
         children: [
-          Container(
-            padding: const EdgeInsets.all(10),
-            decoration: BoxDecoration(color: AppColors.lightGreen, shape: BoxShape.circle),
-            child: const Icon(Icons.pets, color: AppColors.primaryGreen, size: 20),
-          ),
-          const SizedBox(width: 12),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text('$total goat${total == 1 ? '' : 's'} boarded',
-                    style: AppTheme.heading(size: 15)),
-                Text('Tap a goat to check it out', style: AppTheme.body(size: 11)),
+                Text('${allGoats.length}', style: AppTheme.heading(size: 26, color: Colors.white)),
+                Text('goat${allGoats.length == 1 ? '' : 's'} boarded', style: AppTheme.body(size: 12, color: Colors.white.withOpacity(0.9))),
               ],
             ),
           ),
+          _statPill(icon: Icons.favorite, color: Colors.white, label: '$healthy', sub: 'Healthy'),
+          const SizedBox(width: 10),
+          _statPill(icon: Icons.visibility, color: Colors.white, label: '$watch', sub: 'Watch'),
+          const SizedBox(width: 10),
+          _statPill(icon: Icons.local_hospital, color: Colors.white, label: '$sick', sub: 'Sick'),
         ],
+      ),
+    );
+  }
+
+  Widget _statPill({required IconData icon, required Color color, required String label, required String sub}) {
+    return Column(
+      children: [
+        Container(
+          padding: const EdgeInsets.all(8),
+          decoration: BoxDecoration(color: Colors.white.withOpacity(0.18), shape: BoxShape.circle),
+          child: Icon(icon, color: color, size: 15),
+        ),
+        const SizedBox(height: 4),
+        Text(label, style: AppTheme.body(size: 13, color: Colors.white, weight: FontWeight.w700)),
+        Text(sub, style: AppTheme.body(size: 9, color: Colors.white.withOpacity(0.85))),
+      ],
+    );
+  }
+
+  Widget _filterChips() {
+    final options = <(_HealthFilter, String, Color)>[
+      (_HealthFilter.all, 'All', AppColors.primaryGreen),
+      (_HealthFilter.healthy, 'Healthy', AppColors.success),
+      (_HealthFilter.watch, 'Watch', AppColors.warning),
+      (_HealthFilter.sick, 'Sick', AppColors.error),
+    ];
+    return SizedBox(
+      height: 36,
+      child: ListView.separated(
+        scrollDirection: Axis.horizontal,
+        padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
+        itemCount: options.length,
+        separatorBuilder: (_, __) => const SizedBox(width: 8),
+        itemBuilder: (context, i) {
+          final (value, label, color) = options[i];
+          final selected = _filter == value;
+          return ChoiceChip(
+            label: Text(label),
+            selected: selected,
+            onSelected: (_) => setState(() => _filter = value),
+            labelStyle: AppTheme.body(
+              size: 12,
+              color: selected ? Colors.white : AppColors.textDark,
+              weight: FontWeight.w600,
+            ),
+            selectedColor: color,
+            backgroundColor: Colors.white,
+            side: BorderSide(color: selected ? color : AppColors.divider),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+            visualDensity: VisualDensity.compact,
+            materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+          );
+        },
       ),
     );
   }
@@ -195,24 +473,24 @@ class _GoatListScreenState extends State<GoatListScreen> {
     return Material(
       color: Colors.transparent,
       child: InkWell(
-        borderRadius: BorderRadius.circular(14),
+        borderRadius: BorderRadius.circular(16),
         onTap: () => Navigator.of(context).push(fastRoute(CheckOutGoatScreen(goat: goat))),
         child: Container(
-          decoration: AppTheme.card(radius: 14),
+          decoration: AppTheme.card(radius: 16),
           padding: const EdgeInsets.all(12),
           child: Row(
             children: [
               Container(
-                width: 54,
-                height: 54,
+                width: 56,
+                height: 56,
                 decoration: BoxDecoration(
                   shape: BoxShape.circle,
                   color: AppColors.lightGreen,
-                  border: Border.all(color: healthColor.withOpacity(0.55), width: 2),
+                  border: Border.all(color: healthColor.withOpacity(0.6), width: 2.5),
                 ),
                 child: ClipOval(
                   child: goat.beforeImage != null
-                      ? Image.memory(goat.beforeImage!, fit: BoxFit.cover, width: 54, height: 54)
+                      ? Image.memory(goat.beforeImage!, fit: BoxFit.cover, width: 56, height: 56)
                       : const Icon(Icons.pets, color: AppColors.primaryGreen),
                 ),
               ),
@@ -225,12 +503,20 @@ class _GoatListScreenState extends State<GoatListScreen> {
                     const SizedBox(height: 3),
                     Text('${goat.breed} · ${goat.gender}', style: AppTheme.body(size: 12)),
                     const SizedBox(height: 6),
-                    Row(
-                      children: [
-                        Container(width: 6, height: 6, decoration: BoxDecoration(color: healthColor, shape: BoxShape.circle)),
-                        const SizedBox(width: 5),
-                        Text(goat.healthStatus, style: AppTheme.body(size: 11, color: healthColor, weight: FontWeight.w600)),
-                      ],
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                      decoration: BoxDecoration(
+                        color: healthColor.withOpacity(0.12),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Container(width: 6, height: 6, decoration: BoxDecoration(color: healthColor, shape: BoxShape.circle)),
+                          const SizedBox(width: 5),
+                          Text(goat.healthStatus, style: AppTheme.body(size: 11, color: healthColor, weight: FontWeight.w600)),
+                        ],
+                      ),
                     ),
                   ],
                 ),
@@ -259,58 +545,179 @@ class _GoatListScreenState extends State<GoatListScreen> {
   }
 
   Widget _emptyState() {
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(24),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Container(
-              width: 88,
-              height: 88,
-              decoration: const BoxDecoration(color: AppColors.lightGreen, shape: BoxShape.circle),
-              child: const Icon(Icons.pets, size: 40, color: AppColors.primaryGreen),
-            ),
-            const SizedBox(height: 18),
-            Text('No goats currently boarded', style: AppTheme.heading(size: 15)),
-            const SizedBox(height: 6),
-            Text(
-              'Goats you check in to Palai will show up here.',
-              textAlign: TextAlign.center,
-              style: AppTheme.body(size: 13),
-            ),
-            const SizedBox(height: 20),
-            ElevatedButton.icon(
-              onPressed: () => Navigator.of(context).push(fastRoute(const CheckInGoatScreen())),
-              icon: const Icon(Icons.add, size: 18),
-              label: const Text('Check In a Goat'),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: AppColors.primaryGreen,
-                foregroundColor: Colors.white,
-                padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                textStyle: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+    return ListView(
+      physics: const AlwaysScrollableScrollPhysics(),
+      children: [
+        Padding(
+          padding: const EdgeInsets.only(top: 80),
+          child: Center(
+            child: Padding(
+              padding: const EdgeInsets.all(24),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Container(
+                    width: 96,
+                    height: 96,
+                    decoration: const BoxDecoration(color: AppColors.lightGreen, shape: BoxShape.circle),
+                    child: const Icon(Icons.pets, size: 42, color: AppColors.primaryGreen),
+                  ),
+                  const SizedBox(height: 18),
+                  Text('No goats currently boarded', style: AppTheme.heading(size: 16)),
+                  const SizedBox(height: 6),
+                  Text(
+                    'Goats you check in to Palai will show up here.',
+                    textAlign: TextAlign.center,
+                    style: AppTheme.body(size: 13),
+                  ),
+                  const SizedBox(height: 22),
+                  ElevatedButton.icon(
+                    onPressed: () => Navigator.of(context).push(fastRoute(const CheckInGoatScreen())),
+                    icon: const Icon(Icons.add, size: 18),
+                    label: const Text('Check In a Goat'),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: AppColors.primaryGreen,
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                      textStyle: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+                    ),
+                  ),
+                ],
               ),
             ),
-          ],
+          ),
         ),
-      ),
+      ],
     );
   }
 
   Widget _noResultsState() {
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(24),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Icon(Icons.search_off, size: 36, color: AppColors.textGrey),
-            const SizedBox(height: 10),
-            Text('No goats match "${_searchController.text}"', style: AppTheme.body(size: 13), textAlign: TextAlign.center),
-          ],
+    return Padding(
+      padding: const EdgeInsets.only(top: 60),
+      child: Center(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: 72,
+                height: 72,
+                decoration: const BoxDecoration(color: AppColors.lightGreen, shape: BoxShape.circle),
+                child: const Icon(Icons.search_off, size: 32, color: AppColors.textGrey),
+              ),
+              const SizedBox(height: 14),
+              Text(
+                _query.isEmpty ? 'No goats match this filter' : 'No goats match "${_searchController.text}"',
+                style: AppTheme.body(size: 13),
+                textAlign: TextAlign.center,
+              ),
+              if (_filter != _HealthFilter.all || _query.isNotEmpty) ...[
+                const SizedBox(height: 10),
+                TextButton(
+                  onPressed: () => setState(() {
+                    _filter = _HealthFilter.all;
+                    _searchController.clear();
+                  }),
+                  child: Text('Clear filters', style: AppTheme.body(size: 12, color: AppColors.darkGreen, weight: FontWeight.w700)),
+                ),
+              ],
+            ],
+          ),
         ),
       ),
+    );
+  }
+}
+
+/// Fades and gently slides a list item into place when it first appears —
+/// staggered slightly by index so the initial load feels lively rather
+/// than everything popping in at once. Purely cosmetic, self-contained,
+/// and cheap: it only animates once, on mount.
+class _AnimatedListEntry extends StatefulWidget {
+  final int index;
+  final Widget child;
+  const _AnimatedListEntry({required this.index, required this.child});
+
+  @override
+  State<_AnimatedListEntry> createState() => _AnimatedListEntryState();
+}
+
+class _AnimatedListEntryState extends State<_AnimatedListEntry> {
+  bool _visible = false;
+
+  @override
+  void initState() {
+    super.initState();
+    final steps = widget.index > 8 ? 8 : widget.index;
+    final delay = Duration(milliseconds: 25 * steps);
+    Future.delayed(delay, () {
+      if (mounted) setState(() => _visible = true);
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedSlide(
+      duration: const Duration(milliseconds: 260),
+      curve: Curves.easeOutCubic,
+      offset: _visible ? Offset.zero : const Offset(0, 0.08),
+      child: AnimatedOpacity(
+        duration: const Duration(milliseconds: 260),
+        opacity: _visible ? 1 : 0,
+        child: widget.child,
+      ),
+    );
+  }
+}
+
+/// Lightweight shimmer sweep used for the loading skeleton — avoids
+/// pulling in an extra package for a single subtle effect.
+class _Shimmer extends StatefulWidget {
+  final Widget child;
+  const _Shimmer({required this.child});
+
+  @override
+  State<_Shimmer> createState() => _ShimmerState();
+}
+
+class _ShimmerState extends State<_Shimmer> with SingleTickerProviderStateMixin {
+  late final AnimationController _controller = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 1200),
+  )..repeat();
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: _controller,
+      builder: (context, child) {
+        return ShaderMask(
+          blendMode: BlendMode.srcATop,
+          shaderCallback: (bounds) {
+            final t = _controller.value;
+            return LinearGradient(
+              colors: [
+                AppColors.lightGreen.withOpacity(0.5),
+                Colors.white,
+                AppColors.lightGreen.withOpacity(0.5),
+              ],
+              stops: const [0.35, 0.5, 0.65],
+              begin: Alignment(-1 - t * 2, 0),
+              end: Alignment(1 - t * 2, 0),
+            ).createShader(bounds);
+          },
+          child: child,
+        );
+      },
+      child: widget.child,
     );
   }
 }

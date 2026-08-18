@@ -336,7 +336,14 @@ class FirestoreService {
   }
 
   Future<String> checkInGoat(String farmId, String customerId, PalaiGoat goat) async {
-    final ref = await _goats(farmId, customerId).add(goat.toMap());
+    // Denormalize farmId onto the goat document itself. This is required
+    // for the Firestore security rule that guards the collectionGroup
+    // ('goats') query (used by allActiveGoatsStream / the "Goats in
+    // Palai" list) — Firebase's documented pattern for collection-group
+    // rules checks a field stored directly on the document
+    // (`resource.data.farmId`), not a value parsed out of its path.
+    final data = goat.toMap()..['farmId'] = farmId;
+    final ref = await _goats(farmId, customerId).add(data);
     return ref.id;
   }
 
