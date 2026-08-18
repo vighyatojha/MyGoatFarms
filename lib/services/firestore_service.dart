@@ -8,6 +8,7 @@ import 'package:flutter/foundation.dart';
 import '../models/bill_settings_model.dart';
 import '../models/farm_model.dart';
 import '../models/palai_models.dart';
+import '../models/report_models.dart';
 import '../models/stock_model.dart';
 import '../models/activity_model.dart';
 import '../models/partner_model.dart';
@@ -401,6 +402,42 @@ class FirestoreService {
   }
 
   // ---------------------------------------------------------------------
+  // Palai — goat reports (Generate Report)
+  // ---------------------------------------------------------------------
+
+  CollectionReference<Map<String, dynamic>> _reports(String farmId, String customerId, String goatId) =>
+      _goats(farmId, customerId).doc(goatId).collection('reports');
+
+  /// Saves a newly generated [report] under the goat, then updates the
+  /// goat document's `reportStatus` / `lastReportType` / `lastReportDate`
+  /// / `reportsCount` fields so the "Report" badge on the goat card (and
+  /// anywhere else the goat is shown) reflects it immediately — without
+  /// touching any of the goat's other check-in data.
+  Future<void> saveGoatReport(
+      String farmId,
+      String customerId,
+      String goatId,
+      GoatReport report,
+      ) async {
+    await _reports(farmId, customerId, goatId).add(report.toMap()).timeout(timeout);
+    await _goats(farmId, customerId).doc(goatId).update({
+      'reportStatus': report.type.statusLabel,
+      'lastReportType': report.type.storageValue,
+      'lastReportDate': FieldValue.serverTimestamp(),
+      'reportsCount': FieldValue.increment(1),
+    }).timeout(timeout);
+  }
+
+  /// Every report generated for this goat so far, most recent first —
+  /// used by a goat's report history (if/when shown).
+  Stream<List<GoatReport>> goatReportsStream(String farmId, String customerId, String goatId) {
+    return _reports(farmId, customerId, goatId)
+        .orderBy('generatedAt', descending: true)
+        .snapshots()
+        .map((s) => s.docs.map(GoatReport.fromDoc).toList());
+  }
+
+  // ---------------------------------------------------------------------
   // Stock — feed & medicine
   // ---------------------------------------------------------------------
 
@@ -720,10 +757,10 @@ class FirestoreService {
   /// (vaccination, hair trimming) follow the same `nextDueDate` field and
   /// can reuse this same query with a different [type].
   Future<List<MapEntry<OwnFarmGoat, HealthEvent>>> upcomingHealthReminders(
-    String farmId, {
-    HealthEventType? type,
-    int withinDays = 45,
-  }) async {
+      String farmId, {
+        HealthEventType? type,
+        int withinDays = 45,
+      }) async {
     final goatsSnap = await _ownFarmGoats(farmId).where('isActive', isEqualTo: true).get().timeout(timeout);
     final cutoff = DateTime.now().add(Duration(days: withinDays));
     final results = <MapEntry<OwnFarmGoat, HealthEvent>>[];

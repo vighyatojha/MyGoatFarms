@@ -24,26 +24,33 @@ class PalaiCustomer {
     this.price = 0,
   });
 
-  factory PalaiCustomer.fromDoc(DocumentSnapshot<Map<String, dynamic>> doc) {
+  factory PalaiCustomer.fromDoc(
+      DocumentSnapshot<Map<String, dynamic>> doc,
+      ) {
     final data = doc.data() ?? {};
+
     return PalaiCustomer(
       id: doc.id,
       name: data['name'] ?? '',
       mobileNumber: data['mobileNumber'] ?? '',
       address: data['address'] ?? '',
       package: data['package'] ?? '',
-      joiningDate: (data['joiningDate'] as Timestamp?)?.toDate() ?? DateTime.now(),
+      joiningDate:
+      (data['joiningDate'] as Timestamp?)?.toDate() ??
+          DateTime.now(),
       pendingAmount: (data['pendingAmount'] ?? 0).toDouble(),
       price: (data['price'] ?? 0).toDouble(),
     );
   }
 
   @override
-  bool operator ==(Object other) => other is PalaiCustomer && other.id == id;
+  bool operator ==(Object other) =>
+      other is PalaiCustomer && other.id == id;
 
   @override
   int get hashCode => id.hashCode;
 
+  /// Data used when creating a new customer.
   Map<String, dynamic> toMap() {
     return {
       'name': name,
@@ -57,8 +64,10 @@ class PalaiCustomer {
     };
   }
 
-  /// Fields sent on an update — deliberately excludes `joiningDate` and
-  /// `createdAt` so editing a customer never rewrites when they joined.
+  /// Fields sent on an update.
+  ///
+  /// Deliberately excludes [joiningDate] and [createdAt] so editing
+  /// a customer never changes when they originally joined.
   Map<String, dynamic> toUpdateMap() {
     return {
       'name': name,
@@ -94,38 +103,68 @@ class PalaiCustomer {
 
 /// A goat that is checked into Palai boarding, belonging to a customer.
 ///
-/// Carries two optional photos, stored as raw bytes directly on the
-/// document (Firestore `Blob`s) the same way the farm profile photo is
-/// stored — no Storage bucket required:
-///   - [beforeImage] — taken at check-in ("Before Palai").
-///   - [afterImage]  — taken at check-out ("After Palai").
-/// Each is compressed to a tighter budget than the farm profile photo
-/// (see `ImageService.goatPhotoMaxStoredBytes`) since both can live on
-/// the same ~1 MiB document at once.
+/// Carries two optional photos:
+/// - [beforeImage] — taken at check-in ("Before Palai").
+/// - [afterImage] — taken at check-out ("After Palai").
+///
+/// Images are stored as Firestore [Blob] values directly on the
+/// document, so Firebase Storage is not required.
 class PalaiGoat {
   final String id;
   final String customerId;
+
   final String goatCode; // e.g. G-1001
   final String breed;
   final String gender;
   final String color;
+
   final double weightAtCheckIn;
   final double? currentWeight;
+
   final String healthStatus;
+
   final DateTime checkInDate;
   final DateTime? checkOutDate;
+
   final String monthlyPackage;
   final double pricing; // Palai pricing for this check-in (₹)
+
   final String notes;
+
   final bool isCheckedOut;
 
-  /// "Before Palai" photo, taken at check-in time.
+  /// "Before Palai" photo, taken at check-in.
   final Uint8List? beforeImage;
   final String? beforeImageContentType;
 
-  /// "After Palai" photo, taken at check-out time.
+  /// "After Palai" photo, taken at check-out.
   final Uint8List? afterImage;
   final String? afterImageContentType;
+
+  // ------------------------------------------------------------
+  // REPORT INFORMATION
+  // ------------------------------------------------------------
+
+  /// Report-generation status shown on the goat card.
+  ///
+  /// Possible values:
+  /// - "Not Generated"
+  /// - "Progress Report Generated"
+  /// - "Final Report Generated"
+  final String reportStatus;
+
+  /// Storage value of the most recently generated report.
+  ///
+  /// Expected values:
+  /// - "progress"
+  /// - "final"
+  final String? lastReportType;
+
+  /// Date and time when the most recent report was generated.
+  final DateTime? lastReportDate;
+
+  /// Total number of reports generated for this goat.
+  final int reportsCount;
 
   PalaiGoat({
     required this.id,
@@ -143,79 +182,331 @@ class PalaiGoat {
     this.pricing = 0,
     required this.notes,
     this.isCheckedOut = false,
+
+    // Images
     this.beforeImage,
     this.beforeImageContentType,
     this.afterImage,
     this.afterImageContentType,
+
+    // Report fields
+    this.reportStatus = 'Not Generated',
+    this.lastReportType,
+    this.lastReportDate,
+    this.reportsCount = 0,
   });
 
-  factory PalaiGoat.fromDoc(DocumentSnapshot<Map<String, dynamic>> doc) {
+  factory PalaiGoat.fromDoc(
+      DocumentSnapshot<Map<String, dynamic>> doc,
+      ) {
     final data = doc.data() ?? {};
+
     final beforeField = data['beforeImage'];
     final afterField = data['afterImage'];
+
     return PalaiGoat(
       id: doc.id,
+
       customerId: data['customerId'] ?? '',
+
       goatCode: data['goatCode'] ?? '',
       breed: data['breed'] ?? '',
       gender: data['gender'] ?? '',
       color: data['color'] ?? '',
-      weightAtCheckIn: (data['weightAtCheckIn'] ?? 0).toDouble(),
-      currentWeight: (data['currentWeight'] as num?)?.toDouble(),
-      healthStatus: data['healthStatus'] ?? 'Healthy',
-      checkInDate: (data['checkInDate'] as Timestamp?)?.toDate() ?? DateTime.now(),
-      checkOutDate: (data['checkOutDate'] as Timestamp?)?.toDate(),
-      monthlyPackage: data['monthlyPackage'] ?? '',
-      pricing: (data['pricing'] ?? 0).toDouble(),
-      notes: data['notes'] ?? '',
-      isCheckedOut: data['isCheckedOut'] ?? false,
-      beforeImage: beforeField is Blob ? beforeField.bytes : null,
-      beforeImageContentType: data['beforeImageContentType'] as String?,
-      afterImage: afterField is Blob ? afterField.bytes : null,
-      afterImageContentType: data['afterImageContentType'] as String?,
+
+      weightAtCheckIn:
+      (data['weightAtCheckIn'] ?? 0).toDouble(),
+
+      currentWeight:
+      (data['currentWeight'] as num?)?.toDouble(),
+
+      healthStatus:
+      data['healthStatus'] ?? 'Healthy',
+
+      checkInDate:
+      (data['checkInDate'] as Timestamp?)?.toDate() ??
+          DateTime.now(),
+
+      checkOutDate:
+      (data['checkOutDate'] as Timestamp?)?.toDate(),
+
+      monthlyPackage:
+      data['monthlyPackage'] ?? '',
+
+      pricing:
+      (data['pricing'] ?? 0).toDouble(),
+
+      notes:
+      data['notes'] ?? '',
+
+      isCheckedOut:
+      data['isCheckedOut'] ?? false,
+
+      // --------------------------------------------------------
+      // BEFORE IMAGE
+      // --------------------------------------------------------
+      beforeImage:
+      beforeField is Blob
+          ? beforeField.bytes
+          : null,
+
+      beforeImageContentType:
+      data['beforeImageContentType'] as String?,
+
+      // --------------------------------------------------------
+      // AFTER IMAGE
+      // --------------------------------------------------------
+      afterImage:
+      afterField is Blob
+          ? afterField.bytes
+          : null,
+
+      afterImageContentType:
+      data['afterImageContentType'] as String?,
+
+      // --------------------------------------------------------
+      // REPORT INFORMATION
+      // --------------------------------------------------------
+      reportStatus:
+      data['reportStatus'] as String? ??
+          'Not Generated',
+
+      lastReportType:
+      data['lastReportType'] as String?,
+
+      lastReportDate:
+      (data['lastReportDate'] as Timestamp?)?.toDate(),
+
+      reportsCount:
+      (data['reportsCount'] as num?)?.toInt() ?? 0,
     );
   }
 
+  /// Data used when creating a new goat.
   Map<String, dynamic> toMap() {
     final map = <String, dynamic>{
       'customerId': customerId,
+
       'goatCode': goatCode,
       'breed': breed,
       'gender': gender,
       'color': color,
+
       'weightAtCheckIn': weightAtCheckIn,
       'currentWeight': currentWeight,
+
       'healthStatus': healthStatus,
+
       'checkInDate': Timestamp.fromDate(checkInDate),
-      'checkOutDate': checkOutDate != null ? Timestamp.fromDate(checkOutDate!) : null,
+
+      'checkOutDate': checkOutDate != null
+          ? Timestamp.fromDate(checkOutDate!)
+          : null,
+
       'monthlyPackage': monthlyPackage,
       'pricing': pricing,
+
       'notes': notes,
+
       'isCheckedOut': isCheckedOut,
+
+      // --------------------------------------------------------
+      // REPORT INFORMATION
+      // --------------------------------------------------------
+      'reportStatus': reportStatus,
+      'lastReportType': lastReportType,
+      'lastReportDate': lastReportDate != null
+          ? Timestamp.fromDate(lastReportDate!)
+          : null,
+      'reportsCount': reportsCount,
+
       'createdAt': FieldValue.serverTimestamp(),
     };
+
+    // ----------------------------------------------------------
+    // BEFORE IMAGE
+    // ----------------------------------------------------------
     if (beforeImage != null) {
       map['beforeImage'] = Blob(beforeImage!);
-      map['beforeImageContentType'] = beforeImageContentType ?? 'image/jpeg';
+      map['beforeImageContentType'] =
+          beforeImageContentType ?? 'image/jpeg';
     }
+
+    // ----------------------------------------------------------
+    // AFTER IMAGE
+    // ----------------------------------------------------------
     if (afterImage != null) {
       map['afterImage'] = Blob(afterImage!);
-      map['afterImageContentType'] = afterImageContentType ?? 'image/jpeg';
+      map['afterImageContentType'] =
+          afterImageContentType ?? 'image/jpeg';
     }
+
     return map;
+  }
+
+  /// Fields that can be updated without recreating the goat.
+  ///
+  /// This keeps the original [checkInDate] and [createdAt] unchanged.
+  Map<String, dynamic> toUpdateMap() {
+    final map = <String, dynamic>{
+      'customerId': customerId,
+
+      'goatCode': goatCode,
+      'breed': breed,
+      'gender': gender,
+      'color': color,
+
+      'weightAtCheckIn': weightAtCheckIn,
+      'currentWeight': currentWeight,
+
+      'healthStatus': healthStatus,
+
+      'checkOutDate': checkOutDate != null
+          ? Timestamp.fromDate(checkOutDate!)
+          : null,
+
+      'monthlyPackage': monthlyPackage,
+      'pricing': pricing,
+
+      'notes': notes,
+
+      'isCheckedOut': isCheckedOut,
+
+      // Report information
+      'reportStatus': reportStatus,
+      'lastReportType': lastReportType,
+      'lastReportDate': lastReportDate != null
+          ? Timestamp.fromDate(lastReportDate!)
+          : null,
+      'reportsCount': reportsCount,
+    };
+
+    // Before image
+    if (beforeImage != null) {
+      map['beforeImage'] = Blob(beforeImage!);
+      map['beforeImageContentType'] =
+          beforeImageContentType ?? 'image/jpeg';
+    }
+
+    // After image
+    if (afterImage != null) {
+      map['afterImage'] = Blob(afterImage!);
+      map['afterImageContentType'] =
+          afterImageContentType ?? 'image/jpeg';
+    }
+
+    return map;
+  }
+
+  PalaiGoat copyWith({
+    String? customerId,
+    String? goatCode,
+    String? breed,
+    String? gender,
+    String? color,
+    double? weightAtCheckIn,
+    double? currentWeight,
+    String? healthStatus,
+    DateTime? checkInDate,
+    DateTime? checkOutDate,
+    String? monthlyPackage,
+    double? pricing,
+    String? notes,
+    bool? isCheckedOut,
+
+    Uint8List? beforeImage,
+    String? beforeImageContentType,
+
+    Uint8List? afterImage,
+    String? afterImageContentType,
+
+    String? reportStatus,
+    String? lastReportType,
+    DateTime? lastReportDate,
+    int? reportsCount,
+  }) {
+    return PalaiGoat(
+      id: id,
+
+      customerId: customerId ?? this.customerId,
+
+      goatCode: goatCode ?? this.goatCode,
+      breed: breed ?? this.breed,
+      gender: gender ?? this.gender,
+      color: color ?? this.color,
+
+      weightAtCheckIn:
+      weightAtCheckIn ?? this.weightAtCheckIn,
+
+      currentWeight:
+      currentWeight ?? this.currentWeight,
+
+      healthStatus:
+      healthStatus ?? this.healthStatus,
+
+      checkInDate:
+      checkInDate ?? this.checkInDate,
+
+      checkOutDate:
+      checkOutDate ?? this.checkOutDate,
+
+      monthlyPackage:
+      monthlyPackage ?? this.monthlyPackage,
+
+      pricing:
+      pricing ?? this.pricing,
+
+      notes:
+      notes ?? this.notes,
+
+      isCheckedOut:
+      isCheckedOut ?? this.isCheckedOut,
+
+      // Images
+      beforeImage:
+      beforeImage ?? this.beforeImage,
+
+      beforeImageContentType:
+      beforeImageContentType ??
+          this.beforeImageContentType,
+
+      afterImage:
+      afterImage ?? this.afterImage,
+
+      afterImageContentType:
+      afterImageContentType ??
+          this.afterImageContentType,
+
+      // Report information
+      reportStatus:
+      reportStatus ?? this.reportStatus,
+
+      lastReportType:
+      lastReportType ?? this.lastReportType,
+
+      lastReportDate:
+      lastReportDate ?? this.lastReportDate,
+
+      reportsCount:
+      reportsCount ?? this.reportsCount,
+    );
   }
 }
 
 /// A single health-record entry logged against a Palai goat over time.
 class HealthRecordEntry {
   final String id;
+
   final double weight;
+
   final String vaccination;
   final String deworming;
   final String hoofCutting;
   final String medicineGiven;
+
   final String healthStatus;
   final String doctorNotes;
+
   final DateTime recordedAt;
 
   HealthRecordEntry({
@@ -230,30 +521,53 @@ class HealthRecordEntry {
     required this.recordedAt,
   });
 
-  factory HealthRecordEntry.fromDoc(DocumentSnapshot<Map<String, dynamic>> doc) {
+  factory HealthRecordEntry.fromDoc(
+      DocumentSnapshot<Map<String, dynamic>> doc,
+      ) {
     final data = doc.data() ?? {};
+
     return HealthRecordEntry(
       id: doc.id,
-      weight: (data['weight'] ?? 0).toDouble(),
-      vaccination: data['vaccination'] ?? '',
-      deworming: data['deworming'] ?? '',
-      hoofCutting: data['hoofCutting'] ?? '',
-      medicineGiven: data['medicineGiven'] ?? '',
-      healthStatus: data['healthStatus'] ?? '',
-      doctorNotes: data['doctorNotes'] ?? '',
-      recordedAt: (data['recordedAt'] as Timestamp?)?.toDate() ?? DateTime.now(),
+
+      weight:
+      (data['weight'] ?? 0).toDouble(),
+
+      vaccination:
+      data['vaccination'] ?? '',
+
+      deworming:
+      data['deworming'] ?? '',
+
+      hoofCutting:
+      data['hoofCutting'] ?? '',
+
+      medicineGiven:
+      data['medicineGiven'] ?? '',
+
+      healthStatus:
+      data['healthStatus'] ?? '',
+
+      doctorNotes:
+      data['doctorNotes'] ?? '',
+
+      recordedAt:
+      (data['recordedAt'] as Timestamp?)?.toDate() ??
+          DateTime.now(),
     );
   }
 
   Map<String, dynamic> toMap() {
     return {
       'weight': weight,
+
       'vaccination': vaccination,
       'deworming': deworming,
       'hoofCutting': hoofCutting,
       'medicineGiven': medicineGiven,
+
       'healthStatus': healthStatus,
       'doctorNotes': doctorNotes,
+
       'recordedAt': Timestamp.fromDate(recordedAt),
     };
   }

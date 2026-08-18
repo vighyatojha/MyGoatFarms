@@ -8,6 +8,7 @@ import '../../services/firestore_service.dart';
 import '../../widgets/fast_route.dart';
 import 'check_in_screen.dart';
 import 'check_out_screen.dart';
+import 'generate_report_screen.dart';
 
 /// Lists every goat currently boarded in Palai: a circular "Before Palai"
 /// photo (ringed by its health status color), the Goat ID, and how long
@@ -522,6 +523,8 @@ class _GoatListScreenState extends State<GoatListScreen> {
                         ],
                       ),
                     ),
+                    const SizedBox(height: 6),
+                    _reportBadge(goat),
                   ],
                 ),
               ),
@@ -538,12 +541,46 @@ class _GoatListScreenState extends State<GoatListScreen> {
                     ),
                   ),
                   const SizedBox(height: 6),
-                  const Icon(Icons.chevron_right, color: AppColors.textGrey, size: 18),
+                  Material(
+                    color: Colors.transparent,
+                    child: InkWell(
+                      borderRadius: BorderRadius.circular(20),
+                      onTap: () => Navigator.of(context).push(fastRoute(GenerateReportScreen(goat: goat))),
+                      child: Padding(
+                        padding: const EdgeInsets.all(4),
+                        child: Icon(Icons.description_outlined, color: AppColors.primaryGreen, size: 18),
+                      ),
+                    ),
+                  ),
                 ],
               ),
             ],
           ),
         ),
+      ),
+    );
+  }
+
+  /// Small pill showing whether a report has ever been generated for
+  /// this goat — tap the document icon on the card to generate one.
+  Widget _reportBadge(PalaiGoat goat) {
+    final generated = goat.reportStatus != 'Not Generated' && goat.reportsCount > 0;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+      decoration: BoxDecoration(
+        color: (generated ? AppColors.info : AppColors.textGrey).withOpacity(0.10),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(Icons.description_outlined, size: 11, color: generated ? AppColors.info : AppColors.textGrey),
+          const SizedBox(width: 4),
+          Text(
+            generated ? goat.reportStatus : 'No report yet',
+            style: AppTheme.body(size: 10, color: generated ? AppColors.info : AppColors.textGrey, weight: FontWeight.w600),
+          ),
+        ],
       ),
     );
   }
