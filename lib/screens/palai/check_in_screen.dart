@@ -17,7 +17,10 @@ import 'add_customer_screen.dart';
 /// ID, breed, gender, age/weight, color, health status, owner (customer),
 /// check-in date, monthly package and notes — per the Palai spec.
 class CheckInGoatScreen extends StatefulWidget {
-  const CheckInGoatScreen({super.key});
+  /// When opened from a customer's profile, pre-fills the owner field so
+  /// the person doesn't have to pick the same customer again.
+  final PalaiCustomer? presetCustomer;
+  const CheckInGoatScreen({super.key, this.presetCustomer});
 
   @override
   State<CheckInGoatScreen> createState() => _CheckInGoatScreenState();
@@ -48,6 +51,7 @@ class _CheckInGoatScreenState extends State<CheckInGoatScreen> {
   @override
   void initState() {
     super.initState();
+    _selectedCustomer = widget.presetCustomer;
     FirestoreService.instance.currentFarmId().then((id) {
       if (mounted) setState(() => _farmId = id);
     });

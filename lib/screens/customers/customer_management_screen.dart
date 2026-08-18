@@ -10,6 +10,7 @@ import '../../models/palai_models.dart';
 import '../../services/firestore_service.dart';
 import '../../widgets/fast_route.dart';
 import '../palai/add_customer_screen.dart';
+import 'customer_profile_screen.dart';
 
 /// Customer management: the "Customers" bottom-nav tab.
 ///
@@ -17,8 +18,10 @@ import '../palai/add_customer_screen.dart';
 /// Read, Update and Delete customer records:
 ///  - Create: the "+" button opens [AddCustomerScreen] in add mode.
 ///  - Read: this list, plus a summary of total customers & total pending.
-///  - Update: tapping a card, or "Edit" in its menu, opens the same form
-///    pre-filled for that customer.
+///    Tapping a card opens [CustomerProfileScreen] for full detail; "Edit"
+///    in its menu opens the edit form directly.
+///  - Update: "Edit" in the card's menu opens the form pre-filled for
+///    that customer (also reachable from within the profile screen).
 ///  - Delete: "Delete" in the card's menu, with a confirmation dialog
 ///    (blocked if the customer still has goats checked into Palai).
 class CustomerManagementScreen extends StatefulWidget {
@@ -59,6 +62,14 @@ class _CustomerManagementScreenState extends State<CustomerManagementScreen> {
 
   Future<void> _openAdd() async {
     await Navigator.of(context).push(fastRoute(const AddCustomerScreen()));
+  }
+
+  Future<void> _openProfile(PalaiCustomer customer) async {
+    final farmId = _farmId;
+    if (farmId == null) return;
+    await Navigator.of(context).push(
+      fastRoute(CustomerProfileScreen(customer: customer, farmId: farmId)),
+    );
   }
 
   Future<void> _openEdit(PalaiCustomer customer) async {
@@ -152,80 +163,80 @@ class _CustomerManagementScreenState extends State<CustomerManagementScreen> {
         child: _farmId == null
             ? const Center(child: CircularProgressIndicator(color: AppColors.primaryGreen))
             : Column(
-                children: [
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(20, 12, 20, 4),
-                    child: FadeInDown(duration: const Duration(milliseconds: 180), child: _buildHeader()),
-                  ),
-                  Expanded(
-                    child: StreamBuilder<List<PalaiCustomer>>(
-                      stream: FirestoreService.instance.customersStream(_farmId!),
-                      builder: (context, snap) {
-                        if (!snap.hasData) {
-                          return const Center(child: CircularProgressIndicator(color: AppColors.primaryGreen));
-                        }
-                        final all = snap.data!;
-                        final customers = _filtered(all);
-                        return CustomScrollView(
-                          slivers: [
-                            SliverToBoxAdapter(
-                              child: Padding(
-                                padding: const EdgeInsets.fromLTRB(20, 12, 20, 4),
-                                child: FadeInUp(
-                                  delay: const Duration(milliseconds: 40),
-                                  duration: const Duration(milliseconds: 200),
-                                  child: _buildSummary(all),
-                                ),
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 12, 20, 4),
+              child: FadeInDown(duration: const Duration(milliseconds: 180), child: _buildHeader()),
+            ),
+            Expanded(
+              child: StreamBuilder<List<PalaiCustomer>>(
+                stream: FirestoreService.instance.customersStream(_farmId!),
+                builder: (context, snap) {
+                  if (!snap.hasData) {
+                    return const Center(child: CircularProgressIndicator(color: AppColors.primaryGreen));
+                  }
+                  final all = snap.data!;
+                  final customers = _filtered(all);
+                  return CustomScrollView(
+                    slivers: [
+                      SliverToBoxAdapter(
+                        child: Padding(
+                          padding: const EdgeInsets.fromLTRB(20, 12, 20, 4),
+                          child: FadeInUp(
+                            delay: const Duration(milliseconds: 40),
+                            duration: const Duration(milliseconds: 200),
+                            child: _buildSummary(all),
+                          ),
+                        ),
+                      ),
+                      SliverToBoxAdapter(
+                        child: Padding(
+                          padding: const EdgeInsets.fromLTRB(20, 8, 20, 4),
+                          child: _buildSearch(),
+                        ),
+                      ),
+                      if (customers.isEmpty)
+                        SliverFillRemaining(
+                          hasScrollBody: false,
+                          child: Center(
+                            child: Padding(
+                              padding: const EdgeInsets.all(24),
+                              child: Text(
+                                all.isEmpty ? 'No customers yet. Tap "Add Customer" to create one.' : 'No customers match "${_searchController.text}".',
+                                textAlign: TextAlign.center,
+                                style: AppTheme.body(size: 13),
                               ),
                             ),
-                            SliverToBoxAdapter(
-                              child: Padding(
-                                padding: const EdgeInsets.fromLTRB(20, 8, 20, 4),
-                                child: _buildSearch(),
-                              ),
-                            ),
-                            if (customers.isEmpty)
-                              SliverFillRemaining(
-                                hasScrollBody: false,
-                                child: Center(
-                                  child: Padding(
-                                    padding: const EdgeInsets.all(24),
-                                    child: Text(
-                                      all.isEmpty ? 'No customers yet. Tap "Add Customer" to create one.' : 'No customers match "${_searchController.text}".',
-                                      textAlign: TextAlign.center,
-                                      style: AppTheme.body(size: 13),
-                                    ),
-                                  ),
+                          ),
+                        )
+                      else
+                        SliverPadding(
+                          padding: const EdgeInsets.fromLTRB(20, 8, 20, 24),
+                          sliver: SliverList.separated(
+                            itemCount: customers.length,
+                            separatorBuilder: (_, __) => const SizedBox(height: 10),
+                            itemBuilder: (context, i) {
+                              final customer = customers[i];
+                              return FadeInUp(
+                                delay: Duration(milliseconds: 20 * i.clamp(0, 8).toInt()),
+                                duration: const Duration(milliseconds: 200),
+                                child: _CustomerCard(
+                                  customer: customer,
+                                  onTap: () => _openProfile(customer),
+                                  onEdit: () => _openEdit(customer),
+                                  onDelete: () => _confirmDelete(customer),
                                 ),
-                              )
-                            else
-                              SliverPadding(
-                                padding: const EdgeInsets.fromLTRB(20, 8, 20, 24),
-                                sliver: SliverList.separated(
-                                  itemCount: customers.length,
-                                  separatorBuilder: (_, __) => const SizedBox(height: 10),
-                                  itemBuilder: (context, i) {
-                                    final customer = customers[i];
-                                    return FadeInUp(
-                                      delay: Duration(milliseconds: 20 * i.clamp(0, 8).toInt()),
-                                      duration: const Duration(milliseconds: 200),
-                                      child: _CustomerCard(
-                                        customer: customer,
-                                        onTap: () => _openEdit(customer),
-                                        onEdit: () => _openEdit(customer),
-                                        onDelete: () => _confirmDelete(customer),
-                                      ),
-                                    );
-                                  },
-                                ),
-                              ),
-                          ],
-                        );
-                      },
-                    ),
-                  ),
-                ],
+                              );
+                            },
+                          ),
+                        ),
+                    ],
+                  );
+                },
               ),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -323,9 +334,9 @@ class _CustomerManagementScreenState extends State<CustomerManagementScreen> {
           suffixIcon: _query.isEmpty
               ? null
               : IconButton(
-                  icon: const Icon(Icons.close, color: AppColors.textGrey, size: 18),
-                  onPressed: () => _searchController.clear(),
-                ),
+            icon: const Icon(Icons.close, color: AppColors.textGrey, size: 18),
+            onPressed: () => _searchController.clear(),
+          ),
           border: InputBorder.none,
           contentPadding: const EdgeInsets.symmetric(vertical: 12),
         ),
