@@ -3,15 +3,16 @@ import 'package:animate_do/animate_do.dart';
 
 import '../../app_theme.dart';
 import '../../models/activity_model.dart';
-import '../../models/palai_models.dart';
 import '../../services/firestore_service.dart';
 import '../../widgets/fast_route.dart';
+import '../../widgets/goat_count_builder.dart';
 import '../home/widgets/home_widgets.dart';
 import 'add_customer_screen.dart';
 import 'check_in_screen.dart';
 import 'goat_list_screen.dart';
 import 'health_records_screen.dart';
 import 'billing_screen.dart';
+import '../../models/palai_models.dart';
 
 /// Palai (Goat Boarding & Care) module dashboard.
 ///
@@ -34,7 +35,11 @@ class _PalaiScreenState extends State<PalaiScreen> {
   // (e.g. during the FadeIn animations below), forcing it to drop its
   // subscription and flash back to the loading state — that's what caused
   // the dashboard cards to keep "reloading".
-  Stream<List<PalaiGoat>>? _goatsStream;
+  //
+  // The "Total Goats" count itself goes through GoatCountBuilder instead
+  // of a stream field here — it needs to survive a transient listener
+  // error (e.g. the goats collection-group index rebuilding) without
+  // dropping to "—", which a plain StreamBuilder can't do.
   Stream<List<PalaiCustomer>>? _customersStream;
   Stream<double>? _incomeStream;
   Stream<double>? _pendingStream;
@@ -48,7 +53,6 @@ class _PalaiScreenState extends State<PalaiScreen> {
       setState(() {
         _farmId = id;
         if (id != null) {
-          _goatsStream = FirestoreService.instance.allActiveGoatsStream(id);
           _customersStream = FirestoreService.instance.customersStream(id);
           _incomeStream = FirestoreService.instance.todaysIncomeStream(id);
           _pendingStream = FirestoreService.instance.totalPendingPaymentsStream(id);
@@ -150,12 +154,12 @@ class _PalaiScreenState extends State<PalaiScreen> {
           Row(
             children: [
               Expanded(
-                child: StreamBuilder<List<PalaiGoat>>(
-                  stream: _goatsStream,
-                  builder: (context, snap) => StatCard(
+                child: GoatCountBuilder(
+                  farmId: _farmId!,
+                  builder: (context, count) => StatCard(
                     icon: Icons.pets,
                     label: 'Total Goats in Palai',
-                    value: snap.hasData ? '${snap.data!.length}' : '—',
+                    value: count != null ? '$count' : '—',
                     color: AppColors.primaryGreen,
                     // Tapping the card takes you straight to the full
                     // goat list, same as the "Check-Out" quick action.

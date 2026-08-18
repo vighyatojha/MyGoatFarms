@@ -7,7 +7,6 @@ import 'package:animate_do/animate_do.dart';
 import '../../app_theme.dart';
 import '../../models/farm_model.dart';
 import '../../models/activity_model.dart';
-import '../../models/palai_models.dart';
 import '../../models/partner_model.dart';
 import '../../models/stock_model.dart';
 import '../../services/firestore_service.dart';
@@ -19,8 +18,9 @@ import '../stocks/stock_screen.dart';
 import '../stocks/add_feed_stock_screen.dart';
 import '../profile/profile_screen.dart';
 import 'notification_screen.dart';
-import 'total_goats_screen.dart';
+import '../palai/goat_list_screen.dart';
 import 'income_detail_screen.dart';
+import '../../widgets/goat_count_builder.dart';
 
 /// Home / dashboard screen. Quick, at-a-glance view of the whole farm —
 /// live totals, the four main modules, quick actions and recent activity.
@@ -226,19 +226,16 @@ class _HomeScreenState extends State<HomeScreen> {
           Row(
             children: [
               Expanded(
-                child: StreamBuilder<List<PalaiGoat>>(
-                  stream: FirestoreService.instance.allActiveGoatsStream(farmId),
-                  builder: (context, snap) {
-                    final count = snap.data?.length ?? 0;
-                    return StatCard(
-                      icon: Icons.pets,
-                      label: 'Total Goats',
-                      value: snap.hasData ? '$count' : '—',
-                      color: AppColors.primaryGreen,
-                      onTap: () => Navigator.of(context)
-                          .push(fastRoute(const TotalGoatsScreen())),
-                    );
-                  },
+                child: GoatCountBuilder(
+                  farmId: farmId,
+                  builder: (context, count) => StatCard(
+                    icon: Icons.pets,
+                    label: 'Total Goats',
+                    value: count != null ? '$count' : '—',
+                    color: AppColors.primaryGreen,
+                    onTap: () => Navigator.of(context)
+                        .push(fastRoute(const GoatListScreen())),
+                  ),
                 ),
               ),
               const SizedBox(width: 12),
