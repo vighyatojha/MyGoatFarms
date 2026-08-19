@@ -50,6 +50,37 @@ class MonthlyBillResult {
   });
 }
 
+class StandalonePaymentResult {
+  final String paymentId;
+  final String paymentNumber;
+
+  final String customerName;
+
+  final double pendingBefore;
+  final double amountReceived;
+  final double amountAppliedToPending;
+  final double pendingAfter;
+
+  final double advanceBefore;
+  final double advanceAdded;
+  final double advanceAfter;
+
+  final String paymentMethod;
+
+  const StandalonePaymentResult({
+    required this.paymentId,
+    required this.paymentNumber,
+    required this.customerName,
+    required this.pendingBefore,
+    required this.amountReceived,
+    required this.amountAppliedToPending,
+    required this.pendingAfter,
+    required this.advanceBefore,
+    required this.advanceAdded,
+    required this.advanceAfter,
+    required this.paymentMethod,
+  });
+}
 
 
 class FirestoreService {
@@ -423,6 +454,253 @@ class FirestoreService {
       },
     ).timeout(timeout);
   }
+
+  /// Records a standalone payment from a Palai customer.
+  ///
+  /// This operation is atomic:
+  /// - reads current pending + advance
+  /// - applies payment to pending first
+  /// - stores excess payment as advance
+  /// - creates payment record
+  /// - creates income transaction
+  /// - updates customer balance
+  /// - creates activity
+  ///
+  /// This is intentionally separate from createMonthlyBill() because
+  /// Receive Payment is a payment without generating a new bill.
+  Future<StandalonePaymentResult> receivePalaiPayment({
+    required String farmId,
+    required String customerId,
+    required double paidAmount,
+    required String paymentMethod,
+    String note = '',
+  }) async {
+    if (paidAmount <= 0) {
+      throw ArgumentError('Payment amount must be greater than zero.');
+    }
+
+    if (paymentMethod.trim().isEmpty) {
+      throw ArgumentError('Please select a payment method.');
+    }
+
+    final customerRef = _customers(farmId).doc(customerId);
+
+    final paymentsCollection =
+    _farms.doc(farmId).collection('payments');
+
+    final transactionsCollection =
+    _farms.doc(farmId).collection('transactions');
+
+    final activitiesCollection =
+    _farms.doc(farmId).collection('activities');
+
+    final paymentRef = paymentsCollection.doc();
+    final transactionRef = transactionsCollection.doc();
+    final activityRef = activitiesCollection.doc();
+
+    final now = DateTime.now();
+
+    return _db.runTransaction<StandalonePaymentResult>(
+          (transaction) async {
+        // ============================================================
+        // READ CURRENT CUSTOMER
+        // ============================================================
+
+        final customerSnapshot =
+        await transaction.get(customerRef);
+
+        if (!customerSnapshot.exists) {
+          throw StateError('Customer no longer exists.');
+        }
+
+        final data = customerSnapshot.data() ?? {};
+
+        final customerName =
+        (data['name'] ?? '').toString();
+
+        final pendingBefore =
+        (data['pendingAmount'] ?? 0).toDouble();
+
+        final advanceBefore =
+        (data['advanceAmount'] ?? 0).toDouble();
+
+        // ============================================================
+        // CALCULATE PAYMENT
+        // ============================================================
+
+        // Existing advance does not need to be changed by a standalone
+        // payment. A new payment first clears pending and then creates
+        // additional advance if it exceeds pending.
+        final amountAppliedToPending =
+        paidAmount
+            .clamp(0, pendingBefore)
+            .toDouble();
+
+        final excessPayment =
+        (paidAmount - amountAppliedToPending)
+            .clamp(0, double.infinity)
+            .toDouble();
+
+        final pendingAfter =
+        (pendingBefore - amountAppliedToPending)
+            .clamp(0, double.infinity)
+            .toDouble();
+
+        final advanceAfter =
+        (advanceBefore + excessPayment)
+            .clamp(0, double.infinity)
+            .toDouble();
+
+        final paymentNumber =
+            'PAY-${paymentRef.id.substring(0, 8).toUpperCase()}';
+
+        // ============================================================
+        // PAYMENT RECORD
+        // ============================================================
+
+        transaction.set(paymentRef, {
+          'paymentNumber': paymentNumber,
+
+          'type': 'standalone',
+
+          'customerId': customerId,
+          'customerName': customerName,
+
+          'amount': paidAmount,
+
+          'amountAppliedToPending':
+          amountAppliedToPending,
+
+          'advanceAmount':
+          excessPayment,
+
+          'pendingBefore':
+          pendingBefore,
+
+          'pendingAfter':
+          pendingAfter,
+
+          'advanceBefore':
+          advanceBefore,
+
+          'advanceAfter':
+          advanceAfter,
+
+          'paymentMethod':
+          paymentMethod.trim(),
+
+          'note':
+          note.trim(),
+
+          'date':
+          FieldValue.serverTimestamp(),
+
+          'createdAt':
+          FieldValue.serverTimestamp(),
+        });
+
+        // ============================================================
+        // INCOME TRANSACTION
+        // ============================================================
+
+        transaction.set(transactionRef, {
+          'amount': paidAmount,
+
+          'isIncome': true,
+
+          'category': 'Payment Received',
+
+          'customerId': customerId,
+
+          'customerName': customerName,
+
+          'paymentId': paymentRef.id,
+
+          'paymentNumber': paymentNumber,
+
+          'amountAppliedToPending':
+          amountAppliedToPending,
+
+          'advanceAmount':
+          excessPayment,
+
+          'paymentMethod':
+          paymentMethod.trim(),
+
+          'note': note.trim().isNotEmpty
+              ? note.trim()
+              : 'Payment received from $customerName',
+
+          'date':
+          FieldValue.serverTimestamp(),
+
+          'createdAt':
+          FieldValue.serverTimestamp(),
+        });
+
+        // ============================================================
+        // UPDATE CUSTOMER
+        // ============================================================
+
+        transaction.update(customerRef, {
+          'pendingAmount': pendingAfter,
+
+          'advanceAmount': advanceAfter,
+
+          'updatedAt':
+          FieldValue.serverTimestamp(),
+        });
+
+        // ============================================================
+        // ACTIVITY
+        // ============================================================
+
+        transaction.set(activityRef, {
+          'type': 'paymentReceived',
+
+          'title': 'Payment Received',
+
+          'subtitle':
+          '$customerName · ₹${paidAmount.toStringAsFixed(0)}',
+
+          'module': 'palai',
+
+          'timestamp':
+          FieldValue.serverTimestamp(),
+        });
+
+        // ============================================================
+        // RETURN RESULT
+        // ============================================================
+
+        return StandalonePaymentResult(
+          paymentId: paymentRef.id,
+          paymentNumber: paymentNumber,
+
+          customerName: customerName,
+
+          pendingBefore: pendingBefore,
+
+          amountReceived: paidAmount,
+
+          amountAppliedToPending:
+          amountAppliedToPending,
+
+          pendingAfter: pendingAfter,
+
+          advanceBefore: advanceBefore,
+
+          advanceAdded: excessPayment,
+
+          advanceAfter: advanceAfter,
+
+          paymentMethod: paymentMethod.trim(),
+        );
+      },
+    ).timeout(timeout);
+  }
+
+
 
   /// Resolves the email linked to a mobile number, used for mobile-number
   /// login (Firebase Auth itself only signs in with email + password).
