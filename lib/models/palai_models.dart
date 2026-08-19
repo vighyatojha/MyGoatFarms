@@ -3,15 +3,29 @@ import 'dart:typed_data';
 import 'package:cloud_firestore/cloud_firestore.dart';
 
 /// A customer who boards goats under the Palai (boarding & care) service.
+/// A customer who boards goats under the Palai (boarding & care) service.
 class PalaiCustomer {
   final String id;
   final String name;
   final String mobileNumber;
   final String address;
-  final String package; // e.g. "Special Palai", "Basic Palai"
+  final String package;
   final DateTime joiningDate;
+
+  /// Amount currently owed by the customer.
   final double pendingAmount;
-  final double price; // Palai price for this customer (₹)
+
+  /// Amount paid in excess of the customer's outstanding balance.
+  ///
+  /// Example:
+  /// Pending = ₹1,000
+  /// Payment = ₹1,500
+  /// Pending = ₹0
+  /// Advance = ₹500
+  final double advanceAmount;
+
+  /// Palai price for this customer (₹).
+  final double price;
 
   PalaiCustomer({
     required this.id,
@@ -21,6 +35,7 @@ class PalaiCustomer {
     required this.package,
     required this.joiningDate,
     required this.pendingAmount,
+    this.advanceAmount = 0,
     this.price = 0,
   });
 
@@ -38,8 +53,17 @@ class PalaiCustomer {
       joiningDate:
       (data['joiningDate'] as Timestamp?)?.toDate() ??
           DateTime.now(),
-      pendingAmount: (data['pendingAmount'] ?? 0).toDouble(),
-      price: (data['price'] ?? 0).toDouble(),
+
+      pendingAmount:
+      (data['pendingAmount'] ?? 0).toDouble(),
+
+      // Existing customers do not have this field yet.
+      // They safely default to ₹0.
+      advanceAmount:
+      (data['advanceAmount'] ?? 0).toDouble(),
+
+      price:
+      (data['price'] ?? 0).toDouble(),
     );
   }
 
@@ -50,7 +74,6 @@ class PalaiCustomer {
   @override
   int get hashCode => id.hashCode;
 
-  /// Data used when creating a new customer.
   Map<String, dynamic> toMap() {
     return {
       'name': name,
@@ -58,23 +81,26 @@ class PalaiCustomer {
       'address': address,
       'package': package,
       'joiningDate': Timestamp.fromDate(joiningDate),
+
       'pendingAmount': pendingAmount,
+      'advanceAmount': advanceAmount,
+
       'price': price,
+
       'createdAt': FieldValue.serverTimestamp(),
     };
   }
 
-  /// Fields sent on an update.
-  ///
-  /// Deliberately excludes [joiningDate] and [createdAt] so editing
-  /// a customer never changes when they originally joined.
   Map<String, dynamic> toUpdateMap() {
     return {
       'name': name,
       'mobileNumber': mobileNumber,
       'address': address,
       'package': package,
+
       'pendingAmount': pendingAmount,
+      'advanceAmount': advanceAmount,
+
       'price': price,
     };
   }
@@ -86,6 +112,7 @@ class PalaiCustomer {
     String? package,
     DateTime? joiningDate,
     double? pendingAmount,
+    double? advanceAmount,
     double? price,
   }) {
     return PalaiCustomer(
@@ -95,8 +122,15 @@ class PalaiCustomer {
       address: address ?? this.address,
       package: package ?? this.package,
       joiningDate: joiningDate ?? this.joiningDate,
-      pendingAmount: pendingAmount ?? this.pendingAmount,
-      price: price ?? this.price,
+
+      pendingAmount:
+      pendingAmount ?? this.pendingAmount,
+
+      advanceAmount:
+      advanceAmount ?? this.advanceAmount,
+
+      price:
+      price ?? this.price,
     );
   }
 }

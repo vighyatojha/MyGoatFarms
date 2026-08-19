@@ -14,6 +14,44 @@ import '../models/activity_model.dart';
 import '../models/partner_model.dart';
 import '../models/own_farm_models.dart';
 
+class MonthlyBillResult {
+  final String billId;
+  final String billNumber;
+
+  final double previousPending;
+  final double advanceBefore;
+
+  final double newCharges;
+  final double advanceApplied;
+
+  final double totalDue;
+
+  final double paid;
+  final double amountAppliedToBill;
+
+  final double pendingAfter;
+  final double advanceAfter;
+
+  final String paymentMethod;
+
+  const MonthlyBillResult({
+    required this.billId,
+    required this.billNumber,
+    required this.previousPending,
+    required this.advanceBefore,
+    required this.newCharges,
+    required this.advanceApplied,
+    required this.totalDue,
+    required this.paid,
+    required this.amountAppliedToBill,
+    required this.pendingAfter,
+    required this.advanceAfter,
+    required this.paymentMethod,
+  });
+}
+
+
+
 class FirestoreService {
   FirestoreService._();
   static final FirestoreService instance = FirestoreService._();
@@ -42,6 +80,348 @@ class FirestoreService {
         .get()
         .timeout(timeout);
     return query.docs.isNotEmpty;
+  }
+
+  /// Creates a complete monthly Palai bill.
+  ///
+  /// This is the ONLY operation the Billing screen should use to create
+  /// financial data.
+  ///
+  /// Atomically creates:
+  /// - bill
+  /// - payment (when payment > 0)
+  /// - income transaction (when payment > 0)
+  /// - customer balance update
+  /// - activity log
+  ///
+  /// It also correctly handles customer advances.
+  Future<MonthlyBillResult> createMonthlyBill({
+    required String farmId,
+    required String customerId,
+    required double monthlyCharges,
+    required double transportCharges,
+    required double discount,
+    required double paidAmount,
+    required String paymentMethod,
+    String note = '',
+  }) async {
+    if (monthlyCharges < 0 ||
+        transportCharges < 0 ||
+        discount < 0 ||
+        paidAmount < 0) {
+      throw ArgumentError('Amounts cannot be negative.');
+    }
+
+    if (paidAmount > 0 && paymentMethod.trim().isEmpty) {
+      throw ArgumentError(
+        'Please select a payment method.',
+      );
+    }
+
+    final customerRef = _customers(farmId).doc(customerId);
+
+    final billsCollection =
+    _farms.doc(farmId).collection('bills');
+
+    final paymentsCollection =
+    _farms.doc(farmId).collection('payments');
+
+    final transactionsCollection =
+    _farms.doc(farmId).collection('transactions');
+
+    final activitiesCollection =
+    _farms.doc(farmId).collection('activities');
+
+    // Generate references before the transaction.
+    // They remain the same if Firestore retries the transaction.
+    final billRef = billsCollection.doc();
+
+    final paymentRef = paidAmount > 0
+        ? paymentsCollection.doc()
+        : null;
+
+    final transactionRef = paidAmount > 0
+        ? transactionsCollection.doc()
+        : null;
+
+    final activityRef = activitiesCollection.doc();
+
+    final now = DateTime.now();
+
+    final billNumber =
+        'PAL-${now.year}'
+        '${now.month.toString().padLeft(2, '0')}'
+        '${now.day.toString().padLeft(2, '0')}'
+        '-${billRef.id.substring(0, 6).toUpperCase()}';
+
+    return _db.runTransaction<MonthlyBillResult>(
+          (transaction) async {
+        // ------------------------------------------------------------
+        // READ FIRST
+        // ------------------------------------------------------------
+
+        final customerSnapshot =
+        await transaction.get(customerRef);
+
+        if (!customerSnapshot.exists) {
+          throw StateError('Customer no longer exists.');
+        }
+
+        final customerData =
+            customerSnapshot.data() ?? {};
+
+        final customerName =
+        (customerData['name'] ?? '').toString();
+
+        final previousPending =
+        (customerData['pendingAmount'] ?? 0)
+            .toDouble();
+
+        final advanceBefore =
+        (customerData['advanceAmount'] ?? 0)
+            .toDouble();
+
+        // ------------------------------------------------------------
+        // CALCULATE
+        // ------------------------------------------------------------
+
+        final newCharges =
+        (monthlyCharges +
+            transportCharges -
+            discount)
+            .clamp(0, double.infinity)
+            .toDouble();
+
+        final totalBeforeAdvance =
+            previousPending + newCharges;
+
+        // Apply any existing customer advance.
+        final advanceApplied =
+        advanceBefore
+            .clamp(0, totalBeforeAdvance)
+            .toDouble();
+
+        final totalDue =
+        (totalBeforeAdvance -
+            advanceApplied)
+            .clamp(0, double.infinity)
+            .toDouble();
+
+        // Payment first clears the bill.
+        final amountAppliedToBill =
+        paidAmount
+            .clamp(0, totalDue)
+            .toDouble();
+
+        // Anything above the amount due becomes advance.
+        final newAdvanceFromPayment =
+        (paidAmount - totalDue)
+            .clamp(0, double.infinity)
+            .toDouble();
+
+        final pendingAfter =
+        (totalDue - paidAmount)
+            .clamp(0, double.infinity)
+            .toDouble();
+
+        final advanceAfter =
+        (advanceBefore -
+            advanceApplied +
+            newAdvanceFromPayment)
+            .clamp(0, double.infinity)
+            .toDouble();
+
+        final status = totalDue == 0
+            ? 'paid'
+            : pendingAfter == 0
+            ? 'paid'
+            : paidAmount > 0
+            ? 'partial'
+            : 'pending';
+
+        // ------------------------------------------------------------
+        // WRITE BILL
+        // ------------------------------------------------------------
+
+        transaction.set(billRef, {
+          'billNumber': billNumber,
+
+          'type': 'monthly',
+          'customerId': customerId,
+          'customerName': customerName,
+
+          'periodMonth':
+          '${now.year}-${now.month.toString().padLeft(2, '0')}',
+
+          'monthlyCharges': monthlyCharges,
+          'transportCharges': transportCharges,
+          'discount': discount,
+
+          'newCharges': newCharges,
+
+          'previousPending': previousPending,
+          'advanceBefore': advanceBefore,
+          'advanceApplied': advanceApplied,
+
+          'totalDue': totalDue,
+
+          'amountPaid': paidAmount,
+          'amountAppliedToBill':
+          amountAppliedToBill,
+
+          'pendingAfter': pendingAfter,
+          'advanceAfter': advanceAfter,
+
+          'paymentId': paymentRef?.id,
+          'paymentMethod':
+          paidAmount > 0
+              ? paymentMethod
+              : null,
+
+          'note': note.trim(),
+
+          'status': status,
+
+          'createdAt':
+          FieldValue.serverTimestamp(),
+          'updatedAt':
+          FieldValue.serverTimestamp(),
+        });
+
+        // ------------------------------------------------------------
+        // WRITE PAYMENT
+        // ------------------------------------------------------------
+
+        if (paymentRef != null) {
+          transaction.set(paymentRef, {
+            'paymentNumber':
+            'PAY-${paymentRef.id.substring(0, 8).toUpperCase()}',
+
+            'customerId': customerId,
+            'customerName': customerName,
+
+            'billId': billRef.id,
+            'billNumber': billNumber,
+
+            'amount': paidAmount,
+
+            'amountAppliedToBill':
+            amountAppliedToBill,
+
+            'advanceAmount':
+            newAdvanceFromPayment,
+
+            'paymentMethod':
+            paymentMethod,
+
+            'note': note.trim(),
+
+            'date':
+            FieldValue.serverTimestamp(),
+
+            'createdAt':
+            FieldValue.serverTimestamp(),
+          });
+        }
+
+        // ------------------------------------------------------------
+        // WRITE INCOME TRANSACTION
+        // ------------------------------------------------------------
+
+        if (transactionRef != null) {
+          transaction.set(transactionRef, {
+            'amount': paidAmount,
+            'isIncome': true,
+
+            'category': 'Palai Payment',
+
+            'customerId': customerId,
+            'customerName': customerName,
+
+            'billId': billRef.id,
+            'billNumber': billNumber,
+
+            'paymentId': paymentRef?.id,
+
+            'paymentMethod':
+            paymentMethod,
+
+            'note': note.trim().isNotEmpty
+                ? note.trim()
+                : 'Payment received from $customerName',
+
+            'date':
+            FieldValue.serverTimestamp(),
+
+            'createdAt':
+            FieldValue.serverTimestamp(),
+          });
+        }
+
+        // ------------------------------------------------------------
+        // UPDATE CUSTOMER BALANCE
+        // ------------------------------------------------------------
+
+        transaction.update(customerRef, {
+          'pendingAmount': pendingAfter,
+          'advanceAmount': advanceAfter,
+          'updatedAt': FieldValue.serverTimestamp(),
+        });
+
+        // ------------------------------------------------------------
+        // ACTIVITY
+        // ------------------------------------------------------------
+
+        transaction.set(activityRef, {
+          'type': 'paymentReceived',
+          'title': 'Monthly Bill Generated',
+
+          'subtitle':
+          '$customerName · Bill $billNumber · '
+              'Total ₹${totalDue.toStringAsFixed(0)}',
+
+          'module': 'palai',
+
+          'timestamp':
+          FieldValue.serverTimestamp(),
+        });
+
+        return MonthlyBillResult(
+          billId: billRef.id,
+          billNumber: billNumber,
+
+          previousPending:
+          previousPending,
+
+          advanceBefore:
+          advanceBefore,
+
+          newCharges:
+          newCharges,
+
+          advanceApplied:
+          advanceApplied,
+
+          totalDue:
+          totalDue,
+
+          paid:
+          paidAmount,
+
+          amountAppliedToBill:
+          amountAppliedToBill,
+
+          pendingAfter:
+          pendingAfter,
+
+          advanceAfter:
+          advanceAfter,
+
+          paymentMethod:
+          paymentMethod,
+        );
+      },
+    ).timeout(timeout);
   }
 
   /// Resolves the email linked to a mobile number, used for mobile-number
