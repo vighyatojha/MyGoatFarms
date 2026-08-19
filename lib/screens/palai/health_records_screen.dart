@@ -35,7 +35,18 @@ class _HealthRecordsScreenState extends State<HealthRecordsScreen> {
   void initState() {
     super.initState();
     _selectedGoat = widget.initialGoat;
-    FirestoreService.instance.currentFarmId().then((id) {
+    FirestoreService.instance.currentFarmId().then((id) async {
+      if (!mounted || id == null) {
+        if (mounted) setState(() => _farmId = id);
+        return;
+      }
+      // Repair any goat docs missing `farmId` before this screen's
+      // "Select Goat" dropdown queries them — see backfillMissingGoatFarmIds.
+      try {
+        await FirestoreService.instance.backfillMissingGoatFarmIds(id);
+      } catch (e) {
+        debugPrint('backfillMissingGoatFarmIds failed: $e');
+      }
       if (mounted) setState(() => _farmId = id);
     });
   }

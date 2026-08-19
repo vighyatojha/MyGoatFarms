@@ -76,10 +76,21 @@ class _GoatListScreenState extends State<GoatListScreen> {
     _searchController.addListener(() {
       setState(() => _query = _searchController.text.trim().toLowerCase());
     });
-    FirestoreService.instance.currentFarmId().then((id) {
+    FirestoreService.instance.currentFarmId().then((id) async {
       if (!mounted) return;
       setState(() => _farmId = id);
-      if (id != null) _subscribeToGoats(id);
+      if (id == null) return;
+      // Repair any goat docs missing the denormalized `farmId` field
+      // *before* subscribing, so a goat that was invisible due to a
+      // missing field shows up on this very load instead of needing a
+      // manual console edit + app restart.
+      try {
+        await FirestoreService.instance.backfillMissingGoatFarmIds(id);
+      } catch (e) {
+        debugPrint('backfillMissingGoatFarmIds failed: $e');
+      }
+      if (!mounted) return;
+      _subscribeToGoats(id);
     });
   }
 

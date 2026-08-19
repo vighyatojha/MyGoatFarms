@@ -364,6 +364,37 @@ class FirestoreService {
     return ref.id;
   }
 
+  /// Self-healing repair step for `allActiveGoatsStream`'s collection-group
+  /// query. That query (and the security rule guarding it) only matches
+  /// goat documents that have `farmId` denormalized onto them — any goat
+  /// missing that field (added before `checkInGoat` started stamping it,
+  /// imported by hand, edited directly in the console, etc.) silently
+  /// disappears from "Goats in Palai" and the Health Records goat picker
+  /// forever, with no error shown, because the query itself excludes it.
+  ///
+  /// This walks every customer's `goats` subcollection for [farmId] and
+  /// patches any document whose `farmId` is missing or wrong. It's cheap,
+  /// idempotent, and safe to call every time the goat list screen opens —
+  /// on a farm where everything is already correct it does a handful of
+  /// reads and zero writes.
+  Future<void> backfillMissingGoatFarmIds(String farmId) async {
+    final customersSnap = await _customers(farmId).get().timeout(timeout);
+    final batch = _db.batch();
+    var needsCommit = false;
+    for (final customerDoc in customersSnap.docs) {
+      final goatsSnap = await _goats(farmId, customerDoc.id).get().timeout(timeout);
+      for (final goatDoc in goatsSnap.docs) {
+        if (goatDoc.data()['farmId'] != farmId) {
+          batch.update(goatDoc.reference, {'farmId': farmId});
+          needsCommit = true;
+        }
+      }
+    }
+    if (needsCommit) {
+      await batch.commit().timeout(timeout);
+    }
+  }
+
   /// Records a goat's check-out. When an "After Palai" [afterImage] is
   /// supplied, it's stored as a Firestore `Blob` directly on the goat
   /// document — the same way the "Before Palai" (check-in) photo and the
