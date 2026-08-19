@@ -338,8 +338,13 @@ class FirestoreService {
         .collectionGroup('goats')
         .where('farmId', isEqualTo: farmId)
         .where('isCheckedOut', isEqualTo: false)
+        .orderBy('isCheckedOut', descending: true)
         .snapshots()
-        .map((s) => s.docs.map(PalaiGoat.fromDoc).toList());
+        .map(
+          (snapshot) => snapshot.docs
+          .map(PalaiGoat.fromDoc)
+          .toList(),
+    );
   }
 
   Stream<List<PalaiGoat>> goatsForCustomerStream(String farmId, String customerId) {

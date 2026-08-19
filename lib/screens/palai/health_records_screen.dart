@@ -43,9 +43,21 @@ class _HealthRecordsScreenState extends State<HealthRecordsScreen> {
       // Repair any goat docs missing `farmId` before this screen's
       // "Select Goat" dropdown queries them — see backfillMissingGoatFarmIds.
       try {
+        debugPrint('========================================');
+        debugPrint('GOAT FARM ID BACKFILL STARTED');
+        debugPrint('Farm ID: $id');
+
         await FirestoreService.instance.backfillMissingGoatFarmIds(id);
-      } catch (e) {
-        debugPrint('backfillMissingGoatFarmIds failed: $e');
+
+        debugPrint('GOAT FARM ID BACKFILL COMPLETED');
+        debugPrint('========================================');
+      } catch (e, stack) {
+        debugPrint('========================================');
+        debugPrint('GOAT FARM ID BACKFILL FAILED');
+        debugPrint('Farm ID: $id');
+        debugPrint('Error: $e');
+        debugPrintStack(stackTrace: stack);
+        debugPrint('========================================');
       }
       if (mounted) setState(() => _farmId = id);
     });
@@ -85,8 +97,16 @@ class _HealthRecordsScreenState extends State<HealthRecordsScreen> {
               stream: FirestoreService.instance.allActiveGoatsStream(_farmId!),
               builder: (context, snap) {
                 if (snap.hasError) {
+                  debugPrint('========================================');
+                  debugPrint('HEALTH RECORDS - GOAT QUERY ERROR');
+                  debugPrint('Farm ID: $_farmId');
+                  debugPrint('Error: ${snap.error}');
+                  debugPrint('Error type: ${snap.error.runtimeType}');
+                  debugPrint('========================================');
+
                   return _errorBanner(
-                    'Could not load goats.\n${FirestoreService.instance.describeError(snap.error!)}',
+                    'Could not load goats.\n\n'
+                        '${FirestoreService.instance.describeError(snap.error!)}',
                   );
                 }
                 if (!snap.hasData) {
