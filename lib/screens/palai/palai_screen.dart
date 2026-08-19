@@ -10,7 +10,6 @@ import '../home/widgets/home_widgets.dart';
 import 'add_customer_screen.dart';
 import 'check_in_screen.dart';
 import 'goat_list_screen.dart';
-import 'health_records_screen.dart';
 import 'billing_screen.dart';
 import '../../models/palai_models.dart';
 import 'own_farm/own_farm_palai_content.dart';
@@ -291,13 +290,6 @@ class _PalaiScreenState extends State<PalaiScreen> {
             sub: 'New',
             color: AppColors.primaryGreen,
             onTap: () => Navigator.of(context).push(fastRoute(const AddCustomerScreen())),
-          ),
-          ModuleTile(
-            icon: Icons.favorite_border,
-            label: 'Health',
-            sub: 'Records',
-            color: AppColors.breedingPurple,
-            onTap: () => Navigator.of(context).push(fastRoute(const HealthRecordsScreen())),
           ),
           ModuleTile(
             icon: Icons.receipt_long_outlined,
