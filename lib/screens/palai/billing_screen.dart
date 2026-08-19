@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
 import '../../app_theme.dart';
+import '../../models/bill_settings_model.dart';
 import '../../models/palai_models.dart';
 import '../../models/activity_model.dart';
 import '../../services/firestore_service.dart';
+import '../../services/pdf_bill_service.dart';
 
 /// Generates a monthly bill for a Palai customer: monthly charges,
 /// transport charges, previous balance, discount, paid amount — computes
@@ -22,12 +24,16 @@ class _BillingScreenState extends State<BillingScreen> {
   final _discountController = TextEditingController(text: '0');
   final _paidController = TextEditingController(text: '0');
   bool _saving = false;
+  BillSettings _billSettings = const BillSettings();
 
   @override
   void initState() {
     super.initState();
-    FirestoreService.instance.currentFarmId().then((id) {
-      if (mounted) setState(() => _farmId = id);
+    FirestoreService.instance.currentFarmId().then((id) async {
+      if (!mounted || id == null) return;
+      setState(() => _farmId = id);
+      final farm = await FirestoreService.instance.getFarmById(id);
+      if (mounted && farm != null) setState(() => _billSettings = farm.billSettings);
     });
   }
 
@@ -85,12 +91,147 @@ class _BillingScreenState extends State<BillingScreen> {
       ),
     );
 
+    final customerName = _selectedCustomer!.name;
+    final monthlyCharges = _monthlyCharges;
+    final transport = _transport;
+    final previousBalance = _previousBalance;
+    final discount = _discount;
+    final paid = _paid;
+    final totalBill = _totalBill;
+    final pendingAmount = _pendingAmount;
+
     if (!mounted) return;
     setState(() => _saving = false);
-    Navigator.of(context).pop();
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(content: Text('Bill generated and saved'), backgroundColor: AppColors.primaryGreen),
     );
+
+    await _showPdfOptions(
+      customerName: customerName,
+      monthlyCharges: monthlyCharges,
+      transport: transport,
+      previousBalance: previousBalance,
+      discount: discount,
+      paid: paid,
+      totalBill: totalBill,
+      pendingAmount: pendingAmount,
+    );
+  }
+
+  /// Shows a bottom sheet to Share or Download the just-generated bill as
+  /// a PDF, then closes the Billing screen.
+  Future<void> _showPdfOptions({
+    required String customerName,
+    required double monthlyCharges,
+    required double transport,
+    required double previousBalance,
+    required double discount,
+    required double paid,
+    required double totalBill,
+    required double pendingAmount,
+  }) async {
+    if (!mounted) return;
+    await showModalBottomSheet(
+      context: context,
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+      builder: (sheetContext) {
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.all(20),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('Bill PDF', style: AppTheme.heading(size: 15)),
+                const SizedBox(height: 4),
+                Text('Share or save this bill as a PDF.', style: AppTheme.body(size: 12)),
+                const SizedBox(height: 16),
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton.icon(
+                    onPressed: () async {
+                      try {
+                        await PdfBillService.instance.shareMonthlyBill(
+                          customerName: customerName,
+                          monthlyCharges: monthlyCharges,
+                          transport: transport,
+                          previousBalance: previousBalance,
+                          discount: discount,
+                          paid: paid,
+                          totalBill: totalBill,
+                          pendingAmount: pendingAmount,
+                          billSettings: _billSettings,
+                        );
+                      } catch (_) {
+                        if (!sheetContext.mounted) return;
+                        ScaffoldMessenger.of(sheetContext).showSnackBar(
+                          const SnackBar(content: Text('Could not share the PDF.'), backgroundColor: AppColors.error),
+                        );
+                      }
+                    },
+                    icon: const Icon(Icons.ios_share, size: 16),
+                    label: const Text('Share PDF', style: TextStyle(fontWeight: FontWeight.w600)),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: AppColors.primaryGreen,
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(vertical: 14),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 10),
+                SizedBox(
+                  width: double.infinity,
+                  child: OutlinedButton.icon(
+                    onPressed: () async {
+                      try {
+                        final path = await PdfBillService.instance.saveMonthlyBillToDevice(
+                          customerName: customerName,
+                          monthlyCharges: monthlyCharges,
+                          transport: transport,
+                          previousBalance: previousBalance,
+                          discount: discount,
+                          paid: paid,
+                          totalBill: totalBill,
+                          pendingAmount: pendingAmount,
+                          billSettings: _billSettings,
+                        );
+                        if (!sheetContext.mounted) return;
+                        ScaffoldMessenger.of(sheetContext).showSnackBar(
+                          SnackBar(content: Text('Saved to $path'), backgroundColor: AppColors.primaryGreen),
+                        );
+                      } catch (_) {
+                        if (!sheetContext.mounted) return;
+                        ScaffoldMessenger.of(sheetContext).showSnackBar(
+                          const SnackBar(content: Text('Could not save the PDF.'), backgroundColor: AppColors.error),
+                        );
+                      }
+                    },
+                    icon: const Icon(Icons.download_outlined, size: 16),
+                    label: const Text('Download PDF', style: TextStyle(fontWeight: FontWeight.w600)),
+                    style: OutlinedButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(vertical: 14),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                      side: const BorderSide(color: AppColors.primaryGreen),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 10),
+                SizedBox(
+                  width: double.infinity,
+                  child: TextButton(
+                    onPressed: () => Navigator.of(sheetContext).pop(),
+                    child: Text('Close', style: AppTheme.body(size: 13, color: AppColors.textGrey)),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+    if (!mounted) return;
+    Navigator.of(context).pop();
   }
 
   @override
@@ -106,79 +247,79 @@ class _BillingScreenState extends State<BillingScreen> {
       body: _farmId == null
           ? const Center(child: CircularProgressIndicator(color: AppColors.primaryGreen))
           : SingleChildScrollView(
-              padding: const EdgeInsets.all(20),
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            _label('Select Customer'),
+            StreamBuilder<List<PalaiCustomer>>(
+              stream: FirestoreService.instance.customersStream(_farmId!),
+              builder: (context, snap) {
+                final customers = snap.data ?? [];
+                return Container(
+                  decoration: AppTheme.card(radius: 12),
+                  padding: const EdgeInsets.symmetric(horizontal: 12),
+                  child: DropdownButtonHideUnderline(
+                    child: DropdownButton<PalaiCustomer>(
+                      value: _selectedCustomer,
+                      isExpanded: true,
+                      hint: Text('Choose a customer', style: AppTheme.body(size: 13)),
+                      items: customers
+                          .map((c) => DropdownMenuItem(value: c, child: Text(c.name, style: AppTheme.body(size: 13, color: AppColors.textDark))))
+                          .toList(),
+                      onChanged: (v) => setState(() {
+                        _selectedCustomer = v;
+                        if (v != null) _prefillMonthlyCharges(v);
+                      }),
+                    ),
+                  ),
+                );
+              },
+            ),
+            const SizedBox(height: 16),
+            _label('Monthly Charges (₹)'),
+            _amountField(_monthlyChargesController),
+            const SizedBox(height: 12),
+            _label('Transportation Charges (₹)'),
+            _amountField(_transportController),
+            const SizedBox(height: 12),
+            _label('Discount (₹)'),
+            _amountField(_discountController),
+            const SizedBox(height: 12),
+            _label('Paid Amount (₹)'),
+            _amountField(_paidController),
+            const SizedBox(height: 20),
+            Container(
+              padding: const EdgeInsets.all(16),
+              decoration: AppTheme.card(radius: 14),
               child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  _label('Select Customer'),
-                  StreamBuilder<List<PalaiCustomer>>(
-                    stream: FirestoreService.instance.customersStream(_farmId!),
-                    builder: (context, snap) {
-                      final customers = snap.data ?? [];
-                      return Container(
-                        decoration: AppTheme.card(radius: 12),
-                        padding: const EdgeInsets.symmetric(horizontal: 12),
-                        child: DropdownButtonHideUnderline(
-                          child: DropdownButton<PalaiCustomer>(
-                            value: _selectedCustomer,
-                            isExpanded: true,
-                            hint: Text('Choose a customer', style: AppTheme.body(size: 13)),
-                            items: customers
-                                .map((c) => DropdownMenuItem(value: c, child: Text(c.name, style: AppTheme.body(size: 13, color: AppColors.textDark))))
-                                .toList(),
-                            onChanged: (v) => setState(() {
-                              _selectedCustomer = v;
-                              if (v != null) _prefillMonthlyCharges(v);
-                            }),
-                          ),
-                        ),
-                      );
-                    },
-                  ),
-                  const SizedBox(height: 16),
-                  _label('Monthly Charges (₹)'),
-                  _amountField(_monthlyChargesController),
-                  const SizedBox(height: 12),
-                  _label('Transportation Charges (₹)'),
-                  _amountField(_transportController),
-                  const SizedBox(height: 12),
-                  _label('Discount (₹)'),
-                  _amountField(_discountController),
-                  const SizedBox(height: 12),
-                  _label('Paid Amount (₹)'),
-                  _amountField(_paidController),
-                  const SizedBox(height: 20),
-                  Container(
-                    padding: const EdgeInsets.all(16),
-                    decoration: AppTheme.card(radius: 14),
-                    child: Column(
-                      children: [
-                        _summaryRow('Previous Balance', _previousBalance),
-                        _summaryRow('Total Bill', _totalBill, bold: true),
-                        const Divider(height: 20),
-                        _summaryRow('Pending Amount', _pendingAmount, color: AppColors.error, bold: true),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(height: 24),
-                  SizedBox(
-                    width: double.infinity,
-                    child: ElevatedButton(
-                      onPressed: _saving ? null : _generateBill,
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: AppColors.primaryGreen,
-                        foregroundColor: Colors.white,
-                        padding: const EdgeInsets.symmetric(vertical: 16),
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                      ),
-                      child: _saving
-                          ? const SizedBox(height: 18, width: 18, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
-                          : const Text('Generate & Save Bill', style: TextStyle(fontWeight: FontWeight.w600)),
-                    ),
-                  ),
+                  _summaryRow('Previous Balance', _previousBalance),
+                  _summaryRow('Total Bill', _totalBill, bold: true),
+                  const Divider(height: 20),
+                  _summaryRow('Pending Amount', _pendingAmount, color: AppColors.error, bold: true),
                 ],
               ),
             ),
+            const SizedBox(height: 24),
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton(
+                onPressed: _saving ? null : _generateBill,
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppColors.primaryGreen,
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(vertical: 16),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                ),
+                child: _saving
+                    ? const SizedBox(height: 18, width: 18, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                    : const Text('Generate & Save Bill', style: TextStyle(fontWeight: FontWeight.w600)),
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 
@@ -201,9 +342,9 @@ class _BillingScreenState extends State<BillingScreen> {
   }
 
   Widget _label(String text) => Padding(
-        padding: const EdgeInsets.only(bottom: 6),
-        child: Text(text, style: AppTheme.heading(size: 13)),
-      );
+    padding: const EdgeInsets.only(bottom: 6),
+    child: Text(text, style: AppTheme.heading(size: 13)),
+  );
 
   Widget _amountField(TextEditingController controller) {
     return Container(

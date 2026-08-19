@@ -282,6 +282,18 @@ class PalaiGoat {
     );
   }
 
+  // Compared by [id] so that a goat instance picked from one stream
+  // snapshot (e.g. a Dropdown's selected value) still matches the same
+  // goat in a *later* snapshot after a write elsewhere updates its data.
+  // Without this, DropdownButton<PalaiGoat> throws an assertion error
+  // the moment the underlying stream re-emits a fresh list of objects,
+  // because Dart compares objects by identity by default.
+  @override
+  bool operator ==(Object other) => other is PalaiGoat && other.id == id;
+
+  @override
+  int get hashCode => id.hashCode;
+
   /// Data used when creating a new goat.
   Map<String, dynamic> toMap() {
     final map = <String, dynamic>{

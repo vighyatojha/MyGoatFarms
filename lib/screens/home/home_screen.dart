@@ -19,6 +19,7 @@ import '../stocks/add_feed_stock_screen.dart';
 import '../profile/profile_screen.dart';
 import 'notification_screen.dart';
 import '../palai/goat_list_screen.dart';
+import '../palai/receive_payment_screen.dart';
 import 'income_detail_screen.dart';
 import '../../widgets/goat_count_builder.dart';
 
@@ -316,7 +317,7 @@ class _HomeScreenState extends State<HomeScreen> {
             icon: Icons.payments_outlined,
             label: 'Receive\nPayment',
             color: AppColors.success,
-            onTap: () => _comingSoon('Receive Payment'),
+            onTap: () => Navigator.of(context).push(fastRoute(const ReceivePaymentScreen())),
           ),
           QuickAction(
             icon: Icons.remove,

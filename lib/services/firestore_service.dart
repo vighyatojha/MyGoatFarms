@@ -385,7 +385,14 @@ class FirestoreService {
         .doc(goatId)
         .collection('healthRecords')
         .add(entry.toMap());
-    await _goats(farmId, customerId).doc(goatId).update({'currentWeight': entry.weight});
+    // Reflect the latest weight and health status directly on the goat
+    // document too, so the goat list badge / filters (which read
+    // PalaiGoat.healthStatus, not the health-records subcollection)
+    // immediately show this update.
+    await _goats(farmId, customerId).doc(goatId).update({
+      'currentWeight': entry.weight,
+      'healthStatus': entry.healthStatus,
+    });
   }
 
   Stream<List<HealthRecordEntry>> healthRecordsStream(
