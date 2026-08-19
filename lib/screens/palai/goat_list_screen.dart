@@ -9,10 +9,12 @@ import '../../widgets/fast_route.dart';
 import 'check_in_screen.dart';
 import 'check_out_screen.dart';
 import 'generate_report_screen.dart';
+import 'health_records_screen.dart';
 
 /// Lists every goat currently boarded in Palai: a circular "Before Palai"
 /// photo (ringed by its health status color), the Goat ID, and how long
-/// it's been boarded. Tapping a goat opens its Check-Out page.
+/// it's been boarded. Tapping a goat opens a small picker asking whether
+/// to update its health record or check it out.
 class GoatListScreen extends StatefulWidget {
   const GoatListScreen({super.key});
 
@@ -469,13 +471,60 @@ class _GoatListScreenState extends State<GoatListScreen> {
     );
   }
 
+  Future<void> _openGoatActionSheet(PalaiGoat goat) async {
+    final choice = await showModalBottomSheet<String>(
+      context: context,
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
+      builder: (sheetContext) {
+        return SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const SizedBox(height: 12),
+              Container(
+                width: 40,
+                height: 4,
+                decoration: BoxDecoration(color: Colors.grey[300], borderRadius: BorderRadius.circular(4)),
+              ),
+              const SizedBox(height: 12),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                child: Text(goat.goatCode, style: AppTheme.heading(size: 15)),
+              ),
+              const SizedBox(height: 4),
+              ListTile(
+                leading: const Icon(Icons.favorite_border, color: AppColors.primaryGreen),
+                title: Text('Update Health Record', style: AppTheme.body(size: 15, color: AppColors.textDark, weight: FontWeight.w600)),
+                subtitle: Text('Vaccination, hoof cutting, hair trimming, medicine, photos', style: AppTheme.body(size: 11)),
+                onTap: () => Navigator.pop(sheetContext, 'health'),
+              ),
+              ListTile(
+                leading: const Icon(Icons.logout, color: AppColors.primaryGreen),
+                title: Text('Check Out', style: AppTheme.body(size: 15, color: AppColors.textDark, weight: FontWeight.w600)),
+                subtitle: Text('End Palai boarding for this goat', style: AppTheme.body(size: 11)),
+                onTap: () => Navigator.pop(sheetContext, 'checkout'),
+              ),
+              const SizedBox(height: 8),
+            ],
+          ),
+        );
+      },
+    );
+    if (!mounted || choice == null) return;
+    if (choice == 'health') {
+      Navigator.of(context).push(fastRoute(HealthRecordsScreen(initialGoat: goat)));
+    } else if (choice == 'checkout') {
+      Navigator.of(context).push(fastRoute(CheckOutGoatScreen(goat: goat)));
+    }
+  }
+
   Widget _goatCard(PalaiGoat goat) {
     final healthColor = _healthColor(goat.healthStatus);
     return Material(
       color: Colors.transparent,
       child: InkWell(
         borderRadius: BorderRadius.circular(16),
-        onTap: () => Navigator.of(context).push(fastRoute(CheckOutGoatScreen(goat: goat))),
+        onTap: () => _openGoatActionSheet(goat),
         child: Container(
           decoration: AppTheme.card(radius: 16),
           padding: const EdgeInsets.all(12),

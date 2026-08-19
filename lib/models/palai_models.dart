@@ -584,3 +584,52 @@ class HealthRecordEntry {
     };
   }
 }
+
+/// A single month's progress photo for a boarded Palai goat, stored the
+/// same way as the check-in/check-out photos (raw bytes as a Firestore
+/// `Blob`, no Storage bucket required). Lets an owner flip through how a
+/// goat has grown/changed month over month while it's boarded.
+class MonthlyPhoto {
+  final String id;
+
+  /// The month this photo represents, normalised to the 1st of that
+  /// month (e.g. 1 Aug 2026) so entries can be sorted/labelled cleanly.
+  final DateTime month;
+
+  final Uint8List image;
+  final String imageContentType;
+  final String notes;
+  final DateTime capturedAt;
+
+  MonthlyPhoto({
+    required this.id,
+    required this.month,
+    required this.image,
+    this.imageContentType = 'image/jpeg',
+    this.notes = '',
+    required this.capturedAt,
+  });
+
+  factory MonthlyPhoto.fromDoc(DocumentSnapshot<Map<String, dynamic>> doc) {
+    final data = doc.data() ?? {};
+    final imageField = data['image'];
+    return MonthlyPhoto(
+      id: doc.id,
+      month: (data['month'] as Timestamp?)?.toDate() ?? DateTime.now(),
+      image: imageField is Blob ? imageField.bytes : Uint8List(0),
+      imageContentType: data['imageContentType'] ?? 'image/jpeg',
+      notes: data['notes'] ?? '',
+      capturedAt: (data['capturedAt'] as Timestamp?)?.toDate() ?? DateTime.now(),
+    );
+  }
+
+  Map<String, dynamic> toMap() {
+    return {
+      'month': Timestamp.fromDate(DateTime(month.year, month.month, 1)),
+      'image': Blob(image),
+      'imageContentType': imageContentType,
+      'notes': notes,
+      'capturedAt': Timestamp.fromDate(capturedAt),
+    };
+  }
+}

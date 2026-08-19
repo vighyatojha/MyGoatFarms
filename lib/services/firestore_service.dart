@@ -319,15 +319,27 @@ class FirestoreService {
       _customers(farmId).doc(customerId).collection('goats');
 
   /// All goats currently boarded in Palai, across every customer.
+  ///
+  /// FIX: filters by `farmId` *in the query itself*, not just client-side
+  /// after the fetch. Cloud Firestore security rules aren't a post-hoc
+  /// filter for `list`/collection-group requests — the rule is checked
+  /// against every document the query could *possibly* match, not just
+  /// the ones actually returned. The old version only had
+  /// `.where('isCheckedOut', isEqualTo: false)`, so Firestore couldn't
+  /// prove that *every* checked-in goat across the whole database — from
+  /// any farm — would satisfy `isOwnerOrPartner(resource.data.farmId)`,
+  /// and rejected the entire request with `permission-denied`, even for
+  /// the caller's own farm. Adding the `farmId` equality filter here lets
+  /// Firestore verify every possible result has `farmId == farmId`, which
+  /// the rule can then check deterministically. Relies on `checkInGoat`
+  /// denormalizing `farmId` onto the goat document (see below).
   Stream<List<PalaiGoat>> allActiveGoatsStream(String farmId) {
     return _db
         .collectionGroup('goats')
+        .where('farmId', isEqualTo: farmId)
         .where('isCheckedOut', isEqualTo: false)
         .snapshots()
-        .map((s) => s.docs
-        .where((d) => d.reference.path.startsWith('farms/$farmId/'))
-        .map(PalaiGoat.fromDoc)
-        .toList());
+        .map((s) => s.docs.map(PalaiGoat.fromDoc).toList());
   }
 
   Stream<List<PalaiGoat>> goatsForCustomerStream(String farmId, String customerId) {
@@ -343,7 +355,10 @@ class FirestoreService {
     // ('goats') query (used by allActiveGoatsStream / the "Goats in
     // Palai" list) — Firebase's documented pattern for collection-group
     // rules checks a field stored directly on the document
-    // (`resource.data.farmId`), not a value parsed out of its path.
+    // (`resource.data.farmId`), not a value parsed out of its path. It's
+    // also now required by the query itself (see allActiveGoatsStream),
+    // which filters `.where('farmId', isEqualTo: farmId)` so Firestore
+    // can prove the collection-group query is safe under that rule.
     final data = goat.toMap()..['farmId'] = farmId;
     final ref = await _goats(farmId, customerId).add(data);
     return ref.id;
@@ -406,6 +421,74 @@ class FirestoreService {
         .orderBy('recordedAt', descending: true)
         .snapshots()
         .map((s) => s.docs.map(HealthRecordEntry.fromDoc).toList());
+  }
+
+  // ---------------------------------------------------------------------
+  // Palai — health events (vaccination, deworming, hoof cutting / khud
+  // cutting, hair trimming, medicine, checkup) with reminder due-dates.
+  // Reuses the same [HealthEvent] model as the Own Farm herd so the two
+  // modules stay consistent.
+  // ---------------------------------------------------------------------
+
+  CollectionReference<Map<String, dynamic>> _palaiHealthEvents(
+      String farmId, String customerId, String goatId) =>
+      _goats(farmId, customerId).doc(goatId).collection('healthEvents');
+
+  Future<void> addPalaiHealthEvent(
+      String farmId,
+      String customerId,
+      String goatId,
+      HealthEvent event,
+      ) async {
+    await _palaiHealthEvents(farmId, customerId, goatId).add(event.toMap()).timeout(timeout);
+  }
+
+  Stream<List<HealthEvent>> palaiHealthEventsStream(
+      String farmId,
+      String customerId,
+      String goatId,
+      ) {
+    return _palaiHealthEvents(farmId, customerId, goatId)
+        .orderBy('date', descending: true)
+        .snapshots()
+        .map((s) => s.docs.map(HealthEvent.fromDoc).toList());
+  }
+
+  // ---------------------------------------------------------------------
+  // Palai — monthly progress photos
+  // ---------------------------------------------------------------------
+
+  CollectionReference<Map<String, dynamic>> _monthlyPhotos(
+      String farmId, String customerId, String goatId) =>
+      _goats(farmId, customerId).doc(goatId).collection('monthlyPhotos');
+
+  Future<void> addMonthlyPhoto(
+      String farmId,
+      String customerId,
+      String goatId,
+      MonthlyPhoto photo,
+      ) async {
+    await _monthlyPhotos(farmId, customerId, goatId).add(photo.toMap()).timeout(timeout);
+  }
+
+  Stream<List<MonthlyPhoto>> monthlyPhotosStream(
+      String farmId,
+      String customerId,
+      String goatId,
+      ) {
+    return _monthlyPhotos(farmId, customerId, goatId)
+        .orderBy('month', descending: true)
+        .snapshots()
+        .map((s) => s.docs.map(MonthlyPhoto.fromDoc).toList());
+  }
+
+  Future<void> deleteMonthlyPhoto(
+      String farmId,
+      String customerId,
+      String goatId,
+      String photoId,
+      ) async {
+    await _monthlyPhotos(farmId, customerId, goatId).doc(photoId).delete().timeout(timeout);
   }
 
   // ---------------------------------------------------------------------
