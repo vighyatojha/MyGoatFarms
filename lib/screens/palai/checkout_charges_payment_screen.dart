@@ -179,59 +179,52 @@ class _CheckoutChargesPaymentScreenState
     }
   }
 
-  Future<void> _saveCheckoutBill(
+  Future<String> _saveCheckoutBillAndReturnPath(
       MonthlyBillResult billResult,
       ) async {
-    try {
-      if (_customer == null) {
-        throw StateError('Customer information is unavailable.');
-      }
-
-      final path =
-      await PdfBillService.instance.saveMonthlyBillToDevice(
-        customerName: _customer!.name,
-        billNumber: billResult.billNumber,
-
-        monthlyCharges: _palaiCharges,
-        transport: _transport,
-
-        previousBalance: billResult.previousPending,
-
-        discount: _discount,
-        paid: billResult.paid,
-
-        totalBill: _totalBeforeAdvance,
-
-        pendingAmount: billResult.pendingAfter,
-
-        advanceBefore: billResult.advanceBefore,
-        advanceApplied: billResult.advanceApplied,
-        advanceAfter: billResult.advanceAfter,
-
-        paymentMethod: billResult.paymentMethod,
-
-        billSettings: _billSettings,
-      );
-
-      if (!mounted) return;
-
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            'PDF saved successfully.\n$path',
-          ),
-          backgroundColor: AppColors.primaryGreen,
-          duration: const Duration(seconds: 4),
-        ),
-      );
-    } catch (e) {
-      if (!mounted) return;
-
-      _showError(
-        'Could not save the PDF: '
-            '${FirestoreService.instance.describeError(e)}',
+    if (_customer == null) {
+      throw StateError(
+        'Customer information is unavailable.',
       );
     }
+
+    final path =
+    await PdfBillService.instance.saveMonthlyBillToDevice(
+      customerName: _customer!.name,
+      billNumber: billResult.billNumber,
+
+      monthlyCharges: _palaiCharges,
+      transport: _transport,
+
+      previousBalance:
+      billResult.previousPending,
+
+      discount: _discount,
+      paid: billResult.paid,
+
+      totalBill:
+      _totalBeforeAdvance,
+
+      pendingAmount:
+      billResult.pendingAfter,
+
+      advanceBefore:
+      billResult.advanceBefore,
+
+      advanceApplied:
+      billResult.advanceApplied,
+
+      advanceAfter:
+      billResult.advanceAfter,
+
+      paymentMethod:
+      billResult.paymentMethod,
+
+      billSettings:
+      _billSettings,
+    );
+
+    return path;
   }
 
   // ================================================================
@@ -466,192 +459,291 @@ class _CheckoutChargesPaymentScreenState
       context: context,
       barrierDismissible: false,
       builder: (dialogContext) {
-        return AlertDialog(
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(20),
-          ),
+        bool pdfBusy = false;
 
-          title: Row(
-            children: [
-              Container(
-                width: 42,
-                height: 42,
-                decoration: const BoxDecoration(
-                  color: AppColors.lightGreen,
-                  shape: BoxShape.circle,
-                ),
-                child: const Icon(
-                  Icons.check_rounded,
-                  color: AppColors.primaryGreen,
-                  size: 25,
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            Future<void> shareBill() async {
+              if (pdfBusy) return;
+
+              setDialogState(() {
+                pdfBusy = true;
+              });
+
+              try {
+                await _shareCheckoutBill(billResult);
+
+                if (!dialogContext.mounted) return;
+
+                ScaffoldMessenger.of(dialogContext).showSnackBar(
+                  const SnackBar(
+                    content: Text('Bill PDF is ready to share.'),
+                    backgroundColor: AppColors.primaryGreen,
+                  ),
+                );
+              } catch (e) {
+                if (!dialogContext.mounted) return;
+
+                ScaffoldMessenger.of(dialogContext).showSnackBar(
+                  SnackBar(
+                    content: Text(
+                      'Could not share bill: '
+                          '${FirestoreService.instance.describeError(e)}',
+                    ),
+                    backgroundColor: AppColors.error,
+                  ),
+                );
+              } finally {
+                if (dialogContext.mounted) {
+                  setDialogState(() {
+                    pdfBusy = false;
+                  });
+                }
+              }
+            }
+
+            Future<void> downloadBill() async {
+              if (pdfBusy) return;
+
+              setDialogState(() {
+                pdfBusy = true;
+              });
+
+              try {
+                final path = await _saveCheckoutBillAndReturnPath(
+                  billResult,
+                );
+
+                if (!dialogContext.mounted) return;
+
+                ScaffoldMessenger.of(dialogContext).showSnackBar(
+                  SnackBar(
+                    content: Text(
+                      'Bill saved successfully.\n$path',
+                    ),
+                    backgroundColor: AppColors.primaryGreen,
+                    duration: const Duration(seconds: 4),
+                  ),
+                );
+              } catch (e) {
+                if (!dialogContext.mounted) return;
+
+                ScaffoldMessenger.of(dialogContext).showSnackBar(
+                  SnackBar(
+                    content: Text(
+                      'Could not save bill: '
+                          '${FirestoreService.instance.describeError(e)}',
+                    ),
+                    backgroundColor: AppColors.error,
+                  ),
+                );
+              } finally {
+                if (dialogContext.mounted) {
+                  setDialogState(() {
+                    pdfBusy = false;
+                  });
+                }
+              }
+            }
+
+            return AlertDialog(
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(22),
+              ),
+
+              title: Row(
+                children: [
+                  Container(
+                    width: 44,
+                    height: 44,
+                    decoration: const BoxDecoration(
+                      color: AppColors.lightGreen,
+                      shape: BoxShape.circle,
+                    ),
+                    child: const Icon(
+                      Icons.check_rounded,
+                      color: AppColors.primaryGreen,
+                      size: 27,
+                    ),
+                  ),
+
+                  const SizedBox(width: 12),
+
+                  Expanded(
+                    child: Text(
+                      'Checkout Completed',
+                      style: AppTheme.heading(size: 18),
+                    ),
+                  ),
+                ],
+              ),
+
+              content: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      '${widget.goats.length} '
+                          '${widget.goats.length == 1 ? 'goat' : 'goats'} '
+                          'checked out successfully.',
+                      style: AppTheme.body(
+                        size: 13,
+                        color: AppColors.textDark,
+                      ),
+                    ),
+
+                    const SizedBox(height: 18),
+
+                    _dialogRow(
+                      'Bill Number',
+                      billResult.billNumber,
+                    ),
+
+                    _dialogRow(
+                      'New Charges',
+                      _rupees(billResult.newCharges),
+                    ),
+
+                    _dialogRow(
+                      'Previous Pending',
+                      _rupees(billResult.previousPending),
+                    ),
+
+                    _dialogRow(
+                      'Advance Applied',
+                      _rupees(billResult.advanceApplied),
+                    ),
+
+                    _dialogRow(
+                      'Total Due',
+                      _rupees(billResult.totalDue),
+                    ),
+
+                    _dialogRow(
+                      'Paid',
+                      _rupees(billResult.paid),
+                    ),
+
+                    _dialogRow(
+                      'Pending After',
+                      _rupees(billResult.pendingAfter),
+                    ),
+
+                    _dialogRow(
+                      'Advance After',
+                      _rupees(billResult.advanceAfter),
+                    ),
+
+                    const SizedBox(height: 22),
+
+                    // ------------------------------------------------
+                    // BILL ACTIONS
+                    // ------------------------------------------------
+
+                    Text(
+                      'Bill & Receipt',
+                      style: AppTheme.heading(size: 14),
+                    ),
+
+                    const SizedBox(height: 10),
+
+                    // SHARE BILL
+                    SizedBox(
+                      width: double.infinity,
+                      child: ElevatedButton.icon(
+                        onPressed: pdfBusy ? null : shareBill,
+                        icon: pdfBusy
+                            ? const SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: Colors.white,
+                          ),
+                        )
+                            : const Icon(
+                          Icons.share_rounded,
+                          size: 19,
+                        ),
+                        label: Text(
+                          pdfBusy
+                              ? 'Preparing Bill...'
+                              : 'Share Bill PDF',
+                        ),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: AppColors.primaryGreen,
+                          foregroundColor: Colors.white,
+                          minimumSize: const Size.fromHeight(50),
+                          elevation: 0,
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(14),
+                          ),
+                        ),
+                      ),
+                    ),
+
+                    const SizedBox(height: 10),
+
+                    // DOWNLOAD BILL
+                    SizedBox(
+                      width: double.infinity,
+                      child: OutlinedButton.icon(
+                        onPressed: pdfBusy ? null : downloadBill,
+                        icon: const Icon(
+                          Icons.download_rounded,
+                          size: 19,
+                        ),
+                        label: const Text(
+                          'Download Bill PDF',
+                        ),
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: AppColors.primaryGreen,
+                          minimumSize: const Size.fromHeight(50),
+                          side: const BorderSide(
+                            color: AppColors.primaryGreen,
+                          ),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(14),
+                          ),
+                        ),
+                      ),
+                    ),
+
+                    const SizedBox(height: 8),
+
+                    Text(
+                      'You can share the bill directly through WhatsApp, '
+                          'email or other apps.',
+                      style: AppTheme.body(
+                        size: 10,
+                        color: AppColors.textGrey,
+                      ),
+                      textAlign: TextAlign.center,
+                    ),
+                  ],
                 ),
               ),
 
-              const SizedBox(width: 12),
-
-              Expanded(
-                child: Text(
-                  'Checkout Completed',
-                  style: AppTheme.heading(size: 18),
-                ),
-              ),
-            ],
-          ),
-
-          content: SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  '${widget.goats.length} '
-                      '${widget.goats.length == 1 ? 'goat' : 'goats'} '
-                      'checked out successfully.',
-                  style: AppTheme.body(
-                    size: 13,
-                    color: AppColors.textDark,
-                  ),
-                ),
-
-                const SizedBox(height: 18),
-
-                _dialogRow(
-                  'Bill Number',
-                  billResult.billNumber,
-                ),
-
-                _dialogRow(
-                  'New Charges',
-                  _rupees(billResult.newCharges),
-                ),
-
-                _dialogRow(
-                  'Previous Pending',
-                  _rupees(billResult.previousPending),
-                ),
-
-                _dialogRow(
-                  'Advance Applied',
-                  _rupees(billResult.advanceApplied),
-                ),
-
-                _dialogRow(
-                  'Total Due',
-                  _rupees(billResult.totalDue),
-                ),
-
-                _dialogRow(
-                  'Paid',
-                  _rupees(billResult.paid),
-                ),
-
-                _dialogRow(
-                  'Pending After',
-                  _rupees(billResult.pendingAfter),
-                ),
-
-                _dialogRow(
-                  'Advance After',
-                  _rupees(billResult.advanceAfter),
-                ),
-
-                const SizedBox(height: 20),
-
-                // ------------------------------------------------------
-                // PDF ACTIONS
-                // ------------------------------------------------------
-
-                SizedBox(
-                  width: double.infinity,
-                  child: ElevatedButton.icon(
-                    onPressed: () async {
-                      Navigator.of(dialogContext).pop();
-
-                      await _shareCheckoutBill(
-                        billResult,
-                      );
-                    },
-
-                    icon: const Icon(
-                      Icons.share_rounded,
-                      size: 19,
-                    ),
-
-                    label: const Text(
-                      'Share Bill PDF',
-                    ),
-
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor:
-                      AppColors.primaryGreen,
-                      foregroundColor: Colors.white,
-                      minimumSize:
-                      const Size.fromHeight(48),
-                      shape: RoundedRectangleBorder(
-                        borderRadius:
-                        BorderRadius.circular(13),
-                      ),
-                    ),
-                  ),
-                ),
-
-                const SizedBox(height: 10),
-
-                SizedBox(
-                  width: double.infinity,
-                  child: OutlinedButton.icon(
-                    onPressed: () async {
-                      Navigator.of(dialogContext).pop();
-
-                      await _saveCheckoutBill(
-                        billResult,
-                      );
-                    },
-
-                    icon: const Icon(
-                      Icons.download_rounded,
-                      size: 19,
-                    ),
-
-                    label: const Text(
-                      'Download Bill PDF',
-                    ),
-
-                    style: OutlinedButton.styleFrom(
-                      foregroundColor:
-                      AppColors.primaryGreen,
-                      minimumSize:
-                      const Size.fromHeight(48),
-                      side: const BorderSide(
-                        color:
-                        AppColors.primaryGreen,
-                      ),
-                      shape: RoundedRectangleBorder(
-                        borderRadius:
-                        BorderRadius.circular(13),
-                      ),
+              actions: [
+                TextButton(
+                  onPressed: pdfBusy
+                      ? null
+                      : () {
+                    Navigator.of(dialogContext).pop();
+                  },
+                  child: Text(
+                    'Done',
+                    style: AppTheme.body(
+                      size: 13,
+                      color: AppColors.textGrey,
+                      weight: FontWeight.w600,
                     ),
                   ),
                 ),
               ],
-            ),
-          ),
-
-          actions: [
-            TextButton(
-              onPressed: () {
-                Navigator.of(dialogContext).pop();
-              },
-              child: Text(
-                'Done',
-                style: AppTheme.body(
-                  size: 13,
-                  color: AppColors.textGrey,
-                  weight: FontWeight.w600,
-                ),
-              ),
-            ),
-          ],
+            );
+          },
         );
       },
     );

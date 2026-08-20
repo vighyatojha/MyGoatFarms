@@ -7,7 +7,7 @@ import '../../models/palai_models.dart';
 import '../../services/firestore_service.dart';
 import '../../widgets/fast_route.dart';
 import 'check_in_screen.dart';
-import 'check_out_screen.dart';
+import 'multi_goat_checkout_screen.dart';
 import 'generate_report_screen.dart';
 import 'health_records_screen.dart';
 
@@ -453,48 +453,236 @@ class _GoatListScreenState extends State<GoatListScreen> {
   Future<void> _openGoatActionSheet(PalaiGoat goat) async {
     final choice = await showModalBottomSheet<String>(
       context: context,
-      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
       builder: (sheetContext) {
         return SafeArea(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const SizedBox(height: 12),
-              Container(
-                width: 40,
-                height: 4,
-                decoration: BoxDecoration(color: Colors.grey[300], borderRadius: BorderRadius.circular(4)),
+          child: Container(
+            decoration: const BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.vertical(
+                top: Radius.circular(26),
               ),
-              const SizedBox(height: 12),
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 16),
-                child: Text(goat.goatCode, style: AppTheme.heading(size: 15)),
-              ),
-              const SizedBox(height: 4),
-              ListTile(
-                leading: const Icon(Icons.favorite_border, color: AppColors.primaryGreen),
-                title: Text('Update Health Record', style: AppTheme.body(size: 15, color: AppColors.textDark, weight: FontWeight.w600)),
-                subtitle: Text('Vaccination, hoof cutting, hair trimming, medicine, photos', style: AppTheme.body(size: 11)),
-                onTap: () => Navigator.pop(sheetContext, 'health'),
-              ),
-              ListTile(
-                leading: const Icon(Icons.logout, color: AppColors.primaryGreen),
-                title: Text('Check Out', style: AppTheme.body(size: 15, color: AppColors.textDark, weight: FontWeight.w600)),
-                subtitle: Text('End Palai boarding for this goat', style: AppTheme.body(size: 11)),
-                onTap: () => Navigator.pop(sheetContext, 'checkout'),
-              ),
-              const SizedBox(height: 8),
-            ],
+            ),
+            padding: const EdgeInsets.fromLTRB(20, 12, 20, 20),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Container(
+                  width: 42,
+                  height: 5,
+                  decoration: BoxDecoration(
+                    color: Colors.grey.shade300,
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                ),
+
+                const SizedBox(height: 18),
+
+                Row(
+                  children: [
+                    Container(
+                      width: 48,
+                      height: 48,
+                      decoration: const BoxDecoration(
+                        color: AppColors.lightGreen,
+                        shape: BoxShape.circle,
+                      ),
+                      child: const Icon(
+                        Icons.pets,
+                        color: AppColors.primaryGreen,
+                      ),
+                    ),
+
+                    const SizedBox(width: 12),
+
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            goat.goatCode,
+                            style: AppTheme.heading(size: 16),
+                          ),
+                          const SizedBox(height: 3),
+                          Text(
+                            '${goat.breed} · ${goat.gender}',
+                            style: AppTheme.body(size: 12),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+
+                const SizedBox(height: 20),
+
+                // -------------------------------------------------------
+                // HEALTH & CARE
+                // -------------------------------------------------------
+
+                _actionTile(
+                  icon: Icons.medical_services_outlined,
+                  color: AppColors.primaryGreen,
+                  title: 'Health & Care',
+                  subtitle:
+                  'Checkups, vaccination, hoof cutting, medicine and photos',
+                  onTap: () {
+                    Navigator.pop(sheetContext, 'health');
+                  },
+                ),
+
+                const SizedBox(height: 10),
+
+                // -------------------------------------------------------
+                // MONTHLY REPORT
+                // -------------------------------------------------------
+
+                _actionTile(
+                  icon: Icons.description_outlined,
+                  color: AppColors.info,
+                  title: 'Monthly Report',
+                  subtitle:
+                  'Generate the goat progress report up to today',
+                  onTap: () {
+                    Navigator.pop(sheetContext, 'monthly');
+                  },
+                ),
+
+                const SizedBox(height: 10),
+
+                // -------------------------------------------------------
+                // FINAL REPORT + CHECKOUT
+                // -------------------------------------------------------
+
+                _actionTile(
+                  icon: Icons.logout_rounded,
+                  color: AppColors.error,
+                  title: 'Final Report & Check-Out',
+                  subtitle:
+                  'Complete final report, billing and check-out',
+                  onTap: () {
+                    Navigator.pop(sheetContext, 'final');
+                  },
+                ),
+
+                const SizedBox(height: 8),
+              ],
+            ),
           ),
         );
       },
     );
+
     if (!mounted || choice == null) return;
-    if (choice == 'health') {
-      Navigator.of(context).push(fastRoute(HealthRecordsScreen(initialGoat: goat)));
-    } else if (choice == 'checkout') {
-      Navigator.of(context).push(fastRoute(CheckOutGoatScreen(goat: goat)));
+
+    switch (choice) {
+      case 'health':
+        Navigator.of(context).push(
+          fastRoute(
+            HealthRecordsScreen(
+              initialGoat: goat,
+            ),
+          ),
+        );
+        break;
+
+      case 'monthly':
+        Navigator.of(context).push(
+          fastRoute(
+            GenerateReportScreen(
+              goat: goat,
+            ),
+          ),
+        );
+        break;
+
+      case 'final':
+        Navigator.of(context).push(
+          fastRoute(
+            CheckOutGoatScreen(
+              goat: goat,
+            ),
+          ),
+        );
+        break;
     }
+  }
+
+  Widget _actionTile({
+    required IconData icon,
+    required Color color,
+    required String title,
+    required String subtitle,
+    required VoidCallback onTap,
+  }) {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(16),
+        onTap: onTap,
+        child: Container(
+          width: double.infinity,
+          padding: const EdgeInsets.all(15),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(
+              color: AppColors.divider,
+            ),
+          ),
+          child: Row(
+            children: [
+              Container(
+                width: 46,
+                height: 46,
+                decoration: BoxDecoration(
+                  color: color.withOpacity(0.10),
+                  shape: BoxShape.circle,
+                ),
+                child: Icon(
+                  icon,
+                  color: color,
+                  size: 22,
+                ),
+              ),
+
+              const SizedBox(width: 14),
+
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      title,
+                      style: AppTheme.body(
+                        size: 14,
+                        color: AppColors.textDark,
+                        weight: FontWeight.w700,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      subtitle,
+                      style: AppTheme.body(
+                        size: 11,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+
+              const SizedBox(width: 8),
+
+              Icon(
+                Icons.chevron_right_rounded,
+                color: AppColors.textGrey,
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 
   Widget _goatCard(PalaiGoat goat) {
@@ -569,17 +757,7 @@ class _GoatListScreenState extends State<GoatListScreen> {
                     ),
                   ),
                   const SizedBox(height: 6),
-                  Material(
-                    color: Colors.transparent,
-                    child: InkWell(
-                      borderRadius: BorderRadius.circular(20),
-                      onTap: () => Navigator.of(context).push(fastRoute(GenerateReportScreen(goat: goat))),
-                      child: Padding(
-                        padding: const EdgeInsets.all(4),
-                        child: Icon(Icons.description_outlined, color: AppColors.primaryGreen, size: 18),
-                      ),
-                    ),
-                  ),
+
                 ],
               ),
             ],
