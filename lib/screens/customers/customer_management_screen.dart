@@ -1,6 +1,5 @@
 import 'dart:async';
 
-import 'package:animate_do/animate_do.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 
@@ -12,39 +11,67 @@ import '../../widgets/fast_route.dart';
 import '../palai/add_customer_screen.dart';
 import 'customer_profile_screen.dart';
 
-/// Customer management: the "Customers" bottom-nav tab.
+/// Customer management screen for the MyGoatFarms application.
 ///
-/// Lists every Palai customer with search, and lets the user Create,
-/// Read, Update and Delete customer records:
-///  - Create: the "+" button opens [AddCustomerScreen] in add mode.
-///  - Read: this list, plus a summary of total customers & total pending.
-///    Tapping a card opens [CustomerProfileScreen] for full detail; "Edit"
-///    in its menu opens the edit form directly.
-///  - Update: "Edit" in the card's menu opens the form pre-filled for
-///    that customer (also reachable from within the profile screen).
-///  - Delete: "Delete" in the card's menu, with a confirmation dialog
-///    (blocked if the customer still has goats checked into Palai).
+/// Features:
+/// - Customer list
+/// - Search by name / mobile
+/// - Total customer count
+/// - Total pending amount
+/// - Total advance amount
+/// - Customer package and price
+/// - Customer profile
+/// - Edit customer
+/// - Delete customer
+/// - Prevent deletion when active goats exist
 class CustomerManagementScreen extends StatefulWidget {
   const CustomerManagementScreen({super.key});
 
   @override
-  State<CustomerManagementScreen> createState() => _CustomerManagementScreenState();
+  State<CustomerManagementScreen> createState() =>
+      _CustomerManagementScreenState();
 }
 
-class _CustomerManagementScreenState extends State<CustomerManagementScreen> {
+class _CustomerManagementScreenState
+    extends State<CustomerManagementScreen> {
   String? _farmId;
-  final _searchController = TextEditingController();
+
+  final TextEditingController _searchController =
+  TextEditingController();
+
   String _query = '';
 
   @override
   void initState() {
     super.initState();
-    FirestoreService.instance.currentFarmId().then((id) {
-      if (mounted) setState(() => _farmId = id);
-    });
+
+    _loadFarm();
+
     _searchController.addListener(() {
-      setState(() => _query = _searchController.text.trim().toLowerCase());
+      final value =
+      _searchController.text.trim().toLowerCase();
+
+      if (_query == value) return;
+
+      setState(() {
+        _query = value;
+      });
     });
+  }
+
+  Future<void> _loadFarm() async {
+    try {
+      final id =
+      await FirestoreService.instance.currentFarmId();
+
+      if (!mounted) return;
+
+      setState(() {
+        _farmId = id;
+      });
+    } catch (e) {
+      debugPrint('Customer screen farm error: $e');
+    }
   }
 
   @override
@@ -53,106 +80,273 @@ class _CustomerManagementScreenState extends State<CustomerManagementScreen> {
     super.dispose();
   }
 
-  List<PalaiCustomer> _filtered(List<PalaiCustomer> customers) {
-    if (_query.isEmpty) return customers;
-    return customers
-        .where((c) => c.name.toLowerCase().contains(_query) || c.mobileNumber.toLowerCase().contains(_query))
-        .toList();
-  }
-
-  Future<void> _openAdd() async {
-    await Navigator.of(context).push(fastRoute(const AddCustomerScreen()));
-  }
-
-  Future<void> _openProfile(PalaiCustomer customer) async {
-    final farmId = _farmId;
-    if (farmId == null) return;
-    await Navigator.of(context).push(
-      fastRoute(CustomerProfileScreen(customer: customer, farmId: farmId)),
-    );
-  }
-
-  Future<void> _openEdit(PalaiCustomer customer) async {
-    await Navigator.of(context).push(fastRoute(AddCustomerScreen(customer: customer)));
-  }
-
-  Future<void> _confirmDelete(PalaiCustomer customer) async {
-    final farmId = _farmId;
-    if (farmId == null) return;
-
-    final hasActiveGoats = await FirestoreService.instance.customerHasActiveGoats(farmId, customer.id);
-    if (!mounted) return;
-    if (hasActiveGoats) {
-      await showDialog<void>(
-        context: context,
-        builder: (ctx) => AlertDialog(
-          backgroundColor: Colors.white,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-          title: Text('Cannot delete ${customer.name}', style: AppTheme.heading(size: 16)),
-          content: Text(
-            'This customer still has goats checked into Palai. Check out all of their goats before deleting the customer.',
-            style: AppTheme.body(size: 13),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(ctx).pop(),
-              child: Text('OK', style: AppTheme.body(size: 13, color: AppColors.darkGreen, weight: FontWeight.w600)),
-            ),
-          ],
-        ),
-      );
-      return;
+  List<PalaiCustomer> _filterCustomers(
+      List<PalaiCustomer> customers,
+      ) {
+    if (_query.isEmpty) {
+      return customers;
     }
 
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: Colors.white,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        title: Text('Delete ${customer.name}?', style: AppTheme.heading(size: 16)),
-        content: Text(
-          'This permanently removes the customer and their Palai history. This cannot be undone.',
-          style: AppTheme.body(size: 13),
-        ),
-        actions: [
-          TextButton(onPressed: () => Navigator.of(ctx).pop(false), child: Text('Cancel', style: AppTheme.body(size: 13, color: AppColors.textGrey))),
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop(true),
-            child: Text('Delete', style: AppTheme.body(size: 13, color: AppColors.error, weight: FontWeight.w600)),
-          ),
-        ],
+    return customers.where((customer) {
+      final name =
+      customer.name.toLowerCase();
+
+      final mobile =
+      customer.mobileNumber.toLowerCase();
+
+      final package =
+      customer.package.toLowerCase();
+
+      return name.contains(_query) ||
+          mobile.contains(_query) ||
+          package.contains(_query);
+    }).toList();
+  }
+
+  Future<void> _openAddCustomer() async {
+    await Navigator.of(context).push(
+      fastRoute(
+        const AddCustomerScreen(),
       ),
     );
-    if (confirmed != true) return;
+  }
+
+  Future<void> _openProfile(
+      PalaiCustomer customer,
+      ) async {
+    final farmId = _farmId;
+
+    if (farmId == null) return;
+
+    await Navigator.of(context).push(
+      fastRoute(
+        CustomerProfileScreen(
+          customer: customer,
+          farmId: farmId,
+        ),
+      ),
+    );
+  }
+
+  Future<void> _openEdit(
+      PalaiCustomer customer,
+      ) async {
+    await Navigator.of(context).push(
+      fastRoute(
+        AddCustomerScreen(
+          customer: customer,
+        ),
+      ),
+    );
+  }
+
+  Future<void> _deleteCustomer(
+      PalaiCustomer customer,
+      ) async {
+    final farmId = _farmId;
+
+    if (farmId == null) return;
 
     try {
-      await FirestoreService.instance.deleteCustomer(farmId, customer.id);
+      final hasActiveGoats =
+      await FirestoreService.instance
+          .customerHasActiveGoats(
+        farmId,
+        customer.id,
+      );
+
+      if (!mounted) return;
+
+      if (hasActiveGoats) {
+        await _showActiveGoatsDialog(customer);
+        return;
+      }
+
+      final confirmed =
+      await _showDeleteConfirmation(customer);
+
+      if (confirmed != true) return;
+
+      if (!mounted) return;
+
+      _showLoadingSnackBar(
+        'Deleting ${customer.name}...',
+      );
+
+      await FirestoreService.instance
+          .deleteCustomer(
+        farmId,
+        customer.id,
+      );
+
       await FirestoreService.instance.logActivity(
         farmId,
         ActivityLog(
           id: '',
           type: ActivityType.customerDeleted,
           title: 'Customer Deleted',
-          subtitle: '${customer.name} removed from Palai',
+          subtitle:
+          '${customer.name} removed from Palai',
           module: 'palai',
           timestamp: DateTime.now(),
         ),
       );
+
       if (!mounted) return;
+
+      ScaffoldMessenger.of(context).hideCurrentSnackBar();
+
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('${customer.name} deleted'), backgroundColor: AppColors.darkGreen),
+        SnackBar(
+          content:
+          Text('${customer.name} deleted successfully'),
+          backgroundColor: AppColors.darkGreen,
+        ),
       );
     } on TimeoutException {
       if (!mounted) return;
+
+      ScaffoldMessenger.of(context).hideCurrentSnackBar();
+
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('This is taking too long. Check your connection and try again.'), backgroundColor: AppColors.error),
+        const SnackBar(
+          content: Text(
+            'This is taking too long. Check your internet connection.',
+          ),
+          backgroundColor: AppColors.error,
+        ),
       );
     } catch (e) {
       if (!mounted) return;
+
+      ScaffoldMessenger.of(context).hideCurrentSnackBar();
+
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(FirestoreService.instance.describeError(e)), backgroundColor: AppColors.error),
+        SnackBar(
+          content: Text(
+            FirestoreService.instance.describeError(e),
+          ),
+          backgroundColor: AppColors.error,
+        ),
       );
     }
+  }
+
+  Future<void> _showActiveGoatsDialog(
+      PalaiCustomer customer,
+      ) async {
+    await showDialog<void>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          backgroundColor: Colors.white,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(18),
+          ),
+          title: Text(
+            'Cannot Delete Customer',
+            style: AppTheme.heading(size: 17),
+          ),
+          content: Text(
+            '${customer.name} still has goats checked into Palai.\n\n'
+                'Please check out all of the customer\'s goats before deleting this customer.',
+            style: AppTheme.body(size: 13),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () {
+                Navigator.pop(context);
+              },
+              child: Text(
+                'OK',
+                style: AppTheme.body(
+                  size: 13,
+                  color: AppColors.darkGreen,
+                  weight: FontWeight.w600,
+                ),
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Future<bool?> _showDeleteConfirmation(
+      PalaiCustomer customer,
+      ) async {
+    return showDialog<bool>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          backgroundColor: Colors.white,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(18),
+          ),
+          title: Text(
+            'Delete Customer?',
+            style: AppTheme.heading(size: 17),
+          ),
+          content: Text(
+            'Are you sure you want to delete ${customer.name}?\n\n'
+                'This will permanently remove the customer and their Palai history.',
+            style: AppTheme.body(size: 13),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () {
+                Navigator.pop(context, false);
+              },
+              child: Text(
+                'Cancel',
+                style: AppTheme.body(
+                  size: 13,
+                  color: AppColors.textGrey,
+                ),
+              ),
+            ),
+            TextButton(
+              onPressed: () {
+                Navigator.pop(context, true);
+              },
+              child: Text(
+                'Delete',
+                style: AppTheme.body(
+                  size: 13,
+                  color: AppColors.error,
+                  weight: FontWeight.w600,
+                ),
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  void _showLoadingSnackBar(String message) {
+    ScaffoldMessenger.of(context).hideCurrentSnackBar();
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Row(
+          children: [
+            const SizedBox(
+              width: 18,
+              height: 18,
+              child: CircularProgressIndicator(
+                strokeWidth: 2,
+                color: Colors.white,
+              ),
+            ),
+            const SizedBox(width: 12),
+            Text(message),
+          ],
+        ),
+        backgroundColor: AppColors.darkGreen,
+        duration: const Duration(seconds: 30),
+      ),
+    );
   }
 
   @override
@@ -161,79 +355,479 @@ class _CustomerManagementScreenState extends State<CustomerManagementScreen> {
       backgroundColor: AppColors.paleGreen,
       body: SafeArea(
         child: _farmId == null
-            ? const Center(child: CircularProgressIndicator(color: AppColors.primaryGreen))
-            : Column(
-          children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(20, 12, 20, 4),
-              child: FadeInDown(duration: const Duration(milliseconds: 180), child: _buildHeader()),
-            ),
-            Expanded(
-              child: StreamBuilder<List<PalaiCustomer>>(
-                stream: FirestoreService.instance.customersStream(_farmId!),
-                builder: (context, snap) {
-                  if (!snap.hasData) {
-                    return const Center(child: CircularProgressIndicator(color: AppColors.primaryGreen));
-                  }
-                  final all = snap.data!;
-                  final customers = _filtered(all);
-                  return CustomScrollView(
-                    slivers: [
-                      SliverToBoxAdapter(
-                        child: Padding(
-                          padding: const EdgeInsets.fromLTRB(20, 12, 20, 4),
-                          child: FadeInUp(
-                            delay: const Duration(milliseconds: 40),
-                            duration: const Duration(milliseconds: 200),
-                            child: _buildSummary(all),
-                          ),
-                        ),
+            ? const Center(
+          child: CircularProgressIndicator(
+            color: AppColors.primaryGreen,
+          ),
+        )
+            : StreamBuilder<List<PalaiCustomer>>(
+          stream: FirestoreService.instance
+              .customersStream(_farmId!),
+          builder: (
+              context,
+              snapshot,
+              ) {
+            if (snapshot.hasError) {
+              return _buildErrorState(
+                snapshot.error.toString(),
+              );
+            }
+
+            if (snapshot.connectionState ==
+                ConnectionState.waiting) {
+              return const Center(
+                child: CircularProgressIndicator(
+                  color: AppColors.primaryGreen,
+                ),
+              );
+            }
+
+            final allCustomers =
+                snapshot.data ?? [];
+
+            final customers =
+            _filterCustomers(
+              allCustomers,
+            );
+
+            return CustomScrollView(
+              physics:
+              const BouncingScrollPhysics(),
+              slivers: [
+                SliverToBoxAdapter(
+                  child: _buildHeader(),
+                ),
+
+                SliverToBoxAdapter(
+                  child: Padding(
+                    padding:
+                    const EdgeInsets.fromLTRB(
+                      16,
+                      8,
+                      16,
+                      4,
+                    ),
+                    child: _buildSummary(
+                      allCustomers,
+                    ),
+                  ),
+                ),
+
+                SliverToBoxAdapter(
+                  child: Padding(
+                    padding:
+                    const EdgeInsets.fromLTRB(
+                      16,
+                      10,
+                      16,
+                      8,
+                    ),
+                    child: _buildSearch(),
+                  ),
+                ),
+
+                if (customers.isEmpty)
+                  SliverFillRemaining(
+                    hasScrollBody: false,
+                    child:
+                    _buildEmptyState(
+                      allCustomers.isEmpty,
+                    ),
+                  )
+                else
+                  SliverPadding(
+                    padding:
+                    const EdgeInsets.fromLTRB(
+                      16,
+                      4,
+                      16,
+                      28,
+                    ),
+                    sliver:
+                    SliverList.separated(
+                      itemCount:
+                      customers.length,
+                      separatorBuilder:
+                          (_, __) =>
+                      const SizedBox(
+                        height: 10,
                       ),
-                      SliverToBoxAdapter(
-                        child: Padding(
-                          padding: const EdgeInsets.fromLTRB(20, 8, 20, 4),
-                          child: _buildSearch(),
-                        ),
-                      ),
-                      if (customers.isEmpty)
-                        SliverFillRemaining(
-                          hasScrollBody: false,
-                          child: Center(
-                            child: Padding(
-                              padding: const EdgeInsets.all(24),
-                              child: Text(
-                                all.isEmpty ? 'No customers yet. Tap "Add Customer" to create one.' : 'No customers match "${_searchController.text}".',
-                                textAlign: TextAlign.center,
-                                style: AppTheme.body(size: 13),
+                      itemBuilder:
+                          (context, index) {
+                        final customer =
+                        customers[index];
+
+                        return _CustomerCard(
+                          customer:
+                          customer,
+                          onTap: () =>
+                              _openProfile(
+                                customer,
                               ),
-                            ),
-                          ),
-                        )
-                      else
-                        SliverPadding(
-                          padding: const EdgeInsets.fromLTRB(20, 8, 20, 24),
-                          sliver: SliverList.separated(
-                            itemCount: customers.length,
-                            separatorBuilder: (_, __) => const SizedBox(height: 10),
-                            itemBuilder: (context, i) {
-                              final customer = customers[i];
-                              return FadeInUp(
-                                delay: Duration(milliseconds: 20 * i.clamp(0, 8).toInt()),
-                                duration: const Duration(milliseconds: 200),
-                                child: _CustomerCard(
-                                  customer: customer,
-                                  onTap: () => _openProfile(customer),
-                                  onEdit: () => _openEdit(customer),
-                                  onDelete: () => _confirmDelete(customer),
-                                ),
-                              );
-                            },
-                          ),
-                        ),
-                    ],
-                  );
-                },
+                          onEdit: () =>
+                              _openEdit(
+                                customer,
+                              ),
+                          onDelete: () =>
+                              _deleteCustomer(
+                                customer,
+                              ),
+                        );
+                      },
+                    ),
+                  ),
+              ],
+            );
+          },
+        ),
+      ),
+    );
+  }
+
+  Widget _buildHeader() {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(
+        16,
+        14,
+        16,
+        6,
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 46,
+            height: 46,
+            decoration: const BoxDecoration(
+              color: AppColors.lightGreen,
+              shape: BoxShape.circle,
+            ),
+            child: const Icon(
+              Icons.people_alt_outlined,
+              color: AppColors.primaryGreen,
+              size: 24,
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment:
+              CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Customers',
+                  style: AppTheme.heading(
+                    size: 20,
+                  ),
+                ),
+                Text(
+                  'Manage your Palai customers',
+                  style: AppTheme.body(
+                    size: 11,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          ElevatedButton(
+            onPressed: _openAddCustomer,
+            style: ElevatedButton.styleFrom(
+              backgroundColor:
+              AppColors.primaryGreen,
+              foregroundColor: Colors.white,
+              elevation: 0,
+              padding:
+              const EdgeInsets.symmetric(
+                horizontal: 12,
+                vertical: 11,
               ),
+              shape:
+              RoundedRectangleBorder(
+                borderRadius:
+                BorderRadius.circular(12),
+              ),
+            ),
+            child: const Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(
+                  Icons.add,
+                  size: 18,
+                ),
+                SizedBox(width: 4),
+                Text(
+                  'Add',
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontWeight:
+                    FontWeight.w600,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSummary(
+      List<PalaiCustomer> customers,
+      ) {
+    double pending = 0;
+    double advance = 0;
+    double totalValue = 0;
+
+    for (final customer in customers) {
+      pending += customer.pendingAmount;
+      advance += customer.advanceAmount;
+      totalValue += customer.price;
+    }
+
+    return Column(
+      children: [
+        Row(
+          children: [
+            Expanded(
+              child: _SummaryCard(
+                icon:
+                Icons.people_outline,
+                title: 'Customers',
+                value:
+                '${customers.length}',
+                color:
+                AppColors.info,
+              ),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: _SummaryCard(
+                icon:
+                Icons.pending_actions_outlined,
+                title: 'Pending',
+                value:
+                _rupees(pending),
+                color: pending > 0
+                    ? AppColors.error
+                    : AppColors.success,
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 10),
+        Row(
+          children: [
+            Expanded(
+              child: _SummaryCard(
+                icon:
+                Icons.account_balance_wallet_outlined,
+                title: 'Advance',
+                value:
+                _rupees(advance),
+                color:
+                AppColors.darkGreen,
+              ),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: _SummaryCard(
+                icon:
+                Icons.payments_outlined,
+                title: 'Palai Value',
+                value:
+                _rupees(totalValue),
+                color:
+                AppColors.primaryGreen,
+              ),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+
+  Widget _buildSearch() {
+    return Container(
+      decoration:
+      AppTheme.card(radius: 14),
+      child: TextField(
+        controller:
+        _searchController,
+        textInputAction:
+        TextInputAction.search,
+        decoration:
+        InputDecoration(
+          hintText:
+          'Search customer, mobile or package',
+          hintStyle:
+          AppTheme.body(size: 12),
+          prefixIcon:
+          const Icon(
+            Icons.search,
+            color:
+            AppColors.textGrey,
+            size: 20,
+          ),
+          suffixIcon:
+          _query.isEmpty
+              ? null
+              : IconButton(
+            onPressed: () {
+              _searchController
+                  .clear();
+            },
+            icon:
+            const Icon(
+              Icons.close,
+              color:
+              AppColors.textGrey,
+              size: 18,
+            ),
+          ),
+          border:
+          InputBorder.none,
+          contentPadding:
+          const EdgeInsets.symmetric(
+            horizontal: 12,
+            vertical: 13,
+          ),
+        ),
+        style: AppTheme.body(
+          size: 13,
+          color: AppColors.textDark,
+        ),
+      ),
+    );
+  }
+
+  Widget _buildEmptyState(
+      bool noCustomers,
+      ) {
+    return Center(
+      child: Padding(
+        padding:
+        const EdgeInsets.all(30),
+        child: Column(
+          mainAxisAlignment:
+          MainAxisAlignment.center,
+          children: [
+            Container(
+              width: 76,
+              height: 76,
+              decoration:
+              const BoxDecoration(
+                color:
+                AppColors.lightGreen,
+                shape: BoxShape.circle,
+              ),
+              child:
+              const Icon(
+                Icons.people_outline,
+                color:
+                AppColors.primaryGreen,
+                size: 38,
+              ),
+            ),
+            const SizedBox(height: 18),
+            Text(
+              noCustomers
+                  ? 'No customers yet'
+                  : 'No customers found',
+              style: AppTheme.heading(
+                size: 17,
+              ),
+            ),
+            const SizedBox(height: 7),
+            Text(
+              noCustomers
+                  ? 'Add your first Palai customer to start managing their goats and payments.'
+                  : 'Try searching with a different name, mobile number or package.',
+              textAlign:
+              TextAlign.center,
+              style: AppTheme.body(
+                size: 12,
+              ),
+            ),
+            if (noCustomers) ...[
+              const SizedBox(height: 18),
+              ElevatedButton.icon(
+                onPressed:
+                _openAddCustomer,
+                icon:
+                const Icon(Icons.add),
+                label:
+                const Text(
+                  'Add Customer',
+                ),
+                style:
+                ElevatedButton.styleFrom(
+                  backgroundColor:
+                  AppColors.primaryGreen,
+                  foregroundColor:
+                  Colors.white,
+                  elevation: 0,
+                  shape:
+                  RoundedRectangleBorder(
+                    borderRadius:
+                    BorderRadius.circular(
+                      12,
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildErrorState(
+      String error,
+      ) {
+    return Center(
+      child: Padding(
+        padding:
+        const EdgeInsets.all(24),
+        child: Column(
+          mainAxisAlignment:
+          MainAxisAlignment.center,
+          children: [
+            const Icon(
+              Icons.error_outline,
+              size: 44,
+              color: AppColors.error,
+            ),
+            const SizedBox(height: 12),
+            Text(
+              'Could not load customers',
+              style: AppTheme.heading(
+                size: 17,
+              ),
+            ),
+            const SizedBox(height: 7),
+            Text(
+              error,
+              textAlign:
+              TextAlign.center,
+              maxLines: 5,
+              overflow:
+              TextOverflow.ellipsis,
+              style: AppTheme.body(
+                size: 11,
+              ),
+            ),
+            const SizedBox(height: 18),
+            ElevatedButton(
+              onPressed: _loadFarm,
+              style:
+              ElevatedButton.styleFrom(
+                backgroundColor:
+                AppColors.primaryGreen,
+                foregroundColor:
+                Colors.white,
+              ),
+              child:
+              const Text('Retry'),
             ),
           ],
         ),
@@ -241,113 +835,96 @@ class _CustomerManagementScreenState extends State<CustomerManagementScreen> {
     );
   }
 
-  Widget _buildHeader() {
-    return Row(
-      children: [
-        Container(
-          width: 42,
-          height: 42,
-          decoration: const BoxDecoration(color: AppColors.lightGreen, shape: BoxShape.circle),
-          child: const Icon(Icons.people, color: AppColors.primaryGreen),
-        ),
-        const SizedBox(width: 12),
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text('Customers', style: AppTheme.heading(size: 17)),
-              Text('Manage Palai customers', style: AppTheme.body(size: 12)),
-            ],
-          ),
-        ),
-        ElevatedButton.icon(
-          onPressed: _openAdd,
-          icon: const Icon(Icons.person_add_alt, size: 16),
-          label: const Text('Add Customer'),
-          style: ElevatedButton.styleFrom(
-            backgroundColor: AppColors.primaryGreen,
-            foregroundColor: Colors.white,
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-            textStyle: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
-          ),
-        ),
-      ],
-    );
+  static String _rupees(double value) {
+    return '₹${value.toStringAsFixed(0)}';
   }
+}
 
-  Widget _buildSummary(List<PalaiCustomer> customers) {
-    final totalPending = customers.fold<double>(0, (t, c) => t + c.pendingAmount);
-    return Row(
-      children: [
-        Expanded(
-          child: _summaryCard(
-            icon: Icons.people_outline,
-            label: 'Total Customers',
-            value: '${customers.length}',
-            color: AppColors.info,
-          ),
-        ),
-        const SizedBox(width: 12),
-        Expanded(
-          child: _summaryCard(
-            icon: Icons.credit_card_outlined,
-            label: 'Total Pending',
-            value: '₹${totalPending.toStringAsFixed(0)}',
-            color: totalPending > 0 ? AppColors.error : AppColors.success,
-          ),
-        ),
-      ],
-    );
-  }
+// ============================================================================
+// SUMMARY CARD
+// ============================================================================
 
-  Widget _summaryCard({required IconData icon, required String label, required String value, required Color color}) {
+class _SummaryCard extends StatelessWidget {
+  final IconData icon;
+  final String title;
+  final String value;
+  final Color color;
+
+  const _SummaryCard({
+    required this.icon,
+    required this.title,
+    required this.value,
+    required this.color,
+  });
+
+  @override
+  Widget build(BuildContext context) {
     return Container(
-      decoration: AppTheme.card(radius: 14),
-      padding: const EdgeInsets.all(14),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+      padding:
+      const EdgeInsets.all(13),
+      decoration:
+      AppTheme.card(radius: 14),
+      child: Row(
         children: [
           Container(
-            width: 32,
-            height: 32,
-            decoration: BoxDecoration(color: color.withOpacity(0.12), shape: BoxShape.circle),
-            child: Icon(icon, size: 16, color: color),
+            width: 36,
+            height: 36,
+            decoration:
+            BoxDecoration(
+              color:
+              color.withOpacity(0.12),
+              shape:
+              BoxShape.circle,
+            ),
+            child: Icon(
+              icon,
+              color: color,
+              size: 18,
+            ),
           ),
-          const SizedBox(height: 8),
-          Text(value, style: AppTheme.heading(size: 18)),
-          Text(label, style: AppTheme.body(size: 11)),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment:
+              CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  maxLines: 1,
+                  overflow:
+                  TextOverflow.ellipsis,
+                  style:
+                  AppTheme.body(
+                    size: 10,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  value,
+                  maxLines: 1,
+                  overflow:
+                  TextOverflow.ellipsis,
+                  style:
+                  AppTheme.heading(
+                    size: 16,
+                  ),
+                ),
+              ],
+            ),
+          ),
         ],
-      ),
-    );
-  }
-
-  Widget _buildSearch() {
-    return Container(
-      decoration: AppTheme.card(radius: 12),
-      child: TextField(
-        controller: _searchController,
-        decoration: InputDecoration(
-          hintText: 'Search by name or mobile number',
-          hintStyle: AppTheme.body(size: 12),
-          prefixIcon: const Icon(Icons.search, color: AppColors.textGrey, size: 20),
-          suffixIcon: _query.isEmpty
-              ? null
-              : IconButton(
-            icon: const Icon(Icons.close, color: AppColors.textGrey, size: 18),
-            onPressed: () => _searchController.clear(),
-          ),
-          border: InputBorder.none,
-          contentPadding: const EdgeInsets.symmetric(vertical: 12),
-        ),
-        style: AppTheme.body(size: 13, color: AppColors.textDark),
       ),
     );
   }
 }
 
+// ============================================================================
+// CUSTOMER CARD
+// ============================================================================
+
 class _CustomerCard extends StatelessWidget {
   final PalaiCustomer customer;
+
   final VoidCallback onTap;
   final VoidCallback onEdit;
   final VoidCallback onDelete;
@@ -361,77 +938,407 @@ class _CustomerCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final hasPending = customer.pendingAmount > 0;
-    final initial = customer.name.isNotEmpty ? customer.name[0].toUpperCase() : '?';
+    final bool hasPending =
+        customer.pendingAmount > 0;
+
+    final bool hasAdvance =
+        customer.advanceAmount > 0;
+
+    final String initial =
+    customer.name.isNotEmpty
+        ? customer.name[0]
+        .toUpperCase()
+        : '?';
 
     return Material(
       color: Colors.transparent,
       child: InkWell(
-        borderRadius: BorderRadius.circular(14),
         onTap: onTap,
+        borderRadius:
+        BorderRadius.circular(16),
         child: Container(
-          decoration: AppTheme.card(radius: 14),
-          padding: const EdgeInsets.all(12),
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
+          padding:
+          const EdgeInsets.all(14),
+          decoration:
+          AppTheme.card(radius: 16),
+          child: Column(
             children: [
-              Container(
-                width: 46,
-                height: 46,
-                decoration: const BoxDecoration(color: AppColors.lightGreen, shape: BoxShape.circle),
-                alignment: Alignment.center,
-                child: Text(initial, style: AppTheme.heading(size: 17, color: AppColors.darkGreen)),
-              ),
-              const SizedBox(width: 14),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(customer.name, style: AppTheme.heading(size: 14)),
-                    const SizedBox(height: 3),
-                    Text(customer.mobileNumber, style: AppTheme.body(size: 12)),
-                    const SizedBox(height: 6),
-                    Wrap(
-                      spacing: 6,
-                      runSpacing: 6,
+              Row(
+                crossAxisAlignment:
+                CrossAxisAlignment.start,
+                children: [
+                  Container(
+                    width: 48,
+                    height: 48,
+                    decoration:
+                    const BoxDecoration(
+                      color:
+                      AppColors.lightGreen,
+                      shape:
+                      BoxShape.circle,
+                    ),
+                    alignment:
+                    Alignment.center,
+                    child: Text(
+                      initial,
+                      style:
+                      AppTheme.heading(
+                        size: 18,
+                        color:
+                        AppColors.darkGreen,
+                      ),
+                    ),
+                  ),
+
+                  const SizedBox(width: 12),
+
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment:
+                      CrossAxisAlignment.start,
                       children: [
-                        Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                          decoration: BoxDecoration(color: AppColors.lightGreen, borderRadius: BorderRadius.circular(8)),
-                          child: Text(customer.package, style: AppTheme.body(size: 10, color: AppColors.darkGreen, weight: FontWeight.w600)),
+                        Text(
+                          customer.name,
+                          maxLines: 1,
+                          overflow:
+                          TextOverflow.ellipsis,
+                          style:
+                          AppTheme.heading(
+                            size: 14,
+                          ),
                         ),
-                        Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                          decoration: BoxDecoration(
-                            color: (hasPending ? AppColors.error : AppColors.success).withOpacity(0.12),
-                            borderRadius: BorderRadius.circular(8),
-                          ),
-                          child: Text(
-                            hasPending ? 'Pending ₹${customer.pendingAmount.toStringAsFixed(0)}' : 'No dues',
-                            style: AppTheme.body(size: 10, color: hasPending ? AppColors.error : AppColors.success, weight: FontWeight.w600),
-                          ),
+
+                        const SizedBox(height: 3),
+
+                        Row(
+                          children: [
+                            const Icon(
+                              Icons.phone_outlined,
+                              size: 13,
+                              color:
+                              AppColors.textGrey,
+                            ),
+                            const SizedBox(
+                              width: 4,
+                            ),
+                            Expanded(
+                              child: Text(
+                                customer
+                                    .mobileNumber,
+                                maxLines: 1,
+                                overflow:
+                                TextOverflow
+                                    .ellipsis,
+                                style:
+                                AppTheme.body(
+                                  size: 11,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+
+                        const SizedBox(height: 5),
+
+                        Row(
+                          children: [
+                            const Icon(
+                              Icons
+                                  .calendar_today_outlined,
+                              size: 12,
+                              color:
+                              AppColors.textGrey,
+                            ),
+                            const SizedBox(
+                              width: 4,
+                            ),
+                            Text(
+                              'Joined ${DateFormat('dd MMM yyyy').format(customer.joiningDate)}',
+                              style:
+                              AppTheme.body(
+                                size: 10,
+                              ),
+                            ),
+                          ],
                         ),
                       ],
                     ),
-                    const SizedBox(height: 4),
-                    Text('Joined ${DateFormat('dd MMM yyyy').format(customer.joiningDate)}', style: AppTheme.body(size: 10)),
+                  ),
+
+                  PopupMenuButton<String>(
+                    padding:
+                    EdgeInsets.zero,
+                    icon:
+                    const Icon(
+                      Icons.more_vert,
+                      color:
+                      AppColors.textGrey,
+                    ),
+                    onSelected: (value) {
+                      switch (value) {
+                        case 'view':
+                          onTap();
+                          break;
+
+                        case 'edit':
+                          onEdit();
+                          break;
+
+                        case 'delete':
+                          onDelete();
+                          break;
+                      }
+                    },
+                    itemBuilder:
+                        (context) => const [
+                      PopupMenuItem(
+                        value: 'view',
+                        child:
+                        Text('View Profile'),
+                      ),
+                      PopupMenuItem(
+                        value: 'edit',
+                        child:
+                        Text('Edit Customer'),
+                      ),
+                      PopupMenuItem(
+                        value: 'delete',
+                        child:
+                        Text('Delete Customer'),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+
+              const SizedBox(height: 12),
+
+              Container(
+                width: double.infinity,
+                padding:
+                const EdgeInsets.all(10),
+                decoration:
+                BoxDecoration(
+                  color:
+                  AppColors.paleGreen,
+                  borderRadius:
+                  BorderRadius.circular(
+                    10,
+                  ),
+                ),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: _InfoItem(
+                        icon:
+                        Icons.home_work_outlined,
+                        label:
+                        'Package',
+                        value:
+                        customer.package,
+                      ),
+                    ),
+                    Container(
+                      width: 1,
+                      height: 30,
+                      color:
+                      AppColors.divider,
+                    ),
+                    Expanded(
+                      child: _InfoItem(
+                        icon:
+                        Icons.payments_outlined,
+                        label:
+                        'Price',
+                        value:
+                        _rupees(
+                          customer.price,
+                        ),
+                      ),
+                    ),
                   ],
                 ),
               ),
-              PopupMenuButton<String>(
-                icon: const Icon(Icons.more_vert, color: AppColors.textGrey),
-                onSelected: (v) {
-                  if (v == 'edit') onEdit();
-                  if (v == 'delete') onDelete();
-                },
-                itemBuilder: (context) => [
-                  const PopupMenuItem(value: 'edit', child: Text('Edit')),
-                  const PopupMenuItem(value: 'delete', child: Text('Delete')),
+
+              const SizedBox(height: 8),
+
+              Row(
+                children: [
+                  Expanded(
+                    child:
+                    _MoneyBadge(
+                      icon: Icons
+                          .pending_actions_outlined,
+                      label: 'Pending',
+                      value:
+                      _rupees(
+                        customer
+                            .pendingAmount,
+                      ),
+                      color: hasPending
+                          ? AppColors.error
+                          : AppColors.success,
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child:
+                    _MoneyBadge(
+                      icon: Icons
+                          .account_balance_wallet_outlined,
+                      label: 'Advance',
+                      value:
+                      _rupees(
+                        customer
+                            .advanceAmount,
+                      ),
+                      color: hasAdvance
+                          ? AppColors.darkGreen
+                          : AppColors.textGrey,
+                    ),
+                  ),
                 ],
               ),
             ],
           ),
         ),
+      ),
+    );
+  }
+
+  static String _rupees(double value) {
+    return '₹${value.toStringAsFixed(0)}';
+  }
+}
+
+// ============================================================================
+// INFO ITEM
+// ============================================================================
+
+class _InfoItem extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final String value;
+
+  const _InfoItem({
+    required this.icon,
+    required this.label,
+    required this.value,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        Icon(
+          icon,
+          size: 16,
+          color: AppColors.primaryGreen,
+        ),
+        const SizedBox(width: 7),
+        Expanded(
+          child: Column(
+            crossAxisAlignment:
+            CrossAxisAlignment.start,
+            children: [
+              Text(
+                label,
+                style:
+                AppTheme.body(
+                  size: 9,
+                ),
+              ),
+              const SizedBox(height: 1),
+              Text(
+                value.isEmpty
+                    ? '-'
+                    : value,
+                maxLines: 1,
+                overflow:
+                TextOverflow.ellipsis,
+                style:
+                AppTheme.body(
+                  size: 11,
+                  color:
+                  AppColors.textDark,
+                  weight:
+                  FontWeight.w600,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+// ============================================================================
+// MONEY BADGE
+// ============================================================================
+
+class _MoneyBadge extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final String value;
+  final Color color;
+
+  const _MoneyBadge({
+    required this.icon,
+    required this.label,
+    required this.value,
+    required this.color,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding:
+      const EdgeInsets.symmetric(
+        horizontal: 9,
+        vertical: 8,
+      ),
+      decoration:
+      BoxDecoration(
+        color:
+        color.withOpacity(0.08),
+        borderRadius:
+        BorderRadius.circular(10),
+      ),
+      child: Row(
+        children: [
+          Icon(
+            icon,
+            size: 15,
+            color: color,
+          ),
+          const SizedBox(width: 6),
+          Expanded(
+            child: Column(
+              crossAxisAlignment:
+              CrossAxisAlignment.start,
+              children: [
+                Text(
+                  label,
+                  style:
+                  AppTheme.body(
+                    size: 9,
+                  ),
+                ),
+                Text(
+                  value,
+                  style:
+                  AppTheme.body(
+                    size: 11,
+                    color: color,
+                    weight:
+                    FontWeight.w600,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
       ),
     );
   }

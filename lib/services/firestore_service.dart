@@ -113,6 +113,168 @@ class FirestoreService {
     return query.docs.isNotEmpty;
   }
 
+  Stream<List<Map<String, dynamic>>>
+  customerPaymentHistoryStream(
+      String farmId,
+      String customerId,
+      ) {
+    return _farms
+        .doc(farmId)
+        .collection('payments')
+        .where(
+      'customerId',
+      isEqualTo: customerId,
+    )
+        .orderBy(
+      'date',
+      descending: true,
+    )
+        .limit(50)
+        .snapshots()
+        .map(
+          (snapshot) => snapshot.docs
+          .map(
+            (doc) => {
+          'id': doc.id,
+          ...doc.data(),
+        },
+      )
+          .toList(),
+    );
+  }
+
+  Future<void> addOutstandingAmount({
+    required String farmId,
+    required String customerId,
+    required double amount,
+    String note = '',
+  }) async {
+    if (amount <= 0) {
+      throw ArgumentError(
+        'Outstanding amount must be greater than zero.',
+      );
+    }
+
+    final customerRef =
+    _customers(farmId).doc(customerId);
+
+    final billsCollection =
+    _farms.doc(farmId).collection('bills');
+
+    final activitiesCollection =
+    _farms.doc(farmId).collection('activities');
+
+    final billRef =
+    billsCollection.doc();
+
+    final activityRef =
+    activitiesCollection.doc();
+
+    await _db.runTransaction<void>(
+          (transaction) async {
+        final customerSnapshot =
+        await transaction.get(customerRef);
+
+        if (!customerSnapshot.exists) {
+          throw StateError(
+            'Customer no longer exists.',
+          );
+        }
+
+        final data =
+            customerSnapshot.data() ?? {};
+
+        final customerName =
+        (data['name'] ?? '').toString();
+
+        final currentPending =
+        (data['pendingAmount'] ?? 0)
+            .toDouble();
+
+        final newPending =
+            currentPending + amount;
+
+        final now = DateTime.now();
+
+        final billNumber =
+            'OUT-${now.year}'
+            '${now.month.toString().padLeft(2, '0')}'
+            '${now.day.toString().padLeft(2, '0')}'
+            '-${billRef.id.substring(0, 6).toUpperCase()}';
+
+        // ------------------------------------------------------------
+        // Create outstanding record.
+        //
+        // This is NOT an income transaction because money has not
+        // actually been received.
+        // ------------------------------------------------------------
+
+        transaction.set(
+          billRef,
+          {
+            'billNumber': billNumber,
+            'type': 'manualOutstanding',
+
+            'customerId': customerId,
+            'customerName': customerName,
+
+            'newCharges': amount,
+            'amount': amount,
+            'totalAmount': amount,
+
+            'previousPending': currentPending,
+            'pendingAfter': newPending,
+
+            'amountPaid': 0,
+            'status': 'pending',
+
+            'note': note.trim(),
+
+            'createdAt':
+            FieldValue.serverTimestamp(),
+            'updatedAt':
+            FieldValue.serverTimestamp(),
+          },
+        );
+
+        // ------------------------------------------------------------
+        // Update customer
+        // ------------------------------------------------------------
+
+        transaction.update(
+          customerRef,
+          {
+            'pendingAmount': newPending,
+            'updatedAt':
+            FieldValue.serverTimestamp(),
+          },
+        );
+
+        // ------------------------------------------------------------
+        // Activity
+        // ------------------------------------------------------------
+
+        transaction.set(
+          activityRef,
+          {
+            'type': 'outstandingAdded',
+
+            'title':
+            'Outstanding Amount Added',
+
+            'subtitle':
+            '$customerName · ₹${amount.toStringAsFixed(0)}',
+
+            'module': 'palai',
+
+            'timestamp':
+            FieldValue.serverTimestamp(),
+          },
+        );
+      },
+    ).timeout(FirestoreService.timeout);
+  }
+
   /// Creates a complete monthly Palai bill.
   ///
   /// This is the ONLY operation the Billing screen should use to create

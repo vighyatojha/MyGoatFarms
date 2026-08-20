@@ -9,6 +9,7 @@ import '../../widgets/fast_route.dart';
 import 'check_in_screen.dart';
 import 'check_out_screen.dart';
 import 'generate_report_screen.dart';
+import 'checkout_goat_selection_screen.dart';
 import 'health_records_screen.dart';
 
 /// Lists every goat currently boarded in Palai: a circular "Before Palai"
@@ -525,7 +526,11 @@ class _GoatListScreenState extends State<GoatListScreen> {
     if (choice == 'health') {
       Navigator.of(context).push(fastRoute(HealthRecordsScreen(initialGoat: goat)));
     } else if (choice == 'checkout') {
-      Navigator.of(context).push(fastRoute(CheckOutGoatScreen(goat: goat)));
+      Navigator.of(context).push(
+        fastRoute(
+          const CheckoutGoatSelectionScreen(),
+        ),
+      );
     }
   }
 

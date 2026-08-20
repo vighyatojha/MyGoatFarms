@@ -10,6 +10,7 @@ class AppColors {
 
   static const Color textDark = Color(0xFF223322);
   static const Color textGrey = Color(0xFF7C8B7C);
+  static const Color textMuted = textGrey;
 
   // Status colors
   static const Color error = Color(0xFFE53935);
