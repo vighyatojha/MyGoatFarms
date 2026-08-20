@@ -9,17 +9,235 @@ import 'package:printing/printing.dart';
 import '../models/bill_settings_model.dart';
 import '../models/palai_models.dart';
 
-/// Builds the final Palai check-out bill as a PDF, and either shares it
-/// (WhatsApp / email / etc. via the OS share sheet) or saves it to the
-/// device so the owner can "download" it.
+/// Central PDF service for MyGoatFarms.
 ///
-/// The business name, address, phone, UPI/payment info, thank-you note
-/// and terms & conditions are all driven by [BillSettings] — editable
-/// from Profile > Bill Details — instead of being hard-coded here.
+/// Handles:
+/// 1. Single-goat checkout bills
+/// 2. Monthly Palai bills
+/// 3. Sharing PDFs
+/// 4. Saving PDFs locally
+///
+/// IMPORTANT:
+/// This service only generates/saves/shares PDFs.
+/// Firestore payment/accounting updates must be handled by
+/// FirestoreService and the relevant billing/checkout screens.
 class PdfBillService {
   PdfBillService._();
 
   static final PdfBillService instance = PdfBillService._();
+
+  // ================================================================
+  // COMMON HELPERS
+  // ================================================================
+
+  String _fmt(DateTime date) {
+    return '${date.day.toString().padLeft(2, '0')}/'
+        '${date.month.toString().padLeft(2, '0')}/'
+        '${date.year}';
+  }
+
+  String _safeFileName(String value) {
+    final trimmed = value.trim();
+
+    if (trimmed.isEmpty) {
+      return 'document';
+    }
+
+    return trimmed
+        .replaceAll(RegExp(r'[\\/:*?"<>|]'), '_')
+        .replaceAll(RegExp(r'\s+'), '_');
+  }
+
+  pw.Widget _pdfRow(
+      String label,
+      String value, {
+        bool emphasize = false,
+      }) {
+    return pw.Padding(
+      padding: const pw.EdgeInsets.symmetric(vertical: 4),
+      child: pw.Row(
+        crossAxisAlignment: pw.CrossAxisAlignment.start,
+        children: [
+          pw.Expanded(
+            flex: 4,
+            child: pw.Text(
+              label,
+              style: pw.TextStyle(
+                fontSize: 10,
+                color: PdfColors.grey700,
+                fontWeight: emphasize
+                    ? pw.FontWeight.bold
+                    : pw.FontWeight.normal,
+              ),
+            ),
+          ),
+          pw.SizedBox(width: 12),
+          pw.Expanded(
+            flex: 6,
+            child: pw.Text(
+              value,
+              textAlign: pw.TextAlign.right,
+              style: pw.TextStyle(
+                fontSize: 10,
+                fontWeight: emphasize
+                    ? pw.FontWeight.bold
+                    : pw.FontWeight.normal,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  pw.Widget _businessHeader(BillSettings settings) {
+    return pw.Column(
+      crossAxisAlignment: pw.CrossAxisAlignment.start,
+      children: [
+        pw.Text(
+          settings.businessName.trim().isEmpty
+              ? 'My Goat Farms'
+              : settings.businessName,
+          style: pw.TextStyle(
+            fontSize: 20,
+            fontWeight: pw.FontWeight.bold,
+          ),
+        ),
+
+        if (settings.tagline.trim().isNotEmpty) ...[
+          pw.SizedBox(height: 3),
+          pw.Text(
+            settings.tagline,
+            style: const pw.TextStyle(
+              fontSize: 10,
+              color: PdfColors.grey700,
+            ),
+          ),
+        ],
+
+        if (settings.address.trim().isNotEmpty) ...[
+          pw.SizedBox(height: 3),
+          pw.Text(
+            settings.address,
+            style: const pw.TextStyle(
+              fontSize: 9,
+              color: PdfColors.grey700,
+            ),
+          ),
+        ],
+
+        if (settings.phone.trim().isNotEmpty) ...[
+          pw.SizedBox(height: 3),
+          pw.Text(
+            'Phone: ${settings.phone}',
+            style: const pw.TextStyle(
+              fontSize: 9,
+              color: PdfColors.grey700,
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+
+  pw.Widget _billTitle(String title) {
+    return pw.Container(
+      width: double.infinity,
+      padding: const pw.EdgeInsets.symmetric(
+        vertical: 10,
+        horizontal: 12,
+      ),
+      decoration: pw.BoxDecoration(
+        color: PdfColors.green50,
+        borderRadius: pw.BorderRadius.circular(6),
+        border: pw.Border.all(
+          color: PdfColors.green200,
+          width: 0.8,
+        ),
+      ),
+      child: pw.Text(
+        title,
+        style: pw.TextStyle(
+          fontSize: 15,
+          fontWeight: pw.FontWeight.bold,
+          color: PdfColors.green900,
+        ),
+      ),
+    );
+  }
+
+  pw.Widget _footer(BillSettings settings) {
+    if (settings.footerNote.trim().isEmpty) {
+      return pw.SizedBox();
+    }
+
+    return pw.Text(
+      settings.footerNote,
+      style: const pw.TextStyle(
+        fontSize: 9,
+        color: PdfColors.grey600,
+      ),
+      textAlign: pw.TextAlign.center,
+    );
+  }
+
+  pw.Widget _terms(BillSettings settings) {
+    if (settings.terms.trim().isEmpty) {
+      return pw.SizedBox();
+    }
+
+    return pw.Column(
+      crossAxisAlignment: pw.CrossAxisAlignment.start,
+      children: [
+        pw.Text(
+          'Terms & Conditions',
+          style: pw.TextStyle(
+            fontSize: 10,
+            fontWeight: pw.FontWeight.bold,
+          ),
+        ),
+        pw.SizedBox(height: 5),
+        pw.Text(
+          settings.terms,
+          style: const pw.TextStyle(
+            fontSize: 8.5,
+            color: PdfColors.grey700,
+          ),
+        ),
+      ],
+    );
+  }
+
+  pw.Widget _upiSection(BillSettings settings) {
+    if (settings.upiId.trim().isEmpty) {
+      return pw.SizedBox();
+    }
+
+    return pw.Container(
+      width: double.infinity,
+      padding: const pw.EdgeInsets.all(10),
+      decoration: pw.BoxDecoration(
+        color: PdfColors.green50,
+        borderRadius: pw.BorderRadius.circular(6),
+        border: pw.Border.all(
+          color: PdfColors.green200,
+          width: 0.8,
+        ),
+      ),
+      child: pw.Text(
+        'Pay via UPI: ${settings.upiId}',
+        style: pw.TextStyle(
+          fontSize: 10,
+          fontWeight: pw.FontWeight.bold,
+          color: PdfColors.green900,
+        ),
+      ),
+    );
+  }
+
+  // ================================================================
+  // SINGLE GOAT CHECKOUT BILL
+  // ================================================================
 
   Future<Uint8List> _buildBill({
     required PalaiGoat goat,
@@ -33,95 +251,124 @@ class PdfBillService {
     final now = DateTime.now();
 
     doc.addPage(
-      pw.Page(
+      pw.MultiPage(
         pageFormat: PdfPageFormat.a4,
         margin: const pw.EdgeInsets.all(28),
+        footer: (context) {
+          return pw.Align(
+            alignment: pw.Alignment.center,
+            child: _footer(billSettings),
+          );
+        },
         build: (context) {
-          return pw.Column(
-            crossAxisAlignment: pw.CrossAxisAlignment.start,
-            children: [
-              pw.Text(billSettings.businessName, style: pw.TextStyle(
-                  fontSize: 20, fontWeight: pw.FontWeight.bold)),
-              if (billSettings.tagline
-                  .trim()
-                  .isNotEmpty)
-                pw.Text(billSettings.tagline, style: const pw.TextStyle(
-                    fontSize: 11, color: PdfColors.grey700)),
-              if (billSettings.address
-                  .trim()
-                  .isNotEmpty)
-                pw.Text(billSettings.address, style: const pw.TextStyle(
-                    fontSize: 10, color: PdfColors.grey700)),
-              if (billSettings.phone
-                  .trim()
-                  .isNotEmpty)
-                pw.Text('Phone: ${billSettings.phone}',
-                    style: const pw.TextStyle(
-                        fontSize: 10, color: PdfColors.grey700)),
-              pw.SizedBox(height: 18),
-              pw.Container(
-                padding: const pw.EdgeInsets.symmetric(
-                    vertical: 8, horizontal: 12),
-                decoration: pw.BoxDecoration(color: PdfColors.green50,
-                    borderRadius: pw.BorderRadius.circular(6)),
-                child: pw.Text('Check-Out Bill', style: pw.TextStyle(
-                    fontSize: 16,
-                    fontWeight: pw.FontWeight.bold,
-                    color: PdfColors.green900)),
+          return [
+            _businessHeader(billSettings),
+
+            pw.SizedBox(height: 18),
+
+            _billTitle('GOAT CHECK-OUT BILL'),
+
+            pw.SizedBox(height: 14),
+
+            // Goat information
+            pw.Text(
+              'Goat Information',
+              style: pw.TextStyle(
+                fontSize: 12,
+                fontWeight: pw.FontWeight.bold,
               ),
-              pw.SizedBox(height: 14),
-              _pdfRow('Goat ID', goat.goatCode),
-              _pdfRow('Breed', goat.breed),
-              _pdfRow('Gender', goat.gender),
-              _pdfRow('Color', goat.color),
-              _pdfRow('Monthly Package', goat.monthlyPackage),
-              _pdfRow('Check-In Date', _fmt(goat.checkInDate)),
-              _pdfRow('Check-Out Date', _fmt(now)),
-              _pdfRow('Weight at Check-In',
-                  '${goat.weightAtCheckIn.toStringAsFixed(1)} kg'),
-              _pdfRow('Final Weight', '${finalWeight.toStringAsFixed(1)} kg'),
-              _pdfRow('Health Status', healthStatus),
-              _pdfRow('Delivery Status', deliveryStatus),
-              pw.Divider(height: 22),
-              pw.Row(
-                mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
-                children: [
-                  pw.Text('Total Bill', style: pw.TextStyle(
-                      fontSize: 15, fontWeight: pw.FontWeight.bold)),
-                  pw.Text('Rs. ${totalCharges.toStringAsFixed(0)}',
-                      style: pw.TextStyle(
-                          fontSize: 15, fontWeight: pw.FontWeight.bold)),
-                ],
+            ),
+
+            pw.SizedBox(height: 7),
+
+            _pdfRow('Goat ID', goat.goatCode),
+            _pdfRow('Breed', goat.breed),
+            _pdfRow('Gender', goat.gender),
+            _pdfRow('Color', goat.color),
+            _pdfRow('Monthly Package', goat.monthlyPackage),
+            _pdfRow('Check-In Date', _fmt(goat.checkInDate)),
+            _pdfRow('Check-Out Date', _fmt(now)),
+
+            pw.SizedBox(height: 10),
+            pw.Divider(),
+
+            // Weight information
+            pw.Text(
+              'Weight & Health',
+              style: pw.TextStyle(
+                fontSize: 12,
+                fontWeight: pw.FontWeight.bold,
               ),
-              if (billSettings.upiId
-                  .trim()
-                  .isNotEmpty) ...[
-                pw.SizedBox(height: 12),
+            ),
+
+            pw.SizedBox(height: 7),
+
+            _pdfRow(
+              'Weight at Check-In',
+              '${goat.weightAtCheckIn.toStringAsFixed(1)} kg',
+            ),
+
+            _pdfRow(
+              'Final Weight',
+              '${finalWeight.toStringAsFixed(1)} kg',
+              emphasize: true,
+            ),
+
+            _pdfRow(
+              'Health Status',
+              healthStatus,
+            ),
+
+            _pdfRow(
+              'Delivery Status',
+              deliveryStatus,
+            ),
+
+            pw.SizedBox(height: 12),
+            pw.Divider(),
+
+            // Charges
+            pw.Row(
+              mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+              children: [
                 pw.Text(
-                  'Pay via UPI: ${billSettings.upiId}',
-                  style: pw.TextStyle(fontSize: 11,
-                      fontWeight: pw.FontWeight.bold,
-                      color: PdfColors.green900),
+                  'Total Charges',
+                  style: pw.TextStyle(
+                    fontSize: 14,
+                    fontWeight: pw.FontWeight.bold,
+                  ),
+                ),
+                pw.Text(
+                  'Rs. ${totalCharges.toStringAsFixed(0)}',
+                  style: pw.TextStyle(
+                    fontSize: 14,
+                    fontWeight: pw.FontWeight.bold,
+                  ),
                 ),
               ],
-              if (billSettings.terms
-                  .trim()
-                  .isNotEmpty) ...[
-                pw.SizedBox(height: 20),
-                pw.Text('Terms & Conditions', style: pw.TextStyle(
-                    fontSize: 10, fontWeight: pw.FontWeight.bold)),
-                pw.SizedBox(height: 4),
-                pw.Text(billSettings.terms, style: const pw.TextStyle(
-                    fontSize: 9, color: PdfColors.grey700)),
-              ],
-              pw.SizedBox(height: 30),
-              if (billSettings.footerNote
-                  .trim()
-                  .isNotEmpty)
-                pw.Text(billSettings.footerNote, style: const pw.TextStyle(
-                    fontSize: 10, color: PdfColors.grey600)),
-            ],
-          );
+            ),
+
+            pw.SizedBox(height: 16),
+
+            _upiSection(billSettings),
+
+            pw.SizedBox(height: 18),
+
+            _terms(billSettings),
+
+            pw.SizedBox(height: 25),
+
+            pw.Align(
+              alignment: pw.Alignment.center,
+              child: pw.Text(
+                'Thank you for choosing our Palai service.',
+                style: const pw.TextStyle(
+                  fontSize: 9,
+                  color: PdfColors.grey600,
+                ),
+              ),
+            ),
+          ];
         },
       ),
     );
@@ -129,27 +376,10 @@ class PdfBillService {
     return doc.save();
   }
 
-  pw.Widget _pdfRow(String label, String value) {
-    return pw.Padding(
-      padding: const pw.EdgeInsets.symmetric(vertical: 3),
-      child: pw.Row(
-        mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
-        children: [
-          pw.Text(label, style: const pw.TextStyle(
-              fontSize: 11, color: PdfColors.grey700)),
-          pw.Text(value, style: pw.TextStyle(
-              fontSize: 11, fontWeight: pw.FontWeight.bold)),
-        ],
-      ),
-    );
-  }
+  // ================================================================
+  // SHARE SINGLE GOAT BILL
+  // ================================================================
 
-  String _fmt(DateTime d) =>
-      '${d.day.toString().padLeft(2, '0')}/${d.month.toString().padLeft(
-          2, '0')}/${d.year}';
-
-  /// Opens the OS share sheet with the bill PDF (WhatsApp, email, etc.) —
-  /// used by the "Share" button on the Checked-Out success screen.
   Future<void> shareBill({
     required PalaiGoat goat,
     required double finalWeight,
@@ -166,12 +396,20 @@ class PdfBillService {
       totalCharges: totalCharges,
       billSettings: billSettings,
     );
+
+    final fileName =
+        '${_safeFileName(goat.goatCode)}_checkout_bill.pdf';
+
     await Printing.sharePdf(
-        bytes: bytes, filename: '${goat.goatCode}_bill.pdf');
+      bytes: bytes,
+      filename: fileName,
+    );
   }
 
-  /// Saves the bill PDF to the device and returns the saved file path —
-  /// used by the "Download PDF" button on the Check-Out Details screen.
+  // ================================================================
+  // SAVE SINGLE GOAT BILL
+  // ================================================================
+
   Future<String> saveBillToDevice({
     required PalaiGoat goat,
     required double finalWeight,
@@ -188,19 +426,29 @@ class PdfBillService {
       totalCharges: totalCharges,
       billSettings: billSettings,
     );
-    final dir = await getApplicationDocumentsDirectory();
-    final file = File('${dir.path}/${goat.goatCode}_bill.pdf');
-    await file.writeAsBytes(bytes, flush: true);
+
+    final directory =
+    await getApplicationDocumentsDirectory();
+
+    final fileName =
+        '${_safeFileName(goat.goatCode)}_checkout_bill.pdf';
+
+    final filePath =
+        '${directory.path}/$fileName';
+
+    final file = File(filePath);
+
+    await file.writeAsBytes(
+      bytes,
+      flush: true,
+    );
+
     return file.path;
   }
 
-  // -------------------------------------------------------------------
-  // Monthly Palai bill (Billing & Payments screen)
-  // -------------------------------------------------------------------
-
-// -------------------------------------------------------------------
-// Monthly Palai bill (Billing & Payments screen)
-// -------------------------------------------------------------------
+  // ================================================================
+  // MONTHLY PALAI BILL
+  // ================================================================
 
   Future<Uint8List> _buildMonthlyBill({
     required String customerName,
@@ -222,298 +470,244 @@ class PdfBillService {
     final now = DateTime.now();
 
     doc.addPage(
-      pw.Page(
+      pw.MultiPage(
         pageFormat: PdfPageFormat.a4,
         margin: const pw.EdgeInsets.all(28),
+        footer: (context) {
+          return pw.Align(
+            alignment: pw.Alignment.center,
+            child: _footer(billSettings),
+          );
+        },
         build: (context) {
-          return pw.Column(
-            crossAxisAlignment: pw.CrossAxisAlignment.start,
-            children: [
-// ---------------------------------------------------------
-// BUSINESS HEADER
-// ---------------------------------------------------------
+          return [
+            _businessHeader(billSettings),
 
-              pw.Text(
-                billSettings.businessName,
-                style: pw.TextStyle(
-                  fontSize: 20,
-                  fontWeight: pw.FontWeight.bold,
-                ),
+            pw.SizedBox(height: 18),
+
+            _billTitle('MONTHLY PALAI BILL'),
+
+            pw.SizedBox(height: 14),
+
+            // --------------------------------------------------------
+            // BILL INFORMATION
+            // --------------------------------------------------------
+
+            pw.Text(
+              'Bill Information',
+              style: pw.TextStyle(
+                fontSize: 12,
+                fontWeight: pw.FontWeight.bold,
               ),
+            ),
 
-              if (billSettings.tagline
-                  .trim()
-                  .isNotEmpty)
-                pw.Text(
-                  billSettings.tagline,
-                  style: const pw.TextStyle(
-                    fontSize: 11,
-                    color: PdfColors.grey700,
-                  ),
-                ),
+            pw.SizedBox(height: 7),
 
-              if (billSettings.address
-                  .trim()
-                  .isNotEmpty)
-                pw.Text(
-                  billSettings.address,
-                  style: const pw.TextStyle(
-                    fontSize: 10,
-                    color: PdfColors.grey700,
-                  ),
-                ),
+            _pdfRow(
+              'Bill Number',
+              billNumber,
+              emphasize: true,
+            ),
 
-              if (billSettings.phone
-                  .trim()
-                  .isNotEmpty)
-                pw.Text(
-                  'Phone: ${billSettings.phone}',
-                  style: const pw.TextStyle(
-                    fontSize: 10,
-                    color: PdfColors.grey700,
-                  ),
-                ),
+            _pdfRow(
+              'Customer',
+              customerName,
+              emphasize: true,
+            ),
 
-              pw.SizedBox(height: 18),
+            _pdfRow(
+              'Bill Date',
+              _fmt(now),
+            ),
 
-// ---------------------------------------------------------
-// BILL TITLE
-// ---------------------------------------------------------
+            _pdfRow(
+              'Payment Method',
+              paymentMethod,
+            ),
 
-              pw.Container(
-                width: double.infinity,
-                padding: const pw.EdgeInsets.symmetric(
-                  vertical: 10,
-                  horizontal: 12,
-                ),
-                decoration: pw.BoxDecoration(
-                  color: PdfColors.green50,
-                  borderRadius: pw.BorderRadius.circular(6),
-                ),
-                child: pw.Text(
-                  'MONTHLY PALAI BILL',
-                  style: pw.TextStyle(
-                    fontSize: 16,
-                    fontWeight: pw.FontWeight.bold,
-                    color: PdfColors.green900,
-                  ),
-                ),
+            pw.SizedBox(height: 10),
+            pw.Divider(),
+
+            // --------------------------------------------------------
+            // CHARGES
+            // --------------------------------------------------------
+
+            pw.Text(
+              'Bill Details',
+              style: pw.TextStyle(
+                fontSize: 12,
+                fontWeight: pw.FontWeight.bold,
               ),
+            ),
 
-              pw.SizedBox(height: 14),
+            pw.SizedBox(height: 7),
 
-// ---------------------------------------------------------
-// BILL INFORMATION
-// ---------------------------------------------------------
+            _pdfRow(
+              'Previous Balance',
+              'Rs. ${previousBalance.toStringAsFixed(0)}',
+            ),
 
-              _pdfRow('Bill Number', billNumber),
-              _pdfRow('Customer', customerName),
-              _pdfRow('Bill Date', _fmt(now)),
-              _pdfRow('Payment Method', paymentMethod),
+            _pdfRow(
+              'Monthly Charges',
+              'Rs. ${monthlyCharges.toStringAsFixed(0)}',
+            ),
 
-              pw.Divider(height: 22),
+            _pdfRow(
+              'Transportation',
+              'Rs. ${transport.toStringAsFixed(0)}',
+            ),
 
-// ---------------------------------------------------------
-// CHARGES
-// ---------------------------------------------------------
+            _pdfRow(
+              'Discount',
+              '- Rs. ${discount.toStringAsFixed(0)}',
+            ),
 
-              pw.Text(
-                'Bill Details',
-                style: pw.TextStyle(
-                  fontSize: 12,
-                  fontWeight: pw.FontWeight.bold,
-                ),
+            pw.SizedBox(height: 8),
+            pw.Divider(),
+
+            // --------------------------------------------------------
+            // TOTAL
+            // --------------------------------------------------------
+
+            pw.Container(
+              width: double.infinity,
+              padding: const pw.EdgeInsets.all(10),
+              decoration: pw.BoxDecoration(
+                color: PdfColors.grey100,
+                borderRadius: pw.BorderRadius.circular(6),
               ),
-
-              pw.SizedBox(height: 8),
-
-              _pdfRow(
-                'Previous Balance',
-                'Rs. ${previousBalance.toStringAsFixed(0)}',
-              ),
-
-              _pdfRow(
-                'Monthly Charges',
-                'Rs. ${monthlyCharges.toStringAsFixed(0)}',
-              ),
-
-              _pdfRow(
-                'Transportation',
-                'Rs. ${transport.toStringAsFixed(0)}',
-              ),
-
-              _pdfRow(
-                'Discount',
-                '- Rs. ${discount.toStringAsFixed(0)}',
-              ),
-
-              pw.Divider(height: 22),
-
-// ---------------------------------------------------------
-// TOTAL
-// ---------------------------------------------------------
-
-              pw.Row(
-                mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+              child: pw.Row(
+                mainAxisAlignment:
+                pw.MainAxisAlignment.spaceBetween,
                 children: [
                   pw.Text(
                     'Total Bill',
                     style: pw.TextStyle(
-                      fontSize: 15,
+                      fontSize: 14,
                       fontWeight: pw.FontWeight.bold,
                     ),
                   ),
                   pw.Text(
                     'Rs. ${totalBill.toStringAsFixed(0)}',
                     style: pw.TextStyle(
-                      fontSize: 15,
+                      fontSize: 14,
                       fontWeight: pw.FontWeight.bold,
                     ),
                   ),
                 ],
               ),
+            ),
 
-              pw.SizedBox(height: 8),
+            pw.SizedBox(height: 10),
 
-              _pdfRow(
-                'Paid Amount',
-                'Rs. ${paid.toStringAsFixed(0)}',
+            _pdfRow(
+              'Paid Amount',
+              'Rs. ${paid.toStringAsFixed(0)}',
+              emphasize: true,
+            ),
+
+            // --------------------------------------------------------
+            // ADVANCE
+            // --------------------------------------------------------
+
+            if (advanceBefore > 0 ||
+                advanceApplied > 0 ||
+                advanceAfter > 0) ...[
+              pw.SizedBox(height: 14),
+
+              pw.Text(
+                'Advance Payment',
+                style: pw.TextStyle(
+                  fontSize: 12,
+                  fontWeight: pw.FontWeight.bold,
+                ),
               ),
 
-// ---------------------------------------------------------
-// ADVANCE DETAILS
-// ---------------------------------------------------------
+              pw.SizedBox(height: 7),
 
-              if (advanceBefore > 0 ||
-                  advanceApplied > 0 ||
-                  advanceAfter > 0) ...[
-                pw.SizedBox(height: 16),
+              _pdfRow(
+                'Advance Before',
+                'Rs. ${advanceBefore.toStringAsFixed(0)}',
+              ),
 
-                pw.Text(
-                  'Advance Payment',
-                  style: pw.TextStyle(
-                    fontSize: 12,
-                    fontWeight: pw.FontWeight.bold,
-                  ),
-                ),
+              _pdfRow(
+                'Advance Applied',
+                'Rs. ${advanceApplied.toStringAsFixed(0)}',
+              ),
 
-                pw.SizedBox(height: 6),
+              _pdfRow(
+                'Remaining Advance',
+                'Rs. ${advanceAfter.toStringAsFixed(0)}',
+              ),
+            ],
 
-                _pdfRow(
-                  'Advance Before',
-                  'Rs. ${advanceBefore.toStringAsFixed(0)}',
-                ),
+            pw.SizedBox(height: 12),
+            pw.Divider(),
 
-                _pdfRow(
-                  'Advance Applied',
-                  'Rs. ${advanceApplied.toStringAsFixed(0)}',
-                ),
+            // --------------------------------------------------------
+            // PENDING
+            // --------------------------------------------------------
 
-                _pdfRow(
-                  'Remaining Advance',
-                  'Rs. ${advanceAfter.toStringAsFixed(0)}',
-                ),
-              ],
-
-              pw.SizedBox(height: 10),
-
-              pw.Divider(height: 22),
-
-// ---------------------------------------------------------
-// PENDING
-// ---------------------------------------------------------
-
-              pw.Row(
-                mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+            pw.Container(
+              width: double.infinity,
+              padding: const pw.EdgeInsets.all(10),
+              decoration: pw.BoxDecoration(
+                color: pendingAmount > 0
+                    ? PdfColors.red50
+                    : PdfColors.green50,
+                borderRadius: pw.BorderRadius.circular(6),
+              ),
+              child: pw.Row(
+                mainAxisAlignment:
+                pw.MainAxisAlignment.spaceBetween,
                 children: [
                   pw.Text(
-                    'Pending Amount',
+                    pendingAmount > 0
+                        ? 'Pending Amount'
+                        : 'Amount Pending',
                     style: pw.TextStyle(
-                      fontSize: 14,
+                      fontSize: 13,
                       fontWeight: pw.FontWeight.bold,
-                      color: PdfColors.red800,
+                      color: pendingAmount > 0
+                          ? PdfColors.red800
+                          : PdfColors.green800,
                     ),
                   ),
                   pw.Text(
                     'Rs. ${pendingAmount.toStringAsFixed(0)}',
                     style: pw.TextStyle(
-                      fontSize: 14,
+                      fontSize: 13,
                       fontWeight: pw.FontWeight.bold,
-                      color: PdfColors.red800,
+                      color: pendingAmount > 0
+                          ? PdfColors.red800
+                          : PdfColors.green800,
                     ),
                   ),
                 ],
               ),
+            ),
 
-// ---------------------------------------------------------
-// UPI
-// ---------------------------------------------------------
+            pw.SizedBox(height: 18),
 
-              if (billSettings.upiId
-                  .trim()
-                  .isNotEmpty) ...[
-                pw.SizedBox(height: 18),
+            _upiSection(billSettings),
 
-                pw.Container(
-                  width: double.infinity,
-                  padding: const pw.EdgeInsets.all(10),
-                  decoration: pw.BoxDecoration(
-                    color: PdfColors.green50,
-                    borderRadius: pw.BorderRadius.circular(6),
-                  ),
-                  child: pw.Text(
-                    'Pay via UPI: ${billSettings.upiId}',
-                    style: pw.TextStyle(
-                      fontSize: 11,
-                      fontWeight: pw.FontWeight.bold,
-                      color: PdfColors.green900,
-                    ),
-                  ),
+            pw.SizedBox(height: 18),
+
+            _terms(billSettings),
+
+            pw.SizedBox(height: 25),
+
+            pw.Align(
+              alignment: pw.Alignment.center,
+              child: pw.Text(
+                'Thank you for choosing our Palai service.',
+                style: const pw.TextStyle(
+                  fontSize: 9,
+                  color: PdfColors.grey600,
                 ),
-              ],
-
-// ---------------------------------------------------------
-// TERMS
-// ---------------------------------------------------------
-
-              if (billSettings.terms
-                  .trim()
-                  .isNotEmpty) ...[
-                pw.SizedBox(height: 20),
-
-                pw.Text(
-                  'Terms & Conditions',
-                  style: pw.TextStyle(
-                    fontSize: 10,
-                    fontWeight: pw.FontWeight.bold,
-                  ),
-                ),
-
-                pw.SizedBox(height: 4),
-
-                pw.Text(
-                  billSettings.terms,
-                  style: const pw.TextStyle(
-                    fontSize: 9,
-                    color: PdfColors.grey700,
-                  ),
-                ),
-              ],
-
-              pw.Spacer(),
-
-              if (billSettings.footerNote
-                  .trim()
-                  .isNotEmpty)
-                pw.Text(
-                  billSettings.footerNote,
-                  style: const pw.TextStyle(
-                    fontSize: 10,
-                    color: PdfColors.grey600,
-                  ),
-                ),
-            ],
-          );
+              ),
+            ),
+          ];
         },
       ),
     );
@@ -521,10 +715,9 @@ class PdfBillService {
     return doc.save();
   }
 
-
-// -------------------------------------------------------------------
-// SHARE MONTHLY BILL
-// -------------------------------------------------------------------
+  // ================================================================
+  // SHARE MONTHLY BILL
+  // ================================================================
 
   Future<void> shareMonthlyBill({
     required String customerName,
@@ -559,24 +752,22 @@ class PdfBillService {
       billSettings: billSettings,
     );
 
-    final safeName = customerName
-        .trim()
-        .isEmpty
-        ? 'customer'
-        : customerName
-        .trim()
-        .replaceAll(RegExp(r'\s+'), '_');
+    final customerFileName =
+    _safeFileName(customerName);
+
+    final billFileName =
+    _safeFileName(billNumber);
 
     await Printing.sharePdf(
       bytes: bytes,
-      filename: '${safeName}_${billNumber}_bill.pdf',
+      filename:
+      '${customerFileName}_${billFileName}_bill.pdf',
     );
   }
 
-
-// -------------------------------------------------------------------
-// SAVE MONTHLY BILL TO DEVICE
-// -------------------------------------------------------------------
+  // ================================================================
+  // SAVE MONTHLY BILL
+  // ================================================================
 
   Future<String> saveMonthlyBillToDevice({
     required String customerName,
@@ -611,21 +802,25 @@ class PdfBillService {
       billSettings: billSettings,
     );
 
-    final dir = await getApplicationDocumentsDirectory();
+    final directory =
+    await getApplicationDocumentsDirectory();
 
-    final safeName = customerName
-        .trim()
-        .isEmpty
-        ? 'customer'
-        : customerName
-        .trim()
-        .replaceAll(RegExp(r'\s+'), '_');
+    final customerFileName =
+    _safeFileName(customerName);
 
-    final file = File(
-      '${dir.path}/${safeName}_${billNumber}_bill_${DateTime
-          .now()
-          .millisecondsSinceEpoch}.pdf',
-    );
+    final billFileName =
+    _safeFileName(billNumber);
+
+    final timestamp =
+        DateTime.now().millisecondsSinceEpoch;
+
+    final fileName =
+        '${customerFileName}_${billFileName}_bill_$timestamp.pdf';
+
+    final filePath =
+        '${directory.path}/$fileName';
+
+    final file = File(filePath);
 
     await file.writeAsBytes(
       bytes,

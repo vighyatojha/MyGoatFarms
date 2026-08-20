@@ -9,7 +9,6 @@ import '../../widgets/fast_route.dart';
 import 'check_in_screen.dart';
 import 'check_out_screen.dart';
 import 'generate_report_screen.dart';
-import 'checkout_goat_selection_screen.dart';
 import 'health_records_screen.dart';
 
 /// Lists every goat currently boarded in Palai: a circular "Before Palai"
@@ -28,39 +27,7 @@ enum _HealthFilter { all, healthy, watch, sick }
 class _GoatListScreenState extends State<GoatListScreen> {
   String? _farmId;
 
-  // ---------------------------------------------------------------------
-  // Data
-  // ---------------------------------------------------------------------
-  //
-  // THE GLITCH (goats flash on screen for a second, then the list goes
-  // blank): the previous version of this screen fed a Firestore stream
-  // straight into a `StreamBuilder` and did `snap.data ?? []`. The very
-  // first snapshot a fresh listener receives is often served from local
-  // disk cache and renders instantly — including goat docs the SDK had
-  // already cached from other screens — so the list appeared to load
-  // correctly. But `allActiveGoatsStream` is a `collectionGroup('goats')`
-  // query with a `where` clause, and collection-group queries need an
-  // index that is explicitly enabled with *collection-group* scope in
-  // Firestore — plain per-collection field indexes don't cover them. If
-  // that index isn't set up, the live listener rejects the query moments
-  // later with a `failed-precondition` error. Flutter's `StreamBuilder`
-  // throws away whatever data it was holding the instant a stream errors
-  // (`AsyncSnapshot.withError` doesn't carry the old value forward), so
-  // `snap.data` collapsed to `null`, `allGoats` became `[]`, and the
-  // screen silently rendered its "no goats boarded" empty state — with no
-  // error ever shown. That is the "loads then goes empty" glitch.
-  //
-  // Fix, two parts:
-  //  1. We now manage the subscription ourselves instead of handing a
-  //     stream straight to `StreamBuilder`, so an error can never wipe
-  //     data we already successfully loaded — it just surfaces as a
-  //     small retryable banner while the last good list stays on screen.
-  //  2. The actual Firestore index this query needs is now declared in
-  //     `firestore.indexes.json` at the project root — deploy it with
-  //     `firebase deploy --only firestore:indexes` (or open the exact
-  //     console link Firestore prints in the debug log the first time
-  //     the query runs) so the live query stops failing in the first
-  //     place.
+
   List<PalaiGoat> _goats = [];
   bool _initialLoading = true;
   bool _hasLoadedOnce = false;
@@ -526,11 +493,7 @@ class _GoatListScreenState extends State<GoatListScreen> {
     if (choice == 'health') {
       Navigator.of(context).push(fastRoute(HealthRecordsScreen(initialGoat: goat)));
     } else if (choice == 'checkout') {
-      Navigator.of(context).push(
-        fastRoute(
-          const CheckoutGoatSelectionScreen(),
-        ),
-      );
+      Navigator.of(context).push(fastRoute(CheckOutGoatScreen(goat: goat)));
     }
   }
 

@@ -487,8 +487,13 @@ class FirestoreService {
 
         if (paymentRef != null) {
           transaction.set(paymentRef, {
+            // ----------------------------------------------------------
+            // PAYMENT IDENTITY
+            // ----------------------------------------------------------
             'paymentNumber':
             'PAY-${paymentRef.id.substring(0, 8).toUpperCase()}',
+
+            'type': 'billPayment',
 
             'customerId': customerId,
             'customerName': customerName,
@@ -496,24 +501,83 @@ class FirestoreService {
             'billId': billRef.id,
             'billNumber': billNumber,
 
+            // ----------------------------------------------------------
+            // PAYMENT AMOUNT
+            // ----------------------------------------------------------
             'amount': paidAmount,
 
-            'amountAppliedToBill':
-            amountAppliedToBill,
+            'amountReceived': paidAmount,
 
-            'advanceAmount':
-            newAdvanceFromPayment,
+            // Amount of the payment actually used against this bill.
+            'amountAppliedToBill': amountAppliedToBill,
 
-            'paymentMethod':
-            paymentMethod,
+            // Alias used by the Customer Profile payment details.
+            'amountAppliedToPending': amountAppliedToBill,
+
+            // ----------------------------------------------------------
+            // BILL SNAPSHOT
+            //
+            // These values MUST be stored on the payment itself.
+            // Do not calculate them later from the customer's current
+            // balance because the customer balance may change.
+            // ----------------------------------------------------------
+
+            // Amount due immediately before this payment.
+            //
+            // Example:
+            // Previous pending = ₹6500
+            // New charges     = ₹3000
+            // Total due       = ₹9500
+            //
+            // Therefore payment pendingBefore = ₹9500.
+            'pendingBefore': totalDue,
+
+            'pendingAfter': pendingAfter,
+
+            // Keep the original previous balance too.
+            'previousPending': previousPending,
+
+            'newCharges': newCharges,
+
+            // ----------------------------------------------------------
+            // ADVANCE SNAPSHOT
+            // ----------------------------------------------------------
+
+            'advanceBefore': advanceBefore,
+
+            // Existing advance used against this bill.
+            'advanceApplied': advanceApplied,
+
+            // New advance created by THIS payment.
+            //
+            // Example:
+            // Payment = ₹10000
+            // Due     = ₹9500
+            // New advance = ₹500
+            'advanceAmount': newAdvanceFromPayment,
+
+            'advanceAdded': newAdvanceFromPayment,
+
+            // Final advance balance after this payment.
+            'advanceAfter': advanceAfter,
+
+            // ----------------------------------------------------------
+            // PAYMENT METHOD
+            // ----------------------------------------------------------
+
+            'paymentMethod': paymentMethod,
 
             'note': note.trim(),
 
-            'date':
-            FieldValue.serverTimestamp(),
+            // ----------------------------------------------------------
+            // DATES
+            // ----------------------------------------------------------
 
-            'createdAt':
-            FieldValue.serverTimestamp(),
+            'date': FieldValue.serverTimestamp(),
+
+            'createdAt': FieldValue.serverTimestamp(),
+
+            'updatedAt': FieldValue.serverTimestamp(),
           });
         }
 
