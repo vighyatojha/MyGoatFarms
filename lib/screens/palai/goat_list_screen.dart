@@ -11,10 +11,16 @@ import 'multi_goat_checkout_screen.dart';
 import 'generate_report_screen.dart';
 import 'health_records_screen.dart';
 
-/// Lists every goat currently boarded in Palai: a circular "Before Palai"
-/// photo (ringed by its health status color), the Goat ID, and how long
-/// it's been boarded. Tapping a goat opens a small picker asking whether
-/// to update its health record or check it out.
+/// Lists every goat currently boarded in Palai.
+///
+/// From this screen the user can:
+/// - Check in a new goat
+/// - Open Health & Care
+/// - Generate a Monthly Report
+/// - Start the Final Report & Check-Out flow
+///
+/// The old CheckOutGoatScreen has intentionally been removed.
+/// Final checkout now goes through MultiGoatCheckoutScreen.
 class GoatListScreen extends StatefulWidget {
   const GoatListScreen({super.key});
 
@@ -22,84 +28,153 @@ class GoatListScreen extends StatefulWidget {
   State<GoatListScreen> createState() => _GoatListScreenState();
 }
 
-enum _HealthFilter { all, healthy, watch, sick }
+enum _HealthFilter {
+  all,
+  healthy,
+  watch,
+  sick,
+}
 
 class _GoatListScreenState extends State<GoatListScreen> {
   String? _farmId;
 
-
   List<PalaiGoat> _goats = [];
+
   bool _initialLoading = true;
   bool _hasLoadedOnce = false;
+
   String? _errorMessage;
+
   StreamSubscription<List<PalaiGoat>>? _subscription;
 
-  final _searchController = TextEditingController();
+  final TextEditingController _searchController =
+  TextEditingController();
+
   String _query = '';
+
   _HealthFilter _filter = _HealthFilter.all;
 
   @override
   void initState() {
     super.initState();
+
     _searchController.addListener(() {
-      setState(() => _query = _searchController.text.trim().toLowerCase());
-    });
-    FirestoreService.instance.currentFarmId().then((id) async {
       if (!mounted) return;
-      setState(() => _farmId = id);
-      if (id == null) return;
-      // Repair any goat docs missing the denormalized `farmId` field
-      // *before* subscribing, so a goat that was invisible due to a
-      // missing field shows up on this very load instead of needing a
-      // manual console edit + app restart.
-      try {
-        await FirestoreService.instance.backfillMissingGoatFarmIds(id);
-      } catch (e) {
-        debugPrint('backfillMissingGoatFarmIds failed: $e');
-      }
-      if (!mounted) return;
-      _subscribeToGoats(id);
+
+      setState(() {
+        _query =
+            _searchController.text.trim().toLowerCase();
+      });
     });
+
+    _loadFarm();
   }
 
-  void _subscribeToGoats(String farmId, {VoidCallback? onSettled}) {
+  Future<void> _loadFarm() async {
+    try {
+      final id =
+      await FirestoreService.instance.currentFarmId();
+
+      if (!mounted) return;
+
+      setState(() {
+        _farmId = id;
+      });
+
+      if (id == null) {
+        setState(() {
+          _initialLoading = false;
+          _errorMessage = 'Farm could not be identified.';
+        });
+        return;
+      }
+
+      try {
+        await FirestoreService.instance
+            .backfillMissingGoatFarmIds(id);
+      } catch (e) {
+        debugPrint(
+          'backfillMissingGoatFarmIds failed: $e',
+        );
+      }
+
+      if (!mounted) return;
+
+      _subscribeToGoats(id);
+    } catch (e) {
+      debugPrint('Could not load farm: $e');
+
+      if (!mounted) return;
+
+      setState(() {
+        _initialLoading = false;
+        _errorMessage =
+        'Could not load farm information. Please try again.';
+      });
+    }
+  }
+
+  void _subscribeToGoats(
+      String farmId, {
+        VoidCallback? onSettled,
+      }) {
     _subscription?.cancel();
-    _subscription = FirestoreService.instance.allActiveGoatsStream(farmId).listen(
-          (goats) {
-        if (!mounted) return;
-        setState(() {
-          _goats = goats;
-          _initialLoading = false;
-          _hasLoadedOnce = true;
-          _errorMessage = null;
-        });
-        onSettled?.call();
-      },
-      onError: (Object error) {
-        if (!mounted) return;
-        debugPrint('GoatListScreen stream error: $error');
-        setState(() {
-          _initialLoading = false;
-          _errorMessage = _hasLoadedOnce
-              ? 'Live updates paused — pull down to retry.'
-              : "Couldn't load goats. Check your connection and retry.";
-        });
-        onSettled?.call();
-      },
-    );
+
+    _subscription =
+        FirestoreService.instance.allActiveGoatsStream(farmId).listen(
+              (goats) {
+            if (!mounted) return;
+
+            setState(() {
+              _goats = goats;
+              _initialLoading = false;
+              _hasLoadedOnce = true;
+              _errorMessage = null;
+            });
+
+            onSettled?.call();
+          },
+          onError: (Object error) {
+            if (!mounted) return;
+
+            debugPrint(
+              'GoatListScreen stream error: $error',
+            );
+
+            setState(() {
+              _initialLoading = false;
+
+              _errorMessage = _hasLoadedOnce
+                  ? 'Live updates paused — pull down to retry.'
+                  : "Couldn't load goats. Check your connection and retry.";
+            });
+
+            onSettled?.call();
+          },
+        );
   }
 
   Future<void> _handleRefresh() async {
     final farmId = _farmId;
+
     if (farmId == null) return;
+
     final completer = Completer<void>();
-    _subscribeToGoats(farmId, onSettled: () {
-      if (!completer.isCompleted) completer.complete();
-    });
-    // Keep the refresh spinner visible for a beat so it doesn't just flicker.
+
+    _subscribeToGoats(
+      farmId,
+      onSettled: () {
+        if (!completer.isCompleted) {
+          completer.complete();
+        }
+      },
+    );
+
     await Future.wait([
       completer.future,
-      Future.delayed(const Duration(milliseconds: 400)),
+      Future.delayed(
+        const Duration(milliseconds: 400),
+      ),
     ]);
   }
 
@@ -110,19 +185,40 @@ class _GoatListScreenState extends State<GoatListScreen> {
     super.dispose();
   }
 
-  /// e.g. "2 mo 14 d", "18 days", "3 months" — how long a goat has been
-  /// boarded, counted from its check-in date to now.
   String _boardedFor(DateTime checkInDate) {
     final now = DateTime.now();
-    int months = (now.year - checkInDate.year) * 12 + (now.month - checkInDate.month);
-    DateTime monthsAgo = DateTime(checkInDate.year, checkInDate.month + months, checkInDate.day);
+
+    int months =
+        (now.year - checkInDate.year) * 12 +
+            (now.month - checkInDate.month);
+
+    DateTime monthsAgo = DateTime(
+      checkInDate.year,
+      checkInDate.month + months,
+      checkInDate.day,
+    );
+
     if (monthsAgo.isAfter(now)) {
       months -= 1;
-      monthsAgo = DateTime(checkInDate.year, checkInDate.month + months, checkInDate.day);
+
+      monthsAgo = DateTime(
+        checkInDate.year,
+        checkInDate.month + months,
+        checkInDate.day,
+      );
     }
-    final days = now.difference(monthsAgo).inDays;
-    if (months <= 0) return '$days day${days == 1 ? '' : 's'}';
-    if (days <= 0) return '$months month${months == 1 ? '' : 's'}';
+
+    final days =
+        now.difference(monthsAgo).inDays;
+
+    if (months <= 0) {
+      return '$days day${days == 1 ? '' : 's'}';
+    }
+
+    if (days <= 0) {
+      return '$months month${months == 1 ? '' : 's'}';
+    }
+
     return '$months mo $days d';
   }
 
@@ -130,34 +226,60 @@ class _GoatListScreenState extends State<GoatListScreen> {
     switch (status) {
       case 'Sick':
         return AppColors.error;
+
       case 'Under Observation':
         return AppColors.warning;
+
       default:
         return AppColors.success;
     }
   }
 
-  bool _matchesFilter(PalaiGoat g) {
+  bool _matchesFilter(PalaiGoat goat) {
     switch (_filter) {
       case _HealthFilter.all:
         return true;
+
       case _HealthFilter.healthy:
-        return g.healthStatus != 'Sick' && g.healthStatus != 'Under Observation';
+        return goat.healthStatus != 'Sick' &&
+            goat.healthStatus != 'Under Observation';
+
       case _HealthFilter.watch:
-        return g.healthStatus == 'Under Observation';
+        return goat.healthStatus ==
+            'Under Observation';
+
       case _HealthFilter.sick:
-        return g.healthStatus == 'Sick';
+        return goat.healthStatus == 'Sick';
     }
   }
 
-  List<PalaiGoat> _filtered(List<PalaiGoat> goats) {
-    final sorted = [...goats]..sort((a, b) => b.checkInDate.compareTo(a.checkInDate));
-    return sorted.where((g) {
-      if (!_matchesFilter(g)) return false;
-      if (_query.isEmpty) return true;
-      return g.goatCode.toLowerCase().contains(_query) ||
-          g.breed.toLowerCase().contains(_query) ||
-          g.color.toLowerCase().contains(_query);
+  List<PalaiGoat> _filtered(
+      List<PalaiGoat> goats,
+      ) {
+    final sorted = [...goats]
+      ..sort(
+            (a, b) =>
+            b.checkInDate.compareTo(a.checkInDate),
+      );
+
+    return sorted.where((goat) {
+      if (!_matchesFilter(goat)) {
+        return false;
+      }
+
+      if (_query.isEmpty) {
+        return true;
+      }
+
+      return goat.goatCode
+          .toLowerCase()
+          .contains(_query) ||
+          goat.breed
+              .toLowerCase()
+              .contains(_query) ||
+          goat.color
+              .toLowerCase()
+              .contains(_query);
     }).toList();
   }
 
@@ -165,23 +287,50 @@ class _GoatListScreenState extends State<GoatListScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: AppColors.paleGreen,
+
       appBar: AppBar(
         backgroundColor: AppColors.paleGreen,
         elevation: 0,
         foregroundColor: AppColors.textDark,
         titleSpacing: 0,
-        title: Text('Goats in Palai', style: AppTheme.heading(size: 17)),
+        title: Text(
+          'Goats in Palai',
+          style: AppTheme.heading(size: 17),
+        ),
       ),
-      floatingActionButton: (_farmId == null || _goats.isEmpty)
+
+      floatingActionButton:
+      (_farmId == null || _goats.isEmpty)
           ? null
           : FloatingActionButton.extended(
-        onPressed: () => Navigator.of(context).push(fastRoute(const CheckInGoatScreen())),
-        backgroundColor: AppColors.primaryGreen,
-        icon: const Icon(Icons.add, color: Colors.white),
-        label: const Text('Check In', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w600)),
+        onPressed: () {
+          Navigator.of(context).push(
+            fastRoute(
+              const CheckInGoatScreen(),
+            ),
+          );
+        },
+        backgroundColor:
+        AppColors.primaryGreen,
+        icon: const Icon(
+          Icons.add,
+          color: Colors.white,
+        ),
+        label: const Text(
+          'Check In',
+          style: TextStyle(
+            color: Colors.white,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
       ),
+
       body: _farmId == null
-          ? const Center(child: CircularProgressIndicator(color: AppColors.primaryGreen))
+          ? const Center(
+        child: CircularProgressIndicator(
+          color: AppColors.primaryGreen,
+        ),
+      )
           : _buildBody(),
     );
   }
@@ -204,27 +353,48 @@ class _GoatListScreenState extends State<GoatListScreen> {
     return Column(
       children: [
         _summaryHeader(_goats),
+
         _filterChips(),
+
         _searchBar(),
-        if (_errorMessage != null) _inlineErrorBanner(),
+
+        if (_errorMessage != null)
+          _inlineErrorBanner(),
+
         Expanded(
           child: RefreshIndicator(
             color: AppColors.primaryGreen,
             onRefresh: _handleRefresh,
             child: goats.isEmpty
                 ? ListView(
-              physics: const AlwaysScrollableScrollPhysics(),
-              children: [_noResultsState()],
+              physics:
+              const AlwaysScrollableScrollPhysics(),
+              children: [
+                _noResultsState(),
+              ],
             )
                 : ListView.separated(
-              physics: const AlwaysScrollableScrollPhysics(),
-              padding: const EdgeInsets.fromLTRB(16, 4, 16, 88),
-              itemCount: goats.length,
-              separatorBuilder: (_, __) => const SizedBox(height: 10),
-              itemBuilder: (context, i) => _AnimatedListEntry(
-                index: i,
-                child: _goatCard(goats[i]),
+              physics:
+              const AlwaysScrollableScrollPhysics(),
+              padding:
+              const EdgeInsets.fromLTRB(
+                16,
+                4,
+                16,
+                88,
               ),
+              itemCount: goats.length,
+              separatorBuilder:
+                  (_, __) =>
+              const SizedBox(height: 10),
+              itemBuilder:
+                  (context, index) {
+                return _AnimatedListEntry(
+                  index: index,
+                  child:
+                  _goatCard(goats[index]),
+                );
+              },
             ),
           ),
         ),
@@ -234,24 +404,65 @@ class _GoatListScreenState extends State<GoatListScreen> {
 
   Widget _inlineErrorBanner() {
     return Container(
-      margin: const EdgeInsets.fromLTRB(16, 0, 16, 12),
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      margin:
+      const EdgeInsets.fromLTRB(16, 0, 16, 12),
+      padding:
+      const EdgeInsets.symmetric(
+        horizontal: 14,
+        vertical: 10,
+      ),
       decoration: BoxDecoration(
-        color: AppColors.warning.withOpacity(0.12),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: AppColors.warning.withOpacity(0.35)),
+        color:
+        AppColors.warning.withOpacity(0.12),
+        borderRadius:
+        BorderRadius.circular(12),
+        border: Border.all(
+          color:
+          AppColors.warning.withOpacity(0.35),
+        ),
       ),
       child: Row(
         children: [
-          const Icon(Icons.cloud_off_rounded, color: AppColors.warning, size: 18),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Text(_errorMessage!, style: AppTheme.body(size: 12, color: AppColors.textDark)),
+          const Icon(
+            Icons.cloud_off_rounded,
+            color: AppColors.warning,
+            size: 18,
           ),
+
+          const SizedBox(width: 10),
+
+          Expanded(
+            child: Text(
+              _errorMessage!,
+              style: AppTheme.body(
+                size: 12,
+                color: AppColors.textDark,
+              ),
+            ),
+          ),
+
           TextButton(
-            onPressed: () => _farmId == null ? null : _subscribeToGoats(_farmId!),
-            style: TextButton.styleFrom(padding: const EdgeInsets.symmetric(horizontal: 8)),
-            child: Text('Retry', style: AppTheme.body(size: 12, color: AppColors.darkGreen, weight: FontWeight.w700)),
+            onPressed: () {
+              final farmId = _farmId;
+
+              if (farmId != null) {
+                _subscribeToGoats(farmId);
+              }
+            },
+            style: TextButton.styleFrom(
+              padding:
+              const EdgeInsets.symmetric(
+                horizontal: 8,
+              ),
+            ),
+            child: Text(
+              'Retry',
+              style: AppTheme.body(
+                size: 12,
+                color: AppColors.darkGreen,
+                weight: FontWeight.w700,
+              ),
+            ),
           ),
         ],
       ),
@@ -268,28 +479,68 @@ class _GoatListScreenState extends State<GoatListScreen> {
             Container(
               width: 88,
               height: 88,
-              decoration: BoxDecoration(color: AppColors.error.withOpacity(0.1), shape: BoxShape.circle),
-              child: const Icon(Icons.cloud_off_rounded, size: 38, color: AppColors.error),
+              decoration: BoxDecoration(
+                color:
+                AppColors.error.withOpacity(0.1),
+                shape: BoxShape.circle,
+              ),
+              child: const Icon(
+                Icons.cloud_off_rounded,
+                size: 38,
+                color: AppColors.error,
+              ),
             ),
+
             const SizedBox(height: 18),
-            Text("Couldn't load goats", style: AppTheme.heading(size: 15)),
-            const SizedBox(height: 6),
+
             Text(
-              _errorMessage ?? 'Something went wrong. Please try again.',
+              "Couldn't load goats",
+              style: AppTheme.heading(size: 15),
+            ),
+
+            const SizedBox(height: 6),
+
+            Text(
+              _errorMessage ??
+                  'Something went wrong. Please try again.',
               textAlign: TextAlign.center,
               style: AppTheme.body(size: 13),
             ),
+
             const SizedBox(height: 20),
+
             ElevatedButton.icon(
-              onPressed: () => _farmId == null ? null : _subscribeToGoats(_farmId!),
-              icon: const Icon(Icons.refresh, size: 18),
+              onPressed: () {
+                final farmId = _farmId;
+
+                if (farmId != null) {
+                  _subscribeToGoats(farmId);
+                }
+              },
+              icon: const Icon(
+                Icons.refresh,
+                size: 18,
+              ),
               label: const Text('Retry'),
               style: ElevatedButton.styleFrom(
-                backgroundColor: AppColors.primaryGreen,
+                backgroundColor:
+                AppColors.primaryGreen,
                 foregroundColor: Colors.white,
-                padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                textStyle: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+                padding:
+                const EdgeInsets.symmetric(
+                  horizontal: 18,
+                  vertical: 12,
+                ),
+                shape:
+                RoundedRectangleBorder(
+                  borderRadius:
+                  BorderRadius.circular(10),
+                ),
+                textStyle:
+                const TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w600,
+                ),
               ),
             ),
           ],
@@ -300,40 +551,85 @@ class _GoatListScreenState extends State<GoatListScreen> {
 
   Widget _loadingSkeleton() {
     return ListView(
-      padding: const EdgeInsets.fromLTRB(16, 16, 16, 16),
-      physics: const NeverScrollableScrollPhysics(),
+      padding:
+      const EdgeInsets.fromLTRB(
+        16,
+        16,
+        16,
+        16,
+      ),
+      physics:
+      const NeverScrollableScrollPhysics(),
       children: [
-        _skeletonBlock(height: 64, radius: 16),
+        _skeletonBlock(
+          height: 64,
+          radius: 16,
+        ),
+
         const SizedBox(height: 12),
-        _skeletonBlock(height: 44, radius: 12),
+
+        _skeletonBlock(
+          height: 44,
+          radius: 12,
+        ),
+
         const SizedBox(height: 16),
+
         for (int i = 0; i < 5; i++) ...[
-          _skeletonBlock(height: 78, radius: 14),
+          _skeletonBlock(
+            height: 78,
+            radius: 14,
+          ),
           const SizedBox(height: 10),
         ],
       ],
     );
   }
 
-  Widget _skeletonBlock({required double height, required double radius}) {
+  Widget _skeletonBlock({
+    required double height,
+    required double radius,
+  }) {
     return _Shimmer(
       child: Container(
         height: height,
         decoration: BoxDecoration(
           color: Colors.white,
-          borderRadius: BorderRadius.circular(radius),
+          borderRadius:
+          BorderRadius.circular(radius),
         ),
       ),
     );
   }
 
-  Widget _summaryHeader(List<PalaiGoat> allGoats) {
-    final sick = allGoats.where((g) => g.healthStatus == 'Sick').length;
-    final watch = allGoats.where((g) => g.healthStatus == 'Under Observation').length;
-    final healthy = allGoats.length - sick - watch;
+  Widget _summaryHeader(
+      List<PalaiGoat> allGoats,
+      ) {
+    final sick = allGoats
+        .where(
+          (g) => g.healthStatus == 'Sick',
+    )
+        .length;
+
+    final watch = allGoats
+        .where(
+          (g) =>
+      g.healthStatus ==
+          'Under Observation',
+    )
+        .length;
+
+    final healthy =
+        allGoats.length - sick - watch;
 
     return Container(
-      margin: const EdgeInsets.fromLTRB(16, 4, 16, 12),
+      margin:
+      const EdgeInsets.fromLTRB(
+        16,
+        4,
+        16,
+        12,
+      ),
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
         gradient: const LinearGradient(
@@ -341,10 +637,13 @@ class _GoatListScreenState extends State<GoatListScreen> {
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
         ),
-        borderRadius: BorderRadius.circular(18),
+        borderRadius:
+        BorderRadius.circular(18),
         boxShadow: [
           BoxShadow(
-            color: AppColors.darkGreen.withOpacity(0.25),
+            color:
+            AppColors.darkGreen
+                .withOpacity(0.25),
             blurRadius: 14,
             offset: const Offset(0, 6),
           ),
@@ -354,70 +653,187 @@ class _GoatListScreenState extends State<GoatListScreen> {
         children: [
           Expanded(
             child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
+              crossAxisAlignment:
+              CrossAxisAlignment.start,
               children: [
-                Text('${allGoats.length}', style: AppTheme.heading(size: 26, color: Colors.white)),
-                Text('goat${allGoats.length == 1 ? '' : 's'} boarded', style: AppTheme.body(size: 12, color: Colors.white.withOpacity(0.9))),
+                Text(
+                  '${allGoats.length}',
+                  style: AppTheme.heading(
+                    size: 26,
+                    color: Colors.white,
+                  ),
+                ),
+                Text(
+                  'goat${allGoats.length == 1 ? '' : 's'} boarded',
+                  style: AppTheme.body(
+                    size: 12,
+                    color: Colors.white
+                        .withOpacity(0.9),
+                  ),
+                ),
               ],
             ),
           ),
-          _statPill(icon: Icons.favorite, color: Colors.white, label: '$healthy', sub: 'Healthy'),
+
+          _statPill(
+            icon: Icons.favorite,
+            color: Colors.white,
+            label: '$healthy',
+            sub: 'Healthy',
+          ),
+
           const SizedBox(width: 10),
-          _statPill(icon: Icons.visibility, color: Colors.white, label: '$watch', sub: 'Watch'),
+
+          _statPill(
+            icon: Icons.visibility,
+            color: Colors.white,
+            label: '$watch',
+            sub: 'Watch',
+          ),
+
           const SizedBox(width: 10),
-          _statPill(icon: Icons.local_hospital, color: Colors.white, label: '$sick', sub: 'Sick'),
+
+          _statPill(
+            icon: Icons.local_hospital,
+            color: Colors.white,
+            label: '$sick',
+            sub: 'Sick',
+          ),
         ],
       ),
     );
   }
 
-  Widget _statPill({required IconData icon, required Color color, required String label, required String sub}) {
+  Widget _statPill({
+    required IconData icon,
+    required Color color,
+    required String label,
+    required String sub,
+  }) {
     return Column(
       children: [
         Container(
-          padding: const EdgeInsets.all(8),
-          decoration: BoxDecoration(color: Colors.white.withOpacity(0.18), shape: BoxShape.circle),
-          child: Icon(icon, color: color, size: 15),
+          padding:
+          const EdgeInsets.all(8),
+          decoration: BoxDecoration(
+            color: Colors.white
+                .withOpacity(0.18),
+            shape: BoxShape.circle,
+          ),
+          child: Icon(
+            icon,
+            color: color,
+            size: 15,
+          ),
         ),
+
         const SizedBox(height: 4),
-        Text(label, style: AppTheme.body(size: 13, color: Colors.white, weight: FontWeight.w700)),
-        Text(sub, style: AppTheme.body(size: 9, color: Colors.white.withOpacity(0.85))),
+
+        Text(
+          label,
+          style: AppTheme.body(
+            size: 13,
+            color: Colors.white,
+            weight: FontWeight.w700,
+          ),
+        ),
+
+        Text(
+          sub,
+          style: AppTheme.body(
+            size: 9,
+            color: Colors.white
+                .withOpacity(0.85),
+          ),
+        ),
       ],
     );
   }
 
   Widget _filterChips() {
-    final options = <(_HealthFilter, String, Color)>[
-      (_HealthFilter.all, 'All', AppColors.primaryGreen),
-      (_HealthFilter.healthy, 'Healthy', AppColors.success),
-      (_HealthFilter.watch, 'Watch', AppColors.warning),
-      (_HealthFilter.sick, 'Sick', AppColors.error),
+    final options =
+    <(_HealthFilter, String, Color)>[
+      (
+      _HealthFilter.all,
+      'All',
+      AppColors.primaryGreen,
+      ),
+      (
+      _HealthFilter.healthy,
+      'Healthy',
+      AppColors.success,
+      ),
+      (
+      _HealthFilter.watch,
+      'Watch',
+      AppColors.warning,
+      ),
+      (
+      _HealthFilter.sick,
+      'Sick',
+      AppColors.error,
+      ),
     ];
+
     return SizedBox(
       height: 36,
       child: ListView.separated(
-        scrollDirection: Axis.horizontal,
-        padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
+        scrollDirection:
+        Axis.horizontal,
+        padding:
+        const EdgeInsets.fromLTRB(
+          16,
+          0,
+          16,
+          10,
+        ),
         itemCount: options.length,
-        separatorBuilder: (_, __) => const SizedBox(width: 8),
-        itemBuilder: (context, i) {
-          final (value, label, color) = options[i];
-          final selected = _filter == value;
+        separatorBuilder:
+            (_, __) =>
+        const SizedBox(width: 8),
+        itemBuilder: (context, index) {
+          final (
+          value,
+          label,
+          color
+          ) = options[index];
+
+          final selected =
+              _filter == value;
+
           return ChoiceChip(
             label: Text(label),
             selected: selected,
-            onSelected: (_) => setState(() => _filter = value),
+            onSelected: (_) {
+              setState(() {
+                _filter = value;
+              });
+            },
             labelStyle: AppTheme.body(
               size: 12,
-              color: selected ? Colors.white : AppColors.textDark,
+              color: selected
+                  ? Colors.white
+                  : AppColors.textDark,
               weight: FontWeight.w600,
             ),
             selectedColor: color,
-            backgroundColor: Colors.white,
-            side: BorderSide(color: selected ? color : AppColors.divider),
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
-            visualDensity: VisualDensity.compact,
-            materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+            backgroundColor:
+            Colors.white,
+            side: BorderSide(
+              color: selected
+                  ? color
+                  : AppColors.divider,
+            ),
+            shape:
+            RoundedRectangleBorder(
+              borderRadius:
+              BorderRadius.circular(18),
+            ),
+            visualDensity:
+            VisualDensity.compact,
+            materialTapTargetSize:
+            MaterialTapTargetSize
+                .shrinkWrap,
           );
         },
       ),
@@ -426,54 +842,107 @@ class _GoatListScreenState extends State<GoatListScreen> {
 
   Widget _searchBar() {
     return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+      padding:
+      const EdgeInsets.fromLTRB(
+        16,
+        0,
+        16,
+        12,
+      ),
       child: Container(
-        decoration: AppTheme.card(radius: 12),
+        decoration:
+        AppTheme.card(radius: 12),
         child: TextField(
-          controller: _searchController,
-          style: AppTheme.body(size: 13, color: AppColors.textDark),
-          decoration: InputDecoration(
-            hintText: 'Search by goat ID, breed or color',
-            hintStyle: AppTheme.body(size: 13),
-            prefixIcon: const Icon(Icons.search, color: AppColors.textGrey, size: 20),
-            suffixIcon: _query.isEmpty
+          controller:
+          _searchController,
+          style: AppTheme.body(
+            size: 13,
+            color: AppColors.textDark,
+          ),
+          decoration:
+          InputDecoration(
+            hintText:
+            'Search by goat ID, breed or color',
+            hintStyle:
+            AppTheme.body(size: 13),
+            prefixIcon:
+            const Icon(
+              Icons.search,
+              color:
+              AppColors.textGrey,
+              size: 20,
+            ),
+            suffixIcon:
+            _query.isEmpty
                 ? null
                 : IconButton(
-              icon: const Icon(Icons.close, color: AppColors.textGrey, size: 18),
-              onPressed: () => _searchController.clear(),
+              icon:
+              const Icon(
+                Icons.close,
+                color:
+                AppColors.textGrey,
+                size: 18,
+              ),
+              onPressed: () {
+                _searchController
+                    .clear();
+              },
             ),
-            border: InputBorder.none,
-            contentPadding: const EdgeInsets.symmetric(vertical: 12),
+            border:
+            InputBorder.none,
+            contentPadding:
+            const EdgeInsets
+                .symmetric(
+              vertical: 12,
+            ),
           ),
         ),
       ),
     );
   }
 
-  Future<void> _openGoatActionSheet(PalaiGoat goat) async {
-    final choice = await showModalBottomSheet<String>(
+  Future<void> _openGoatActionSheet(
+      PalaiGoat goat,
+      ) async {
+    final choice =
+    await showModalBottomSheet<String>(
       context: context,
       isScrollControlled: true,
-      backgroundColor: Colors.transparent,
+      backgroundColor:
+      Colors.transparent,
       builder: (sheetContext) {
         return SafeArea(
           child: Container(
-            decoration: const BoxDecoration(
+            decoration:
+            const BoxDecoration(
               color: Colors.white,
-              borderRadius: BorderRadius.vertical(
+              borderRadius:
+              BorderRadius.vertical(
                 top: Radius.circular(26),
               ),
             ),
-            padding: const EdgeInsets.fromLTRB(20, 12, 20, 20),
+            padding:
+            const EdgeInsets.fromLTRB(
+              20,
+              12,
+              20,
+              20,
+            ),
             child: Column(
-              mainAxisSize: MainAxisSize.min,
+              mainAxisSize:
+              MainAxisSize.min,
               children: [
                 Container(
                   width: 42,
                   height: 5,
-                  decoration: BoxDecoration(
-                    color: Colors.grey.shade300,
-                    borderRadius: BorderRadius.circular(10),
+                  decoration:
+                  BoxDecoration(
+                    color:
+                    Colors.grey.shade300,
+                    borderRadius:
+                    BorderRadius.circular(
+                      10,
+                    ),
                   ),
                 ),
 
@@ -484,13 +953,18 @@ class _GoatListScreenState extends State<GoatListScreen> {
                     Container(
                       width: 48,
                       height: 48,
-                      decoration: const BoxDecoration(
-                        color: AppColors.lightGreen,
-                        shape: BoxShape.circle,
+                      decoration:
+                      const BoxDecoration(
+                        color:
+                        AppColors.lightGreen,
+                        shape:
+                        BoxShape.circle,
                       ),
-                      child: const Icon(
+                      child:
+                      const Icon(
                         Icons.pets,
-                        color: AppColors.primaryGreen,
+                        color:
+                        AppColors.primaryGreen,
                       ),
                     ),
 
@@ -498,16 +972,28 @@ class _GoatListScreenState extends State<GoatListScreen> {
 
                     Expanded(
                       child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
+                        crossAxisAlignment:
+                        CrossAxisAlignment
+                            .start,
                         children: [
                           Text(
                             goat.goatCode,
-                            style: AppTheme.heading(size: 16),
+                            style:
+                            AppTheme.heading(
+                              size: 16,
+                            ),
                           ),
-                          const SizedBox(height: 3),
+
+                          const SizedBox(
+                            height: 3,
+                          ),
+
                           Text(
                             '${goat.breed} · ${goat.gender}',
-                            style: AppTheme.body(size: 12),
+                            style:
+                            AppTheme.body(
+                              size: 12,
+                            ),
                           ),
                         ],
                       ),
@@ -517,52 +1003,58 @@ class _GoatListScreenState extends State<GoatListScreen> {
 
                 const SizedBox(height: 20),
 
-                // -------------------------------------------------------
-                // HEALTH & CARE
-                // -------------------------------------------------------
-
                 _actionTile(
-                  icon: Icons.medical_services_outlined,
-                  color: AppColors.primaryGreen,
-                  title: 'Health & Care',
+                  icon: Icons
+                      .medical_services_outlined,
+                  color:
+                  AppColors.primaryGreen,
+                  title:
+                  'Health & Care',
                   subtitle:
                   'Checkups, vaccination, hoof cutting, medicine and photos',
                   onTap: () {
-                    Navigator.pop(sheetContext, 'health');
+                    Navigator.pop(
+                      sheetContext,
+                      'health',
+                    );
                   },
                 ),
 
                 const SizedBox(height: 10),
 
-                // -------------------------------------------------------
-                // MONTHLY REPORT
-                // -------------------------------------------------------
-
                 _actionTile(
-                  icon: Icons.description_outlined,
-                  color: AppColors.info,
-                  title: 'Monthly Report',
+                  icon: Icons
+                      .description_outlined,
+                  color:
+                  AppColors.info,
+                  title:
+                  'Monthly Report',
                   subtitle:
                   'Generate the goat progress report up to today',
                   onTap: () {
-                    Navigator.pop(sheetContext, 'monthly');
+                    Navigator.pop(
+                      sheetContext,
+                      'monthly',
+                    );
                   },
                 ),
 
                 const SizedBox(height: 10),
 
-                // -------------------------------------------------------
-                // FINAL REPORT + CHECKOUT
-                // -------------------------------------------------------
-
                 _actionTile(
-                  icon: Icons.logout_rounded,
-                  color: AppColors.error,
-                  title: 'Final Report & Check-Out',
+                  icon: Icons
+                      .logout_rounded,
+                  color:
+                  AppColors.error,
+                  title:
+                  'Final Report & Check-Out',
                   subtitle:
                   'Complete final report, billing and check-out',
                   onTap: () {
-                    Navigator.pop(sheetContext, 'final');
+                    Navigator.pop(
+                      sheetContext,
+                      'final',
+                    );
                   },
                 ),
 
@@ -574,7 +1066,10 @@ class _GoatListScreenState extends State<GoatListScreen> {
       },
     );
 
-    if (!mounted || choice == null) return;
+    if (!mounted ||
+        choice == null) {
+      return;
+    }
 
     switch (choice) {
       case 'health':
@@ -598,10 +1093,23 @@ class _GoatListScreenState extends State<GoatListScreen> {
         break;
 
       case 'final':
+      // IMPORTANT:
+      // The old CheckOutGoatScreen has been
+      // removed from the project.
+      //
+      // Final checkout now starts directly
+      // in MultiGoatCheckoutScreen.
+      //
+      // We pass the current goat as the
+      // initially selected goat and disable
+      // selection so this Goat List action
+      // remains for THIS goat only.
         Navigator.of(context).push(
           fastRoute(
-            CheckOutGoatScreen(
-              goat: goat,
+            MultiGoatCheckoutScreen(
+              customerId: goat.customerId,
+              initialSelectedGoats: [goat],
+              allowSelection: false,
             ),
           ),
         );
@@ -619,16 +1127,21 @@ class _GoatListScreenState extends State<GoatListScreen> {
     return Material(
       color: Colors.transparent,
       child: InkWell(
-        borderRadius: BorderRadius.circular(16),
+        borderRadius:
+        BorderRadius.circular(16),
         onTap: onTap,
         child: Container(
           width: double.infinity,
-          padding: const EdgeInsets.all(15),
-          decoration: BoxDecoration(
+          padding:
+          const EdgeInsets.all(15),
+          decoration:
+          BoxDecoration(
             color: Colors.white,
-            borderRadius: BorderRadius.circular(16),
+            borderRadius:
+            BorderRadius.circular(16),
             border: Border.all(
-              color: AppColors.divider,
+              color:
+              AppColors.divider,
             ),
           ),
           child: Row(
@@ -636,9 +1149,12 @@ class _GoatListScreenState extends State<GoatListScreen> {
               Container(
                 width: 46,
                 height: 46,
-                decoration: BoxDecoration(
-                  color: color.withOpacity(0.10),
-                  shape: BoxShape.circle,
+                decoration:
+                BoxDecoration(
+                  color: color
+                      .withOpacity(0.10),
+                  shape:
+                  BoxShape.circle,
                 ),
                 child: Icon(
                   icon,
@@ -651,20 +1167,31 @@ class _GoatListScreenState extends State<GoatListScreen> {
 
               Expanded(
                 child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+                  crossAxisAlignment:
+                  CrossAxisAlignment
+                      .start,
                   children: [
                     Text(
                       title,
-                      style: AppTheme.body(
+                      style:
+                      AppTheme.body(
                         size: 14,
-                        color: AppColors.textDark,
-                        weight: FontWeight.w700,
+                        color:
+                        AppColors
+                            .textDark,
+                        weight:
+                        FontWeight.w700,
                       ),
                     ),
-                    const SizedBox(height: 4),
+
+                    const SizedBox(
+                      height: 4,
+                    ),
+
                     Text(
                       subtitle,
-                      style: AppTheme.body(
+                      style:
+                      AppTheme.body(
                         size: 11,
                       ),
                     ),
@@ -674,9 +1201,11 @@ class _GoatListScreenState extends State<GoatListScreen> {
 
               const SizedBox(width: 8),
 
-              Icon(
-                Icons.chevron_right_rounded,
-                color: AppColors.textGrey,
+              const Icon(
+                Icons
+                    .chevron_right_rounded,
+                color:
+                AppColors.textGrey,
               ),
             ],
           ),
@@ -685,79 +1214,223 @@ class _GoatListScreenState extends State<GoatListScreen> {
     );
   }
 
-  Widget _goatCard(PalaiGoat goat) {
-    final healthColor = _healthColor(goat.healthStatus);
+  Widget _goatCard(
+      PalaiGoat goat,
+      ) {
+    final healthColor =
+    _healthColor(
+      goat.healthStatus,
+    );
+
     return Material(
       color: Colors.transparent,
       child: InkWell(
-        borderRadius: BorderRadius.circular(16),
-        onTap: () => _openGoatActionSheet(goat),
+        borderRadius:
+        BorderRadius.circular(16),
+        onTap: () =>
+            _openGoatActionSheet(
+              goat,
+            ),
         child: Container(
-          decoration: AppTheme.card(radius: 16),
-          padding: const EdgeInsets.all(12),
+          decoration:
+          AppTheme.card(
+            radius: 16,
+          ),
+          padding:
+          const EdgeInsets.all(12),
           child: Row(
             children: [
               Container(
                 width: 56,
                 height: 56,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  color: AppColors.lightGreen,
-                  border: Border.all(color: healthColor.withOpacity(0.6), width: 2.5),
+                decoration:
+                BoxDecoration(
+                  shape:
+                  BoxShape.circle,
+                  color:
+                  AppColors.lightGreen,
+                  border:
+                  Border.all(
+                    color:
+                    healthColor
+                        .withOpacity(
+                      0.6,
+                    ),
+                    width: 2.5,
+                  ),
                 ),
                 child: ClipOval(
-                  child: goat.beforeImage != null
-                      ? Image.memory(goat.beforeImage!, fit: BoxFit.cover, width: 56, height: 56)
-                      : const Icon(Icons.pets, color: AppColors.primaryGreen),
+                  child:
+                  goat.beforeImage !=
+                      null
+                      ? Image.memory(
+                    goat.beforeImage!,
+                    fit: BoxFit.cover,
+                    width: 56,
+                    height: 56,
+                  )
+                      : const Icon(
+                    Icons.pets,
+                    color:
+                    AppColors
+                        .primaryGreen,
+                  ),
                 ),
               ),
+
               const SizedBox(width: 14),
+
               Expanded(
                 child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+                  crossAxisAlignment:
+                  CrossAxisAlignment
+                      .start,
                   children: [
-                    Text(goat.goatCode, style: AppTheme.heading(size: 14)),
-                    const SizedBox(height: 3),
-                    Text('${goat.breed} · ${goat.gender}', style: AppTheme.body(size: 12)),
+                    Text(
+                      goat.goatCode,
+                      style:
+                      AppTheme.heading(
+                        size: 14,
+                      ),
+                    ),
+
+                    const SizedBox(
+                      height: 3,
+                    ),
+
+                    Text(
+                      '${goat.breed} · ${goat.gender}',
+                      style:
+                      AppTheme.body(
+                        size: 12,
+                      ),
+                    ),
+
                     if (goat.pricing > 0) ...[
-                      const SizedBox(height: 2),
-                      Text('₹${goat.pricing.toStringAsFixed(0)}/mo', style: AppTheme.body(size: 11, color: AppColors.textGrey)),
+                      const SizedBox(
+                        height: 2,
+                      ),
+                      Text(
+                        '₹${goat.pricing.toStringAsFixed(0)}/mo',
+                        style:
+                        AppTheme.body(
+                          size: 11,
+                          color:
+                          AppColors
+                              .textGrey,
+                        ),
+                      ),
                     ],
-                    const SizedBox(height: 6),
+
+                    const SizedBox(
+                      height: 6,
+                    ),
+
                     Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                      decoration: BoxDecoration(
-                        color: healthColor.withOpacity(0.12),
-                        borderRadius: BorderRadius.circular(8),
+                      padding:
+                      const EdgeInsets
+                          .symmetric(
+                        horizontal: 8,
+                        vertical: 3,
+                      ),
+                      decoration:
+                      BoxDecoration(
+                        color: healthColor
+                            .withOpacity(
+                          0.12,
+                        ),
+                        borderRadius:
+                        BorderRadius
+                            .circular(
+                          8,
+                        ),
                       ),
                       child: Row(
-                        mainAxisSize: MainAxisSize.min,
+                        mainAxisSize:
+                        MainAxisSize.min,
                         children: [
-                          Container(width: 6, height: 6, decoration: BoxDecoration(color: healthColor, shape: BoxShape.circle)),
-                          const SizedBox(width: 5),
-                          Text(goat.healthStatus, style: AppTheme.body(size: 11, color: healthColor, weight: FontWeight.w600)),
+                          Container(
+                            width: 6,
+                            height: 6,
+                            decoration:
+                            BoxDecoration(
+                              color:
+                              healthColor,
+                              shape:
+                              BoxShape
+                                  .circle,
+                            ),
+                          ),
+
+                          const SizedBox(
+                            width: 5,
+                          ),
+
+                          Text(
+                            goat.healthStatus,
+                            style:
+                            AppTheme.body(
+                              size: 11,
+                              color:
+                              healthColor,
+                              weight:
+                              FontWeight
+                                  .w600,
+                            ),
+                          ),
                         ],
                       ),
                     ),
-                    const SizedBox(height: 6),
+
+                    const SizedBox(
+                      height: 6,
+                    ),
+
                     _reportBadge(goat),
                   ],
                 ),
               ),
+
               const SizedBox(width: 8),
+
               Column(
-                crossAxisAlignment: CrossAxisAlignment.end,
+                crossAxisAlignment:
+                CrossAxisAlignment.end,
                 children: [
                   Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                    decoration: BoxDecoration(color: AppColors.lightGreen, borderRadius: BorderRadius.circular(10)),
+                    padding:
+                    const EdgeInsets
+                        .symmetric(
+                      horizontal: 10,
+                      vertical: 6,
+                    ),
+                    decoration:
+                    BoxDecoration(
+                      color:
+                      AppColors
+                          .lightGreen,
+                      borderRadius:
+                      BorderRadius
+                          .circular(
+                        10,
+                      ),
+                    ),
                     child: Text(
-                      _boardedFor(goat.checkInDate),
-                      style: AppTheme.body(size: 11, color: AppColors.darkGreen, weight: FontWeight.w600),
+                      _boardedFor(
+                        goat.checkInDate,
+                      ),
+                      style:
+                      AppTheme.body(
+                        size: 11,
+                        color:
+                        AppColors
+                            .darkGreen,
+                        weight:
+                        FontWeight
+                            .w600,
+                      ),
                     ),
                   ),
-                  const SizedBox(height: 6),
-
                 ],
               ),
             ],
@@ -767,24 +1440,56 @@ class _GoatListScreenState extends State<GoatListScreen> {
     );
   }
 
-  /// Small pill showing whether a report has ever been generated for
-  /// this goat — tap the document icon on the card to generate one.
-  Widget _reportBadge(PalaiGoat goat) {
-    final generated = goat.reportStatus != 'Not Generated' && goat.reportsCount > 0;
+  Widget _reportBadge(
+      PalaiGoat goat,
+      ) {
+    final generated =
+        goat.reportStatus !=
+            'Not Generated' &&
+            goat.reportsCount > 0;
+
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-      decoration: BoxDecoration(
-        color: (generated ? AppColors.info : AppColors.textGrey).withOpacity(0.10),
-        borderRadius: BorderRadius.circular(8),
+      padding:
+      const EdgeInsets.symmetric(
+        horizontal: 8,
+        vertical: 3,
+      ),
+      decoration:
+      BoxDecoration(
+        color: (generated
+            ? AppColors.info
+            : AppColors.textGrey)
+            .withOpacity(0.10),
+        borderRadius:
+        BorderRadius.circular(8),
       ),
       child: Row(
-        mainAxisSize: MainAxisSize.min,
+        mainAxisSize:
+        MainAxisSize.min,
         children: [
-          Icon(Icons.description_outlined, size: 11, color: generated ? AppColors.info : AppColors.textGrey),
+          Icon(
+            Icons
+                .description_outlined,
+            size: 11,
+            color: generated
+                ? AppColors.info
+                : AppColors.textGrey,
+          ),
+
           const SizedBox(width: 4),
+
           Text(
-            generated ? goat.reportStatus : 'No report yet',
-            style: AppTheme.body(size: 10, color: generated ? AppColors.info : AppColors.textGrey, weight: FontWeight.w600),
+            generated
+                ? goat.reportStatus
+                : 'No report yet',
+            style: AppTheme.body(
+              size: 10,
+              color: generated
+                  ? AppColors.info
+                  : AppColors.textGrey,
+              weight:
+              FontWeight.w600,
+            ),
           ),
         ],
       ),
@@ -793,41 +1498,120 @@ class _GoatListScreenState extends State<GoatListScreen> {
 
   Widget _emptyState() {
     return ListView(
-      physics: const AlwaysScrollableScrollPhysics(),
+      physics:
+      const AlwaysScrollableScrollPhysics(),
       children: [
         Padding(
-          padding: const EdgeInsets.only(top: 80),
+          padding:
+          const EdgeInsets.only(
+            top: 80,
+          ),
           child: Center(
             child: Padding(
-              padding: const EdgeInsets.all(24),
+              padding:
+              const EdgeInsets.all(24),
               child: Column(
-                mainAxisSize: MainAxisSize.min,
+                mainAxisSize:
+                MainAxisSize.min,
                 children: [
                   Container(
                     width: 96,
                     height: 96,
-                    decoration: const BoxDecoration(color: AppColors.lightGreen, shape: BoxShape.circle),
-                    child: const Icon(Icons.pets, size: 42, color: AppColors.primaryGreen),
+                    decoration:
+                    const BoxDecoration(
+                      color:
+                      AppColors
+                          .lightGreen,
+                      shape:
+                      BoxShape.circle,
+                    ),
+                    child:
+                    const Icon(
+                      Icons.pets,
+                      size: 42,
+                      color:
+                      AppColors
+                          .primaryGreen,
+                    ),
                   ),
-                  const SizedBox(height: 18),
-                  Text('No goats currently boarded', style: AppTheme.heading(size: 16)),
-                  const SizedBox(height: 6),
+
+                  const SizedBox(
+                    height: 18,
+                  ),
+
+                  Text(
+                    'No goats currently boarded',
+                    style:
+                    AppTheme.heading(
+                      size: 16,
+                    ),
+                  ),
+
+                  const SizedBox(
+                    height: 6,
+                  ),
+
                   Text(
                     'Goats you check in to Palai will show up here.',
-                    textAlign: TextAlign.center,
-                    style: AppTheme.body(size: 13),
+                    textAlign:
+                    TextAlign.center,
+                    style:
+                    AppTheme.body(
+                      size: 13,
+                    ),
                   ),
-                  const SizedBox(height: 22),
+
+                  const SizedBox(
+                    height: 22,
+                  ),
+
                   ElevatedButton.icon(
-                    onPressed: () => Navigator.of(context).push(fastRoute(const CheckInGoatScreen())),
-                    icon: const Icon(Icons.add, size: 18),
-                    label: const Text('Check In a Goat'),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: AppColors.primaryGreen,
-                      foregroundColor: Colors.white,
-                      padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                      textStyle: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+                    onPressed: () {
+                      Navigator.of(
+                        context,
+                      ).push(
+                        fastRoute(
+                          const CheckInGoatScreen(),
+                        ),
+                      );
+                    },
+                    icon:
+                    const Icon(
+                      Icons.add,
+                      size: 18,
+                    ),
+                    label: const Text(
+                      'Check In a Goat',
+                    ),
+                    style:
+                    ElevatedButton
+                        .styleFrom(
+                      backgroundColor:
+                      AppColors
+                          .primaryGreen,
+                      foregroundColor:
+                      Colors.white,
+                      padding:
+                      const EdgeInsets
+                          .symmetric(
+                        horizontal: 18,
+                        vertical: 12,
+                      ),
+                      shape:
+                      RoundedRectangleBorder(
+                        borderRadius:
+                        BorderRadius
+                            .circular(
+                          10,
+                        ),
+                      ),
+                      textStyle:
+                      const TextStyle(
+                        fontSize: 13,
+                        fontWeight:
+                        FontWeight
+                            .w600,
+                      ),
                     ),
                   ),
                 ],
@@ -841,33 +1625,82 @@ class _GoatListScreenState extends State<GoatListScreen> {
 
   Widget _noResultsState() {
     return Padding(
-      padding: const EdgeInsets.only(top: 60),
+      padding:
+      const EdgeInsets.only(
+        top: 60,
+      ),
       child: Center(
         child: Padding(
-          padding: const EdgeInsets.all(24),
+          padding:
+          const EdgeInsets.all(24),
           child: Column(
-            mainAxisSize: MainAxisSize.min,
+            mainAxisSize:
+            MainAxisSize.min,
             children: [
               Container(
                 width: 72,
                 height: 72,
-                decoration: const BoxDecoration(color: AppColors.lightGreen, shape: BoxShape.circle),
-                child: const Icon(Icons.search_off, size: 32, color: AppColors.textGrey),
+                decoration:
+                const BoxDecoration(
+                  color:
+                  AppColors
+                      .lightGreen,
+                  shape:
+                  BoxShape.circle,
+                ),
+                child:
+                const Icon(
+                  Icons.search_off,
+                  size: 32,
+                  color:
+                  AppColors.textGrey,
+                ),
               ),
-              const SizedBox(height: 14),
+
+              const SizedBox(
+                height: 14,
+              ),
+
               Text(
-                _query.isEmpty ? 'No goats match this filter' : 'No goats match "${_searchController.text}"',
-                style: AppTheme.body(size: 13),
-                textAlign: TextAlign.center,
+                _query.isEmpty
+                    ? 'No goats match this filter'
+                    : 'No goats match "${_searchController.text}"',
+                style:
+                AppTheme.body(
+                  size: 13,
+                ),
+                textAlign:
+                TextAlign.center,
               ),
-              if (_filter != _HealthFilter.all || _query.isNotEmpty) ...[
-                const SizedBox(height: 10),
+
+              if (_filter !=
+                  _HealthFilter.all ||
+                  _query.isNotEmpty) ...[
+                const SizedBox(
+                  height: 10,
+                ),
+
                 TextButton(
-                  onPressed: () => setState(() {
-                    _filter = _HealthFilter.all;
-                    _searchController.clear();
-                  }),
-                  child: Text('Clear filters', style: AppTheme.body(size: 12, color: AppColors.darkGreen, weight: FontWeight.w700)),
+                  onPressed: () {
+                    setState(() {
+                      _filter =
+                          _HealthFilter.all;
+                      _searchController
+                          .clear();
+                    });
+                  },
+                  child: Text(
+                    'Clear filters',
+                    style:
+                    AppTheme.body(
+                      size: 12,
+                      color:
+                      AppColors
+                          .darkGreen,
+                      weight:
+                      FontWeight.w700,
+                    ),
+                  ),
                 ),
               ],
             ],
@@ -878,61 +1711,108 @@ class _GoatListScreenState extends State<GoatListScreen> {
   }
 }
 
-/// Fades and gently slides a list item into place when it first appears —
-/// staggered slightly by index so the initial load feels lively rather
-/// than everything popping in at once. Purely cosmetic, self-contained,
-/// and cheap: it only animates once, on mount.
-class _AnimatedListEntry extends StatefulWidget {
+/// Animated list entry.
+class _AnimatedListEntry
+    extends StatefulWidget {
   final int index;
   final Widget child;
-  const _AnimatedListEntry({required this.index, required this.child});
+
+  const _AnimatedListEntry({
+    required this.index,
+    required this.child,
+  });
 
   @override
-  State<_AnimatedListEntry> createState() => _AnimatedListEntryState();
+  State<_AnimatedListEntry>
+  createState() =>
+      _AnimatedListEntryState();
 }
 
-class _AnimatedListEntryState extends State<_AnimatedListEntry> {
+class _AnimatedListEntryState
+    extends State<_AnimatedListEntry> {
   bool _visible = false;
 
   @override
   void initState() {
     super.initState();
-    final steps = widget.index > 8 ? 8 : widget.index;
-    final delay = Duration(milliseconds: 25 * steps);
-    Future.delayed(delay, () {
-      if (mounted) setState(() => _visible = true);
-    });
+
+    final steps =
+    widget.index > 8
+        ? 8
+        : widget.index;
+
+    final delay = Duration(
+      milliseconds: 25 * steps,
+    );
+
+    Future.delayed(
+      delay,
+          () {
+        if (mounted) {
+          setState(() {
+            _visible = true;
+          });
+        }
+      },
+    );
   }
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(
+      BuildContext context,
+      ) {
     return AnimatedSlide(
-      duration: const Duration(milliseconds: 260),
-      curve: Curves.easeOutCubic,
-      offset: _visible ? Offset.zero : const Offset(0, 0.08),
-      child: AnimatedOpacity(
-        duration: const Duration(milliseconds: 260),
-        opacity: _visible ? 1 : 0,
-        child: widget.child,
+      duration:
+      const Duration(
+        milliseconds: 260,
+      ),
+      curve:
+      Curves.easeOutCubic,
+      offset: _visible
+          ? Offset.zero
+          : const Offset(0, 0.08),
+      child:
+      AnimatedOpacity(
+        duration:
+        const Duration(
+          milliseconds: 260,
+        ),
+        opacity:
+        _visible ? 1 : 0,
+        child:
+        widget.child,
       ),
     );
   }
 }
 
-/// Lightweight shimmer sweep used for the loading skeleton — avoids
-/// pulling in an extra package for a single subtle effect.
-class _Shimmer extends StatefulWidget {
+/// Lightweight shimmer used for
+/// loading skeletons.
+class _Shimmer
+    extends StatefulWidget {
   final Widget child;
-  const _Shimmer({required this.child});
+
+  const _Shimmer({
+    required this.child,
+  });
 
   @override
-  State<_Shimmer> createState() => _ShimmerState();
+  State<_Shimmer> createState() =>
+      _ShimmerState();
 }
 
-class _ShimmerState extends State<_Shimmer> with SingleTickerProviderStateMixin {
-  late final AnimationController _controller = AnimationController(
+class _ShimmerState
+    extends State<_Shimmer>
+    with
+        SingleTickerProviderStateMixin {
+  late final AnimationController
+  _controller =
+  AnimationController(
     vsync: this,
-    duration: const Duration(milliseconds: 1200),
+    duration:
+    const Duration(
+      milliseconds: 1200,
+    ),
   )..repeat();
 
   @override
@@ -942,24 +1822,45 @@ class _ShimmerState extends State<_Shimmer> with SingleTickerProviderStateMixin 
   }
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(
+      BuildContext context,
+      ) {
     return AnimatedBuilder(
       animation: _controller,
-      builder: (context, child) {
+      builder:
+          (context, child) {
         return ShaderMask(
-          blendMode: BlendMode.srcATop,
-          shaderCallback: (bounds) {
-            final t = _controller.value;
+          blendMode:
+          BlendMode.srcATop,
+          shaderCallback:
+              (bounds) {
+            final t =
+                _controller.value;
+
             return LinearGradient(
               colors: [
-                AppColors.lightGreen.withOpacity(0.5),
+                AppColors.lightGreen
+                    .withOpacity(0.5),
                 Colors.white,
-                AppColors.lightGreen.withOpacity(0.5),
+                AppColors.lightGreen
+                    .withOpacity(0.5),
               ],
-              stops: const [0.35, 0.5, 0.65],
-              begin: Alignment(-1 - t * 2, 0),
-              end: Alignment(1 - t * 2, 0),
-            ).createShader(bounds);
+              stops: const [
+                0.35,
+                0.5,
+                0.65,
+              ],
+              begin: Alignment(
+                -1 - t * 2,
+                0,
+              ),
+              end: Alignment(
+                1 - t * 2,
+                0,
+              ),
+            ).createShader(
+              bounds,
+            );
           },
           child: child,
         );
