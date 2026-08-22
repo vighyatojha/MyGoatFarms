@@ -1,6 +1,13 @@
 import 'package:flutter/material.dart';
-import 'customer_goat_weight_screen.dart';
+
+import '../../../app_theme.dart';
+import '../../../models/palai_models.dart';
+import '../../palai/multi_goat_checkout_screen.dart';
+import '../../../widgets/fast_route.dart';
+import 'package:flutter/material.dart';
+
 import '../../../models/palai_goat.dart';
+import 'customer_goat_weight_screen.dart';
 import 'customer_goat_hoof_screen.dart';
 import 'customer_goat_vaccination_screen.dart';
 
@@ -12,46 +19,139 @@ class CustomerPalaiGoatProfileScreen extends StatelessWidget {
     required this.goat,
   });
 
+  // ===========================================================================
+  // DIRECT CHECKOUT
+  // ===========================================================================
+
+  Future<void> _openDirectCheckout(BuildContext context) async {
+    if (goat.isCheckedOut) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'This goat has already been checked out.',
+          ),
+        ),
+      );
+      return;
+    }
+
+    await Navigator.of(context).push(
+      fastRoute(
+        MultiGoatCheckoutScreen(
+          customerId: goat.customerId,
+          initialSelectedGoats: [goat],
+          allowSelection: false,
+        ),
+      ),
+    );
+  }
+
+  // ===========================================================================
+  // BUILD
+  // ===========================================================================
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      backgroundColor: AppColors.paleGreen,
+
       appBar: AppBar(
-        title: const Text('Goat Profile'),
+        backgroundColor: AppColors.paleGreen,
+        elevation: 0,
+        foregroundColor: AppColors.textDark,
+
+        title: Text(
+          'Goat Profile',
+          style: AppTheme.heading(
+            size: 18,
+          ),
+        ),
+
         actions: [
           IconButton(
             tooltip: 'More options',
             onPressed: () => _showMoreOptions(context),
-            icon: const Icon(Icons.more_vert),
+            icon: const Icon(
+              Icons.more_vert,
+            ),
           ),
         ],
       ),
+
       body: SafeArea(
         child: CustomScrollView(
           slivers: [
             SliverPadding(
-              padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
+              padding: const EdgeInsets.fromLTRB(
+                16,
+                8,
+                16,
+                32,
+              ),
               sliver: SliverList(
-                delegate: SliverChildListDelegate([
-                  _buildProfileHeader(context),
-                  const SizedBox(height: 20),
-                  _buildCurrentOverview(context),
-                  const SizedBox(height: 28),
-                  _buildSectionTitle(
-                    context,
-                    'Goat Management',
-                    'Open a section to add or view records.',
-                  ),
-                  const SizedBox(height: 12),
-                  _buildManagementGrid(context),
-                  const SizedBox(height: 28),
-                  _buildSectionTitle(
-                    context,
-                    'History',
-                    'View the complete activity of this goat.',
-                  ),
-                  const SizedBox(height: 12),
-                  _buildHistoryCard(context),
-                ]),
+                delegate: SliverChildListDelegate(
+                  [
+                    _buildProfileHeader(context),
+
+                    const SizedBox(height: 18),
+
+                    // ---------------------------------------------------------
+                    // DIRECT CHECKOUT BUTTON
+                    // ---------------------------------------------------------
+
+                    if (!goat.isCheckedOut)
+                      _buildCheckoutButton(context),
+
+                    if (!goat.isCheckedOut)
+                      const SizedBox(height: 24),
+
+                    // ---------------------------------------------------------
+                    // CURRENT OVERVIEW
+                    // ---------------------------------------------------------
+
+                    _buildSectionTitle(
+                      context,
+                      'Current Overview',
+                      'Important information at a glance.',
+                    ),
+
+                    const SizedBox(height: 12),
+
+                    _buildCurrentOverview(context),
+
+                    const SizedBox(height: 28),
+
+                    // ---------------------------------------------------------
+                    // GOAT MANAGEMENT
+                    // ---------------------------------------------------------
+
+                    _buildSectionTitle(
+                      context,
+                      'Goat Management',
+                      'Open a section to add or view records.',
+                    ),
+
+                    const SizedBox(height: 12),
+
+                    _buildManagementGrid(context),
+
+                    const SizedBox(height: 28),
+
+                    // ---------------------------------------------------------
+                    // HISTORY
+                    // ---------------------------------------------------------
+
+                    _buildSectionTitle(
+                      context,
+                      'History',
+                      'View the complete activity of this goat.',
+                    ),
+
+                    const SizedBox(height: 12),
+
+                    _buildHistoryCard(context),
+                  ],
+                ),
               ),
             ),
           ],
@@ -65,106 +165,155 @@ class CustomerPalaiGoatProfileScreen extends StatelessWidget {
   // ===========================================================================
 
   Widget _buildProfileHeader(BuildContext context) {
-    final theme = Theme.of(context);
-    final colorScheme = theme.colorScheme;
+    return Container(
+      decoration: AppTheme.card(
+        radius: 16,
+      ),
+      padding: const EdgeInsets.all(16),
 
-    return Card(
-      clipBehavior: Clip.antiAlias,
-      child: Padding(
-        padding: const EdgeInsets.all(18),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            _buildGoatImage(context),
-            const SizedBox(width: 16),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _buildGoatImage(),
+
+          const SizedBox(width: 14),
+
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  goat.goatCode.trim().isEmpty
+                      ? 'Unnamed Goat'
+                      : goat.goatCode,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: AppTheme.heading(
+                    size: 19,
+                  ),
+                ),
+
+                const SizedBox(height: 5),
+
+                if (goat.color.trim().isNotEmpty)
                   Text(
-                    goat.name.trim().isEmpty
-                        ? 'Unnamed Goat'
-                        : goat.name,
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                    style: theme.textTheme.headlineSmall?.copyWith(
-                      fontWeight: FontWeight.w800,
+                    'Color: ${goat.color}',
+                    style: AppTheme.body(
+                      size: 11,
+                      color: AppColors.textGrey,
                     ),
                   ),
-                  const SizedBox(height: 6),
-                  Text(
-                    goat.tagNumber.trim().isEmpty
-                        ? 'No tag number'
-                        : 'Tag: ${goat.tagNumber}',
-                    style: theme.textTheme.bodyMedium?.copyWith(
-                      color: colorScheme.onSurfaceVariant,
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  Wrap(
-                    spacing: 8,
-                    runSpacing: 8,
-                    children: [
+
+                const SizedBox(height: 10),
+
+                Wrap(
+                  spacing: 7,
+                  runSpacing: 7,
+                  children: [
+                    if (goat.gender.trim().isNotEmpty)
                       _buildSmallChip(
-                        context,
-                        goat.gender.trim().isEmpty
-                            ? 'Gender not set'
-                            : goat.gender,
+                        goat.gender,
                         Icons.wc_outlined,
                       ),
-                      if (goat.breed.trim().isNotEmpty)
-                        _buildSmallChip(
-                          context,
-                          goat.breed,
-                          Icons.category_outlined,
-                        ),
-                      _buildStatusChip(context),
-                    ],
-                  ),
-                ],
-              ),
+
+                    if (goat.breed.trim().isNotEmpty)
+                      _buildSmallChip(
+                        goat.breed,
+                        Icons.category_outlined,
+                      ),
+
+                    _buildStatusChip(),
+                  ],
+                ),
+              ],
             ),
-          ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ===========================================================================
+  // GOAT IMAGE
+  // ===========================================================================
+
+  Widget _buildGoatImage() {
+    final image = goat.beforeImage;
+
+    return Container(
+      width: 90,
+      height: 90,
+
+      decoration: BoxDecoration(
+        color: AppColors.lightGreen,
+        borderRadius: BorderRadius.circular(16),
+      ),
+
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(16),
+
+        child: image != null
+            ? Image.memory(
+          image,
+          fit: BoxFit.cover,
+        )
+            : const Icon(
+          Icons.pets_outlined,
+          size: 42,
+          color: AppColors.primaryGreen,
         ),
       ),
     );
   }
 
-  Widget _buildGoatImage(BuildContext context) {
-    final imageUrl = goat.imageUrl?.trim();
+  // ===========================================================================
+  // CHECKOUT BUTTON
+  // ===========================================================================
 
-    if (imageUrl != null && imageUrl.isNotEmpty) {
-      return ClipRRect(
-        borderRadius: BorderRadius.circular(16),
-        child: Image.network(
-          imageUrl,
-          width: 90,
-          height: 90,
-          fit: BoxFit.cover,
-          errorBuilder: (_, __, ___) {
-            return _buildDefaultGoatImage(context);
-          },
-        ),
-      );
-    }
-
-    return _buildDefaultGoatImage(context);
-  }
-
-  Widget _buildDefaultGoatImage(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
-
+  Widget _buildCheckoutButton(BuildContext context) {
     return Container(
-      width: 90,
-      height: 90,
+      width: double.infinity,
+
       decoration: BoxDecoration(
+        color: AppColors.primaryGreen,
         borderRadius: BorderRadius.circular(16),
-        color: colorScheme.surfaceContainerHighest,
+
+        boxShadow: [
+          BoxShadow(
+            color: AppColors.primaryGreen.withOpacity(0.18),
+            blurRadius: 12,
+            offset: const Offset(0, 5),
+          ),
+        ],
       ),
-      child: Icon(
-        Icons.pets_outlined,
-        size: 42,
-        color: colorScheme.onSurfaceVariant,
+
+      child: ElevatedButton.icon(
+        onPressed: () => _openDirectCheckout(context),
+
+        icon: const Icon(
+          Icons.logout_rounded,
+          size: 21,
+        ),
+
+        label: const Text(
+          'CHECK OUT THIS GOAT',
+          style: TextStyle(
+            fontWeight: FontWeight.w700,
+            letterSpacing: 0.3,
+          ),
+        ),
+
+        style: ElevatedButton.styleFrom(
+          backgroundColor: Colors.transparent,
+          foregroundColor: Colors.white,
+          shadowColor: Colors.transparent,
+
+          minimumSize: const Size.fromHeight(56),
+
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+          ),
+        ),
       ),
     );
   }
@@ -174,85 +323,89 @@ class CustomerPalaiGoatProfileScreen extends StatelessWidget {
   // ===========================================================================
 
   Widget _buildCurrentOverview(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
+    return Row(
       children: [
-        _buildSectionTitle(
-          context,
-          'Current Overview',
-          'Important information at a glance.',
+        Expanded(
+          child: _buildOverviewCard(
+            icon: Icons.monitor_weight_outlined,
+            title: 'Weight',
+            value: goat.currentWeight == null
+                ? '${goat.weightAtCheckIn.toStringAsFixed(1)} kg'
+                : '${goat.currentWeight!.toStringAsFixed(1)} kg',
+          ),
         ),
-        const SizedBox(height: 12),
-        Row(
-          children: [
-            Expanded(
-              child: _buildOverviewCard(
-                context,
-                icon: Icons.monitor_weight_outlined,
-                title: 'Weight',
-                value: goat.currentWeight == null
-                    ? 'Not added'
-                    : '${_formatWeight(goat.currentWeight!)} kg',
-              ),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: _buildOverviewCard(
-                context,
-                icon: Icons.calendar_today_outlined,
-                title: 'Registered',
-                value: _formatDate(goat.registrationDate),
-              ),
-            ),
-          ],
+
+        const SizedBox(width: 12),
+
+        Expanded(
+          child: _buildOverviewCard(
+            icon: Icons.calendar_today_outlined,
+            title: 'Checked In',
+            value: _formatDate(goat.checkInDate),
+          ),
         ),
       ],
     );
   }
 
-  Widget _buildOverviewCard(
-      BuildContext context, {
-        required IconData icon,
-        required String title,
-        required String value,
-      }) {
-    final theme = Theme.of(context);
-    final colorScheme = theme.colorScheme;
+  Widget _buildOverviewCard({
+    required IconData icon,
+    required String title,
+    required String value,
+  }) {
+    return Container(
+      decoration: AppTheme.card(
+        radius: 14,
+      ),
 
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Icon(
+      padding: const EdgeInsets.all(14),
+
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            width: 34,
+            height: 34,
+
+            decoration: const BoxDecoration(
+              color: AppColors.lightGreen,
+              shape: BoxShape.circle,
+            ),
+
+            child: Icon(
               icon,
-              color: colorScheme.primary,
+              size: 18,
+              color: AppColors.primaryGreen,
             ),
-            const SizedBox(height: 12),
-            Text(
-              title,
-              style: theme.textTheme.bodySmall?.copyWith(
-                color: colorScheme.onSurfaceVariant,
-              ),
+          ),
+
+          const SizedBox(height: 10),
+
+          Text(
+            title,
+            style: AppTheme.body(
+              size: 10,
+              color: AppColors.textGrey,
             ),
-            const SizedBox(height: 4),
-            Text(
-              value,
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-              style: theme.textTheme.titleMedium?.copyWith(
-                fontWeight: FontWeight.w700,
-              ),
+          ),
+
+          const SizedBox(height: 3),
+
+          Text(
+            value,
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            style: AppTheme.heading(
+              size: 13,
             ),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }
 
   // ===========================================================================
-  // MANAGEMENT
+  // MANAGEMENT GRID
   // ===========================================================================
 
   Widget _buildManagementGrid(BuildContext context) {
@@ -272,12 +425,17 @@ class CustomerPalaiGoatProfileScreen extends StatelessWidget {
           );
         },
       ),
+
       _GoatAction(
         title: 'Health',
-        subtitle: 'Health status',
+        subtitle: goat.healthStatus,
         icon: Icons.health_and_safety_outlined,
-        onTap: () => _showComingSoon(context, 'Health'),
+        onTap: () => _showComingSoon(
+          context,
+          'Health',
+        ),
       ),
+
       _GoatAction(
         title: 'Vaccination',
         subtitle: 'Schedule & history',
@@ -285,15 +443,15 @@ class CustomerPalaiGoatProfileScreen extends StatelessWidget {
         onTap: () {
           Navigator.of(context).push(
             MaterialPageRoute<void>(
-              builder: (_) =>
-                  CustomerGoatVaccinationScreen(
-                    customerId: goat.customerId,
-                    goat: goat,
-                  ),
+              builder: (_) => CustomerGoatVaccinationScreen(
+                customerId: goat.customerId,
+                goat: goat,
+              ),
             ),
           );
         },
       ),
+
       _GoatAction(
         title: 'Hoof Cutting',
         subtitle: 'Cutting records',
@@ -301,51 +459,71 @@ class CustomerPalaiGoatProfileScreen extends StatelessWidget {
         onTap: () {
           Navigator.of(context).push(
             MaterialPageRoute<void>(
-              builder: (_) =>
-                  CustomerGoatHoofScreen(
-                    customerId: goat.customerId,
-                    goat: goat,
-                  ),
+              builder: (_) => CustomerGoatHoofScreen(
+                customerId: goat.customerId,
+                goat: goat,
+              ),
             ),
           );
         },
       ),
+
       _GoatAction(
         title: 'Hair Trimming',
         subtitle: 'Trimming records',
         icon: Icons.content_cut_outlined,
-        onTap: () => _showComingSoon(context, 'Hair Trimming'),
+        onTap: () => _showComingSoon(
+          context,
+          'Hair Trimming',
+        ),
       ),
+
       _GoatAction(
         title: 'Medicine',
         subtitle: 'Medicine records',
         icon: Icons.medication_outlined,
-        onTap: () => _showComingSoon(context, 'Medicine'),
+        onTap: () => _showComingSoon(
+          context,
+          'Medicine',
+        ),
       ),
+
       _GoatAction(
         title: 'Photos',
         subtitle: 'Monthly photos',
         icon: Icons.photo_library_outlined,
-        onTap: () => _showComingSoon(context, 'Photos'),
+        onTap: () => _showComingSoon(
+          context,
+          'Photos',
+        ),
       ),
+
       _GoatAction(
         title: 'Check-In / Out',
-        subtitle: 'Boarding movement',
+        subtitle: goat.isCheckedOut
+            ? 'Already checked out'
+            : 'Boarding movement',
         icon: Icons.swap_horiz_outlined,
-        onTap: () => _showComingSoon(context, 'Check-In / Check-Out'),
+        onTap: goat.isCheckedOut
+            ? null
+            : () => _openDirectCheckout(context),
       ),
     ];
 
     return GridView.builder(
       shrinkWrap: true,
       physics: const NeverScrollableScrollPhysics(),
+
       itemCount: actions.length,
-      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+
+      gridDelegate:
+      const SliverGridDelegateWithFixedCrossAxisCount(
         crossAxisCount: 2,
         crossAxisSpacing: 12,
         mainAxisSpacing: 12,
         childAspectRatio: 1.18,
       ),
+
       itemBuilder: (context, index) {
         return _buildActionCard(
           context,
@@ -359,46 +537,64 @@ class CustomerPalaiGoatProfileScreen extends StatelessWidget {
       BuildContext context,
       _GoatAction action,
       ) {
-    final theme = Theme.of(context);
-    final colorScheme = theme.colorScheme;
+    final enabled = action.onTap != null;
 
-    return Card(
-      clipBehavior: Clip.antiAlias,
+    return Container(
+      decoration: AppTheme.card(
+        radius: 14,
+      ),
+
       child: InkWell(
-        onTap: action.onTap,
+        onTap: enabled ? action.onTap : null,
+
+        borderRadius: BorderRadius.circular(14),
+
         child: Padding(
           padding: const EdgeInsets.all(14),
+
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
+
             children: [
               Container(
                 width: 42,
                 height: 42,
+
                 decoration: BoxDecoration(
                   borderRadius: BorderRadius.circular(12),
-                  color: colorScheme.primaryContainer,
+                  color: enabled
+                      ? AppColors.lightGreen
+                      : Colors.grey.shade100,
                 ),
+
                 child: Icon(
                   action.icon,
-                  color: colorScheme.onPrimaryContainer,
+                  color: enabled
+                      ? AppColors.primaryGreen
+                      : AppColors.textGrey,
                 ),
               ),
+
               const Spacer(),
+
               Text(
                 action.title,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
-                style: theme.textTheme.titleSmall?.copyWith(
-                  fontWeight: FontWeight.w700,
+                style: AppTheme.heading(
+                  size: 12,
                 ),
               ),
+
               const SizedBox(height: 3),
+
               Text(
                 action.subtitle,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
-                style: theme.textTheme.bodySmall?.copyWith(
-                  color: colorScheme.onSurfaceVariant,
+                style: AppTheme.body(
+                  size: 10,
+                  color: AppColors.textGrey,
                 ),
               ),
             ],
@@ -413,63 +609,152 @@ class CustomerPalaiGoatProfileScreen extends StatelessWidget {
   // ===========================================================================
 
   Widget _buildHistoryCard(BuildContext context) {
-    return Card(
-      clipBehavior: Clip.antiAlias,
-      child: InkWell(
-        onTap: () => _showComingSoon(context, 'Complete History'),
-        child: Padding(
-          padding: const EdgeInsets.all(16),
-          child: Row(
-            children: [
-              Container(
-                width: 48,
-                height: 48,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  color: Theme.of(context)
-                      .colorScheme
-                      .secondaryContainer,
-                ),
-                child: Icon(
-                  Icons.history_outlined,
-                  color: Theme.of(context)
-                      .colorScheme
-                      .onSecondaryContainer,
-                ),
+    return Container(
+      decoration: AppTheme.card(
+        radius: 14,
+      ),
+
+      padding: const EdgeInsets.all(15),
+
+      child: Column(
+        children: [
+          _historyRow(
+            icon: Icons.login_rounded,
+            title: 'Check-In',
+            value: _formatDate(goat.checkInDate),
+          ),
+
+          if (goat.checkOutDate != null) ...[
+            const Divider(height: 20),
+
+            _historyRow(
+              icon: Icons.logout_rounded,
+              title: 'Check-Out',
+              value: _formatDate(
+                goat.checkOutDate!,
               ),
-              const SizedBox(width: 14),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment:
-                  CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      'Complete History',
-                      style: Theme.of(context)
-                          .textTheme
-                          .titleMedium
-                          ?.copyWith(
-                        fontWeight: FontWeight.w700,
+            ),
+          ],
+
+          const Divider(height: 20),
+
+          _historyRow(
+            icon: Icons.health_and_safety_outlined,
+            title: 'Health',
+            value: goat.healthStatus,
+          ),
+
+          const Divider(height: 20),
+
+          _historyRow(
+            icon: Icons.receipt_long_outlined,
+            title: 'Monthly Package',
+            value: goat.monthlyPackage.isEmpty
+                ? 'Not specified'
+                : goat.monthlyPackage,
+          ),
+
+          const Divider(height: 20),
+
+          _historyRow(
+            icon: Icons.currency_rupee,
+            title: 'Palai Price',
+            value:
+            '₹${goat.pricing.toStringAsFixed(0)}',
+          ),
+
+          if (goat.notes.trim().isNotEmpty) ...[
+            const Divider(height: 20),
+
+            Row(
+              crossAxisAlignment:
+              CrossAxisAlignment.start,
+              children: [
+                const Icon(
+                  Icons.notes_outlined,
+                  size: 18,
+                  color: AppColors.textGrey,
+                ),
+
+                const SizedBox(width: 10),
+
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment:
+                    CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Notes',
+                        style: AppTheme.body(
+                          size: 10,
+                          color: AppColors.textGrey,
+                        ),
                       ),
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      'Weight, health, medicines, vaccinations and other records.',
-                      style: Theme.of(context)
-                          .textTheme
-                          .bodySmall,
-                    ),
-                  ],
+
+                      const SizedBox(height: 3),
+
+                      Text(
+                        goat.notes,
+                        style: AppTheme.body(
+                          size: 11,
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
-              ),
-              const SizedBox(width: 8),
-              const Icon(
-                Icons.chevron_right,
-              ),
-            ],
+              ],
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _historyRow({
+    required IconData icon,
+    required String title,
+    required String value,
+  }) {
+    return Row(
+      children: [
+        Container(
+          width: 34,
+          height: 34,
+
+          decoration: const BoxDecoration(
+            color: AppColors.lightGreen,
+            shape: BoxShape.circle,
+          ),
+
+          child: Icon(
+            icon,
+            size: 17,
+            color: AppColors.primaryGreen,
           ),
         ),
-      ),
+
+        const SizedBox(width: 10),
+
+        Expanded(
+          child: Text(
+            title,
+            style: AppTheme.body(
+              size: 11,
+              color: AppColors.textGrey,
+            ),
+          ),
+        ),
+
+        Flexible(
+          child: Text(
+            value,
+            textAlign: TextAlign.end,
+            style: AppTheme.heading(
+              size: 11,
+            ),
+          ),
+        ),
+      ],
     );
   }
 
@@ -487,23 +772,18 @@ class CustomerPalaiGoatProfileScreen extends StatelessWidget {
       children: [
         Text(
           title,
-          style: Theme.of(context)
-              .textTheme
-              .titleLarge
-              ?.copyWith(
-            fontWeight: FontWeight.w800,
+          style: AppTheme.heading(
+            size: 17,
           ),
         ),
+
         const SizedBox(height: 4),
+
         Text(
           subtitle,
-          style: Theme.of(context)
-              .textTheme
-              .bodySmall
-              ?.copyWith(
-            color: Theme.of(context)
-                .colorScheme
-                .onSurfaceVariant,
+          style: AppTheme.body(
+            size: 10,
+            color: AppColors.textGrey,
           ),
         ),
       ],
@@ -515,7 +795,6 @@ class CustomerPalaiGoatProfileScreen extends StatelessWidget {
   // ===========================================================================
 
   Widget _buildSmallChip(
-      BuildContext context,
       String text,
       IconData icon,
       ) {
@@ -524,27 +803,29 @@ class CustomerPalaiGoatProfileScreen extends StatelessWidget {
         horizontal: 9,
         vertical: 6,
       ),
+
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(20),
-        color: Theme.of(context)
-            .colorScheme
-            .surfaceContainerHighest,
+        color: AppColors.lightGreen,
       ),
+
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
           Icon(
             icon,
             size: 14,
+            color: AppColors.darkGreen,
           ),
+
           const SizedBox(width: 5),
+
           Text(
             text,
-            style: Theme.of(context)
-                .textTheme
-                .labelSmall
-                ?.copyWith(
-              fontWeight: FontWeight.w600,
+            style: AppTheme.body(
+              size: 9,
+              color: AppColors.darkGreen,
+              weight: FontWeight.w600,
             ),
           ),
         ],
@@ -552,36 +833,40 @@ class CustomerPalaiGoatProfileScreen extends StatelessWidget {
     );
   }
 
-  Widget _buildStatusChip(BuildContext context) {
-    final status = goat.status.trim().isEmpty
-        ? 'active'
-        : goat.status;
+  // ===========================================================================
+  // STATUS CHIP
+  // ===========================================================================
 
-    final isActive =
-        status.toLowerCase() == 'active';
+  Widget _buildStatusChip() {
+    final checkedOut = goat.isCheckedOut;
 
     return Container(
       padding: const EdgeInsets.symmetric(
         horizontal: 9,
         vertical: 6,
       ),
+
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(20),
-        color: isActive
-            ? Theme.of(context)
-            .colorScheme
-            .primaryContainer
-            : Theme.of(context)
-            .colorScheme
-            .surfaceContainerHighest,
+
+        color: checkedOut
+            ? Colors.grey.shade200
+            : AppColors.lightGreen,
       ),
+
       child: Text(
-        _formatStatus(status),
-        style: Theme.of(context)
-            .textTheme
-            .labelSmall
-            ?.copyWith(
-          fontWeight: FontWeight.w700,
+        checkedOut
+            ? 'Checked Out'
+            : 'Currently Boarded',
+
+        style: AppTheme.body(
+          size: 9,
+
+          color: checkedOut
+              ? AppColors.textGrey
+              : AppColors.darkGreen,
+
+          weight: FontWeight.w700,
         ),
       ),
     );
@@ -594,42 +879,54 @@ class CustomerPalaiGoatProfileScreen extends StatelessWidget {
   void _showMoreOptions(BuildContext context) {
     showModalBottomSheet<void>(
       context: context,
+
       showDragHandle: true,
+
+      backgroundColor: Colors.white,
+
       builder: (sheetContext) {
         return SafeArea(
           child: Column(
             mainAxisSize: MainAxisSize.min,
+
             children: [
               ListTile(
                 leading: const Icon(
                   Icons.edit_outlined,
                 ),
+
                 title: const Text(
                   'Edit Goat',
                 ),
+
                 onTap: () {
                   Navigator.pop(sheetContext);
+
                   _showComingSoon(
                     context,
                     'Edit Goat',
                   );
                 },
               ),
-              ListTile(
-                leading: const Icon(
-                  Icons.photo_camera_outlined,
+
+              if (!goat.isCheckedOut)
+                ListTile(
+                  leading: const Icon(
+                    Icons.logout_rounded,
+                  ),
+
+                  title: const Text(
+                    'Check Out Goat',
+                  ),
+
+                  onTap: () {
+                    Navigator.pop(sheetContext);
+
+                    _openDirectCheckout(
+                      context,
+                    );
+                  },
                 ),
-                title: const Text(
-                  'Change Photo',
-                ),
-                onTap: () {
-                  Navigator.pop(sheetContext);
-                  _showComingSoon(
-                    context,
-                    'Change Photo',
-                  );
-                },
-              ),
             ],
           ),
         );
@@ -638,72 +935,30 @@ class CustomerPalaiGoatProfileScreen extends StatelessWidget {
   }
 
   // ===========================================================================
-  // TEMPORARY NAVIGATION PLACEHOLDER
+  // HELPERS
   // ===========================================================================
+
+  String _formatDate(DateTime date) {
+    final day =
+    date.day.toString().padLeft(2, '0');
+
+    final month =
+    date.month.toString().padLeft(2, '0');
+
+    return '$day/$month/${date.year}';
+  }
 
   void _showComingSoon(
       BuildContext context,
       String feature,
       ) {
-    ScaffoldMessenger.of(context)
-      ..hideCurrentSnackBar()
-      ..showSnackBar(
-        SnackBar(
-          content: Text(
-            '$feature will be connected next.',
-          ),
-          duration: const Duration(
-            seconds: 2,
-          ),
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          '$feature is coming soon.',
         ),
-      );
-  }
-
-  // ===========================================================================
-  // HELPERS
-  // ===========================================================================
-
-  String _formatWeight(double weight) {
-    if (weight == weight.roundToDouble()) {
-      return weight.toStringAsFixed(0);
-    }
-
-    return weight.toStringAsFixed(1);
-  }
-
-  String _formatDate(DateTime date) {
-    final day = date.day.toString().padLeft(2, '0');
-    final month = date.month.toString().padLeft(2, '0');
-
-    return '$day/$month/${date.year}';
-  }
-
-  String _formatStatus(String status) {
-    final normalized = status.trim();
-
-    if (normalized.isEmpty) {
-      return 'Active';
-    }
-
-    switch (normalized.toLowerCase()) {
-      case 'active':
-        return 'Active';
-      case 'inactive':
-        return 'Inactive';
-      case 'checkedin':
-      case 'checked_in':
-        return 'Checked In';
-      case 'checkedout':
-      case 'checked_out':
-        return 'Checked Out';
-      default:
-        if (normalized.length == 1) {
-          return normalized.toUpperCase();
-        }
-
-        return normalized[0].toUpperCase() +
-            normalized.substring(1);
-    }
+      ),
+    );
   }
 }
 
@@ -715,7 +970,7 @@ class _GoatAction {
   final String title;
   final String subtitle;
   final IconData icon;
-  final VoidCallback onTap;
+  final VoidCallback? onTap;
 
   const _GoatAction({
     required this.title,
