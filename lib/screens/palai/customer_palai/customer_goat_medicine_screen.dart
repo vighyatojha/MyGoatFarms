@@ -2,7 +2,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 
 import '../../../models/medicine_record.dart';
-import '../../../models/palai_goat.dart';
+import '../../../models/palai_models.dart';
 
 class CustomerGoatMedicineScreen extends StatefulWidget {
   final String customerId;

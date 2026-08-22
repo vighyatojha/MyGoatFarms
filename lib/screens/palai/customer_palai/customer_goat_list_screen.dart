@@ -1,7 +1,7 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 
-import '../../../models/palai_goat.dart';
+import '../../../models/palai_models.dart';
 import 'customer_goat_registration_screen.dart';
 import 'customer_palai_goat_profile_screen.dart';
 

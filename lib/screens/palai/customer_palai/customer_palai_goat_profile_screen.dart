@@ -2,11 +2,9 @@ import 'package:flutter/material.dart';
 
 import '../../../app_theme.dart';
 import '../../../models/palai_models.dart';
-import '../../palai/multi_goat_checkout_screen.dart';
 import '../../../widgets/fast_route.dart';
-import 'package:flutter/material.dart';
 
-import '../../../models/palai_goat.dart';
+import '../../palai/multi_goat_checkout_screen.dart';
 import 'customer_goat_weight_screen.dart';
 import 'customer_goat_hoof_screen.dart';
 import 'customer_goat_vaccination_screen.dart';

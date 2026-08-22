@@ -2,8 +2,11 @@ import 'dart:typed_data';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 
-/// A customer who boards goats under the Palai (boarding & care) service.
-/// A customer who boards goats under the Palai (boarding & care) service.
+// ============================================================================
+// PALAI CUSTOMER
+// ============================================================================
+
+/// A customer who boards goats under the Palai boarding & care service.
 class PalaiCustomer {
   final String id;
   final String name;
@@ -15,16 +18,10 @@ class PalaiCustomer {
   /// Amount currently owed by the customer.
   final double pendingAmount;
 
-  /// Amount paid in excess of the customer's outstanding balance.
-  ///
-  /// Example:
-  /// Pending = ₹1,000
-  /// Payment = ₹1,500
-  /// Pending = ₹0
-  /// Advance = ₹500
+  /// Amount paid in excess of the outstanding balance.
   final double advanceAmount;
 
-  /// Palai price for this customer (₹).
+  /// Palai price for this customer.
   final double price;
 
   PalaiCustomer({
@@ -46,24 +43,19 @@ class PalaiCustomer {
 
     return PalaiCustomer(
       id: doc.id,
-      name: data['name'] ?? '',
-      mobileNumber: data['mobileNumber'] ?? '',
-      address: data['address'] ?? '',
-      package: data['package'] ?? '',
+      name: data['name']?.toString() ?? '',
+      mobileNumber: data['mobileNumber']?.toString() ?? '',
+      address: data['address']?.toString() ?? '',
+      package: data['package']?.toString() ?? '',
       joiningDate:
       (data['joiningDate'] as Timestamp?)?.toDate() ??
           DateTime.now(),
-
       pendingAmount:
-      (data['pendingAmount'] ?? 0).toDouble(),
-
-      // Existing customers do not have this field yet.
-      // They safely default to ₹0.
+      (data['pendingAmount'] as num?)?.toDouble() ?? 0,
       advanceAmount:
-      (data['advanceAmount'] ?? 0).toDouble(),
-
+      (data['advanceAmount'] as num?)?.toDouble() ?? 0,
       price:
-      (data['price'] ?? 0).toDouble(),
+      (data['price'] as num?)?.toDouble() ?? 0,
     );
   }
 
@@ -81,12 +73,9 @@ class PalaiCustomer {
       'address': address,
       'package': package,
       'joiningDate': Timestamp.fromDate(joiningDate),
-
       'pendingAmount': pendingAmount,
       'advanceAmount': advanceAmount,
-
       'price': price,
-
       'createdAt': FieldValue.serverTimestamp(),
     };
   }
@@ -97,10 +86,8 @@ class PalaiCustomer {
       'mobileNumber': mobileNumber,
       'address': address,
       'package': package,
-
       'pendingAmount': pendingAmount,
       'advanceAmount': advanceAmount,
-
       'price': price,
     };
   }
@@ -122,100 +109,231 @@ class PalaiCustomer {
       address: address ?? this.address,
       package: package ?? this.package,
       joiningDate: joiningDate ?? this.joiningDate,
-
-      pendingAmount:
-      pendingAmount ?? this.pendingAmount,
-
-      advanceAmount:
-      advanceAmount ?? this.advanceAmount,
-
-      price:
-      price ?? this.price,
+      pendingAmount: pendingAmount ?? this.pendingAmount,
+      advanceAmount: advanceAmount ?? this.advanceAmount,
+      price: price ?? this.price,
     );
   }
 }
 
-/// A goat that is checked into Palai boarding, belonging to a customer.
+// ============================================================================
+// PALAI GOAT
+// ============================================================================
+
+/// The single source-of-truth model for a goat in the Palai system.
 ///
-/// Carries two optional photos:
-/// - [beforeImage] — taken at check-in ("Before Palai").
-/// - [afterImage] — taken at check-out ("After Palai").
+/// This model combines:
 ///
-/// Images are stored as Firestore [Blob] values directly on the
-/// document, so Firebase Storage is not required.
+/// 1. Goat identity / registration information
+/// 2. Palai check-in / check-out information
+/// 3. Weight information
+/// 4. Health information
+/// 5. Before / after Palai photos
+/// 6. Monthly photos
+/// 7. Report information
+///
+/// All Palai screens should use this class from:
+///
+///     package:mygoatfarms/models/palai_models.dart
+///
+/// Do NOT create another PalaiGoat model in palai_goat.dart.
 class PalaiGoat {
+  // --------------------------------------------------------------------------
+  // IDENTITY
+  // --------------------------------------------------------------------------
+
+  /// Firestore document ID.
   final String id;
+
+  /// Customer who owns this goat.
   final String customerId;
 
-  final String goatCode; // e.g. G-1001
+  /// Goat name.
+  ///
+  /// This belongs to the newer goat identity structure.
+  final String name;
+
+  /// Goat tag / identification number.
+  ///
+  /// Example: G-1001
+  final String tagNumber;
+
+  /// Legacy/display goat code used by existing Palai screens.
+  ///
+  /// Kept for compatibility with existing code.
+  final String goatCode;
+
+  /// Goat breed.
   final String breed;
+
+  /// Goat gender.
   final String gender;
+
+  /// Goat colour.
   final String color;
 
+  /// Optional date of birth.
+  final DateTime? dateOfBirth;
+
+  // --------------------------------------------------------------------------
+  // WEIGHT
+  // --------------------------------------------------------------------------
+
+  /// Weight when the goat entered Palai.
   final double weightAtCheckIn;
+
+  /// Current/latest weight.
   final double? currentWeight;
 
+  // --------------------------------------------------------------------------
+  // HEALTH
+  // --------------------------------------------------------------------------
+
+  /// Current health status.
   final String healthStatus;
 
+  // --------------------------------------------------------------------------
+  // CHECK-IN / CHECK-OUT
+  // --------------------------------------------------------------------------
+
+  /// Date when goat entered Palai.
   final DateTime checkInDate;
+
+  /// Date when goat left Palai.
   final DateTime? checkOutDate;
 
+  /// Current operational status.
+  ///
+  /// Examples:
+  /// active
+  /// checkedIn
+  /// checkedOut
+  /// inactive
+  ///
+  /// Kept in addition to [isCheckedOut] so the newer structure
+  /// can use an explicit status field.
+  final String status;
+
+  /// Whether this goat has already been checked out.
+  final bool isCheckedOut;
+
+  // --------------------------------------------------------------------------
+  // PALAI PACKAGE / PRICING
+  // --------------------------------------------------------------------------
+
+  /// Monthly Palai package.
   final String monthlyPackage;
-  final double pricing; // Palai pricing for this check-in (₹)
+
+  /// Palai price for this goat/check-in.
+  final double pricing;
+
+  // --------------------------------------------------------------------------
+  // REGISTRATION
+  // --------------------------------------------------------------------------
+
+  /// When the goat was registered in the Palai system.
+  final DateTime registrationDate;
+
+  /// Last time the goat record was updated.
+  final DateTime? updatedAt;
+
+  // --------------------------------------------------------------------------
+  // NOTES
+  // --------------------------------------------------------------------------
 
   final String notes;
 
-  final bool isCheckedOut;
+  // --------------------------------------------------------------------------
+  // OPTIONAL IMAGE URL
+  // --------------------------------------------------------------------------
 
-  /// "Before Palai" photo, taken at check-in.
+  /// Optional URL for a goat image.
+  ///
+  /// Existing Palai before/after photos remain stored as Firestore Blobs.
+  final String? imageUrl;
+
+  // --------------------------------------------------------------------------
+  // CHECK-IN / CHECK-OUT IMAGES
+  // --------------------------------------------------------------------------
+
+  /// "Before Palai" photo taken during check-in.
   final Uint8List? beforeImage;
+
   final String? beforeImageContentType;
 
-  /// "After Palai" photo, taken at check-out.
+  /// "After Palai" photo taken during check-out.
   final Uint8List? afterImage;
+
   final String? afterImageContentType;
 
-  // ------------------------------------------------------------
+  // --------------------------------------------------------------------------
   // REPORT INFORMATION
-  // ------------------------------------------------------------
+  // --------------------------------------------------------------------------
 
-  /// Report-generation status shown on the goat card.
-  ///
   /// Possible values:
-  /// - "Not Generated"
-  /// - "Progress Report Generated"
-  /// - "Final Report Generated"
+  ///
+  /// Not Generated
+  /// Progress Report Generated
+  /// Final Report Generated
   final String reportStatus;
 
-  /// Storage value of the most recently generated report.
+  /// Possible values:
   ///
-  /// Expected values:
-  /// - "progress"
-  /// - "final"
+  /// progress
+  /// final
   final String? lastReportType;
 
-  /// Date and time when the most recent report was generated.
+  /// Date/time of the latest report.
   final DateTime? lastReportDate;
 
-  /// Total number of reports generated for this goat.
+  /// Total number of generated reports.
   final int reportsCount;
+
+  // ==========================================================================
+  // CONSTRUCTOR
+  // ==========================================================================
 
   PalaiGoat({
     required this.id,
     required this.customerId,
-    required this.goatCode,
+
+    // New identity fields
+    this.name = '',
+    this.tagNumber = '',
+
+    // Existing Palai field
+    this.goatCode = '',
+
     required this.breed,
     required this.gender,
-    required this.color,
-    required this.weightAtCheckIn,
+
+    this.color = '',
+    this.dateOfBirth,
+
+    // Weight
+    this.weightAtCheckIn = 0,
     this.currentWeight,
-    required this.healthStatus,
+
+    // Health
+    this.healthStatus = 'Healthy',
+
+    // Check-in/out
     required this.checkInDate,
     this.checkOutDate,
-    required this.monthlyPackage,
-    this.pricing = 0,
-    required this.notes,
+    this.status = 'active',
     this.isCheckedOut = false,
+
+    // Package / pricing
+    this.monthlyPackage = '',
+    this.pricing = 0,
+
+    // Registration
+    DateTime? registrationDate,
+    this.updatedAt,
+
+    // Other
+    this.notes = '',
+    this.imageUrl,
 
     // Images
     this.beforeImage,
@@ -223,12 +341,17 @@ class PalaiGoat {
     this.afterImage,
     this.afterImageContentType,
 
-    // Report fields
+    // Reports
     this.reportStatus = 'Not Generated',
     this.lastReportType,
     this.lastReportDate,
     this.reportsCount = 0,
-  });
+  }) : registrationDate =
+      registrationDate ?? checkInDate;
+
+  // ==========================================================================
+  // FIRESTORE
+  // ==========================================================================
 
   factory PalaiGoat.fromDoc(
       DocumentSnapshot<Map<String, dynamic>> doc,
@@ -238,190 +361,485 @@ class PalaiGoat {
     final beforeField = data['beforeImage'];
     final afterField = data['afterImage'];
 
+    final checkInDate =
+        _readDate(data['checkInDate']) ??
+            _readDate(data['registrationDate']) ??
+            DateTime.now();
+
+    final checkedOut =
+    _readBool(data['isCheckedOut']);
+
+    final statusValue =
+    _readString(
+      data['status'],
+      fallback: checkedOut
+          ? 'checkedOut'
+          : 'checkedIn',
+    );
+
     return PalaiGoat(
       id: doc.id,
 
-      customerId: data['customerId'] ?? '',
+      // ----------------------------------------------------------------------
+      // IDENTITY
+      // ----------------------------------------------------------------------
 
-      goatCode: data['goatCode'] ?? '',
-      breed: data['breed'] ?? '',
-      gender: data['gender'] ?? '',
-      color: data['color'] ?? '',
+      customerId:
+      _readString(data['customerId']),
+
+      name:
+      _readString(data['name']),
+
+      tagNumber:
+      _readString(data['tagNumber']),
+
+      goatCode:
+      _readString(
+        data['goatCode'],
+        fallback: _readString(data['tagNumber']),
+      ),
+
+      breed:
+      _readString(data['breed']),
+
+      gender:
+      _readString(data['gender']),
+
+      color:
+      _readString(data['color']),
+
+      dateOfBirth:
+      _readDate(data['dateOfBirth']),
+
+      // ----------------------------------------------------------------------
+      // WEIGHT
+      // ----------------------------------------------------------------------
 
       weightAtCheckIn:
-      (data['weightAtCheckIn'] ?? 0).toDouble(),
+      _readDouble(
+        data['weightAtCheckIn'],
+      ),
 
       currentWeight:
-      (data['currentWeight'] as num?)?.toDouble(),
+      _readNullableDouble(
+        data['currentWeight'],
+      ),
+
+      // ----------------------------------------------------------------------
+      // HEALTH
+      // ----------------------------------------------------------------------
 
       healthStatus:
-      data['healthStatus'] ?? 'Healthy',
+      _readString(
+        data['healthStatus'],
+        fallback: 'Healthy',
+      ),
+
+      // ----------------------------------------------------------------------
+      // CHECK-IN / CHECK-OUT
+      // ----------------------------------------------------------------------
 
       checkInDate:
-      (data['checkInDate'] as Timestamp?)?.toDate() ??
-          DateTime.now(),
+      checkInDate,
 
       checkOutDate:
-      (data['checkOutDate'] as Timestamp?)?.toDate(),
+      _readDate(data['checkOutDate']),
 
-      monthlyPackage:
-      data['monthlyPackage'] ?? '',
-
-      pricing:
-      (data['pricing'] ?? 0).toDouble(),
-
-      notes:
-      data['notes'] ?? '',
+      status:
+      statusValue,
 
       isCheckedOut:
-      data['isCheckedOut'] ?? false,
+      checkedOut,
 
-      // --------------------------------------------------------
+      // ----------------------------------------------------------------------
+      // PACKAGE / PRICING
+      // ----------------------------------------------------------------------
+
+      monthlyPackage:
+      _readString(data['monthlyPackage']),
+
+      pricing:
+      _readDouble(data['pricing']),
+
+      // ----------------------------------------------------------------------
+      // REGISTRATION
+      // ----------------------------------------------------------------------
+
+      registrationDate:
+      _readDate(
+        data['registrationDate'],
+      ) ??
+          checkInDate,
+
+      updatedAt:
+      _readDate(data['updatedAt']),
+
+      // ----------------------------------------------------------------------
+      // NOTES
+      // ----------------------------------------------------------------------
+
+      notes:
+      _readString(data['notes']),
+
+      // ----------------------------------------------------------------------
+      // IMAGE URL
+      // ----------------------------------------------------------------------
+
+      imageUrl:
+      _readNullableString(
+        data['imageUrl'],
+      ),
+
+      // ----------------------------------------------------------------------
       // BEFORE IMAGE
-      // --------------------------------------------------------
+      // ----------------------------------------------------------------------
+
       beforeImage:
       beforeField is Blob
           ? beforeField.bytes
           : null,
 
       beforeImageContentType:
-      data['beforeImageContentType'] as String?,
+      _readNullableString(
+        data['beforeImageContentType'],
+      ),
 
-      // --------------------------------------------------------
+      // ----------------------------------------------------------------------
       // AFTER IMAGE
-      // --------------------------------------------------------
+      // ----------------------------------------------------------------------
+
       afterImage:
       afterField is Blob
           ? afterField.bytes
           : null,
 
       afterImageContentType:
-      data['afterImageContentType'] as String?,
+      _readNullableString(
+        data['afterImageContentType'],
+      ),
 
-      // --------------------------------------------------------
-      // REPORT INFORMATION
-      // --------------------------------------------------------
+      // ----------------------------------------------------------------------
+      // REPORTS
+      // ----------------------------------------------------------------------
+
       reportStatus:
-      data['reportStatus'] as String? ??
-          'Not Generated',
+      _readString(
+        data['reportStatus'],
+        fallback: 'Not Generated',
+      ),
 
       lastReportType:
-      data['lastReportType'] as String?,
+      _readNullableString(
+        data['lastReportType'],
+      ),
 
       lastReportDate:
-      (data['lastReportDate'] as Timestamp?)?.toDate(),
+      _readDate(data['lastReportDate']),
 
       reportsCount:
-      (data['reportsCount'] as num?)?.toInt() ?? 0,
+      _readInt(data['reportsCount']),
     );
   }
 
-  // Compared by [id] so that a goat instance picked from one stream
-  // snapshot (e.g. a Dropdown's selected value) still matches the same
-  // goat in a *later* snapshot after a write elsewhere updates its data.
-  // Without this, DropdownButton<PalaiGoat> throws an assertion error
-  // the moment the underlying stream re-emits a fresh list of objects,
-  // because Dart compares objects by identity by default.
-  @override
-  bool operator ==(Object other) => other is PalaiGoat && other.id == id;
+  /// Creates a goat from a normal map.
+  ///
+  /// Useful for data that is already loaded from Firestore or
+  /// passed between services.
+  factory PalaiGoat.fromMap(
+      Map<String, dynamic> data, {
+        required String id,
+      }) {
+    final checkInDate =
+        _readDate(data['checkInDate']) ??
+            _readDate(data['registrationDate']) ??
+            DateTime.now();
 
-  @override
-  int get hashCode => id.hashCode;
+    final checkedOut =
+    _readBool(data['isCheckedOut']);
 
-  /// Data used when creating a new goat.
+    return PalaiGoat(
+      id: id,
+
+      customerId:
+      _readString(data['customerId']),
+
+      name:
+      _readString(data['name']),
+
+      tagNumber:
+      _readString(data['tagNumber']),
+
+      goatCode:
+      _readString(
+        data['goatCode'],
+        fallback: _readString(data['tagNumber']),
+      ),
+
+      breed:
+      _readString(data['breed']),
+
+      gender:
+      _readString(data['gender']),
+
+      color:
+      _readString(data['color']),
+
+      dateOfBirth:
+      _readDate(data['dateOfBirth']),
+
+      weightAtCheckIn:
+      _readDouble(
+        data['weightAtCheckIn'],
+      ),
+
+      currentWeight:
+      _readNullableDouble(
+        data['currentWeight'],
+      ),
+
+      healthStatus:
+      _readString(
+        data['healthStatus'],
+        fallback: 'Healthy',
+      ),
+
+      checkInDate:
+      checkInDate,
+
+      checkOutDate:
+      _readDate(data['checkOutDate']),
+
+      status:
+      _readString(
+        data['status'],
+        fallback: checkedOut
+            ? 'checkedOut'
+            : 'checkedIn',
+      ),
+
+      isCheckedOut:
+      checkedOut,
+
+      monthlyPackage:
+      _readString(data['monthlyPackage']),
+
+      pricing:
+      _readDouble(data['pricing']),
+
+      registrationDate:
+      _readDate(
+        data['registrationDate'],
+      ) ??
+          checkInDate,
+
+      updatedAt:
+      _readDate(data['updatedAt']),
+
+      notes:
+      _readString(data['notes']),
+
+      imageUrl:
+      _readNullableString(
+        data['imageUrl'],
+      ),
+
+      beforeImage:
+      data['beforeImage'] is Blob
+          ? (data['beforeImage'] as Blob).bytes
+          : null,
+
+      beforeImageContentType:
+      _readNullableString(
+        data['beforeImageContentType'],
+      ),
+
+      afterImage:
+      data['afterImage'] is Blob
+          ? (data['afterImage'] as Blob).bytes
+          : null,
+
+      afterImageContentType:
+      _readNullableString(
+        data['afterImageContentType'],
+      ),
+
+      reportStatus:
+      _readString(
+        data['reportStatus'],
+        fallback: 'Not Generated',
+      ),
+
+      lastReportType:
+      _readNullableString(
+        data['lastReportType'],
+      ),
+
+      lastReportDate:
+      _readDate(data['lastReportDate']),
+
+      reportsCount:
+      _readInt(data['reportsCount']),
+    );
+  }
+
+  // ==========================================================================
+  // FIRESTORE MAP
+  // ==========================================================================
+
+  /// Complete data map for creating a goat.
   Map<String, dynamic> toMap() {
     final map = <String, dynamic>{
       'customerId': customerId,
 
+      // Identity
+      'name': name,
+      'tagNumber': tagNumber,
       'goatCode': goatCode,
       'breed': breed,
       'gender': gender,
       'color': color,
 
+      'dateOfBirth':
+      dateOfBirth != null
+          ? Timestamp.fromDate(dateOfBirth!)
+          : null,
+
+      // Weight
       'weightAtCheckIn': weightAtCheckIn,
       'currentWeight': currentWeight,
 
+      // Health
       'healthStatus': healthStatus,
 
-      'checkInDate': Timestamp.fromDate(checkInDate),
+      // Check-in / checkout
+      'checkInDate':
+      Timestamp.fromDate(checkInDate),
 
-      'checkOutDate': checkOutDate != null
+      'checkOutDate':
+      checkOutDate != null
           ? Timestamp.fromDate(checkOutDate!)
           : null,
 
+      'status': status,
+      'isCheckedOut': isCheckedOut,
+
+      // Package / price
       'monthlyPackage': monthlyPackage,
       'pricing': pricing,
 
+      // Registration
+      'registrationDate':
+      Timestamp.fromDate(registrationDate),
+
+      'updatedAt':
+      updatedAt != null
+          ? Timestamp.fromDate(updatedAt!)
+          : null,
+
+      // Other
+      'imageUrl': imageUrl,
       'notes': notes,
 
-      'isCheckedOut': isCheckedOut,
-
-      // --------------------------------------------------------
-      // REPORT INFORMATION
-      // --------------------------------------------------------
+      // Reports
       'reportStatus': reportStatus,
       'lastReportType': lastReportType,
-      'lastReportDate': lastReportDate != null
+      'lastReportDate':
+      lastReportDate != null
           ? Timestamp.fromDate(lastReportDate!)
           : null,
       'reportsCount': reportsCount,
 
-      'createdAt': FieldValue.serverTimestamp(),
+      'createdAt':
+      FieldValue.serverTimestamp(),
     };
 
-    // ----------------------------------------------------------
+    // ------------------------------------------------------------------------
     // BEFORE IMAGE
-    // ----------------------------------------------------------
+    // ------------------------------------------------------------------------
+
     if (beforeImage != null) {
-      map['beforeImage'] = Blob(beforeImage!);
+      map['beforeImage'] =
+          Blob(beforeImage!);
+
       map['beforeImageContentType'] =
-          beforeImageContentType ?? 'image/jpeg';
+          beforeImageContentType ??
+              'image/jpeg';
     }
 
-    // ----------------------------------------------------------
+    // ------------------------------------------------------------------------
     // AFTER IMAGE
-    // ----------------------------------------------------------
+    // ------------------------------------------------------------------------
+
     if (afterImage != null) {
-      map['afterImage'] = Blob(afterImage!);
+      map['afterImage'] =
+          Blob(afterImage!);
+
       map['afterImageContentType'] =
-          afterImageContentType ?? 'image/jpeg';
+          afterImageContentType ??
+              'image/jpeg';
     }
 
     return map;
   }
 
-  /// Fields that can be updated without recreating the goat.
+  /// Data used when updating an existing goat.
   ///
-  /// This keeps the original [checkInDate] and [createdAt] unchanged.
+  /// The original check-in and createdAt values are not overwritten.
   Map<String, dynamic> toUpdateMap() {
     final map = <String, dynamic>{
       'customerId': customerId,
 
+      // Identity
+      'name': name,
+      'tagNumber': tagNumber,
       'goatCode': goatCode,
       'breed': breed,
       'gender': gender,
       'color': color,
 
+      'dateOfBirth':
+      dateOfBirth != null
+          ? Timestamp.fromDate(dateOfBirth!)
+          : null,
+
+      // Weight
       'weightAtCheckIn': weightAtCheckIn,
       'currentWeight': currentWeight,
 
+      // Health
       'healthStatus': healthStatus,
 
-      'checkOutDate': checkOutDate != null
+      // Checkout
+      'checkOutDate':
+      checkOutDate != null
           ? Timestamp.fromDate(checkOutDate!)
           : null,
 
+      'status': status,
+      'isCheckedOut': isCheckedOut,
+
+      // Package / price
       'monthlyPackage': monthlyPackage,
       'pricing': pricing,
 
+      // Registration / update
+      'registrationDate':
+      Timestamp.fromDate(registrationDate),
+
+      'updatedAt':
+      updatedAt != null
+          ? Timestamp.fromDate(updatedAt!)
+          : null,
+
+      // Other
+      'imageUrl': imageUrl,
       'notes': notes,
 
-      'isCheckedOut': isCheckedOut,
-
-      // Report information
+      // Reports
       'reportStatus': reportStatus,
       'lastReportType': lastReportType,
-      'lastReportDate': lastReportDate != null
+      'lastReportDate':
+      lastReportDate != null
           ? Timestamp.fromDate(lastReportDate!)
           : null,
       'reportsCount': reportsCount,
@@ -429,36 +847,62 @@ class PalaiGoat {
 
     // Before image
     if (beforeImage != null) {
-      map['beforeImage'] = Blob(beforeImage!);
+      map['beforeImage'] =
+          Blob(beforeImage!);
+
       map['beforeImageContentType'] =
-          beforeImageContentType ?? 'image/jpeg';
+          beforeImageContentType ??
+              'image/jpeg';
     }
 
     // After image
     if (afterImage != null) {
-      map['afterImage'] = Blob(afterImage!);
+      map['afterImage'] =
+          Blob(afterImage!);
+
       map['afterImageContentType'] =
-          afterImageContentType ?? 'image/jpeg';
+          afterImageContentType ??
+              'image/jpeg';
     }
 
     return map;
   }
 
+  // ==========================================================================
+  // COPY WITH
+  // ==========================================================================
+
   PalaiGoat copyWith({
     String? customerId,
+
+    String? name,
+    String? tagNumber,
     String? goatCode,
     String? breed,
     String? gender,
     String? color,
+
+    DateTime? dateOfBirth,
+
     double? weightAtCheckIn,
     double? currentWeight,
+
     String? healthStatus,
+
     DateTime? checkInDate,
     DateTime? checkOutDate,
+
+    String? status,
+    bool? isCheckedOut,
+
     String? monthlyPackage,
     double? pricing,
+
+    DateTime? registrationDate,
+    DateTime? updatedAt,
+
     String? notes,
-    bool? isCheckedOut,
+    String? imageUrl,
 
     Uint8List? beforeImage,
     String? beforeImageContentType,
@@ -474,72 +918,260 @@ class PalaiGoat {
     return PalaiGoat(
       id: id,
 
-      customerId: customerId ?? this.customerId,
+      customerId:
+      customerId ?? this.customerId,
 
-      goatCode: goatCode ?? this.goatCode,
-      breed: breed ?? this.breed,
-      gender: gender ?? this.gender,
-      color: color ?? this.color,
+      name:
+      name ?? this.name,
+
+      tagNumber:
+      tagNumber ?? this.tagNumber,
+
+      goatCode:
+      goatCode ?? this.goatCode,
+
+      breed:
+      breed ?? this.breed,
+
+      gender:
+      gender ?? this.gender,
+
+      color:
+      color ?? this.color,
+
+      dateOfBirth:
+      dateOfBirth ?? this.dateOfBirth,
 
       weightAtCheckIn:
-      weightAtCheckIn ?? this.weightAtCheckIn,
+      weightAtCheckIn ??
+          this.weightAtCheckIn,
 
       currentWeight:
-      currentWeight ?? this.currentWeight,
+      currentWeight ??
+          this.currentWeight,
 
       healthStatus:
-      healthStatus ?? this.healthStatus,
+      healthStatus ??
+          this.healthStatus,
 
       checkInDate:
-      checkInDate ?? this.checkInDate,
+      checkInDate ??
+          this.checkInDate,
 
       checkOutDate:
-      checkOutDate ?? this.checkOutDate,
+      checkOutDate ??
+          this.checkOutDate,
+
+      status:
+      status ?? this.status,
+
+      isCheckedOut:
+      isCheckedOut ??
+          this.isCheckedOut,
 
       monthlyPackage:
-      monthlyPackage ?? this.monthlyPackage,
+      monthlyPackage ??
+          this.monthlyPackage,
 
       pricing:
       pricing ?? this.pricing,
 
+      registrationDate:
+      registrationDate ??
+          this.registrationDate,
+
+      updatedAt:
+      updatedAt ??
+          this.updatedAt,
+
       notes:
       notes ?? this.notes,
 
-      isCheckedOut:
-      isCheckedOut ?? this.isCheckedOut,
+      imageUrl:
+      imageUrl ??
+          this.imageUrl,
 
-      // Images
       beforeImage:
-      beforeImage ?? this.beforeImage,
+      beforeImage ??
+          this.beforeImage,
 
       beforeImageContentType:
       beforeImageContentType ??
           this.beforeImageContentType,
 
       afterImage:
-      afterImage ?? this.afterImage,
+      afterImage ??
+          this.afterImage,
 
       afterImageContentType:
       afterImageContentType ??
           this.afterImageContentType,
 
-      // Report information
       reportStatus:
-      reportStatus ?? this.reportStatus,
+      reportStatus ??
+          this.reportStatus,
 
       lastReportType:
-      lastReportType ?? this.lastReportType,
+      lastReportType ??
+          this.lastReportType,
 
       lastReportDate:
-      lastReportDate ?? this.lastReportDate,
+      lastReportDate ??
+          this.lastReportDate,
 
       reportsCount:
-      reportsCount ?? this.reportsCount,
+      reportsCount ??
+          this.reportsCount,
     );
+  }
+
+  // ==========================================================================
+  // EQUALITY
+  // ==========================================================================
+
+  /// Goats are identified by their Firestore document ID.
+  ///
+  /// This is important for DropdownButton, selection screens and streams,
+  /// because a new Firestore snapshot creates new PalaiGoat instances.
+  @override
+  bool operator ==(Object other) =>
+      other is PalaiGoat &&
+          other.id == id;
+
+  @override
+  int get hashCode => id.hashCode;
+
+  // ==========================================================================
+  // HELPERS
+  // ==========================================================================
+
+  static String _readString(
+      dynamic value, {
+        String fallback = '',
+      }) {
+    if (value == null) {
+      return fallback;
+    }
+
+    return value.toString();
+  }
+
+  static String? _readNullableString(
+      dynamic value,
+      ) {
+    if (value == null) {
+      return null;
+    }
+
+    final result =
+    value.toString().trim();
+
+    if (result.isEmpty) {
+      return null;
+    }
+
+    return result;
+  }
+
+  static double _readDouble(
+      dynamic value, {
+        double fallback = 0,
+      }) {
+    if (value == null) {
+      return fallback;
+    }
+
+    if (value is num) {
+      return value.toDouble();
+    }
+
+    return double.tryParse(
+      value.toString(),
+    ) ??
+        fallback;
+  }
+
+  static double? _readNullableDouble(
+      dynamic value,
+      ) {
+    if (value == null) {
+      return null;
+    }
+
+    if (value is num) {
+      return value.toDouble();
+    }
+
+    return double.tryParse(
+      value.toString(),
+    );
+  }
+
+  static int _readInt(
+      dynamic value, {
+        int fallback = 0,
+      }) {
+    if (value == null) {
+      return fallback;
+    }
+
+    if (value is num) {
+      return value.toInt();
+    }
+
+    return int.tryParse(
+      value.toString(),
+    ) ??
+        fallback;
+  }
+
+  static bool _readBool(
+      dynamic value, {
+        bool fallback = false,
+      }) {
+    if (value == null) {
+      return fallback;
+    }
+
+    if (value is bool) {
+      return value;
+    }
+
+    if (value is String) {
+      return value.toLowerCase() == 'true';
+    }
+
+    return fallback;
+  }
+
+  static DateTime? _readDate(
+      dynamic value,
+      ) {
+    if (value == null) {
+      return null;
+    }
+
+    if (value is Timestamp) {
+      return value.toDate();
+    }
+
+    if (value is DateTime) {
+      return value;
+    }
+
+    if (value is String) {
+      return DateTime.tryParse(value);
+    }
+
+    return null;
   }
 }
 
-/// A single health-record entry logged against a Palai goat over time.
+// ============================================================================
+// HEALTH RECORD
+// ============================================================================
+
+/// A single health-record entry logged against a Palai goat.
 class HealthRecordEntry {
   final String id;
 
@@ -576,25 +1208,26 @@ class HealthRecordEntry {
       id: doc.id,
 
       weight:
-      (data['weight'] ?? 0).toDouble(),
+      (data['weight'] as num?)?.toDouble() ??
+          0,
 
       vaccination:
-      data['vaccination'] ?? '',
+      data['vaccination']?.toString() ?? '',
 
       deworming:
-      data['deworming'] ?? '',
+      data['deworming']?.toString() ?? '',
 
       hoofCutting:
-      data['hoofCutting'] ?? '',
+      data['hoofCutting']?.toString() ?? '',
 
       medicineGiven:
-      data['medicineGiven'] ?? '',
+      data['medicineGiven']?.toString() ?? '',
 
       healthStatus:
-      data['healthStatus'] ?? '',
+      data['healthStatus']?.toString() ?? '',
 
       doctorNotes:
-      data['doctorNotes'] ?? '',
+      data['doctorNotes']?.toString() ?? '',
 
       recordedAt:
       (data['recordedAt'] as Timestamp?)?.toDate() ??
@@ -605,34 +1238,39 @@ class HealthRecordEntry {
   Map<String, dynamic> toMap() {
     return {
       'weight': weight,
-
       'vaccination': vaccination,
       'deworming': deworming,
       'hoofCutting': hoofCutting,
       'medicineGiven': medicineGiven,
-
       'healthStatus': healthStatus,
       'doctorNotes': doctorNotes,
-
-      'recordedAt': Timestamp.fromDate(recordedAt),
+      'recordedAt':
+      Timestamp.fromDate(recordedAt),
     };
   }
 }
 
-/// A single month's progress photo for a boarded Palai goat, stored the
-/// same way as the check-in/check-out photos (raw bytes as a Firestore
-/// `Blob`, no Storage bucket required). Lets an owner flip through how a
-/// goat has grown/changed month over month while it's boarded.
+// ============================================================================
+// MONTHLY PHOTO
+// ============================================================================
+
+/// A monthly progress photo for a boarded Palai goat.
+///
+/// Stored as a Firestore Blob. Firebase Storage is not required.
 class MonthlyPhoto {
   final String id;
 
-  /// The month this photo represents, normalised to the 1st of that
-  /// month (e.g. 1 Aug 2026) so entries can be sorted/labelled cleanly.
+  /// Month represented by this photo.
+  ///
+  /// Normalised to the first day of the month.
   final DateTime month;
 
   final Uint8List image;
+
   final String imageContentType;
+
   final String notes;
+
   final DateTime capturedAt;
 
   MonthlyPhoto({
@@ -644,26 +1282,53 @@ class MonthlyPhoto {
     required this.capturedAt,
   });
 
-  factory MonthlyPhoto.fromDoc(DocumentSnapshot<Map<String, dynamic>> doc) {
+  factory MonthlyPhoto.fromDoc(
+      DocumentSnapshot<Map<String, dynamic>> doc,
+      ) {
     final data = doc.data() ?? {};
-    final imageField = data['image'];
+
+    final imageField =
+    data['image'];
+
     return MonthlyPhoto(
       id: doc.id,
-      month: (data['month'] as Timestamp?)?.toDate() ?? DateTime.now(),
-      image: imageField is Blob ? imageField.bytes : Uint8List(0),
-      imageContentType: data['imageContentType'] ?? 'image/jpeg',
-      notes: data['notes'] ?? '',
-      capturedAt: (data['capturedAt'] as Timestamp?)?.toDate() ?? DateTime.now(),
+
+      month:
+      (data['month'] as Timestamp?)?.toDate() ??
+          DateTime.now(),
+
+      image:
+      imageField is Blob
+          ? imageField.bytes
+          : Uint8List(0),
+
+      imageContentType:
+      data['imageContentType']?.toString() ??
+          'image/jpeg',
+
+      notes:
+      data['notes']?.toString() ?? '',
+
+      capturedAt:
+      (data['capturedAt'] as Timestamp?)?.toDate() ??
+          DateTime.now(),
     );
   }
 
   Map<String, dynamic> toMap() {
     return {
-      'month': Timestamp.fromDate(DateTime(month.year, month.month, 1)),
+      'month': Timestamp.fromDate(
+        DateTime(
+          month.year,
+          month.month,
+          1,
+        ),
+      ),
       'image': Blob(image),
       'imageContentType': imageContentType,
       'notes': notes,
-      'capturedAt': Timestamp.fromDate(capturedAt),
+      'capturedAt':
+      Timestamp.fromDate(capturedAt),
     };
   }
 }

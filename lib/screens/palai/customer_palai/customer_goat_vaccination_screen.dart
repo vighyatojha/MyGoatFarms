@@ -1,7 +1,7 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 
-import '../../../models/palai_goat.dart';
+import '../../../models/palai_models.dart';
 import '../../../models/vaccination_record.dart';
 
 class CustomerGoatVaccinationScreen extends StatefulWidget {

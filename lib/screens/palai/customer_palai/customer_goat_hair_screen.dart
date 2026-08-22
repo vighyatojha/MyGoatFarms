@@ -2,7 +2,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 
 import '../../../models/hair_trimming_record.dart';
-import '../../../models/palai_goat.dart';
+import '../../../models/palai_models.dart';
 
 class CustomerGoatHairScreen extends StatefulWidget {
   final String customerId;
