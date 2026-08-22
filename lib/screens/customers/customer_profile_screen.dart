@@ -2,7 +2,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:animate_do/animate_do.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
-
+import 'monthly_bills_screen.dart';
 import '../../app_theme.dart';
 import '../../models/palai_models.dart';
 import '../../services/firestore_service.dart';
@@ -120,6 +120,50 @@ class _CustomerProfileScreenState
       fastRoute(
         CheckInGoatScreen(
           presetCustomer: _customer,
+        ),
+      ),
+    );
+
+    if (!mounted) return;
+
+    await _refreshCustomer();
+  }
+
+  // ================================================================
+// MONTHLY BILLS
+// ================================================================
+
+  Future<void> _openMonthlyBills() async {
+    await Navigator.of(context).push(
+      fastRoute(
+        MonthlyBillsScreen(
+          farmId: widget.farmId,
+          customerId: _customer.id,
+          customerName: _customer.name,
+
+          onAddPayment: (bill) async {
+            final result = await showModalBottomSheet<bool>(
+              context: context,
+              backgroundColor: Colors.transparent,
+              isScrollControlled: true,
+              useSafeArea: true,
+              builder: (context) {
+                return _AddPaymentSheet(
+                  farmId: widget.farmId,
+                  customer: _customer,
+                );
+              },
+            );
+
+            if (!mounted) return false;
+
+            if (result == true) {
+              await _refreshCustomer();
+              return true;
+            }
+
+            return false;
+          },
         ),
       ),
     );
@@ -406,6 +450,10 @@ class _CustomerProfileScreenState
 
                 const SizedBox(height: 20),
 
+                _buildMonthlyBillingButton(),
+
+                const SizedBox(height: 20),
+
                 _buildPaymentHistory(),
 
                 const SizedBox(height: 26),
@@ -478,6 +526,79 @@ class _CustomerProfileScreenState
               ],
             );
           },
+        ),
+      ),
+    );
+  }
+
+  // ================================================================
+// MONTHLY BILLING BUTTON
+// ================================================================
+
+  Widget _buildMonthlyBillingButton() {
+    return Container(
+      width: double.infinity,
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(15),
+        border: Border.all(
+            color: Colors.grey.shade300,
+        ),
+      ),
+      child: InkWell(
+        onTap: _openMonthlyBills,
+        borderRadius: BorderRadius.circular(15),
+        child: Padding(
+          padding: const EdgeInsets.all(15),
+          child: Row(
+            children: [
+              Container(
+                width: 44,
+                height: 44,
+                decoration: const BoxDecoration(
+                  color: AppColors.lightGreen,
+                  shape: BoxShape.circle,
+                ),
+                child: const Icon(
+                  Icons.receipt_long_outlined,
+                  color: AppColors.primaryGreen,
+                ),
+              ),
+
+              const SizedBox(width: 12),
+
+              Expanded(
+                child: Column(
+                  crossAxisAlignment:
+                  CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Monthly Bills',
+                      style: AppTheme.heading(
+                        size: 14,
+                      ),
+                    ),
+
+                    const SizedBox(height: 3),
+
+                    Text(
+                      'Generate and manage monthly bills',
+                      style: AppTheme.body(
+                        size: 11,
+                        color: AppColors.textGrey,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+
+              const Icon(
+                Icons.arrow_forward_ios_rounded,
+                size: 16,
+                color: AppColors.textGrey,
+              ),
+            ],
+          ),
         ),
       ),
     );

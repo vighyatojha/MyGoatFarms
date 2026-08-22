@@ -37,7 +37,7 @@ class MonthlyBillingService {
       ) {
     return _farms()
         .doc(farmId)
-        .collection('customers');
+        .collection('palaiCustomers');
   }
 
   CollectionReference<Map<String, dynamic>> _bills(
