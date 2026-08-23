@@ -23,15 +23,13 @@ class MonthlyReportService {
   static final MonthlyReportService instance =
   MonthlyReportService._();
 
-  final FirebaseFirestore _db =
-      FirebaseFirestore.instance;
+  final FirebaseFirestore _db = FirebaseFirestore.instance;
 
-  static const Duration timeout =
-  Duration(seconds: 15);
+  static const Duration timeout = Duration(seconds: 15);
 
-  // ---------------------------------------------------------------------------
+  // ===========================================================================
   // FIRESTORE REFERENCES
-  // ---------------------------------------------------------------------------
+  // ===========================================================================
 
   CollectionReference<Map<String, dynamic>> _customers(
       String farmId,
@@ -51,6 +49,17 @@ class MonthlyReportService {
         .collection('goats');
   }
 
+  CollectionReference<Map<String, dynamic>> _weightRecords(
+      String farmId,
+      String customerId,
+      String goatId,
+      ) {
+    return _goats(
+      farmId,
+      customerId,
+    ).doc(goatId).collection('weightRecords');
+  }
+
   CollectionReference<Map<String, dynamic>> _healthRecords(
       String farmId,
       String customerId,
@@ -59,9 +68,7 @@ class MonthlyReportService {
     return _goats(
       farmId,
       customerId,
-    )
-        .doc(goatId)
-        .collection('healthRecords');
+    ).doc(goatId).collection('healthRecords');
   }
 
   CollectionReference<Map<String, dynamic>> _healthEvents(
@@ -72,9 +79,7 @@ class MonthlyReportService {
     return _goats(
       farmId,
       customerId,
-    )
-        .doc(goatId)
-        .collection('healthEvents');
+    ).doc(goatId).collection('healthEvents');
   }
 
   CollectionReference<Map<String, dynamic>> _monthlyPhotos(
@@ -85,14 +90,12 @@ class MonthlyReportService {
     return _goats(
       farmId,
       customerId,
-    )
-        .doc(goatId)
-        .collection('monthlyPhotos');
+    ).doc(goatId).collection('monthlyPhotos');
   }
 
-  // ---------------------------------------------------------------------------
+  // ===========================================================================
   // GENERATE MONTHLY REPORT
-  // ---------------------------------------------------------------------------
+  // ===========================================================================
 
   Future<MonthlyReport> generateMonthlyReport({
     required String farmId,
@@ -122,26 +125,20 @@ class MonthlyReportService {
       final goatsSnapshot = await _goats(
         farmId,
         customerId,
-      )
-          .get()
-          .timeout(timeout);
+      ).get().timeout(timeout);
 
       for (final goatDoc in goatsSnapshot.docs) {
         final goatData = goatDoc.data();
 
-        final goatWasPresent =
-        _goatWasPresentDuringMonth(
+        if (!_goatWasPresentDuringMonth(
           goatData,
           monthStart,
           nextMonthStart,
-        );
-
-        if (!goatWasPresent) {
+        )) {
           continue;
         }
 
-        final reportGoat =
-        await _buildGoatReport(
+        final reportGoat = await _buildGoatReport(
           farmId: farmId,
           customerId: customerId,
           goatId: goatDoc.id,
@@ -183,9 +180,9 @@ class MonthlyReportService {
     );
   }
 
-  // ---------------------------------------------------------------------------
+  // ===========================================================================
   // BUILD ONE GOAT REPORT
-  // ---------------------------------------------------------------------------
+  // ===========================================================================
 
   Future<MonthlyReportGoat> _buildGoatReport({
     required String farmId,
@@ -196,75 +193,88 @@ class MonthlyReportService {
     required DateTime nextMonthStart,
   }) async {
     final results = await Future.wait([
+      _weightRecords(
+        farmId,
+        customerId,
+        goatId,
+      ).get().timeout(timeout),
+
       _healthRecords(
         farmId,
         customerId,
         goatId,
-      )
-          .get()
-          .timeout(timeout),
+      ).get().timeout(timeout),
 
       _healthEvents(
         farmId,
         customerId,
         goatId,
-      )
-          .get()
-          .timeout(timeout),
+      ).get().timeout(timeout),
 
       _monthlyPhotos(
         farmId,
         customerId,
         goatId,
-      )
-          .get()
-          .timeout(timeout),
+      ).get().timeout(timeout),
     ]);
 
+    final weightRecordsSnapshot =
+    results[0] as QuerySnapshot<Map<String, dynamic>>;
+
     final healthRecordsSnapshot =
-    results[0]
-    as QuerySnapshot<Map<String, dynamic>>;
+    results[1] as QuerySnapshot<Map<String, dynamic>>;
 
     final healthEventsSnapshot =
-    results[1]
-    as QuerySnapshot<Map<String, dynamic>>;
+    results[2] as QuerySnapshot<Map<String, dynamic>>;
 
     final monthlyPhotosSnapshot =
-    results[2]
-    as QuerySnapshot<Map<String, dynamic>>;
+    results[3] as QuerySnapshot<Map<String, dynamic>>;
 
-    // -------------------------------------------------------------------------
-    // HEALTH RECORDS
-    // -------------------------------------------------------------------------
-
-    final healthRecordsList =
-    healthRecordsSnapshot.docs.where(
-          (doc) {
-        final date = _readDate(
-          doc.data()['recordedAt'],
-        );
-
-        return _isInsideMonth(
-          date,
-          monthStart,
-          nextMonthStart,
-        );
-      },
-    ).toList();
+    // =========================================================================
+    // WEIGHT RECORDS
+    // =========================================================================
 
     final weightRecordsCount =
-        healthRecordsList.where(
+        weightRecordsSnapshot.docs.where(
               (doc) {
-            return doc.data()['weight'] != null;
+            final data = doc.data();
+
+            // GoatWeightRecord stores the measurement date
+            // in the "date" field.
+            final date = _readDate(data['date']);
+
+            return _isInsideMonth(
+              date,
+              monthStart,
+              nextMonthStart,
+            );
           },
         ).length;
 
-    final healthRecordsCount =
-        healthRecordsList.length;
+    // =========================================================================
+    // HEALTH RECORDS
+    // =========================================================================
 
-    // -------------------------------------------------------------------------
+    final healthRecordsCount =
+        healthRecordsSnapshot.docs.where(
+              (doc) {
+            final data = doc.data();
+
+            final date = _readDate(
+              data['recordedAt'] ?? data['date'],
+            );
+
+            return _isInsideMonth(
+              date,
+              monthStart,
+              nextMonthStart,
+            );
+          },
+        ).length;
+
+    // =========================================================================
     // HEALTH EVENTS
-    // -------------------------------------------------------------------------
+    // =========================================================================
 
     final healthEvents =
     healthEventsSnapshot.docs.where(
@@ -308,9 +318,9 @@ class MonthlyReportService {
       }
     }
 
-    // -------------------------------------------------------------------------
+    // =========================================================================
     // MONTHLY PHOTOS
-    // -------------------------------------------------------------------------
+    // =========================================================================
 
     final monthlyPhotoCount =
         monthlyPhotosSnapshot.docs.where(
@@ -322,9 +332,9 @@ class MonthlyReportService {
           },
         ).length;
 
-    // -------------------------------------------------------------------------
+    // =========================================================================
     // GOAT INFORMATION
-    // -------------------------------------------------------------------------
+    // =========================================================================
 
     final goatName = _readFirstString(
       goatData,
@@ -344,6 +354,10 @@ class MonthlyReportService {
       ],
     );
 
+    // =========================================================================
+    // FINAL STRUCTURED GOAT REPORT
+    // =========================================================================
+
     return MonthlyReportGoat(
       goatName: goatName,
       tagNumber: tagNumber,
@@ -357,29 +371,33 @@ class MonthlyReportService {
     );
   }
 
-  // ---------------------------------------------------------------------------
+  // ===========================================================================
   // GOAT PRESENCE
-  // ---------------------------------------------------------------------------
+  // ===========================================================================
 
   bool _goatWasPresentDuringMonth(
       Map<String, dynamic> goatData,
       DateTime monthStart,
       DateTime nextMonthStart,
       ) {
-    final checkInDate =
-    _readDate(goatData['checkInDate']);
+    final checkInDate = _readDate(
+      goatData['checkInDate'],
+    );
 
-    final checkOutDate =
-    _readDate(goatData['checkOutDate']);
+    final checkOutDate = _readDate(
+      goatData['checkOutDate'],
+    );
 
     if (checkInDate == null) {
       return false;
     }
 
+    // Goat checked in after this month.
     if (!checkInDate.isBefore(nextMonthStart)) {
       return false;
     }
 
+    // Goat checked out before this month started.
     if (checkOutDate != null &&
         !checkOutDate.isAfter(monthStart)) {
       return false;
@@ -388,9 +406,9 @@ class MonthlyReportService {
     return true;
   }
 
-  // ---------------------------------------------------------------------------
+  // ===========================================================================
   // MONTH FILTER
-  // ---------------------------------------------------------------------------
+  // ===========================================================================
 
   bool _isInsideMonth(
       DateTime? date,
@@ -405,9 +423,9 @@ class MonthlyReportService {
         date.isBefore(nextMonthStart);
   }
 
-  // ---------------------------------------------------------------------------
-  // PHOTO FILTER
-  // ---------------------------------------------------------------------------
+  // ===========================================================================
+  // MONTHLY PHOTO FILTER
+  // ===========================================================================
 
   bool _photoBelongsToMonth(
       Map<String, dynamic> data,
@@ -423,7 +441,7 @@ class MonthlyReportService {
             monthDate.month == monthStart.month;
       }
 
-      final monthString = monthValue.toString();
+      final monthString = monthValue.toString().trim();
 
       final expected =
           '${monthStart.year}-'
@@ -446,9 +464,9 @@ class MonthlyReportService {
         fallbackDate.month == monthStart.month;
   }
 
-  // ---------------------------------------------------------------------------
+  // ===========================================================================
   // EVENT TYPES
-  // ---------------------------------------------------------------------------
+  // ===========================================================================
 
   String _normaliseType(dynamic value) {
     return _readString(value)
@@ -480,9 +498,9 @@ class MonthlyReportService {
         type.contains('hairtrim');
   }
 
-  // ---------------------------------------------------------------------------
-  // HELPERS
-  // ---------------------------------------------------------------------------
+  // ===========================================================================
+  // FIRESTORE HELPERS
+  // ===========================================================================
 
   DateTime? _readDate(dynamic value) {
     if (value == null) {
