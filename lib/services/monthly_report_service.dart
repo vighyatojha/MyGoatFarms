@@ -71,7 +71,14 @@ class MonthlyReportService {
     ).doc(goatId).collection('healthRecords');
   }
 
-  CollectionReference<Map<String, dynamic>> _healthEvents(
+  // NOTE: Customer Palai goats do NOT use a unified "healthEvents"
+  // collection. Each activity type is written by its own screen into
+  // its own subcollection (see customer_goat_vaccination_screen.dart,
+  // customer_goat_medicine_screen.dart, customer_goat_hoof_screen.dart,
+  // customer_goat_hair_screen.dart). "healthEvents" is a different
+  // collection used only by Own Farm goats.
+
+  CollectionReference<Map<String, dynamic>> _vaccinationRecords(
       String farmId,
       String customerId,
       String goatId,
@@ -79,7 +86,40 @@ class MonthlyReportService {
     return _goats(
       farmId,
       customerId,
-    ).doc(goatId).collection('healthEvents');
+    ).doc(goatId).collection('vaccinationRecords');
+  }
+
+  CollectionReference<Map<String, dynamic>> _medicineRecords(
+      String farmId,
+      String customerId,
+      String goatId,
+      ) {
+    return _goats(
+      farmId,
+      customerId,
+    ).doc(goatId).collection('medicineRecords');
+  }
+
+  CollectionReference<Map<String, dynamic>> _hoofCuttingRecords(
+      String farmId,
+      String customerId,
+      String goatId,
+      ) {
+    return _goats(
+      farmId,
+      customerId,
+    ).doc(goatId).collection('hoofCuttingRecords');
+  }
+
+  CollectionReference<Map<String, dynamic>> _hairTrimmingRecords(
+      String farmId,
+      String customerId,
+      String goatId,
+      ) {
+    return _goats(
+      farmId,
+      customerId,
+    ).doc(goatId).collection('hairTrimmingRecords');
   }
 
   CollectionReference<Map<String, dynamic>> _monthlyPhotos(
@@ -205,7 +245,25 @@ class MonthlyReportService {
         goatId,
       ).get().timeout(timeout),
 
-      _healthEvents(
+      _vaccinationRecords(
+        farmId,
+        customerId,
+        goatId,
+      ).get().timeout(timeout),
+
+      _medicineRecords(
+        farmId,
+        customerId,
+        goatId,
+      ).get().timeout(timeout),
+
+      _hoofCuttingRecords(
+        farmId,
+        customerId,
+        goatId,
+      ).get().timeout(timeout),
+
+      _hairTrimmingRecords(
         farmId,
         customerId,
         goatId,
@@ -224,11 +282,20 @@ class MonthlyReportService {
     final healthRecordsSnapshot =
     results[1] as QuerySnapshot<Map<String, dynamic>>;
 
-    final healthEventsSnapshot =
+    final vaccinationRecordsSnapshot =
     results[2] as QuerySnapshot<Map<String, dynamic>>;
 
-    final monthlyPhotosSnapshot =
+    final medicineRecordsSnapshot =
     results[3] as QuerySnapshot<Map<String, dynamic>>;
+
+    final hoofCuttingRecordsSnapshot =
+    results[4] as QuerySnapshot<Map<String, dynamic>>;
+
+    final hairTrimmingRecordsSnapshot =
+    results[5] as QuerySnapshot<Map<String, dynamic>>;
+
+    final monthlyPhotosSnapshot =
+    results[6] as QuerySnapshot<Map<String, dynamic>>;
 
     // =========================================================================
     // WEIGHT RECORDS
@@ -273,50 +340,77 @@ class MonthlyReportService {
         ).length;
 
     // =========================================================================
-    // HEALTH EVENTS
+    // VACCINATIONS / MEDICINES / HOOF CUTTING / HAIR TRIMMING
+    //
+    // Each of these lives in its own collection with its own date field
+    // (see customer_goat_*_screen.dart), so each is counted independently.
     // =========================================================================
 
-    final healthEvents =
-    healthEventsSnapshot.docs.where(
-          (doc) {
-        final date = _readDate(
-          doc.data()['date'],
-        );
+    final vaccinationCount =
+        vaccinationRecordsSnapshot.docs.where(
+              (doc) {
+            final date = _readDate(
+              doc.data()['vaccinationDate'],
+            );
 
-        return _isInsideMonth(
-          date,
-          monthStart,
-          nextMonthStart,
-        );
-      },
-    );
+            return _isInsideMonth(
+              date,
+              monthStart,
+              nextMonthStart,
+            );
+          },
+        ).length;
 
-    var vaccinationCount = 0;
-    var medicineCount = 0;
-    var hoofCuttingCount = 0;
-    var hairTrimmingCount = 0;
+    final medicineCount =
+        medicineRecordsSnapshot.docs.where(
+              (doc) {
+            final data = doc.data();
 
-    for (final doc in healthEvents) {
-      final type = _normaliseType(
-        doc.data()['type'],
-      );
+            final date = _readDate(
+              data['treatmentDate'] ?? data['date'],
+            );
 
-      if (_isVaccination(type)) {
-        vaccinationCount++;
-      }
+            return _isInsideMonth(
+              date,
+              monthStart,
+              nextMonthStart,
+            );
+          },
+        ).length;
 
-      if (_isMedicine(type)) {
-        medicineCount++;
-      }
+    final hoofCuttingCount =
+        hoofCuttingRecordsSnapshot.docs.where(
+              (doc) {
+            final data = doc.data();
 
-      if (_isHoofCutting(type)) {
-        hoofCuttingCount++;
-      }
+            final date = _readDate(
+              data['cuttingDate'] ?? data['date'],
+            );
 
-      if (_isHairTrimming(type)) {
-        hairTrimmingCount++;
-      }
-    }
+            return _isInsideMonth(
+              date,
+              monthStart,
+              nextMonthStart,
+            );
+          },
+        ).length;
+
+    final hairTrimmingCount =
+        hairTrimmingRecordsSnapshot.docs.where(
+              (doc) {
+            final data = doc.data();
+
+            final date = _readDate(
+              data['trimmingDate'] ?? data['date'],
+            );
+
+            return _isInsideMonth(
+              date,
+              monthStart,
+              nextMonthStart,
+            );
+          },
+        ).length;
 
     // =========================================================================
     // MONTHLY PHOTOS
@@ -462,40 +556,6 @@ class MonthlyReportService {
 
     return fallbackDate.year == monthStart.year &&
         fallbackDate.month == monthStart.month;
-  }
-
-  // ===========================================================================
-  // EVENT TYPES
-  // ===========================================================================
-
-  String _normaliseType(dynamic value) {
-    return _readString(value)
-        .toLowerCase()
-        .replaceAll('_', '')
-        .replaceAll('-', '')
-        .replaceAll(' ', '');
-  }
-
-  bool _isVaccination(String type) {
-    return type.contains('vaccin');
-  }
-
-  bool _isMedicine(String type) {
-    return type.contains('medicine') ||
-        type.contains('medication') ||
-        type.contains('drug');
-  }
-
-  bool _isHoofCutting(String type) {
-    return type.contains('hoof') ||
-        type.contains('khud') ||
-        type.contains('hoofcut');
-  }
-
-  bool _isHairTrimming(String type) {
-    return type.contains('hair') ||
-        type.contains('trim') ||
-        type.contains('hairtrim');
   }
 
   // ===========================================================================

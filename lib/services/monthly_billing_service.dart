@@ -43,9 +43,15 @@ class MonthlyBillingService {
   CollectionReference<Map<String, dynamic>> _bills(
       String farmId,
       ) {
+    // Shares the same collection MonthlyBillsScreen reads from, so a
+    // bill created here shows up there and vice versa. This used to
+    // point at `bills` — the same collection the goat check-out
+    // "Final Bill" flow (FirestoreService.createMonthlyBill) writes
+    // to — which meant a bill generated here would silently never
+    // appear in the customer's own Monthly Bills screen.
     return _farms()
         .doc(farmId)
-        .collection('bills');
+        .collection('monthlyBills');
   }
 
   CollectionReference<Map<String, dynamic>> _payments(
@@ -1124,94 +1130,94 @@ class MonthlyBillingService {
         // RETURN UPDATED BILL
         // -------------------------------------------------------------------
 
-            return MonthlyBill(
-              id: billId,
+        return MonthlyBill(
+          id: billId,
 
-              customerId: customerId,
+          customerId: customerId,
 
-              customerName: customerName,
+          customerName: customerName,
 
-              billNumber: billNumber,
+          billNumber: billNumber,
 
-              billingMonth: _dateValue(
-                billData['billingMonth'],
-                now,
-              ),
+          billingMonth: _dateValue(
+            billData['billingMonth'],
+            now,
+          ),
 
-              periodEnd: _dateValue(
-                billData['periodEnd'],
-                now,
-              ),
+          periodEnd: _dateValue(
+            billData['periodEnd'],
+            now,
+          ),
 
-              goatCount:
-              (billData['goatCount'] as num?)?.toInt() ?? 0,
+          goatCount:
+          (billData['goatCount'] as num?)?.toInt() ?? 0,
 
-              palaiCharges:
-              _doubleValue(
-                billData['palaiCharges'],
-              ),
+          palaiCharges:
+          _doubleValue(
+            billData['palaiCharges'],
+          ),
 
-              otherCharges:
-              _doubleValue(
-                billData['otherCharges'],
-              ),
+          otherCharges:
+          _doubleValue(
+            billData['otherCharges'],
+          ),
 
-              discount:
-              _doubleValue(
-                billData['discount'],
-              ),
+          discount:
+          _doubleValue(
+            billData['discount'],
+          ),
 
-              previousOutstanding:
-              _doubleValue(
-                billData['previousOutstanding'],
-              ),
+          previousOutstanding:
+          _doubleValue(
+            billData['previousOutstanding'],
+          ),
 
-              currentBillAmount:
-              _doubleValue(
-                billData['currentBillAmount'] ??
-                    billData['newCharges'],
-              ),
+          currentBillAmount:
+          _doubleValue(
+            billData['currentBillAmount'] ??
+                billData['newCharges'],
+          ),
 
-              totalDue:
-              _doubleValue(
-                billData['totalDue'],
-              ),
+          totalDue:
+          _doubleValue(
+            billData['totalDue'],
+          ),
 
-              amountPaid:
-              newAmountPaid,
+          amountPaid:
+          newAmountPaid,
 
-              remainingAmount:
-              newRemaining,
+          remainingAmount:
+          newRemaining,
 
-              status:
-              newStatus,
+          status:
+          newStatus,
 
-              generatedAt: _dateValue(
-                billData['generatedAt'],
-                now,
-              ),
+          generatedAt: _dateValue(
+            billData['generatedAt'],
+            now,
+          ),
 
-              paidAt: isFullyPaid
-                  ? now
-                  : _nullableDateValue(
-                billData['paidAt'],
-              ),
+          paidAt: isFullyPaid
+              ? now
+              : _nullableDateValue(
+            billData['paidAt'],
+          ),
 
-              notes:
-              billData['notes']?.toString() ?? '',
+          notes:
+          billData['notes']?.toString() ?? '',
 
-              farmName:
-              billData['farmName']?.toString() ?? '',
+          farmName:
+          billData['farmName']?.toString() ?? '',
 
-              farmAddress:
-              billData['farmAddress']?.toString() ?? '',
+          farmAddress:
+          billData['farmAddress']?.toString() ?? '',
 
-              farmPhone:
-              billData['farmPhone']?.toString() ?? '',
+          farmPhone:
+          billData['farmPhone']?.toString() ?? '',
 
-              farmEmail:
-              billData['farmEmail']?.toString() ?? '',
-            );
+          farmEmail:
+          billData['farmEmail']?.toString() ?? '',
+        );
       },
     ).timeout(_timeout);
   }
@@ -1416,9 +1422,9 @@ class MonthlyBillingService {
   }
 }
 
-  /// Creates a temporary snapshot containing the original document data plus
-  /// the values that have just been written.
-  ///
-  /// Firestore's Transaction object does not return the updated snapshot after
-  /// transaction.update(), so the model returned by applyPaymentToMonthlyBill
-  /// is constructed from this temporary snapshot.
+/// Creates a temporary snapshot containing the original document data plus
+/// the values that have just been written.
+///
+/// Firestore's Transaction object does not return the updated snapshot after
+/// transaction.update(), so the model returned by applyPaymentToMonthlyBill
+/// is constructed from this temporary snapshot.

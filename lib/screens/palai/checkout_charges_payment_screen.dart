@@ -7,6 +7,8 @@ import '../../models/bill_settings_model.dart';
 import '../../models/palai_models.dart';
 import '../../services/firestore_service.dart';
 import '../../services/pdf_bill_service.dart';
+import '../../widgets/fast_route.dart';
+import 'checkout_success_screen.dart';
 
 /// Data carried from the Review Checkout screen into
 /// Charges & Payment.
@@ -433,6 +435,17 @@ class _CheckoutChargesPaymentScreenState
 
       if (!mounted) return;
 
+      // ------------------------------------------------------------
+      // 4. OFFER EACH GOAT'S OWN FINAL CHECK-OUT REPORT
+      // ------------------------------------------------------------
+      // The dialog above covers the customer's combined monthly bill.
+      // Each goat also gets its own final report (weight, health,
+      // before/after photos) via CheckoutSuccessScreen.
+
+      await _offerFinalCheckoutReports();
+
+      if (!mounted) return;
+
       Navigator.of(context).pop(true);
     } catch (e) {
       if (!mounted) return;
@@ -746,6 +759,93 @@ class _CheckoutChargesPaymentScreenState
           },
         );
       },
+    );
+  }
+
+  // ================================================================
+  // PER-GOAT FINAL CHECK-OUT REPORT
+  // ================================================================
+
+  /// Single goat: goes straight to its final report. Multiple goats:
+  /// offers a pick list so the user can view/share any (or all) of
+  /// them before finishing, without forcing a screen per goat.
+  Future<void> _offerFinalCheckoutReports() async {
+    if (widget.goats.length == 1) {
+      await _pushFinalCheckoutReport(widget.goats.first);
+      return;
+    }
+
+    if (!mounted) return;
+
+    await showModalBottomSheet<void>(
+      context: context,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(22)),
+      ),
+      builder: (sheetContext) {
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(20, 18, 20, 12),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Final Check-out Reports',
+                  style: AppTheme.heading(size: 16),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  'View or share each goat\'s own report.',
+                  style: AppTheme.body(size: 12, color: AppColors.textGrey),
+                ),
+                const SizedBox(height: 12),
+                ...widget.goats.map(
+                      (draft) => ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    leading: const Icon(Icons.description_outlined, color: AppColors.primaryGreen),
+                    title: Text(draft.goat.goatCode, style: AppTheme.body(size: 13, weight: FontWeight.w600)),
+                    trailing: const Icon(Icons.chevron_right, size: 20),
+                    onTap: () => _pushFinalCheckoutReport(draft),
+                  ),
+                ),
+                const SizedBox(height: 8),
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton(
+                    onPressed: () => Navigator.of(sheetContext).pop(),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: AppColors.primaryGreen,
+                      foregroundColor: Colors.white,
+                      minimumSize: const Size.fromHeight(46),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                    ),
+                    child: const Text('Done'),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Future<void> _pushFinalCheckoutReport(GoatCheckoutDraft draft) async {
+    if (!mounted) return;
+    await Navigator.of(context).push(
+      fastRoute(
+        CheckoutSuccessScreen(
+          goat: draft.goat,
+          finalWeight: draft.finalWeight,
+          healthStatus: draft.healthStatus,
+          deliveryStatus: draft.deliveryStatus,
+          totalCharges: draft.goat.pricing,
+          beforeImage: draft.goat.beforeImage,
+          afterImage: draft.afterImage,
+          billSettings: _billSettings,
+        ),
+      ),
     );
   }
 

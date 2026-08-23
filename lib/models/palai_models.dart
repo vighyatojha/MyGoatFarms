@@ -1185,6 +1185,12 @@ class HealthRecordEntry {
   final String healthStatus;
   final String doctorNotes;
 
+  /// Optional photo taken at the time of this checkup (e.g. a visible
+  /// wound, condition, or general appearance). Stored as a Firestore
+  /// Blob, same approach as [MonthlyPhoto] — no Firebase Storage needed.
+  final Uint8List? image;
+  final String imageContentType;
+
   final DateTime recordedAt;
 
   HealthRecordEntry({
@@ -1196,6 +1202,8 @@ class HealthRecordEntry {
     required this.medicineGiven,
     required this.healthStatus,
     required this.doctorNotes,
+    this.image,
+    this.imageContentType = 'image/jpeg',
     required this.recordedAt,
   });
 
@@ -1203,6 +1211,8 @@ class HealthRecordEntry {
       DocumentSnapshot<Map<String, dynamic>> doc,
       ) {
     final data = doc.data() ?? {};
+
+    final imageField = data['image'];
 
     return HealthRecordEntry(
       id: doc.id,
@@ -1229,6 +1239,12 @@ class HealthRecordEntry {
       doctorNotes:
       data['doctorNotes']?.toString() ?? '',
 
+      image:
+      imageField is Blob ? imageField.bytes : null,
+
+      imageContentType:
+      data['imageContentType']?.toString() ?? 'image/jpeg',
+
       recordedAt:
       (data['recordedAt'] as Timestamp?)?.toDate() ??
           DateTime.now(),
@@ -1244,6 +1260,8 @@ class HealthRecordEntry {
       'medicineGiven': medicineGiven,
       'healthStatus': healthStatus,
       'doctorNotes': doctorNotes,
+      if (image != null) 'image': Blob(image!),
+      'imageContentType': imageContentType,
       'recordedAt':
       Timestamp.fromDate(recordedAt),
     };

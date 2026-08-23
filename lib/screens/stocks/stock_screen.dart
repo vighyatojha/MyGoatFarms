@@ -13,6 +13,7 @@ import 'add_feed_stock_screen.dart';
 import 'add_medicine_screen.dart';
 import 'feed_used_screen.dart';
 import 'medicine_used_screen.dart';
+import '../home/notification_screen.dart';
 
 /// Stock (Feed, Medicine & Expenses) module dashboard.
 class StockScreen extends StatefulWidget {
@@ -146,7 +147,7 @@ class _StockScreenState extends State<StockScreen> {
             ],
           ),
         ),
-        IconButton(onPressed: () => _comingSoon('Notifications'), icon: const Icon(Icons.notifications_none, color: AppColors.textDark)),
+        IconButton(onPressed: () => Navigator.of(context).push(fastRoute(const NotificationScreen())), icon: const Icon(Icons.notifications_none, color: AppColors.textDark)),
       ],
     );
   }

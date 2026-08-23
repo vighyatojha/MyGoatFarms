@@ -10,9 +10,14 @@ import '../../services/pdf_bill_service.dart';
 import '../../widgets/fast_route.dart';
 import 'checkout_details_screen.dart';
 
-/// Shown right after a goat is checked out: a "popping" check-mark
-/// animation, then "View Details" and "Share" (shares the final bill as
-/// a PDF).
+/// Shown after a goat is checked out, to view/share that goat's own
+/// final check-out report (weight, health, before/after photos) — a
+/// per-goat artifact distinct from the customer's combined monthly
+/// bill shown by the checkout dialog that precedes this screen.
+///
+/// Pops with `true` when dismissed via "Done", so callers that chain
+/// several pops together (multi-goat checkout → goat list refresh)
+/// keep working exactly as before this screen was wired in.
 class CheckoutSuccessScreen extends StatelessWidget {
   final PalaiGoat goat;
   final double finalWeight;
@@ -136,7 +141,7 @@ class CheckoutSuccessScreen extends StatelessWidget {
                   delay: const Duration(milliseconds: 400),
                   duration: const Duration(milliseconds: 300),
                   child: TextButton(
-                    onPressed: () => Navigator.of(context).popUntil((route) => route.isFirst),
+                    onPressed: () => Navigator.of(context).pop(true),
                     child: Text('Done', style: AppTheme.body(size: 13, color: AppColors.textGrey)),
                   ),
                 ),

@@ -5,6 +5,7 @@ import 'package:intl/intl.dart';
 import '../../app_theme.dart';
 import '../../models/monthly_bill_model.dart';
 import '../../services/monthly_bill_pdf_service.dart';
+import 'monthly_bill_generate_screen.dart';
 
 /// Customer-level Monthly Bills.
 ///
@@ -147,126 +148,30 @@ class _MonthlyBillsScreenState
   // ========================================================================
   // CREATE MONTHLY BILL
   // ========================================================================
+  //
+  // This used to build and write the bill inline, right here. That logic
+  // now lives in MonthlyBillGenerateScreen + MonthlyBillingService (which
+  // covers the same duplicate-protection and outstanding-balance update,
+  // transactionally). We just compute the same prefill values — current
+  // goat count and the customer's package price — and hand off to it.
 
   Future<void> _createMonthlyBill() async {
     if (_creatingBill) return;
-
-    final now = DateTime.now();
-
-    final selectedMonth = await showDatePicker(
-      context: context,
-      initialDate: DateTime(
-        now.year,
-        now.month,
-        1,
-      ),
-      firstDate: DateTime(
-        2020,
-        1,
-        1,
-      ),
-      lastDate: DateTime(
-        now.year + 1,
-        12,
-        31,
-      ),
-      helpText: 'Select billing month',
-    );
-
-    if (selectedMonth == null) return;
-
-    final billingMonth = DateTime(
-      selectedMonth.year,
-      selectedMonth.month,
-      1,
-    );
-
-    final periodEnd = DateTime(
-      selectedMonth.year,
-      selectedMonth.month + 1,
-      0,
-    );
-
-    final billingPeriodKey =
-        '${billingMonth.year}-'
-        '${billingMonth.month.toString().padLeft(2, '0')}';
 
     try {
       setState(() {
         _creatingBill = true;
       });
 
-      // ------------------------------------------------------------
-      // Prevent duplicate bill for same customer/month.
-      // ------------------------------------------------------------
-
-      final duplicate = await _billsCollection
-          .where(
-        'customerId',
-        isEqualTo: widget.customerId,
-      )
-          .where(
-        'billingPeriodKey',
-        isEqualTo: billingPeriodKey,
-      )
-          .limit(1)
-          .get();
-
-      if (duplicate.docs.isNotEmpty) {
-        throw StateError(
-          'A monthly bill already exists for '
-              '${DateFormat('MMMM yyyy').format(billingMonth)}.',
-        );
-      }
-
-      // ------------------------------------------------------------
-      // Read current customer snapshot.
-      // ------------------------------------------------------------
-
-      final customerSnapshot =
-      await _customerReference.get();
+      final customerSnapshot = await _customerReference.get();
 
       if (!customerSnapshot.exists) {
-        throw StateError(
-          'Customer could not be found.',
-        );
+        throw StateError('Customer could not be found.');
       }
 
-      final customerData =
-          customerSnapshot.data() ?? {};
+      final customerData = customerSnapshot.data() ?? {};
 
-      // ------------------------------------------------------------
-      // Customer data.
-      // ------------------------------------------------------------
-
-      final customerName =
-      (customerData['name'] ?? widget.customerName)
-          .toString();
-
-      final currentOutstanding =
-      _number(
-        customerData['pendingAmount'],
-      );
-
-      // ------------------------------------------------------------
-      // Current package price.
-      //
-      // Your PalaiCustomer model already contains `price`.
-      // We support both numeric and string Firestore values.
-      // ------------------------------------------------------------
-
-      final monthlyPrice =
-      _number(
-        customerData['price'],
-      );
-
-      // ------------------------------------------------------------
-      // Goat count.
-      //
-      // We read the customer's goats and count currently boarded
-      // goats. This keeps the monthly bill based on the database
-      // state at the moment the bill is generated.
-      // ------------------------------------------------------------
+      final suggestedMonthlyAmount = _number(customerData['price']);
 
       final goatsSnapshot = await _db
           .collection('farms')
@@ -276,126 +181,34 @@ class _MonthlyBillsScreenState
           .collection('goats')
           .get();
 
-      int goatCount = 0;
-
-      for (final goatDoc in goatsSnapshot.docs) {
-        final goatData = goatDoc.data();
-
-        final checkedOut =
-            goatData['isCheckedOut'] == true;
-
-        if (!checkedOut) {
-          goatCount++;
-        }
-      }
-
-      // ------------------------------------------------------------
-      // Calculate bill.
-      //
-      // IMPORTANT:
-      // If the customer's price represents the customer's complete
-      // monthly Palai charge, use it directly.
-      //
-      // Otherwise, when no customer price is stored, the amount is
-      // zero and the user can add the amount through the UI later.
-      // ------------------------------------------------------------
-
-      final palaiCharges = monthlyPrice;
-
-      const double otherCharges = 0;
-      const double discount = 0;
-
-      final currentBillAmount =
-          palaiCharges +
-              otherCharges -
-              discount;
-
-      final totalDue =
-          currentOutstanding +
-              currentBillAmount;
-
-      final billRef =
-      _billsCollection.doc();
-
-      final nowGenerated =
-      DateTime.now();
-
-      final billNumber =
-          'MB-${billingMonth.year}-'
-          '${billingMonth.month.toString().padLeft(2, '0')}-'
-          '${billRef.id.substring(0, 6).toUpperCase()}';
-
-      final bill = MonthlyBill(
-        id: billRef.id,
-        customerId: widget.customerId,
-        customerName: customerName,
-        billNumber: billNumber,
-        billingMonth: billingMonth,
-        periodEnd: periodEnd,
-        goatCount: goatCount,
-        palaiCharges: palaiCharges,
-        otherCharges: otherCharges,
-        discount: discount,
-        previousOutstanding: currentOutstanding,
-        currentBillAmount: currentBillAmount,
-        totalDue: totalDue,
-        amountPaid: 0,
-        remainingAmount: currentBillAmount,
-        status: MonthlyBillStatus.unpaid,
-        generatedAt: nowGenerated,
-        notes: '',
-        farmName:
-        (customerData['farmName'] ?? '')
-            .toString(),
-        farmAddress:
-        (customerData['farmAddress'] ?? '')
-            .toString(),
-        farmPhone:
-        (customerData['farmPhone'] ?? '')
-            .toString(),
-        farmEmail:
-        (customerData['farmEmail'] ?? '')
-            .toString(),
-      );
-
-      // ------------------------------------------------------------
-      // Store monthly bill.
-      // ------------------------------------------------------------
-
-      await billRef.set(
-        bill.toMap(),
-      );
-
-      // ------------------------------------------------------------
-      // Add this month's bill to customer outstanding.
-      // ------------------------------------------------------------
-
-      await _customerReference.update({
-        'pendingAmount':
-        totalDue,
-        'updatedAt':
-        FieldValue.serverTimestamp(),
-      });
-
-      await _loadBills();
+      final goatCount = goatsSnapshot.docs
+          .where((doc) => doc.data()['isCheckedOut'] != true)
+          .length;
 
       if (!mounted) return;
 
-      _showSuccess(
-        'Monthly bill generated successfully.',
+      final createdBill = await Navigator.of(context).push<MonthlyBill>(
+        MaterialPageRoute(
+          builder: (_) => MonthlyBillGenerateScreen(
+            farmId: widget.farmId,
+            customerId: widget.customerId,
+            customerName: widget.customerName,
+            goatCount: goatCount,
+            suggestedMonthlyAmount: suggestedMonthlyAmount,
+          ),
+        ),
       );
+
+      if (createdBill != null) {
+        await _loadBills();
+      }
     } catch (e) {
-      debugPrint(
-        'Create monthly bill error: $e',
-      );
+      debugPrint('Create monthly bill error: $e');
 
       if (!mounted) return;
 
       _showError(
-        e.toString().replaceFirst(
-          'Bad state: ',
-          '',
-        ),
+        e.toString().replaceFirst('Bad state: ', ''),
       );
     } finally {
       if (mounted) {
@@ -1026,7 +839,7 @@ class _MonthlyBillsScreenState
         borderRadius:
         BorderRadius.circular(18),
         border: Border.all(
-            color: Colors.grey.shade300,
+          color: Colors.grey.shade300,
         ),
       ),
       child: Column(
@@ -1235,7 +1048,7 @@ class _MonthlyBillsScreenState
                 ),
                 border:
                 Border.all(
-                    color: Colors.grey.shade300,
+                  color: Colors.grey.shade300,
                 ),
               ),
               child: Row(

@@ -13,6 +13,8 @@ import 'goat_list_screen.dart';
 import 'billing_screen.dart';
 import '../../models/palai_models.dart';
 import 'own_farm/own_farm_palai_content.dart';
+import '../monthly_report_screen.dart';
+import '../home/notification_screen.dart';
 
 /// Which kind of Palai this screen is showing.
 ///
@@ -116,7 +118,7 @@ class _PalaiScreenState extends State<PalaiScreen> {
                 const SizedBox(height: 12),
                 _buildActivities(),
                 const SizedBox(height: 20),
-                _buildGenerateReportBanner(),
+                _buildGenerateReportBanner(_farmId!),
               ] else
                 OwnFarmPalaiContent(farmId: _farmId!),
             ],
@@ -186,7 +188,7 @@ class _PalaiScreenState extends State<PalaiScreen> {
             ],
           ),
         ),
-        IconButton(onPressed: () => _comingSoon('Notifications'), icon: const Icon(Icons.notifications_none, color: AppColors.textDark)),
+        IconButton(onPressed: () => Navigator.of(context).push(fastRoute(const NotificationScreen())), icon: const Icon(Icons.notifications_none, color: AppColors.textDark)),
         ElevatedButton.icon(
           onPressed: () => Navigator.of(context).push(fastRoute(const CheckInGoatScreen())),
           icon: const Icon(Icons.add, size: 16),
@@ -310,7 +312,8 @@ class _PalaiScreenState extends State<PalaiScreen> {
             label: 'Report',
             sub: 'Monthly',
             color: AppColors.stockTeal,
-            onTap: () => _comingSoon('Monthly report generator'),
+            onTap: () => Navigator.of(context)
+                .push(fastRoute(MonthlyReportScreen(farmId: farmId))),
           ),
           ModuleTile(
             icon: Icons.more_horiz,
@@ -347,7 +350,7 @@ class _PalaiScreenState extends State<PalaiScreen> {
     );
   }
 
-  Widget _buildGenerateReportBanner() {
+  Widget _buildGenerateReportBanner(String farmId) {
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(color: AppColors.darkGreen, borderRadius: BorderRadius.circular(16)),
@@ -366,7 +369,8 @@ class _PalaiScreenState extends State<PalaiScreen> {
             ),
           ),
           ElevatedButton(
-            onPressed: () => _comingSoon('Report generator'),
+            onPressed: () => Navigator.of(context)
+                .push(fastRoute(MonthlyReportScreen(farmId: farmId))),
             style: ElevatedButton.styleFrom(
               backgroundColor: Colors.white,
               foregroundColor: AppColors.darkGreen,

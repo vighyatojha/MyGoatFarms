@@ -290,6 +290,27 @@ class _CheckupsTab extends StatelessWidget {
                         Text(DateFormat('dd MMM yyyy · hh:mm a').format(e.recordedAt), style: AppTheme.body(size: 11)),
                       ],
                     ),
+                    if (e.image != null && e.image!.isNotEmpty) ...[
+                      const SizedBox(height: 10),
+                      InkWell(
+                        borderRadius: BorderRadius.circular(10),
+                        onTap: () => Navigator.of(context).push(MaterialPageRoute(
+                          builder: (_) => FullscreenImageViewer(
+                            imageBytes: e.image!,
+                            title: DateFormat('dd MMM yyyy').format(e.recordedAt),
+                          ),
+                        )),
+                        child: ClipRRect(
+                          borderRadius: BorderRadius.circular(10),
+                          child: Image.memory(
+                            e.image!,
+                            height: 140,
+                            width: double.infinity,
+                            fit: BoxFit.cover,
+                          ),
+                        ),
+                      ),
+                    ],
                     const SizedBox(height: 6),
                     Text('${e.weight} kg', style: AppTheme.body(size: 12, color: AppColors.textDark)),
                     const SizedBox(height: 6),
@@ -346,7 +367,21 @@ class _AddHealthRecordSheetState extends State<_AddHealthRecordSheet> {
   final _notesController = TextEditingController();
   String _healthStatus = 'Healthy';
   DateTime _recordedAt = DateTime.now();
+  PickedImage? _pickedImage;
   bool _saving = false;
+
+  Future<void> _pickImage() async {
+    try {
+      final picked = await showImageSourceSheet(context, isGoatPhoto: true);
+      if (picked == null || !mounted) return; // user cancelled
+      setState(() => _pickedImage = picked);
+    } on ImageTooLargeException catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(e.message), backgroundColor: AppColors.error),
+      );
+    }
+  }
 
   Future<void> _pickDateTime() async {
     final date = await showDatePicker(
@@ -377,6 +412,8 @@ class _AddHealthRecordSheetState extends State<_AddHealthRecordSheet> {
       medicineGiven: _medicineController.text.trim(),
       healthStatus: _healthStatus,
       doctorNotes: _notesController.text.trim(),
+      image: _pickedImage?.bytes,
+      imageContentType: _pickedImage?.contentType ?? 'image/jpeg',
       recordedAt: _recordedAt,
     );
     try {
@@ -440,6 +477,50 @@ class _AddHealthRecordSheetState extends State<_AddHealthRecordSheet> {
             _field(_medicineController, 'Medicine Given'),
             const SizedBox(height: 10),
             _field(_notesController, 'Doctor Notes', maxLines: 3),
+            const SizedBox(height: 10),
+            Text('Photo (optional)', style: AppTheme.body(size: 12, color: AppColors.textDark)),
+            const SizedBox(height: 6),
+            InkWell(
+              onTap: _pickImage,
+              borderRadius: BorderRadius.circular(10),
+              child: _pickedImage == null
+                  ? Container(
+                decoration: AppTheme.card(radius: 10),
+                padding: const EdgeInsets.all(14),
+                child: Row(
+                  children: [
+                    const Icon(Icons.add_a_photo_outlined, size: 18, color: AppColors.primaryGreen),
+                    const SizedBox(width: 10),
+                    Text('Attach a photo', style: AppTheme.body(size: 13, color: AppColors.textDark)),
+                  ],
+                ),
+              )
+                  : ClipRRect(
+                borderRadius: BorderRadius.circular(10),
+                child: Stack(
+                  children: [
+                    Image.memory(
+                      _pickedImage!.bytes,
+                      height: 140,
+                      width: double.infinity,
+                      fit: BoxFit.cover,
+                    ),
+                    Positioned(
+                      top: 6,
+                      right: 6,
+                      child: InkWell(
+                        onTap: () => setState(() => _pickedImage = null),
+                        child: Container(
+                          padding: const EdgeInsets.all(4),
+                          decoration: const BoxDecoration(color: Colors.black54, shape: BoxShape.circle),
+                          child: const Icon(Icons.close, size: 16, color: Colors.white),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
             const SizedBox(height: 16),
             SizedBox(
               width: double.infinity,

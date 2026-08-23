@@ -19,6 +19,7 @@ import '../../widgets/fast_route.dart';
 import '../login_screen.dart';
 import '../palai/palai_screen.dart';
 import '../stocks/stock_screen.dart';
+import '../customers/customer_management_screen.dart';
 import 'bill_settings_screen.dart';
 
 /// Profile screen — the home of everything needed to get a farm profile
@@ -263,9 +264,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
       case 4: // Profile — already here.
         break;
       case 3:
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Reports coming soon'), backgroundColor: AppColors.darkGreen),
-        );
+        Navigator.of(context).pop();
+        Navigator.of(context).push(fastRoute(const CustomerManagementScreen()));
         break;
       case 0:
         Navigator.of(context).pop();
@@ -727,8 +727,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
               onPressed: _farmId == null
                   ? null
                   : () => Navigator.of(context).push(
-                        fastRoute(BillSettingsScreen(farmId: _farmId!, initialSettings: settings)),
-                      ),
+                fastRoute(BillSettingsScreen(farmId: _farmId!, initialSettings: settings)),
+              ),
               icon: const Icon(Icons.edit_outlined, color: AppColors.primaryGreen),
               label: Text('Edit Bill Details', style: AppTheme.heading(size: 13, color: AppColors.primaryGreen)),
               style: OutlinedButton.styleFrom(
