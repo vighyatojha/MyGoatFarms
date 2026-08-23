@@ -70,14 +70,13 @@ class _CustomerGoatRegistrationScreenState
 
       final now = DateTime.now();
 
-      final weightText =
-      _weightController.text.trim();
+      final weightText = _weightController.text.trim();
 
-      final parsedWeight =
-      double.tryParse(weightText);
+      final double? weight = weightText.isEmpty
+          ? null
+          : double.tryParse(weightText);
 
-      if (parsedWeight == null ||
-          parsedWeight <= 0) {
+      if (weight == null || weight <= 0) {
         if (!mounted) {
           return;
         }
@@ -94,84 +93,60 @@ class _CustomerGoatRegistrationScreenState
       }
 
       // -----------------------------------------------------------------------
-      // CREATE THE UNIFIED PALAI GOAT MODEL
+      // CREATE UNIFIED PALAI GOAT
+      // -----------------------------------------------------------------------
+      //
+      // This uses the single PalaiGoat model from palai_models.dart.
+      //
+      // DOB is intentionally NOT supplied because it is optional and this
+      // registration screen does not collect DOB.
+      //
       // -----------------------------------------------------------------------
 
       final goat = PalaiGoat(
         id: goatReference.id,
         customerId: widget.customerId,
 
-        goatCode:
-        _goatCodeController.text.trim(),
+        // New registration model fields.
+        //
+        // The current screen uses goatCode instead of name/tagNumber.
+        goatCode: _goatCodeController.text.trim(),
 
-        breed:
-        _breedController.text.trim(),
+        breed: _breedController.text.trim(),
 
-        gender:
-        _gender,
+        gender: _gender,
 
-        color:
-        _color.trim(),
+        color: _color.trim(),
 
-        // At registration/check-in the entered weight
-        // becomes the initial boarding weight.
-        weightAtCheckIn:
-        parsedWeight,
+        // DOB is optional.
+        // Do NOT pass dateOfBirth here.
 
-        currentWeight:
-        parsedWeight,
+        // Initial weight becomes the permanent check-in/start weight.
+        weightAtCheckIn: weight,
+        currentWeight: weight,
 
-        healthStatus:
-        'Healthy',
+        healthStatus: 'Healthy',
 
-        // New goat is being registered into Palai,
-        // therefore check-in happens now.
-        checkInDate:
-        now,
+        // The goat is considered checked in when registered.
+        checkInDate: now,
+        checkOutDate: null,
 
-        // It has not been checked out yet.
-        checkOutDate:
-        null,
+        // Current Palai state.
+        status: 'active',
+        isCheckedOut: false,
 
-        // These can be changed later according
-        // to the customer's Palai package.
-        monthlyPackage:
-        '',
+        // Package/pricing can be assigned later.
+        monthlyPackage: '',
+        pricing: 0,
 
-        pricing:
-        0,
-
-        notes:
-        _notesController.text.trim(),
-
-        isCheckedOut:
-        false,
+        notes: _notesController.text.trim(),
 
         // No image at registration.
-        beforeImage:
-        null,
+        imageUrl: null,
 
-        beforeImageContentType:
-        null,
-
-        afterImage:
-        null,
-
-        afterImageContentType:
-        null,
-
-        // Report starts with no generated report.
-        reportStatus:
-        'Not Generated',
-
-        lastReportType:
-        null,
-
-        lastReportDate:
-        null,
-
-        reportsCount:
-        0,
+        // Registration metadata.
+        registrationDate: now,
+        updatedAt: now,
       );
 
       // -----------------------------------------------------------------------
@@ -194,7 +169,7 @@ class _CustomerGoatRegistrationScreenState
         ),
       );
 
-      // Return the SAME PalaiGoat type from palai_models.dart.
+      // Return the same PalaiGoat type from palai_models.dart.
       Navigator.of(context).pop(goat);
     } on FirebaseException catch (e) {
       if (!mounted) {
@@ -208,7 +183,7 @@ class _CustomerGoatRegistrationScreenState
           ),
         ),
       );
-    } catch (e) {
+    } catch (_) {
       if (!mounted) {
         return;
       }

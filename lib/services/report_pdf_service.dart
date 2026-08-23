@@ -12,10 +12,10 @@ import '../models/report_models.dart';
 
 /// Builds a goat's Generate Report PDF — covering everything recorded
 /// from its check-in (registration) date through today: customer &
-/// goat details, a weight trend, the latest health update, and any
-/// photos captured specifically for this report — then either shares it
-/// (WhatsApp / email / etc. via the OS share sheet) or saves it to the
-/// device.
+/// goat details, a weight trend, the latest health update, and photos
+/// from three moments in the goat's stay (check-in, most recent health
+/// update, and report day) — then either shares it (WhatsApp / email /
+/// etc. via the OS share sheet) or saves it to the device.
 ///
 /// Mirrors the structure of [PdfBillService] but for the "Generate
 /// Report" flow (Goats in Palai > goat > Generate Report) rather than
@@ -33,64 +33,85 @@ class ReportPdfService {
     required BillSettings billSettings,
   }) async {
     final doc = pw.Document();
-    final images = report.images.map((img) => pw.MemoryImage(img.bytes)).toList();
     final latest = historyAscending.isEmpty ? null : historyAscending.last;
+    final gain = (report.startWeight != null && report.endWeight != null) ? report.endWeight! - report.startWeight! : null;
 
     doc.addPage(
       pw.MultiPage(
         pageFormat: PdfPageFormat.a4,
         margin: const pw.EdgeInsets.all(28),
+        footer: (context) => pw.Padding(
+          padding: const pw.EdgeInsets.only(top: 8),
+          child: pw.Text(
+            'Page ${context.pageNumber} of ${context.pagesCount}',
+            style: const pw.TextStyle(fontSize: 8, color: PdfColors.grey500),
+            textAlign: pw.TextAlign.right,
+          ),
+        ),
         build: (context) => [
-          _header(billSettings),
-          pw.SizedBox(height: 14),
-          _titleBar(report),
+          _header(billSettings, goat, report),
           pw.SizedBox(height: 16),
+          _titleBar(report),
+          pw.SizedBox(height: 14),
+          pw.Row(
+            children: [
+              _statCard('Boarded For', _boardedFor(goat.checkInDate)),
+              _statCard(
+                'Weight Gain',
+                gain != null ? '${gain >= 0 ? '+' : ''}${gain.toStringAsFixed(1)} kg' : '—',
+                valueColor: gain == null ? PdfColors.green900 : (gain >= 0 ? PdfColors.green700 : PdfColors.red700),
+              ),
+              _statCard('Health Status', latest?.healthStatus.isNotEmpty == true ? latest!.healthStatus : goat.healthStatus),
+            ],
+          ),
+          pw.SizedBox(height: 14),
           pw.Row(
             crossAxisAlignment: pw.CrossAxisAlignment.start,
             children: [
-              pw.Expanded(child: _customerBlock(customer)),
-              pw.SizedBox(width: 18),
-              pw.Expanded(child: _goatBlock(goat, report)),
+              pw.Expanded(child: _card(child: _customerBlock(customer))),
+              pw.SizedBox(width: 12),
+              pw.Expanded(child: _card(child: _goatBlock(goat))),
             ],
           ),
-          pw.SizedBox(height: 18),
-          pw.Text('Weight & Growth', style: pw.TextStyle(fontSize: 13, fontWeight: pw.FontWeight.bold, color: PdfColors.green900)),
+          pw.SizedBox(height: 14),
+          _sectionTitle('Weight & Growth'),
           pw.SizedBox(height: 8),
-          if (historyAscending.isEmpty)
-            pw.Text(
+          _card(
+            child: historyAscending.isEmpty
+                ? pw.Text(
               'No weight/health records were logged during this period.',
               style: const pw.TextStyle(fontSize: 10, color: PdfColors.grey700),
             )
-          else ...[
-            _weightChart(historyAscending),
-            pw.SizedBox(height: 10),
-            _weightTable(historyAscending),
-          ],
-          pw.SizedBox(height: 18),
-          pw.Text('Health Update', style: pw.TextStyle(fontSize: 13, fontWeight: pw.FontWeight.bold, color: PdfColors.green900)),
+                : pw.Column(
+              crossAxisAlignment: pw.CrossAxisAlignment.start,
+              children: [
+                _weightChart(historyAscending),
+                pw.SizedBox(height: 10),
+                _weightTable(historyAscending),
+              ],
+            ),
+          ),
+          pw.SizedBox(height: 14),
+          _sectionTitle('Health Update'),
           pw.SizedBox(height: 8),
-          _healthBlock(goat, latest),
-          if (images.isNotEmpty) ...[
-            pw.SizedBox(height: 18),
-            pw.Text('Report Photos', style: pw.TextStyle(fontSize: 13, fontWeight: pw.FontWeight.bold, color: PdfColors.green900)),
+          _card(child: _healthBlock(goat, latest)),
+          if (report.images.isNotEmpty) ...[
+            pw.SizedBox(height: 14),
+            _sectionTitle('Report Photos'),
+            pw.SizedBox(height: 4),
+            pw.Text(
+              'From check-in, the latest health update, and today\'s report.',
+              style: const pw.TextStyle(fontSize: 9, color: PdfColors.grey600),
+            ),
             pw.SizedBox(height: 8),
             pw.Wrap(
               spacing: 10,
               runSpacing: 10,
-              children: images
-                  .map((img) => pw.ClipRRect(
-                horizontalRadius: 8,
-                verticalRadius: 8,
-                child: pw.Image(img, width: 130, height: 130, fit: pw.BoxFit.cover),
-              ))
-                  .toList(),
+              children: report.images.map(_photoCard).toList(),
             ),
           ],
-          pw.SizedBox(height: 26),
-          pw.Divider(color: PdfColors.grey300),
-          pw.SizedBox(height: 8),
-          if (billSettings.footerNote.trim().isNotEmpty)
-            pw.Text(billSettings.footerNote, style: const pw.TextStyle(fontSize: 10, color: PdfColors.grey600)),
+          pw.SizedBox(height: 22),
+          _footer(billSettings),
         ],
       ),
     );
@@ -102,17 +123,53 @@ class ReportPdfService {
   // Sections
   // -----------------------------------------------------------------
 
-  pw.Widget _header(BillSettings b) {
-    return pw.Column(
+  pw.Widget _header(BillSettings b, PalaiGoat goat, GoatReport report) {
+    final initial = b.businessName.trim().isNotEmpty ? b.businessName.trim()[0].toUpperCase() : 'F';
+    return pw.Row(
       crossAxisAlignment: pw.CrossAxisAlignment.start,
+      mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
       children: [
-        pw.Text(b.businessName, style: pw.TextStyle(fontSize: 20, fontWeight: pw.FontWeight.bold)),
-        if (b.tagline.trim().isNotEmpty)
-          pw.Text(b.tagline, style: const pw.TextStyle(fontSize: 11, color: PdfColors.grey700)),
-        if (b.address.trim().isNotEmpty)
-          pw.Text(b.address, style: const pw.TextStyle(fontSize: 10, color: PdfColors.grey700)),
-        if (b.phone.trim().isNotEmpty)
-          pw.Text('Phone: ${b.phone}', style: const pw.TextStyle(fontSize: 10, color: PdfColors.grey700)),
+        pw.Row(
+          crossAxisAlignment: pw.CrossAxisAlignment.start,
+          children: [
+            pw.Container(
+              width: 42,
+              height: 42,
+              alignment: pw.Alignment.center,
+              decoration: pw.BoxDecoration(color: PdfColors.green700, borderRadius: pw.BorderRadius.circular(21)),
+              child: pw.Text(initial, style: pw.TextStyle(fontSize: 19, fontWeight: pw.FontWeight.bold, color: PdfColors.white)),
+            ),
+            pw.SizedBox(width: 10),
+            pw.Column(
+              crossAxisAlignment: pw.CrossAxisAlignment.start,
+              children: [
+                pw.Text(b.businessName, style: pw.TextStyle(fontSize: 18, fontWeight: pw.FontWeight.bold)),
+                if (b.tagline.trim().isNotEmpty)
+                  pw.Text(b.tagline, style: const pw.TextStyle(fontSize: 10, color: PdfColors.grey700)),
+                if (b.address.trim().isNotEmpty)
+                  pw.Text(b.address, style: const pw.TextStyle(fontSize: 9, color: PdfColors.grey700)),
+                if (b.phone.trim().isNotEmpty)
+                  pw.Text('Phone: ${b.phone}', style: const pw.TextStyle(fontSize: 9, color: PdfColors.grey700)),
+              ],
+            ),
+          ],
+        ),
+        pw.Column(
+          crossAxisAlignment: pw.CrossAxisAlignment.end,
+          children: [
+            pw.Container(
+              padding: const pw.EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+              decoration: pw.BoxDecoration(color: PdfColors.green900, borderRadius: pw.BorderRadius.circular(20)),
+              child: pw.Text(
+                report.type.label.toUpperCase(),
+                style: pw.TextStyle(fontSize: 8, fontWeight: pw.FontWeight.bold, color: PdfColors.white),
+              ),
+            ),
+            pw.SizedBox(height: 6),
+            pw.Text('Report ID: ${_reportId(goat, report)}', style: const pw.TextStyle(fontSize: 8, color: PdfColors.grey600)),
+            pw.Text('Generated: ${_fmt(report.generatedAt)}', style: const pw.TextStyle(fontSize: 8, color: PdfColors.grey600)),
+          ],
+        ),
       ],
     );
   }
@@ -120,7 +177,7 @@ class ReportPdfService {
   pw.Widget _titleBar(GoatReport report) {
     return pw.Container(
       padding: const pw.EdgeInsets.symmetric(vertical: 10, horizontal: 12),
-      decoration: pw.BoxDecoration(color: PdfColors.green50, borderRadius: pw.BorderRadius.circular(6)),
+      decoration: pw.BoxDecoration(color: PdfColors.green50, borderRadius: pw.BorderRadius.circular(8)),
       child: pw.Row(
         mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
         children: [
@@ -139,7 +196,7 @@ class ReportPdfService {
       crossAxisAlignment: pw.CrossAxisAlignment.start,
       children: [
         pw.Text('CUSTOMER DETAILS', style: pw.TextStyle(fontSize: 9, fontWeight: pw.FontWeight.bold, color: PdfColors.grey600)),
-        pw.SizedBox(height: 5),
+        pw.SizedBox(height: 6),
         _pdfRow('Name', c.name),
         _pdfRow('Mobile', c.mobileNumber),
         if (c.address.trim().isNotEmpty) _pdfRow('Address', c.address),
@@ -148,12 +205,12 @@ class ReportPdfService {
     );
   }
 
-  pw.Widget _goatBlock(PalaiGoat goat, GoatReport report) {
+  pw.Widget _goatBlock(PalaiGoat goat) {
     return pw.Column(
       crossAxisAlignment: pw.CrossAxisAlignment.start,
       children: [
         pw.Text('GOAT DETAILS', style: pw.TextStyle(fontSize: 9, fontWeight: pw.FontWeight.bold, color: PdfColors.grey600)),
-        pw.SizedBox(height: 5),
+        pw.SizedBox(height: 6),
         _pdfRow('Goat ID', goat.goatCode),
         _pdfRow('Breed', goat.breed),
         _pdfRow('Gender', goat.gender),
@@ -273,10 +330,108 @@ class ReportPdfService {
       child: pw.Row(
         crossAxisAlignment: pw.CrossAxisAlignment.start,
         children: [
-          pw.SizedBox(width: 70, child: pw.Text(label, style: const pw.TextStyle(fontSize: 9, color: PdfColors.grey700))),
+          pw.SizedBox(width: 78, child: pw.Text(label, style: const pw.TextStyle(fontSize: 9, color: PdfColors.grey700))),
           pw.Expanded(child: pw.Text(value.isEmpty ? '—' : value, style: pw.TextStyle(fontSize: 9, fontWeight: pw.FontWeight.bold))),
         ],
       ),
+    );
+  }
+
+  /// One photo, boxed, with its label captioned underneath — the same
+  /// "what is this photo of" clarity as the Front View / Side View
+  /// captions in the Monthly Report style.
+  pw.Widget _photoCard(ReportImage img) {
+    return pw.Container(
+      width: 150,
+      padding: const pw.EdgeInsets.all(6),
+      decoration: pw.BoxDecoration(
+        color: PdfColors.white,
+        borderRadius: pw.BorderRadius.circular(10),
+        border: pw.Border.all(color: PdfColors.grey300, width: 0.7),
+      ),
+      child: pw.Column(
+        children: [
+          pw.ClipRRect(
+            horizontalRadius: 6,
+            verticalRadius: 6,
+            child: pw.Image(pw.MemoryImage(img.bytes), width: 138, height: 138, fit: pw.BoxFit.cover),
+          ),
+          pw.SizedBox(height: 6),
+          pw.Text(
+            img.label.isNotEmpty ? img.label : 'Photo',
+            style: pw.TextStyle(fontSize: 8.5, fontWeight: pw.FontWeight.bold, color: PdfColors.grey800),
+            textAlign: pw.TextAlign.center,
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// A white, bordered, rounded box used to group every section — gives
+  /// the report a "form" feel instead of loose text floating on the
+  /// page, matching the boxed-card look of the Monthly Report reference.
+  pw.Widget _card({required pw.Widget child}) {
+    return pw.Container(
+      width: double.infinity,
+      padding: const pw.EdgeInsets.all(14),
+      decoration: pw.BoxDecoration(
+        color: PdfColors.white,
+        borderRadius: pw.BorderRadius.circular(10),
+        border: pw.Border.all(color: PdfColors.grey300, width: 0.7),
+      ),
+      child: child,
+    );
+  }
+
+  pw.Widget _sectionTitle(String text) {
+    return pw.Text(text, style: pw.TextStyle(fontSize: 13, fontWeight: pw.FontWeight.bold, color: PdfColors.green900));
+  }
+
+  pw.Widget _statCard(String label, String value, {PdfColor valueColor = PdfColors.green900}) {
+    return pw.Expanded(
+      child: pw.Container(
+        margin: const pw.EdgeInsets.symmetric(horizontal: 3),
+        padding: const pw.EdgeInsets.symmetric(vertical: 10, horizontal: 6),
+        decoration: pw.BoxDecoration(color: PdfColors.green50, borderRadius: pw.BorderRadius.circular(10)),
+        child: pw.Column(
+          children: [
+            pw.Text(value, style: pw.TextStyle(fontSize: 12.5, fontWeight: pw.FontWeight.bold, color: valueColor), textAlign: pw.TextAlign.center),
+            pw.SizedBox(height: 3),
+            pw.Text(label, style: const pw.TextStyle(fontSize: 8, color: PdfColors.grey700), textAlign: pw.TextAlign.center),
+          ],
+        ),
+      ),
+    );
+  }
+
+  pw.Widget _footer(BillSettings b) {
+    return pw.Column(
+      crossAxisAlignment: pw.CrossAxisAlignment.stretch,
+      children: [
+        pw.Container(
+          padding: const pw.EdgeInsets.symmetric(vertical: 12, horizontal: 14),
+          decoration: pw.BoxDecoration(color: PdfColors.green900, borderRadius: pw.BorderRadius.circular(10)),
+          child: pw.Column(
+            children: [
+              pw.Text(
+                'Thank you for trusting ${b.businessName.trim().isEmpty ? 'us' : b.businessName}.',
+                style: pw.TextStyle(fontSize: 11, fontWeight: pw.FontWeight.bold, color: PdfColors.white),
+                textAlign: pw.TextAlign.center,
+              ),
+              pw.SizedBox(height: 3),
+              pw.Text(
+                'We care for your goats as our own.',
+                style: const pw.TextStyle(fontSize: 9, color: PdfColors.green100),
+                textAlign: pw.TextAlign.center,
+              ),
+            ],
+          ),
+        ),
+        if (b.footerNote.trim().isNotEmpty) ...[
+          pw.SizedBox(height: 8),
+          pw.Text(b.footerNote, style: const pw.TextStyle(fontSize: 9, color: PdfColors.grey600), textAlign: pw.TextAlign.center),
+        ],
+      ],
     );
   }
 
@@ -302,6 +457,12 @@ class ReportPdfService {
     if (months <= 0) return '$days day${days == 1 ? '' : 's'}';
     if (days <= 0) return '$months month${months == 1 ? '' : 's'}';
     return '$months mo $days d';
+  }
+
+  String _reportId(PalaiGoat goat, GoatReport report) {
+    final d = report.generatedAt;
+    String two(int v) => v.toString().padLeft(2, '0');
+    return 'RPT-${goat.goatCode}-${d.year}${two(d.month)}${two(d.day)}${two(d.hour)}${two(d.minute)}';
   }
 
   // -----------------------------------------------------------------

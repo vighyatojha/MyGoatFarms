@@ -215,6 +215,41 @@ class MyGoatFarmsApp extends StatelessWidget {
          */
         initialRoute: initialRoute,
 
+        /*
+         * IMPORTANT — this is what makes `initialRoute: '/home'` safe.
+         *
+         * Flutter's *default* initial-route handling treats a route
+         * name with a leading slash as a path, and silently walks it
+         * segment by segment. For `initialRoute: '/home'` that means it
+         * builds the navigator's starting stack as:
+         *
+         *     ['/'  (SplashScreen),  '/home' (MainShell)]
+         *
+         * SplashScreen is invisible at launch because MainShell is on
+         * top of it — but it is still sitting at the *bottom* of the
+         * stack. The moment anything calls
+         * `Navigator.popUntil((route) => route.isFirst)` — e.g. the
+         * "Done" button after generating a Palai report — it pops all
+         * the way down to that phantom SplashScreen instead of
+         * MainShell. SplashScreen has no logic of its own to move
+         * forward (that's `_AppBootstrap`'s job, and it already ran),
+         * so the app appears to close and reload forever.
+         *
+         * Overriding onGenerateInitialRoutes builds the stack ourselves
+         * with exactly one route — Login or MainShell — so there's no
+         * hidden Splash route left underneath for popUntil(isFirst) to
+         * land on.
+         */
+        onGenerateInitialRoutes: (String initialRouteName) {
+          final Widget page = initialRouteName == '/home' ? const MainShell() : const LoginScreen();
+          return [
+            MaterialPageRoute(
+              builder: (_) => page,
+              settings: RouteSettings(name: initialRouteName),
+            ),
+          ];
+        },
+
         routes: {
           '/': (context) => const SplashScreen(),
           '/login': (context) => const LoginScreen(),

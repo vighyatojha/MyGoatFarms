@@ -10,7 +10,7 @@ import '../../models/palai_models.dart';
 import '../../services/firestore_service.dart';
 import '../../widgets/fast_route.dart';
 import '../palai/add_customer_screen.dart';
-import '../palai/check_in_screen.dart';
+import '../palai/customer_palai/customer_goat_registration_screen.dart';
 import '../palai/multi_goat_checkout_screen.dart';
 
 class CustomerProfileScreen extends StatefulWidget {
@@ -117,16 +117,18 @@ class _CustomerProfileScreenState
   // CHECK IN GOAT
   // ================================================================
 
-  Future<void> _openCheckIn() async {
-    await Navigator.of(context).push(
+  Future<void> _openRegisterGoat() async {
+    final goat = await Navigator.of(context).push<PalaiGoat>(
       fastRoute(
-        CheckInGoatScreen(
-          presetCustomer: _customer,
+        CustomerGoatRegistrationScreen(
+          customerId: _customer.id,
         ),
       ),
     );
 
-    if (!mounted) return;
+    if (!mounted || goat == null) {
+      return;
+    }
 
     await _refreshCustomer();
   }
@@ -2031,7 +2033,7 @@ class _CustomerProfileScreenState
           const SizedBox(height: 14),
 
           OutlinedButton.icon(
-            onPressed: _openCheckIn,
+            onPressed: _openRegisterGoat,
 
             icon: const Icon(
               Icons.add,

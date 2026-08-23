@@ -27,15 +27,21 @@ extension GoatReportTypeX on GoatReportType {
   }
 }
 
-/// A single photo captured specifically for a generated report (camera
-/// only — see GenerateReportScreen's "Add Report Photos" step). Stored
-/// as a Firestore `Blob` inside the [GoatReport] document, the same
-/// pattern the app already uses for the goat's Before/After Palai
-/// photos, and included in the generated PDF.
+/// A single photo shown in a generated report. Stored as a Firestore
+/// `Blob` inside the [GoatReport] document, the same pattern the app
+/// already uses for the goat's Before/After Palai photos.
+///
+/// A report can carry photos from three different moments in the
+/// goat's stay — [label] is what tells them apart in the PDF (e.g.
+/// "Check-In Photo", "Health Update Photo", "Report Day Photo"):
+///   1. The photo taken at check-in (goat's `beforeImage`).
+///   2. The photo attached to the most recent health record.
+///   3. Photo(s) captured fresh while generating this report.
 class ReportImage {
   final Uint8List bytes;
   final String contentType;
-  const ReportImage({required this.bytes, required this.contentType});
+  final String label;
+  const ReportImage({required this.bytes, required this.contentType, this.label = ''});
 }
 
 /// A report generated for one goat, covering [fromDate] (the goat's
@@ -86,6 +92,7 @@ class GoatReport {
         return ReportImage(
           bytes: field is Blob ? field.bytes : Uint8List(0),
           contentType: m['contentType'] as String? ?? 'image/jpeg',
+          label: m['label'] as String? ?? '',
         );
       }).where((img) => img.bytes.isNotEmpty).toList(),
     );
@@ -105,6 +112,7 @@ class GoatReport {
           .map((img) => {
         'bytes': Blob(img.bytes),
         'contentType': img.contentType,
+        'label': img.label,
       })
           .toList(),
     };

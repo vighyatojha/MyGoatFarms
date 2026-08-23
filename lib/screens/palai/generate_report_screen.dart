@@ -102,8 +102,16 @@ class _GenerateReportScreenState extends State<GenerateReportScreen> {
     }
   }
 
-  double? get _startWeight => _historyAscending.isNotEmpty ? _historyAscending.first.weight : widget.goat.weightAtCheckIn;
+  // Start weight is always the weight recorded at check-in — that's the
+  // actual start of the report period (checkInDate). It must NOT shift to
+  // whatever weight was logged in the first health record, otherwise a
+  // goat with only one health record ends up with its just-entered weight
+  // showing as "Start Weight" instead of "Current Weight".
+  double? get _startWeight => widget.goat.weightAtCheckIn;
 
+  // Current/end weight is the most recently logged health record weight;
+  // if no health records exist yet, fall back to the goat's current/at
+  // check-in weight so the report still has a value to show.
   double? get _endWeight =>
       _historyAscending.isNotEmpty ? _historyAscending.last.weight : (widget.goat.currentWeight ?? widget.goat.weightAtCheckIn);
 
@@ -142,6 +150,52 @@ class _GenerateReportScreenState extends State<GenerateReportScreen> {
   // Step 4 — Generate
   // -------------------------------------------------------------------
 
+  /// Assembles every photo the report should show, in chronological
+  /// order, each tagged with a label so the PDF can caption them:
+  ///   1. The "Before Palai" photo taken at check-in.
+  ///   2. The photo attached to the most recent health record that has
+  ///      one (not necessarily the very latest record — if the latest
+  ///      entry has no photo, we fall back to the last one that does).
+  ///   3. Whatever photo(s) were just captured for this report.
+  ///
+  /// Previously only #3 was ever included, which is why the PDF looked
+  /// like it was "missing" the check-in and health-update photos — they
+  /// were never being attached to the report at all.
+  List<ReportImage> _buildReportImages() {
+    final images = <ReportImage>[];
+
+    final beforeBytes = widget.goat.beforeImage;
+    if (beforeBytes != null && beforeBytes.isNotEmpty) {
+      images.add(ReportImage(
+        bytes: beforeBytes,
+        contentType: widget.goat.beforeImageContentType ?? 'image/jpeg',
+        label: 'Check-In Photo',
+      ));
+    }
+
+    for (final entry in _historyAscending.reversed) {
+      final img = entry.image;
+      if (img != null && img.isNotEmpty) {
+        images.add(ReportImage(
+          bytes: img,
+          contentType: entry.imageContentType,
+          label: 'Health Update Photo',
+        ));
+        break;
+      }
+    }
+
+    for (int i = 0; i < _photos.length; i++) {
+      images.add(ReportImage(
+        bytes: _photos[i].bytes,
+        contentType: _photos[i].contentType,
+        label: _photos.length > 1 ? 'Report Day Photo ${i + 1}' : 'Report Day Photo',
+      ));
+    }
+
+    return images;
+  }
+
   Future<void> _generate() async {
     if (_farmId == null || _selectedType == null) return;
     setState(() => _generating = true);
@@ -163,7 +217,7 @@ class _GenerateReportScreenState extends State<GenerateReportScreen> {
         startWeight: _startWeight,
         endWeight: _endWeight,
         healthStatus: widget.goat.healthStatus,
-        images: _photos.map((p) => ReportImage(bytes: p.bytes, contentType: p.contentType)).toList(),
+        images: _buildReportImages(),
       );
 
       final billSettings = farm?.billSettings ?? const BillSettings();

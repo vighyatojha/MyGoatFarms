@@ -1214,178 +1214,99 @@ class _GoatListScreenState extends State<GoatListScreen> {
     );
   }
 
-  Widget _goatCard(
-      PalaiGoat goat,
-      ) {
-    final healthColor =
-    _healthColor(
-      goat.healthStatus,
-    );
+  Widget _goatCard(PalaiGoat goat) {
+    final healthColor = _healthColor(goat.healthStatus);
 
     return Material(
       color: Colors.transparent,
       child: InkWell(
-        borderRadius:
-        BorderRadius.circular(16),
-        onTap: () =>
-            _openGoatActionSheet(
-              goat,
-            ),
+        borderRadius: BorderRadius.circular(18),
+        onTap: () => _openGoatActionSheet(goat),
         child: Container(
-          decoration:
-          AppTheme.card(
-            radius: 16,
-          ),
-          padding:
-          const EdgeInsets.all(12),
+          width: double.infinity,
+          decoration: AppTheme.card(radius: 18),
+          padding: const EdgeInsets.all(12),
           child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Container(
-                width: 56,
-                height: 56,
-                decoration:
-                BoxDecoration(
-                  shape:
-                  BoxShape.circle,
-                  color:
-                  AppColors.lightGreen,
-                  border:
-                  Border.all(
-                    color:
-                    healthColor
-                        .withOpacity(
-                      0.6,
-                    ),
-                    width: 2.5,
-                  ),
-                ),
-                child: ClipOval(
-                  child:
-                  goat.beforeImage !=
-                      null
-                      ? Image.memory(
-                    goat.beforeImage!,
-                    fit: BoxFit.cover,
-                    width: 56,
-                    height: 56,
-                  )
-                      : const Icon(
-                    Icons.pets,
-                    color:
-                    AppColors
-                        .primaryGreen,
-                  ),
-                ),
+              // ------------------------------------------------------------
+              // GOAT IMAGE
+              // ------------------------------------------------------------
+              _goatAvatar(
+                goat: goat,
+                healthColor: healthColor,
               ),
 
-              const SizedBox(width: 14),
+              const SizedBox(width: 12),
 
+              // ------------------------------------------------------------
+              // MAIN INFORMATION
+              // ------------------------------------------------------------
               Expanded(
                 child: Column(
-                  crossAxisAlignment:
-                  CrossAxisAlignment
-                      .start,
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(
-                      goat.goatCode,
-                      style:
-                      AppTheme.heading(
-                        size: 14,
-                      ),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            goat.goatCode,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: AppTheme.heading(
+                              size: 14,
+                            ),
+                          ),
+                        ),
+
+                        const SizedBox(width: 6),
+
+                        Icon(
+                          Icons.chevron_right_rounded,
+                          size: 18,
+                          color: AppColors.textGrey.withOpacity(0.7),
+                        ),
+                      ],
                     ),
 
-                    const SizedBox(
-                      height: 3,
-                    ),
+                    const SizedBox(height: 3),
 
                     Text(
                       '${goat.breed} · ${goat.gender}',
-                      style:
-                      AppTheme.body(
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: AppTheme.body(
                         size: 12,
+                        color: AppColors.textGrey,
                       ),
                     ),
 
                     if (goat.pricing > 0) ...[
-                      const SizedBox(
-                        height: 2,
-                      ),
+                      const SizedBox(height: 3),
                       Text(
-                        '₹${goat.pricing.toStringAsFixed(0)}/mo',
-                        style:
-                        AppTheme.body(
+                        '₹${goat.pricing.toStringAsFixed(0)}/month',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: AppTheme.body(
                           size: 11,
-                          color:
-                          AppColors
-                              .textGrey,
+                          color: AppColors.textGrey,
+                          weight: FontWeight.w500,
                         ),
                       ),
                     ],
 
-                    const SizedBox(
-                      height: 6,
+                    const SizedBox(height: 7),
+
+                    // Health status
+                    _healthBadge(
+                      goat.healthStatus,
+                      healthColor,
                     ),
 
-                    Container(
-                      padding:
-                      const EdgeInsets
-                          .symmetric(
-                        horizontal: 8,
-                        vertical: 3,
-                      ),
-                      decoration:
-                      BoxDecoration(
-                        color: healthColor
-                            .withOpacity(
-                          0.12,
-                        ),
-                        borderRadius:
-                        BorderRadius
-                            .circular(
-                          8,
-                        ),
-                      ),
-                      child: Row(
-                        mainAxisSize:
-                        MainAxisSize.min,
-                        children: [
-                          Container(
-                            width: 6,
-                            height: 6,
-                            decoration:
-                            BoxDecoration(
-                              color:
-                              healthColor,
-                              shape:
-                              BoxShape
-                                  .circle,
-                            ),
-                          ),
+                    const SizedBox(height: 7),
 
-                          const SizedBox(
-                            width: 5,
-                          ),
-
-                          Text(
-                            goat.healthStatus,
-                            style:
-                            AppTheme.body(
-                              size: 11,
-                              color:
-                              healthColor,
-                              weight:
-                              FontWeight
-                                  .w600,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-
-                    const SizedBox(
-                      height: 6,
-                    ),
-
+                    // IMPORTANT:
+                    // This is now width-constrained and can never overflow.
                     _reportBadge(goat),
                   ],
                 ),
@@ -1393,46 +1314,10 @@ class _GoatListScreenState extends State<GoatListScreen> {
 
               const SizedBox(width: 8),
 
-              Column(
-                crossAxisAlignment:
-                CrossAxisAlignment.end,
-                children: [
-                  Container(
-                    padding:
-                    const EdgeInsets
-                        .symmetric(
-                      horizontal: 10,
-                      vertical: 6,
-                    ),
-                    decoration:
-                    BoxDecoration(
-                      color:
-                      AppColors
-                          .lightGreen,
-                      borderRadius:
-                      BorderRadius
-                          .circular(
-                        10,
-                      ),
-                    ),
-                    child: Text(
-                      _boardedFor(
-                        goat.checkInDate,
-                      ),
-                      style:
-                      AppTheme.body(
-                        size: 11,
-                        color:
-                        AppColors
-                            .darkGreen,
-                        weight:
-                        FontWeight
-                            .w600,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
+              // ------------------------------------------------------------
+              // BOARDING DURATION
+              // ------------------------------------------------------------
+              _boardingBadge(goat),
             ],
           ),
         ),
@@ -1440,55 +1325,193 @@ class _GoatListScreenState extends State<GoatListScreen> {
     );
   }
 
-  Widget _reportBadge(
-      PalaiGoat goat,
-      ) {
-    final generated =
-        goat.reportStatus !=
-            'Not Generated' &&
-            goat.reportsCount > 0;
+  Widget _goatAvatar({
+    required PalaiGoat goat,
+    required Color healthColor,
+  }) {
+    return Container(
+      width: 58,
+      height: 58,
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        color: AppColors.lightGreen,
+        border: Border.all(
+          color: healthColor.withOpacity(0.55),
+          width: 2.5,
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: healthColor.withOpacity(0.10),
+            blurRadius: 8,
+            offset: const Offset(0, 3),
+          ),
+        ],
+      ),
+      child: ClipOval(
+        child: goat.beforeImage != null
+            ? Image.memory(
+          goat.beforeImage!,
+          fit: BoxFit.cover,
+          width: 58,
+          height: 58,
+          errorBuilder: (_, __, ___) {
+            return const Icon(
+              Icons.pets,
+              color: AppColors.primaryGreen,
+              size: 26,
+            );
+          },
+        )
+            : const Icon(
+          Icons.pets,
+          color: AppColors.primaryGreen,
+          size: 26,
+        ),
+      ),
+    );
+  }
+
+  Widget _boardingBadge(PalaiGoat goat) {
+    final duration = _boardedFor(goat.checkInDate);
 
     return Container(
-      padding:
-      const EdgeInsets.symmetric(
+      constraints: const BoxConstraints(
+        minWidth: 62,
+        maxWidth: 76,
+      ),
+      padding: const EdgeInsets.symmetric(
         horizontal: 8,
-        vertical: 3,
+        vertical: 7,
       ),
-      decoration:
-      BoxDecoration(
-        color: (generated
-            ? AppColors.info
-            : AppColors.textGrey)
-            .withOpacity(0.10),
-        borderRadius:
-        BorderRadius.circular(8),
+      decoration: BoxDecoration(
+        color: AppColors.lightGreen,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+          color: AppColors.primaryGreen.withOpacity(0.08),
+        ),
       ),
-      child: Row(
-        mainAxisSize:
-        MainAxisSize.min,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(
-            Icons
-                .description_outlined,
-            size: 11,
-            color: generated
-                ? AppColors.info
-                : AppColors.textGrey,
-          ),
-
-          const SizedBox(width: 4),
-
           Text(
-            generated
-                ? goat.reportStatus
-                : 'No report yet',
+            duration,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            textAlign: TextAlign.center,
             style: AppTheme.body(
               size: 10,
-              color: generated
-                  ? AppColors.info
-                  : AppColors.textGrey,
-              weight:
-              FontWeight.w600,
+              color: AppColors.darkGreen,
+              weight: FontWeight.w700,
+            ),
+          ),
+
+          const SizedBox(height: 2),
+
+          Text(
+            'boarded',
+            style: AppTheme.body(
+              size: 8,
+              color: AppColors.textGrey,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _healthBadge(
+      String status,
+      Color healthColor,
+      ) {
+    return Container(
+      padding: const EdgeInsets.symmetric(
+        horizontal: 8,
+        vertical: 4,
+      ),
+      decoration: BoxDecoration(
+        color: healthColor.withOpacity(0.10),
+        borderRadius: BorderRadius.circular(20),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            width: 6,
+            height: 6,
+            decoration: BoxDecoration(
+              color: healthColor,
+              shape: BoxShape.circle,
+            ),
+          ),
+
+          const SizedBox(width: 5),
+
+          Flexible(
+            child: Text(
+              status,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: AppTheme.body(
+                size: 10,
+                color: healthColor,
+                weight: FontWeight.w700,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _reportBadge(PalaiGoat goat) {
+    final generated =
+        goat.reportStatus != 'Not Generated' &&
+            goat.reportsCount > 0;
+
+    final color = generated
+        ? AppColors.info
+        : AppColors.textGrey;
+
+    final text = generated
+        ? goat.reportStatus
+        : 'No report yet';
+
+    return Container(
+      width: double.infinity,
+      constraints: const BoxConstraints(
+        minHeight: 28,
+      ),
+      padding: const EdgeInsets.symmetric(
+        horizontal: 8,
+        vertical: 5,
+      ),
+      decoration: BoxDecoration(
+        color: color.withOpacity(0.09),
+        borderRadius: BorderRadius.circular(9),
+      ),
+      child: Row(
+        children: [
+          Icon(
+            generated
+                ? Icons.description_outlined
+                : Icons.description_outlined,
+            size: 13,
+            color: color,
+          ),
+
+          const SizedBox(width: 5),
+
+          Expanded(
+            child: Text(
+              text,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              softWrap: false,
+              style: AppTheme.body(
+                size: 10,
+                color: color,
+                weight: FontWeight.w600,
+              ),
             ),
           ),
         ],
