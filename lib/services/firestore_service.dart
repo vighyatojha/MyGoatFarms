@@ -681,6 +681,8 @@ class FirestoreService {
     ).timeout(timeout);
   }
 
+
+
   /// Records a standalone payment from a Palai customer.
   ///
   /// This operation is atomic:
@@ -1660,25 +1662,116 @@ class FirestoreService {
   /// Firebase Auth uid (created beforehand via [PartnerAuthService]) rather
   /// than an auto-id — this lets Firestore security rules grant a partner
   /// access with a simple `exists()` check instead of a query.
-  Future<void> addPartner(
-      String farmId, {
-        required String name,
-        required String mobileNumber,
-        required String email,
-        required String authUid,
-      }) async {
-    await _partners(farmId).doc(authUid).set({
+  Future<void> addPartner({
+    required String farmId,
+    required String name,
+    required String mobileNumber,
+    required String email,
+    required String authUid,
+  }) async {
+    final ref = _farms
+        .doc(farmId)
+        .collection('partners')
+        .doc(authUid);
+
+    await ref.set({
       'name': name.trim(),
       'mobileNumber': mobileNumber.trim(),
       'email': email.trim(),
       'authUid': authUid,
+
+      'role': 'partner',
+      'status': 'pending',
+
+      'permissions': PartnerPermissions.none().toMap(),
+
       'createdAt': FieldValue.serverTimestamp(),
-    }).timeout(timeout);
+      'updatedAt': FieldValue.serverTimestamp(),
+    });
   }
 
-  Future<void> deletePartner(String farmId, String partnerId) async {
-    await _partners(farmId).doc(partnerId).delete().timeout(timeout);
+  Future<void> approvePartner({
+    required String farmId,
+    required String partnerId,
+    required String adminUid,
+    required PartnerPermissions permissions,
+  }) async {
+    await _farms
+        .doc(farmId)
+        .collection('partners')
+        .doc(partnerId)
+        .update({
+      'status': 'active',
+      'permissions': permissions.toMap(),
+      'approvedBy': adminUid,
+      'approvedAt': FieldValue.serverTimestamp(),
+      'updatedAt': FieldValue.serverTimestamp(),
+    });
   }
+
+  Future<void> rejectPartner({
+    required String farmId,
+    required String partnerId,
+  }) async {
+    await _farms
+        .doc(farmId)
+        .collection('partners')
+        .doc(partnerId)
+        .update({
+      'status': 'rejected',
+      'updatedAt': FieldValue.serverTimestamp(),
+    });
+  }
+
+  Future<void> disablePartner({
+    required String farmId,
+    required String partnerId,
+  }) async {
+    await _farms
+        .doc(farmId)
+        .collection('partners')
+        .doc(partnerId)
+        .update({
+      'status': 'disabled',
+      'disabledAt': FieldValue.serverTimestamp(),
+      'updatedAt': FieldValue.serverTimestamp(),
+    });
+  }
+
+  Future<void> enablePartner({
+    required String farmId,
+    required String partnerId,
+    required String adminUid,
+    required PartnerPermissions permissions,
+  }) async {
+    await _farms
+        .doc(farmId)
+        .collection('partners')
+        .doc(partnerId)
+        .update({
+      'status': 'active',
+      'permissions': permissions.toMap(),
+      'approvedBy': adminUid,
+      'disabledAt': null,
+      'updatedAt': FieldValue.serverTimestamp(),
+    });
+  }
+
+  Future<void> updatePartnerPermissions({
+    required String farmId,
+    required String partnerId,
+    required PartnerPermissions permissions,
+  }) async {
+    await _farms
+        .doc(farmId)
+        .collection('partners')
+        .doc(partnerId)
+        .update({
+      'permissions': permissions.toMap(),
+      'updatedAt': FieldValue.serverTimestamp(),
+    });
+  }
+
 
   // ---------------------------------------------------------------------
   // Own Farm Palai — goats owned by the farm itself

@@ -1,13 +1,12 @@
 import 'dart:async';
-
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+
 import '../../app_theme.dart';
 import '../../models/stock_model.dart';
 import '../../models/activity_model.dart';
 import '../../services/firestore_service.dart';
 
-/// Records medicine used (e.g. given to a goat), deducting it from the
-/// matching medicine stock item. Mirrors [FeedUsedScreen] for medicine.
 class MedicineUsedScreen extends StatefulWidget {
   const MedicineUsedScreen({super.key});
 
@@ -37,40 +36,61 @@ class _MedicineUsedScreenState extends State<MedicineUsedScreen> {
     super.dispose();
   }
 
+  void _message(String text, {bool error = false}) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(text),
+        behavior: SnackBarBehavior.floating,
+        backgroundColor: error ? AppColors.error : AppColors.primaryGreen,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+      ),
+    );
+  }
+
   Future<void> _save() async {
-    if (_selectedItem == null || _farmId == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Please select a medicine'), backgroundColor: AppColors.error),
-      );
+    final item = _selectedItem;
+    final farmId = _farmId;
+
+    if (item == null || farmId == null) {
+      _message('Select a medicine first.', error: true);
       return;
     }
+
     final quantity = double.tryParse(_quantityController.text.trim()) ?? 0;
+
     if (quantity <= 0) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Enter a valid quantity'), backgroundColor: AppColors.error),
-      );
+      _message('Enter a valid quantity.', error: true);
       return;
     }
+
+    if (quantity > item.quantity) {
+      _message('Only ${item.quantity.toStringAsFixed(0)} ${item.unit} is available.', error: true);
+      return;
+    }
+
+    final confirmed = await _confirmUsage(item, quantity);
+    if (!confirmed || !mounted) return;
 
     setState(() => _saving = true);
 
     try {
       await FirestoreService.instance.useStock(
-        _farmId!,
-        itemId: _selectedItem!.id,
-        itemName: _selectedItem!.name,
+        farmId,
+        itemId: item.id,
+        itemName: item.name,
         quantity: quantity,
-        unit: _selectedItem!.unit,
+        unit: item.unit,
         notes: _notesController.text.trim(),
       );
 
       await FirestoreService.instance.logActivity(
-        _farmId!,
+        farmId,
         ActivityLog(
           id: '',
           type: ActivityType.medicineUsed,
           title: 'Medicine Used',
-          subtitle: '${quantity.toStringAsFixed(0)} ${_selectedItem!.unit} of ${_selectedItem!.name} used'
+          subtitle: '${quantity.toStringAsFixed(0)} ${item.unit} of ${item.name} used'
               '${_notesController.text.trim().isEmpty ? '' : ' — ${_notesController.text.trim()}'}',
           module: 'stock',
           timestamp: DateTime.now(),
@@ -79,25 +99,106 @@ class _MedicineUsedScreenState extends State<MedicineUsedScreen> {
 
       if (!mounted) return;
       Navigator.of(context).pop();
-      _finishWithSnack();
+      _message('Medicine usage recorded');
     } on TimeoutException {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('This is taking too long. Check your connection and try again.'), backgroundColor: AppColors.error),
-      );
+      _message('Connection is taking too long. Please try again.', error: true);
     } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(FirestoreService.instance.describeError(e)), backgroundColor: AppColors.error),
-      );
+      _message(FirestoreService.instance.describeError(e), error: true);
     } finally {
       if (mounted) setState(() => _saving = false);
     }
   }
 
-  void _finishWithSnack() {
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Medicine usage recorded'), backgroundColor: AppColors.primaryGreen),
+  Future<bool> _confirmUsage(StockItem item, double quantity) async {
+    final remaining = item.quantity - quantity;
+
+    return await showModalBottomSheet<bool>(
+          context: context,
+          backgroundColor: Colors.transparent,
+          builder: (sheetContext) {
+            return Container(
+              padding: const EdgeInsets.fromLTRB(20, 12, 20, 22),
+              decoration: const BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.vertical(top: Radius.circular(26)),
+              ),
+              child: SafeArea(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Container(
+                      width: 42,
+                      height: 5,
+                      decoration: BoxDecoration(
+                        color: Colors.grey.shade300,
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                    ),
+                    const SizedBox(height: 18),
+                    const CircleAvatar(
+                      radius: 28,
+                      backgroundColor: AppColors.lightGreen,
+                      child: Icon(Icons.medication_outlined, color: AppColors.primaryGreen, size: 28),
+                    ),
+                    const SizedBox(height: 12),
+                    Text('Confirm medicine usage', style: AppTheme.heading(size: 17)),
+                    const SizedBox(height: 5),
+                    Text(
+                      '${quantity.toStringAsFixed(0)} ${item.unit} will be deducted from ${item.name}.',
+                      textAlign: TextAlign.center,
+                      style: AppTheme.body(size: 12),
+                    ),
+                    const SizedBox(height: 16),
+                    _summaryRow('Current stock', '${item.quantity.toStringAsFixed(0)} ${item.unit}'),
+                    _summaryRow('Used now', '${quantity.toStringAsFixed(0)} ${item.unit}'),
+                    _summaryRow('Remaining', '${remaining.toStringAsFixed(0)} ${item.unit}', highlight: true),
+                    const SizedBox(height: 18),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: OutlinedButton(
+                            onPressed: () => Navigator.pop(sheetContext, false),
+                            child: const Text('Cancel'),
+                          ),
+                        ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: ElevatedButton(
+                            onPressed: () => Navigator.pop(sheetContext, true),
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: AppColors.primaryGreen,
+                              foregroundColor: Colors.white,
+                            ),
+                            child: const Text('Confirm'),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            );
+          },
+        ) ??
+        false;
+  }
+
+  Widget _summaryRow(String label, String value, {bool highlight = false}) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 5),
+      child: Row(
+        children: [
+          Expanded(child: Text(label, style: AppTheme.body(size: 12))),
+          Text(
+            value,
+            style: AppTheme.body(
+              size: 12,
+              color: highlight ? AppColors.darkGreen : AppColors.textDark,
+              weight: FontWeight.w700,
+            ),
+          ),
+        ],
+      ),
     );
   }
 
@@ -109,111 +210,308 @@ class _MedicineUsedScreenState extends State<MedicineUsedScreen> {
         backgroundColor: AppColors.paleGreen,
         elevation: 0,
         foregroundColor: AppColors.textDark,
-        title: Text('Medicine Used', style: AppTheme.heading(size: 17)),
+        titleSpacing: 4,
+        title: Text('Medicine Used', style: AppTheme.heading(size: 18)),
       ),
       body: _farmId == null
           ? const Center(child: CircularProgressIndicator(color: AppColors.primaryGreen))
-          : SingleChildScrollView(
-        padding: const EdgeInsets.all(20),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            _label('Select Medicine'),
-            StreamBuilder<List<StockItem>>(
+          : StreamBuilder<List<StockItem>>(
               stream: FirestoreService.instance.stockItemsStream(_farmId!, type: StockType.medicine),
               builder: (context, snap) {
-                final items = snap.data ?? [];
-                if (snap.hasData && items.isEmpty) {
-                  return Text('No medicine stock yet — add some first.', style: AppTheme.body(size: 12));
+                if (snap.connectionState == ConnectionState.waiting && !snap.hasData) {
+                  return const Center(child: CircularProgressIndicator(color: AppColors.primaryGreen));
                 }
-                // Re-resolve the selection against the CURRENT items list
-                // rather than reusing the old StockItem instance — each
-                // stream snapshot rebuilds fresh objects, so pointing the
-                // dropdown's value at a stale instance (even one with a
-                // matching id) trips DropdownButton's "exactly one item
-                // with this value" assertion. If the item was deleted,
-                // drop the selection instead of pointing at a value that
-                // can't be found.
+
+                final items = snap.data ?? <StockItem>[];
+
+                if (items.isEmpty) {
+                  return _emptyState();
+                }
+
                 StockItem? selected;
-                for (final i in items) {
-                  if (i.id == _selectedItem?.id) {
-                    selected = i;
+                for (final item in items) {
+                  if (item.id == _selectedItem?.id) {
+                    selected = item;
                     break;
                   }
                 }
-                return Container(
-                  decoration: AppTheme.card(radius: 12),
-                  padding: const EdgeInsets.symmetric(horizontal: 12),
-                  child: DropdownButtonHideUnderline(
-                    child: DropdownButton<StockItem>(
-                      value: selected,
-                      isExpanded: true,
-                      hint: Text('Choose medicine', style: AppTheme.body(size: 13)),
-                      items: items
-                          .map((i) => DropdownMenuItem(
-                          value: i,
-                          child: Text('${i.name} (${i.quantity.toStringAsFixed(0)} ${i.unit} left)',
-                              style: AppTheme.body(size: 13, color: AppColors.textDark))))
-                          .toList(),
-                      onChanged: (v) => setState(() => _selectedItem = v),
-                    ),
-                  ),
+
+                if (selected != null && selected != _selectedItem) {
+                  WidgetsBinding.instance.addPostFrameCallback((_) {
+                    if (mounted) setState(() => _selectedItem = selected);
+                  });
+                }
+
+                return ListView(
+                  padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
+                  children: [
+                    _hero(),
+                    const SizedBox(height: 16),
+                    _stockSelector(items, selected),
+                    const SizedBox(height: 14),
+                    if (selected != null) _availableCard(selected),
+                    const SizedBox(height: 14),
+                    _quantityField(selected),
+                    const SizedBox(height: 14),
+                    _notesField(),
+                    const SizedBox(height: 20),
+                    _saveButton(),
+                  ],
                 );
               },
             ),
-            const SizedBox(height: 16),
-            _label('Quantity Used (${_selectedItem?.unit ?? 'unit'})'),
-            _field(_quantityController, hint: 'e.g. 2', keyboardType: TextInputType.number),
-            const SizedBox(height: 16),
-            _label('Notes'),
-            _field(_notesController, hint: 'e.g. Given to Goat G-1004 for deworming', maxLines: 2, optional: true),
-            const SizedBox(height: 28),
-            SizedBox(
-              width: double.infinity,
-              child: ElevatedButton(
-                onPressed: _saving ? null : _save,
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: AppColors.breedingPurple,
-                  foregroundColor: Colors.white,
-                  padding: const EdgeInsets.symmetric(vertical: 16),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+    );
+  }
+
+  Widget _hero() {
+    return Container(
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        gradient: const LinearGradient(
+          colors: [AppColors.primaryGreen, AppColors.darkGreen],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        borderRadius: BorderRadius.circular(22),
+        boxShadow: [
+          BoxShadow(color: AppColors.darkGreen.withOpacity(.20), blurRadius: 18, offset: const Offset(0, 8)),
+        ],
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 54,
+            height: 54,
+            decoration: BoxDecoration(color: Colors.white.withOpacity(.18), shape: BoxShape.circle),
+            child: const Icon(Icons.medication_rounded, color: Colors.white, size: 28),
+          ),
+          const SizedBox(width: 14),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('Record medicine usage', style: AppTheme.heading(size: 17, color: Colors.white)),
+                const SizedBox(height: 4),
+                Text('Track medicine given to goats and keep inventory accurate.', style: AppTheme.body(size: 11, color: Colors.white70)),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _stockSelector(List<StockItem> items, StockItem? selected) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: AppTheme.card(radius: 18),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _sectionTitle(Icons.medication_outlined, 'Medicine'),
+          const SizedBox(height: 12),
+          DropdownButtonFormField<String>(
+            value: selected?.id,
+            isExpanded: true,
+            decoration: InputDecoration(
+              hintText: 'Choose medicine',
+              prefixIcon: const Icon(Icons.inventory_2_outlined, color: AppColors.primaryGreen),
+              filled: true,
+              fillColor: AppColors.paleGreen,
+              border: OutlineInputBorder(borderRadius: BorderRadius.circular(13), borderSide: BorderSide.none),
+            ),
+            items: items.map((item) {
+              final low = item.isLowStock;
+              return DropdownMenuItem(
+                value: item.id,
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Text(item.name, style: AppTheme.body(size: 13, color: AppColors.textDark, weight: FontWeight.w600)),
+                    ),
+                    Text(
+                      '${item.quantity.toStringAsFixed(0)} ${item.unit}',
+                      style: AppTheme.body(size: 11, color: low ? AppColors.error : AppColors.darkGreen, weight: FontWeight.w700),
+                    ),
+                  ],
                 ),
-                child: _saving
-                    ? const SizedBox(height: 18, width: 18, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
-                    : const Text('Record Usage', style: TextStyle(fontWeight: FontWeight.w600)),
+              );
+            }).toList(),
+            onChanged: (id) {
+              for (final item in items) {
+                if (item.id == id) {
+                  setState(() {
+                    _selectedItem = item;
+                    _quantityController.clear();
+                  });
+                  break;
+                }
+              }
+            },
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _availableCard(StockItem item) {
+    final progress = item.quantity <= 0 ? 0.0 : (item.quantity / (item.quantity + 10)).clamp(0.0, 1.0);
+    final low = item.isLowStock;
+
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: low ? AppColors.error.withOpacity(.07) : AppColors.lightGreen,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: low ? AppColors.error.withOpacity(.18) : AppColors.primaryGreen.withOpacity(.12)),
+      ),
+      child: Column(
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.inventory_2_rounded, color: AppColors.primaryGreen, size: 21),
+              const SizedBox(width: 9),
+              Expanded(child: Text('Available stock', style: AppTheme.body(size: 12, weight: FontWeight.w600))),
+              Text(
+                '${item.quantity.toStringAsFixed(0)} ${item.unit}',
+                style: AppTheme.heading(size: 16, color: low ? AppColors.error : AppColors.darkGreen),
               ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(10),
+            child: LinearProgressIndicator(
+              value: progress,
+              minHeight: 7,
+              backgroundColor: Colors.white,
+              valueColor: AlwaysStoppedAnimation<Color>(low ? AppColors.error : AppColors.primaryGreen),
+            ),
+          ),
+          if (low) ...[
+            const SizedBox(height: 7),
+            Row(
+              children: [
+                const Icon(Icons.warning_amber_rounded, color: AppColors.error, size: 16),
+                const SizedBox(width: 5),
+                Text('Stock is already low', style: AppTheme.body(size: 11, color: AppColors.error, weight: FontWeight.w700)),
+              ],
             ),
           ],
+        ],
+      ),
+    );
+  }
+
+  Widget _quantityField(StockItem? item) {
+    return _card(
+      title: 'Usage quantity',
+      icon: Icons.remove_circle_outline_rounded,
+      child: TextField(
+        controller: _quantityController,
+        keyboardType: const TextInputType.numberWithOptions(decimal: true),
+        inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'[0-9.]'))],
+        style: AppTheme.body(size: 14, color: AppColors.textDark, weight: FontWeight.w600),
+        decoration: InputDecoration(
+          hintText: 'e.g. 2',
+          suffixText: item?.unit ?? 'unit',
+          prefixIcon: const Icon(Icons.numbers_rounded, color: AppColors.primaryGreen),
+          filled: true,
+          fillColor: Colors.white,
+          border: OutlineInputBorder(borderRadius: BorderRadius.circular(13), borderSide: BorderSide(color: AppColors.divider)),
+          enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(13), borderSide: BorderSide(color: AppColors.divider)),
         ),
       ),
     );
   }
 
-  Widget _label(String text) => Padding(
-    padding: const EdgeInsets.only(bottom: 6),
-    child: Text(text, style: AppTheme.heading(size: 13)),
-  );
-
-  Widget _field(
-      TextEditingController controller, {
-        String? hint,
-        TextInputType? keyboardType,
-        int maxLines = 1,
-        bool optional = false,
-      }) {
-    return Container(
-      decoration: AppTheme.card(radius: 12),
+  Widget _notesField() {
+    return _card(
+      title: 'Usage note',
+      icon: Icons.notes_rounded,
       child: TextField(
-        controller: controller,
-        keyboardType: keyboardType,
-        maxLines: maxLines,
-        decoration: InputDecoration(
-          hintText: hint,
-          hintStyle: AppTheme.body(size: 12),
-          border: InputBorder.none,
-          contentPadding: const EdgeInsets.all(14),
-        ),
+        controller: _notesController,
+        maxLines: 3,
         style: AppTheme.body(size: 13, color: AppColors.textDark),
+        decoration: InputDecoration(
+          hintText: 'e.g. Given to Goat G-1004 for deworming',
+          filled: true,
+          fillColor: Colors.white,
+          border: OutlineInputBorder(borderRadius: BorderRadius.circular(13), borderSide: BorderSide(color: AppColors.divider)),
+          enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(13), borderSide: BorderSide(color: AppColors.divider)),
+        ),
+      ),
+    );
+  }
+
+  Widget _card({required String title, required IconData icon, required Widget child}) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: AppTheme.card(radius: 18),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _sectionTitle(icon, title),
+          const SizedBox(height: 12),
+          child,
+        ],
+      ),
+    );
+  }
+
+  Widget _sectionTitle(IconData icon, String title) {
+    return Row(
+      children: [
+        Container(
+          width: 34,
+          height: 34,
+          decoration: BoxDecoration(color: AppColors.lightGreen, borderRadius: BorderRadius.circular(10)),
+          child: Icon(icon, color: AppColors.primaryGreen, size: 18),
+        ),
+        const SizedBox(width: 10),
+        Text(title, style: AppTheme.heading(size: 14)),
+      ],
+    );
+  }
+
+  Widget _saveButton() {
+    return SizedBox(
+      height: 54,
+      child: ElevatedButton.icon(
+        onPressed: _saving ? null : _save,
+        icon: _saving
+            ? const SizedBox(width: 19, height: 19, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+            : const Icon(Icons.check_circle_outline_rounded),
+        label: Text(_saving ? 'Saving...' : 'Record Medicine Usage'),
+        style: ElevatedButton.styleFrom(
+          backgroundColor: AppColors.primaryGreen,
+          foregroundColor: Colors.white,
+          elevation: 4,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          textStyle: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14),
+        ),
+      ),
+    );
+  }
+
+  Widget _emptyState() {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(30),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const CircleAvatar(
+              radius: 42,
+              backgroundColor: AppColors.lightGreen,
+              child: Icon(Icons.medication_outlined, color: AppColors.primaryGreen, size: 38),
+            ),
+            const SizedBox(height: 16),
+            Text('No medicine stock yet', style: AppTheme.heading(size: 17)),
+            const SizedBox(height: 6),
+            Text('Add medicine stock first, then record its usage.', textAlign: TextAlign.center, style: AppTheme.body(size: 12)),
+          ],
+        ),
       ),
     );
   }
