@@ -3,6 +3,8 @@ import 'package:animate_do/animate_do.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'monthly_bills_screen.dart';
+import '../../models/monthly_bill_model.dart';
+import '../../services/monthly_billing_service.dart';
 import '../../app_theme.dart';
 import '../../models/palai_models.dart';
 import '../../services/firestore_service.dart';
@@ -151,6 +153,7 @@ class _CustomerProfileScreenState
                 return _AddPaymentSheet(
                   farmId: widget.farmId,
                   customer: _customer,
+                  bill: bill,
                 );
               },
             );
@@ -2063,13 +2066,25 @@ class _CustomerProfileScreenState
 // ADD PAYMENT SHEET
 // ====================================================================
 
+// ====================================================================
+// ADD PAYMENT SHEET
+// ====================================================================
+
 class _AddPaymentSheet extends StatefulWidget {
   final String farmId;
   final PalaiCustomer customer;
 
+  /// Null:
+  ///   Normal customer payment.
+  ///
+  /// Non-null:
+  ///   Payment is specifically being made against this Monthly Bill.
+  final MonthlyBill? bill;
+
   const _AddPaymentSheet({
     required this.farmId,
     required this.customer,
+    this.bill,
   });
 
   @override
@@ -2079,66 +2094,116 @@ class _AddPaymentSheet extends StatefulWidget {
 
 class _AddPaymentSheetState
     extends State<_AddPaymentSheet> {
-  final _amountController =
+  final TextEditingController _amountController =
   TextEditingController();
 
-  final _referenceController =
+  final TextEditingController _referenceController =
   TextEditingController();
 
-  final _noteController =
+  final TextEditingController _noteController =
   TextEditingController();
 
   String _paymentMethod = 'Cash';
 
   bool _saving = false;
 
-  double get _amount =>
-      double.tryParse(
-        _amountController.text.trim(),
-      ) ??
-          0;
+  // ================================================================
+  // AMOUNT
+  // ================================================================
 
-  double get _applied =>
-      _amount
-          .clamp(
-        0,
-        widget.customer.pendingAmount,
-      )
-          .toDouble();
+  double get _amount {
+    return double.tryParse(
+      _amountController.text.trim(),
+    ) ??
+        0;
+  }
 
-  double get _advanceAdded =>
-      (_amount - _applied)
-          .clamp(
-        0,
-        double.infinity,
-      )
-          .toDouble();
+  /// If this payment was opened from Monthly Bills,
+  /// the maximum amount applied to that bill is the bill's
+  /// remaining amount.
+  ///
+  /// Otherwise it is the customer's pending amount.
+  double get _paymentLimit {
+    if (widget.bill != null) {
+      return widget.bill!.remainingAmount;
+    }
 
-  double get _pendingAfter =>
-      (widget.customer.pendingAmount - _applied)
-          .clamp(
-        0,
-        double.infinity,
-      )
-          .toDouble();
+    return widget.customer.pendingAmount;
+  }
 
-  double get _advanceAfter =>
-      widget.customer.advanceAmount +
-          _advanceAdded;
+  double get _applied {
+    return _amount
+        .clamp(
+      0,
+      _paymentLimit,
+    )
+        .toDouble();
+  }
+
+  double get _advanceAdded {
+    return (_amount - _applied)
+        .clamp(
+      0,
+      double.infinity,
+    )
+        .toDouble();
+  }
+
+  double get _pendingAfter {
+    return (widget.customer.pendingAmount -
+        _applied)
+        .clamp(
+      0,
+      double.infinity,
+    )
+        .toDouble();
+  }
+
+  double get _advanceAfter {
+    return widget.customer.advanceAmount +
+        _advanceAdded;
+  }
+
+  // ================================================================
+  // DISPOSE
+  // ================================================================
 
   @override
   void dispose() {
     _amountController.dispose();
     _referenceController.dispose();
     _noteController.dispose();
+
     super.dispose();
   }
 
+  // ================================================================
+  // SAVE PAYMENT
+  // ================================================================
+
   Future<void> _save() async {
+    // --------------------------------------------------------------
+    // VALIDATION
+    // --------------------------------------------------------------
+
     if (_amount <= 0) {
       _error(
         'Enter a payment amount greater than ₹0.',
       );
+      return;
+    }
+
+    if (_paymentLimit <= 0) {
+      if (widget.bill != null) {
+        _error(
+          'This monthly bill has no remaining amount.',
+        );
+      } else {
+        _error(
+          'This customer has no outstanding amount.',
+        );
+      }
+
       return;
     }
 
@@ -2149,6 +2214,117 @@ class _AddPaymentSheetState
     });
 
     try {
+      // ============================================================
+      // MONTHLY BILL PAYMENT
+      // ============================================================
+
+      if (widget.bill != null) {
+        final result =
+        await MonthlyBillingService.instance
+            .receiveMonthlyBillPayment(
+          farmId: widget.farmId,
+          customerId: widget.customer.id,
+          billId: widget.bill!.id,
+          paidAmount: _amount,
+          paymentMethod: _paymentMethod,
+          note: _buildNote(),
+        );
+
+        if (!mounted) return;
+
+        // ----------------------------------------------------------
+        // MONTHLY BILL SUCCESS DIALOG
+        // ----------------------------------------------------------
+
+        await showDialog<void>(
+          context: context,
+          barrierDismissible: false,
+          builder: (dialogContext) {
+            return AlertDialog(
+              title: const Text(
+                'Payment Recorded',
+              ),
+
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(
+                    Icons.check_circle,
+                    color: AppColors.success,
+                    size: 52,
+                  ),
+
+                  const SizedBox(height: 12),
+
+                  Text(
+                    result.paymentNumber,
+                    style: AppTheme.heading(
+                      size: 14,
+                    ),
+                  ),
+
+                  const SizedBox(height: 14),
+
+                  _resultRow(
+                    'Bill',
+                    result.billNumber,
+                  ),
+
+                  _resultRow(
+                    'Amount',
+                    '₹${result.amountReceived.toStringAsFixed(0)}',
+                  ),
+
+                  _resultRow(
+                    'Bill Remaining',
+                    '₹${result.billRemainingAfter.toStringAsFixed(0)}',
+                  ),
+
+                  _resultRow(
+                    'Customer Pending',
+                    '₹${result.pendingAfter.toStringAsFixed(0)}',
+                  ),
+
+                  if (result.advanceAfter > 0)
+                    _resultRow(
+                      'Customer Advance',
+                      '₹${result.advanceAfter.toStringAsFixed(0)}',
+                    ),
+                ],
+              ),
+
+              actions: [
+                TextButton(
+                  onPressed: () {
+                    Navigator.pop(dialogContext);
+                  },
+                  child: const Text(
+                    'Done',
+                  ),
+                ),
+              ],
+            );
+          },
+        );
+
+        if (!mounted) return;
+
+        // ----------------------------------------------------------
+        // TRUE = PAYMENT SUCCESSFUL
+        // ----------------------------------------------------------
+
+        Navigator.pop(
+          context,
+          true,
+        );
+
+        return;
+      }
+
+      // ============================================================
+      // NORMAL CUSTOMER PAYMENT
+      // ============================================================
+
       final result =
       await FirestoreService.instance
           .receivePalaiPayment(
@@ -2161,9 +2337,14 @@ class _AddPaymentSheetState
 
       if (!mounted) return;
 
+      // ------------------------------------------------------------
+      // NORMAL PAYMENT SUCCESS DIALOG
+      // ------------------------------------------------------------
+
       await showDialog<void>(
         context: context,
-        builder: (context) {
+        barrierDismissible: false,
+        builder: (dialogContext) {
           return AlertDialog(
             title: const Text(
               'Payment Recorded',
@@ -2171,7 +2352,6 @@ class _AddPaymentSheetState
 
             content: Column(
               mainAxisSize: MainAxisSize.min,
-
               children: [
                 const Icon(
                   Icons.check_circle,
@@ -2188,7 +2368,7 @@ class _AddPaymentSheetState
                   ),
                 ),
 
-                const SizedBox(height: 12),
+                const SizedBox(height: 14),
 
                 _resultRow(
                   'Amount',
@@ -2220,9 +2400,9 @@ class _AddPaymentSheetState
 
             actions: [
               TextButton(
-                onPressed: () =>
-                    Navigator.pop(context),
-
+                onPressed: () {
+                  Navigator.pop(dialogContext);
+                },
                 child: const Text(
                   'Done',
                 ),
@@ -2234,6 +2414,10 @@ class _AddPaymentSheetState
 
       if (!mounted) return;
 
+      // ------------------------------------------------------------
+      // TRUE = NORMAL PAYMENT SUCCESSFUL
+      // ------------------------------------------------------------
+
       Navigator.pop(
         context,
         true,
@@ -2241,15 +2425,21 @@ class _AddPaymentSheetState
     } catch (e) {
       if (!mounted) return;
 
-      setState(() {
-        _saving = false;
-      });
-
       _error(
         FirestoreService.instance.describeError(e),
       );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _saving = false;
+        });
+      }
     }
   }
+
+  // ================================================================
+  // BUILD NOTE
+  // ================================================================
 
   String _buildNote() {
     final note =
@@ -2269,6 +2459,10 @@ class _AddPaymentSheetState
     return '$note · Reference: $reference';
   }
 
+  // ================================================================
+  // ERROR
+  // ================================================================
+
   void _error(String message) {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
@@ -2277,6 +2471,10 @@ class _AddPaymentSheetState
       ),
     );
   }
+
+  // ================================================================
+  // BUILD
+  // ================================================================
 
   @override
   Widget build(BuildContext context) {
@@ -2305,6 +2503,10 @@ class _AddPaymentSheetState
           CrossAxisAlignment.start,
 
           children: [
+            // --------------------------------------------------------
+            // HANDLE
+            // --------------------------------------------------------
+
             Center(
               child: Container(
                 width: 42,
@@ -2320,8 +2522,14 @@ class _AddPaymentSheetState
 
             const SizedBox(height: 20),
 
+            // --------------------------------------------------------
+            // TITLE
+            // --------------------------------------------------------
+
             Text(
-              'Add New Payment',
+              widget.bill != null
+                  ? 'Pay Monthly Bill'
+                  : 'Add New Payment',
               style: AppTheme.heading(
                 size: 20,
               ),
@@ -2336,19 +2544,91 @@ class _AddPaymentSheetState
               ),
             ),
 
+            // --------------------------------------------------------
+            // MONTHLY BILL INFORMATION
+            // --------------------------------------------------------
+
+            if (widget.bill != null) ...[
+              const SizedBox(height: 8),
+
+              Container(
+                width: double.infinity,
+
+                padding:
+                const EdgeInsets.all(12),
+
+                decoration: BoxDecoration(
+                  color: AppColors.lightGreen,
+                  borderRadius:
+                  BorderRadius.circular(12),
+                ),
+
+                child: Column(
+                  crossAxisAlignment:
+                  CrossAxisAlignment.start,
+
+                  children: [
+                    Text(
+                      widget.bill!.billNumber,
+                      style: AppTheme.heading(
+                        size: 13,
+                        color:
+                        AppColors.darkGreen,
+                      ),
+                    ),
+
+                    const SizedBox(height: 3),
+
+                    Text(
+                      DateFormat('MMMM yyyy')
+                          .format(
+                        widget.bill!.billingMonth,
+                      ),
+                      style: AppTheme.body(
+                        size: 11,
+                      ),
+                    ),
+
+                    const SizedBox(height: 7),
+
+                    Text(
+                      'Bill Remaining: '
+                          '₹${widget.bill!.remainingAmount.toStringAsFixed(0)}',
+                      style: AppTheme.heading(
+                        size: 12,
+                        color: AppColors.error,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+
             const SizedBox(height: 18),
+
+            // --------------------------------------------------------
+            // BALANCE PREVIEW
+            // --------------------------------------------------------
 
             _balancePreview(),
 
             const SizedBox(height: 20),
+
+            // --------------------------------------------------------
+            // PAYMENT AMOUNT
+            // --------------------------------------------------------
 
             _fieldLabel(
               'Payment Amount',
             ),
 
             _outlinedField(
-              controller: _amountController,
-              hint: 'Enter amount',
+              controller:
+              _amountController,
+
+              hint: widget.bill != null
+                  ? 'Maximum ₹${widget.bill!.remainingAmount.toStringAsFixed(0)}'
+                  : 'Enter amount',
 
               keyboardType:
               const TextInputType.numberWithOptions(
@@ -2359,11 +2639,16 @@ class _AddPaymentSheetState
                 '₹ ',
               ),
 
-              onChanged: (_) =>
-                  setState(() {}),
+              onChanged: (_) {
+                setState(() {});
+              },
             ),
 
             const SizedBox(height: 17),
+
+            // --------------------------------------------------------
+            // PAYMENT METHOD
+            // --------------------------------------------------------
 
             _fieldLabel(
               'Payment Method',
@@ -2373,6 +2658,10 @@ class _AddPaymentSheetState
 
             const SizedBox(height: 17),
 
+            // --------------------------------------------------------
+            // REFERENCE
+            // --------------------------------------------------------
+
             _fieldLabel(
               'Reference Number (optional)',
             ),
@@ -2380,23 +2669,35 @@ class _AddPaymentSheetState
             _outlinedField(
               controller:
               _referenceController,
+
               hint:
               'UPI / transaction / cheque number',
             ),
 
             const SizedBox(height: 17),
 
+            // --------------------------------------------------------
+            // NOTE
+            // --------------------------------------------------------
+
             _fieldLabel(
               'Note (optional)',
             ),
 
             _outlinedField(
-              controller: _noteController,
+              controller:
+              _noteController,
+
               hint: 'Add a note',
+
               maxLines: 3,
             ),
 
             const SizedBox(height: 22),
+
+            // --------------------------------------------------------
+            // RECEIVE PAYMENT BUTTON
+            // --------------------------------------------------------
 
             SizedBox(
               width: double.infinity,
@@ -2405,9 +2706,11 @@ class _AddPaymentSheetState
                 onPressed:
                 _saving ? null : _save,
 
-                style: ElevatedButton.styleFrom(
+                style:
+                ElevatedButton.styleFrom(
                   backgroundColor:
                   AppColors.primaryGreen,
+
                   foregroundColor:
                   Colors.white,
 
@@ -2427,16 +2730,19 @@ class _AddPaymentSheetState
                     ? const SizedBox(
                   width: 20,
                   height: 20,
-
                   child:
                   CircularProgressIndicator(
                     color: Colors.white,
                     strokeWidth: 2,
                   ),
                 )
-                    : const Text(
-                  'Receive Payment',
-                  style: TextStyle(
+                    : Text(
+                  widget.bill != null
+                      ? 'Pay Monthly Bill'
+                      : 'Receive Payment',
+
+                  style:
+                  const TextStyle(
                     fontWeight:
                     FontWeight.w600,
                   ),
@@ -2449,12 +2755,23 @@ class _AddPaymentSheetState
     );
   }
 
+  // ================================================================
+  // BALANCE PREVIEW
+  // ================================================================
+
   Widget _balancePreview() {
+    final outstanding =
+        widget.customer.pendingAmount;
+
+    final advance =
+        widget.customer.advanceAmount;
+
     return Container(
       padding: const EdgeInsets.all(14),
 
       decoration: BoxDecoration(
         color: AppColors.lightGreen,
+
         borderRadius:
         BorderRadius.circular(14),
       ),
@@ -2468,7 +2785,10 @@ class _AddPaymentSheetState
 
               children: [
                 Text(
-                  'Outstanding',
+                  widget.bill != null
+                      ? 'Bill Remaining'
+                      : 'Outstanding',
+
                   style: AppTheme.body(
                     size: 10,
                   ),
@@ -2477,13 +2797,13 @@ class _AddPaymentSheetState
                 const SizedBox(height: 3),
 
                 Text(
-                  '₹${widget.customer.pendingAmount.toStringAsFixed(0)}',
+                  '₹${_paymentLimit.toStringAsFixed(0)}',
 
                   style: AppTheme.heading(
                     size: 16,
+
                     color:
-                    widget.customer.pendingAmount >
-                        0
+                    _paymentLimit > 0
                         ? AppColors.error
                         : AppColors.success,
                   ),
@@ -2499,7 +2819,8 @@ class _AddPaymentSheetState
 
               children: [
                 Text(
-                  'Existing Advance',
+                  'Customer Pending',
+
                   style: AppTheme.body(
                     size: 10,
                   ),
@@ -2508,11 +2829,28 @@ class _AddPaymentSheetState
                 const SizedBox(height: 3),
 
                 Text(
-                  '₹${widget.customer.advanceAmount.toStringAsFixed(0)}',
+                  '₹${outstanding.toStringAsFixed(0)}',
 
                   style: AppTheme.heading(
                     size: 16,
-                    color: AppColors.success,
+
+                    color:
+                    outstanding > 0
+                        ? AppColors.error
+                        : AppColors.success,
+                  ),
+                ),
+
+                const SizedBox(height: 2),
+
+                Text(
+                  'Advance ₹${advance.toStringAsFixed(0)}',
+
+                  style: AppTheme.body(
+                    size: 9,
+
+                    color:
+                    AppColors.success,
                   ),
                 ),
               ],
@@ -2523,10 +2861,15 @@ class _AddPaymentSheetState
     );
   }
 
+  // ================================================================
+  // PAYMENT METHOD
+  // ================================================================
+
   Widget _paymentMethodField() {
     return Container(
       decoration: BoxDecoration(
         color: Colors.white,
+
         borderRadius:
         BorderRadius.circular(12),
 
@@ -2536,13 +2879,16 @@ class _AddPaymentSheetState
         ),
       ),
 
-      padding: const EdgeInsets.symmetric(
+      padding:
+      const EdgeInsets.symmetric(
         horizontal: 14,
       ),
 
-      child: DropdownButtonHideUnderline(
+      child:
+      DropdownButtonHideUnderline(
         child: DropdownButton<String>(
           value: _paymentMethod,
+
           isExpanded: true,
 
           items: const [
@@ -2550,18 +2896,24 @@ class _AddPaymentSheetState
               value: 'Cash',
               child: Text('Cash'),
             ),
+
             DropdownMenuItem(
               value: 'UPI',
               child: Text('UPI'),
             ),
+
             DropdownMenuItem(
               value: 'Bank Transfer',
-              child: Text('Bank Transfer'),
+              child: Text(
+                'Bank Transfer',
+              ),
             ),
+
             DropdownMenuItem(
               value: 'Cheque',
               child: Text('Cheque'),
             ),
+
             DropdownMenuItem(
               value: 'Other',
               child: Text('Other'),
@@ -2576,7 +2928,8 @@ class _AddPaymentSheetState
             }
 
             setState(() {
-              _paymentMethod = value;
+              _paymentMethod =
+                  value;
             });
           },
         ),
@@ -2584,26 +2937,44 @@ class _AddPaymentSheetState
     );
   }
 
+  // ================================================================
+  // TEXT FIELD
+  // ================================================================
+
   Widget _outlinedField({
-    required TextEditingController controller,
+    required TextEditingController
+    controller,
+
     String? hint,
+
     Widget? prefix,
+
     TextInputType? keyboardType,
+
     int maxLines = 1,
+
     ValueChanged<String>? onChanged,
   }) {
     return TextField(
       controller: controller,
-      keyboardType: keyboardType,
+
+      keyboardType:
+      keyboardType,
+
       maxLines: maxLines,
+
       onChanged: onChanged,
 
-      decoration: InputDecoration(
+      decoration:
+      InputDecoration(
         hintText: hint,
+
         prefix: prefix,
 
         filled: true,
-        fillColor: Colors.white,
+
+        fillColor:
+        Colors.white,
 
         contentPadding:
         const EdgeInsets.symmetric(
@@ -2611,12 +2982,15 @@ class _AddPaymentSheetState
           vertical: 13,
         ),
 
-        border: OutlineInputBorder(
+        border:
+        OutlineInputBorder(
           borderRadius:
           BorderRadius.circular(12),
 
-          borderSide: const BorderSide(
-            color: AppColors.divider,
+          borderSide:
+          const BorderSide(
+            color:
+            AppColors.divider,
             width: 1,
           ),
         ),
@@ -2626,8 +3000,10 @@ class _AddPaymentSheetState
           borderRadius:
           BorderRadius.circular(12),
 
-          borderSide: const BorderSide(
-            color: AppColors.divider,
+          borderSide:
+          const BorderSide(
+            color:
+            AppColors.divider,
             width: 1,
           ),
         ),
@@ -2637,8 +3013,10 @@ class _AddPaymentSheetState
           borderRadius:
           BorderRadius.circular(12),
 
-          borderSide: const BorderSide(
-            color: AppColors.primaryGreen,
+          borderSide:
+          const BorderSide(
+            color:
+            AppColors.primaryGreen,
             width: 1.5,
           ),
         ),
@@ -2646,36 +3024,50 @@ class _AddPaymentSheetState
 
       style: AppTheme.body(
         size: 13,
-        color: AppColors.textDark,
+        color:
+        AppColors.textDark,
       ),
     );
   }
+
+  // ================================================================
+  // FIELD LABEL
+  // ================================================================
 
   Widget _fieldLabel(
       String text,
       ) {
     return Padding(
-      padding: const EdgeInsets.only(
+      padding:
+      const EdgeInsets.only(
         bottom: 7,
       ),
 
       child: Text(
         text,
+
         style: AppTheme.body(
           size: 11,
-          color: AppColors.textDark,
-          weight: FontWeight.w600,
+          color:
+          AppColors.textDark,
+          weight:
+          FontWeight.w600,
         ),
       ),
     );
   }
+
+  // ================================================================
+  // RESULT ROW
+  // ================================================================
 
   Widget _resultRow(
       String label,
       String value,
       ) {
     return Padding(
-      padding: const EdgeInsets.symmetric(
+      padding:
+      const EdgeInsets.symmetric(
         vertical: 4,
       ),
 
@@ -2684,17 +3076,32 @@ class _AddPaymentSheetState
         MainAxisAlignment.spaceBetween,
 
         children: [
-          Text(
-            label,
-            style: AppTheme.body(
-              size: 11,
+          Expanded(
+            child: Text(
+              label,
+
+              style:
+              AppTheme.body(
+                size: 11,
+              ),
             ),
           ),
 
-          Text(
-            value,
-            style: AppTheme.heading(
-              size: 11,
+          const SizedBox(
+            width: 12,
+          ),
+
+          Flexible(
+            child: Text(
+              value,
+
+              textAlign:
+              TextAlign.end,
+
+              style:
+              AppTheme.heading(
+                size: 11,
+              ),
             ),
           ),
         ],

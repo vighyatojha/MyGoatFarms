@@ -14,6 +14,37 @@ import '../models/monthly_bill_model.dart';
 /// Final Bill:
 ///   Goat check-out settlement.
 ///   Remains handled by the existing check-out billing flow.
+
+class MonthlyBillPaymentResult {
+  final String paymentId;
+  final String paymentNumber;
+
+  final String billId;
+  final String billNumber;
+
+  final double amountReceived;
+  final double amountAppliedToBill;
+
+  final double billRemainingAfter;
+  final double pendingAfter;
+  final double advanceAfter;
+
+  final String paymentMethod;
+
+  const MonthlyBillPaymentResult({
+    required this.paymentId,
+    required this.paymentNumber,
+    required this.billId,
+    required this.billNumber,
+    required this.amountReceived,
+    required this.amountAppliedToBill,
+    required this.billRemainingAfter,
+    required this.pendingAfter,
+    required this.advanceAfter,
+    required this.paymentMethod,
+  });
+}
+
 class MonthlyBillingService {
   MonthlyBillingService._();
 
@@ -561,6 +592,488 @@ class MonthlyBillingService {
           farmPhone: farmPhone,
 
           farmEmail: farmEmail,
+        );
+      },
+    ).timeout(_timeout);
+  }
+
+  // ===========================================================================
+// RECEIVE MONTHLY BILL PAYMENT
+// ===========================================================================
+
+  /// Receives a payment specifically against one Monthly Bill.
+  ///
+  /// This operation updates everything atomically:
+  ///
+  ///   Monthly Bill
+  ///       ↓
+  ///   amountPaid
+  ///   remainingAmount
+  ///   status
+  ///
+  ///   Customer
+  ///       ↓
+  ///   pendingAmount
+  ///
+  ///   Payment
+  ///       ↓
+  ///   payments collection
+  ///
+  ///   Transaction
+  ///       ↓
+  ///   transactions collection
+  ///
+  ///   Activity
+  ///       ↓
+  ///   activities collection
+  ///
+  /// Returns a result to the UI.
+  ///
+  /// Cancellation is NOT handled here.
+  /// The UI simply does not call this method when the user cancels.
+  Future<MonthlyBillPaymentResult>
+  receiveMonthlyBillPayment({
+    required String farmId,
+    required String customerId,
+    required String billId,
+    required double paidAmount,
+    required String paymentMethod,
+    String note = '',
+  }) async {
+    // -------------------------------------------------------------------------
+    // VALIDATION
+    // -------------------------------------------------------------------------
+
+    if (paidAmount <= 0) {
+      throw ArgumentError(
+        'Payment amount must be greater than zero.',
+      );
+    }
+
+    if (paymentMethod.trim().isEmpty) {
+      throw ArgumentError(
+        'Please select a payment method.',
+      );
+    }
+
+    final customerRef =
+    _customers(farmId).doc(customerId);
+
+    final billRef =
+    _bills(farmId).doc(billId);
+
+    final paymentRef =
+    _payments(farmId).doc();
+
+    final transactionRef =
+    _transactions(farmId).doc();
+
+    final activityRef =
+    _activities(farmId).doc();
+
+    final paymentNumber =
+    _generatePaymentNumber(
+      paymentRef.id,
+    );
+
+    return _db
+        .runTransaction<MonthlyBillPaymentResult>(
+          (transaction) async {
+        // =====================================================================
+        // READS
+        // =====================================================================
+
+        final customerSnapshot =
+        await transaction.get(
+          customerRef,
+        );
+
+        final billSnapshot =
+        await transaction.get(
+          billRef,
+        );
+
+        // =====================================================================
+        // VALIDATE CUSTOMER
+        // =====================================================================
+
+        if (!customerSnapshot.exists) {
+          throw StateError(
+            'Customer no longer exists.',
+          );
+        }
+
+        // =====================================================================
+        // VALIDATE BILL
+        // =====================================================================
+
+        if (!billSnapshot.exists) {
+          throw StateError(
+            'Monthly bill no longer exists.',
+          );
+        }
+
+        final customerData =
+            customerSnapshot.data() ?? {};
+
+        final billData =
+            billSnapshot.data() ?? {};
+
+        // =====================================================================
+        // CUSTOMER INFORMATION
+        // =====================================================================
+
+        final customerName =
+        (customerData['name'] ?? '')
+            .toString();
+
+        // =====================================================================
+        // BILL INFORMATION
+        // =====================================================================
+
+        final billNumber =
+        (billData['billNumber'] ?? billId)
+            .toString();
+
+        final billCustomerId =
+        (billData['customerId'] ?? '')
+            .toString();
+
+        if (billCustomerId != customerId) {
+          throw StateError(
+            'This monthly bill does not belong to this customer.',
+          );
+        }
+
+        // =====================================================================
+        // CURRENT CUSTOMER BALANCE
+        // =====================================================================
+
+        final currentPending =
+        _doubleValue(
+          customerData['pendingAmount'],
+        );
+
+        final currentAdvance =
+        _doubleValue(
+          customerData['advanceAmount'],
+        );
+
+        // =====================================================================
+        // CURRENT BILL BALANCE
+        // =====================================================================
+
+        final billRemaining =
+        _doubleValue(
+          billData['remainingAmount'],
+        );
+
+        final currentAmountPaid =
+        _doubleValue(
+          billData['amountPaid'],
+        );
+
+        if (billRemaining <= 0) {
+          throw StateError(
+            'This monthly bill is already paid.',
+          );
+        }
+
+        // =====================================================================
+        // PAYMENT AMOUNT
+        // =====================================================================
+
+        final amountAppliedToBill =
+        paidAmount > billRemaining
+            ? billRemaining
+            : paidAmount;
+
+        final extraAmount =
+            paidAmount -
+                amountAppliedToBill;
+
+        // =====================================================================
+        // NEW BILL VALUES
+        // =====================================================================
+
+        final newAmountPaid =
+            currentAmountPaid +
+                amountAppliedToBill;
+
+        final newBillRemaining =
+        (billRemaining -
+            amountAppliedToBill)
+            .clamp(
+          0,
+          double.infinity,
+        )
+            .toDouble();
+
+        final newBillStatus =
+        newBillRemaining <= 0
+            ? 'paid'
+            : 'partial';
+
+        // =====================================================================
+        // NEW CUSTOMER VALUES
+        // =====================================================================
+
+        final newPending =
+        (currentPending -
+            amountAppliedToBill)
+            .clamp(
+          0,
+          double.infinity,
+        )
+            .toDouble();
+
+        final newAdvance =
+            currentAdvance +
+                extraAmount;
+
+        // =====================================================================
+        // UPDATE MONTHLY BILL
+        // =====================================================================
+
+        transaction.update(
+          billRef,
+          {
+            'amountPaid': newAmountPaid,
+
+            'remainingAmount':
+            newBillRemaining,
+
+            'status':
+            newBillStatus,
+
+            'paymentStatus':
+            newBillStatus,
+
+            'paymentId':
+            paymentRef.id,
+
+            'paymentMethod':
+            paymentMethod.trim(),
+
+            'paidAt':
+            newBillRemaining <= 0
+                ? FieldValue.serverTimestamp()
+                : null,
+
+            'updatedAt':
+            FieldValue.serverTimestamp(),
+          },
+        );
+
+        // =====================================================================
+        // UPDATE CUSTOMER
+        // =====================================================================
+
+        transaction.update(
+          customerRef,
+          {
+            'pendingAmount':
+            newPending,
+
+            'advanceAmount':
+            newAdvance,
+
+            'updatedAt':
+            FieldValue.serverTimestamp(),
+          },
+        );
+
+        // =====================================================================
+        // PAYMENT RECORD
+        // =====================================================================
+
+        transaction.set(
+          paymentRef,
+          {
+            'paymentNumber':
+            paymentNumber,
+
+            'type':
+            'monthlyBillPayment',
+
+            'customerId':
+            customerId,
+
+            'customerName':
+            customerName,
+
+            'billId':
+            billId,
+
+            'billNumber':
+            billNumber,
+
+            'amount':
+            paidAmount,
+
+            'amountReceived':
+            paidAmount,
+
+            'amountAppliedToBill':
+            amountAppliedToBill,
+
+            'advanceAdded':
+            extraAmount,
+
+            'pendingBefore':
+            currentPending,
+
+            'pendingAfter':
+            newPending,
+
+            'advanceBefore':
+            currentAdvance,
+
+            'advanceAfter':
+            newAdvance,
+
+            'paymentMethod':
+            paymentMethod.trim(),
+
+            'note':
+            note.trim(),
+
+            'date':
+            FieldValue.serverTimestamp(),
+
+            'createdAt':
+            FieldValue.serverTimestamp(),
+
+            'updatedAt':
+            FieldValue.serverTimestamp(),
+          },
+        );
+
+        // =====================================================================
+        // TRANSACTION RECORD
+        // =====================================================================
+
+        transaction.set(
+          transactionRef,
+          {
+            'type':
+            'income',
+
+            'category':
+            'Palai Monthly Bill Payment',
+
+            'amount':
+            paidAmount,
+
+            'customerId':
+            customerId,
+
+            'customerName':
+            customerName,
+
+            'billId':
+            billId,
+
+            'billNumber':
+            billNumber,
+
+            'paymentId':
+            paymentRef.id,
+
+            'paymentNumber':
+            paymentNumber,
+
+            'amountAppliedToBill':
+            amountAppliedToBill,
+
+            'paymentMethod':
+            paymentMethod.trim(),
+
+            'note':
+            note.trim().isEmpty
+                ? 'Monthly bill payment from $customerName'
+                : note.trim(),
+
+            'date':
+            FieldValue.serverTimestamp(),
+
+            'createdAt':
+            FieldValue.serverTimestamp(),
+          },
+        );
+
+        // =====================================================================
+        // ACTIVITY
+        // =====================================================================
+
+        transaction.set(
+          activityRef,
+          {
+            'type':
+            'paymentReceived',
+
+            'title':
+            'Monthly Bill Payment',
+
+            'subtitle':
+            '$customerName · '
+                '$billNumber · '
+                '₹${paidAmount.toStringAsFixed(0)}',
+
+            'module':
+            'palai',
+
+            'customerId':
+            customerId,
+
+            'billId':
+            billId,
+
+            'paymentId':
+            paymentRef.id,
+
+            'timestamp':
+            FieldValue.serverTimestamp(),
+
+            'createdAt':
+            FieldValue.serverTimestamp(),
+          },
+        );
+
+        // =====================================================================
+        // RETURN RESULT
+        // =====================================================================
+
+        return MonthlyBillPaymentResult(
+          paymentId:
+          paymentRef.id,
+
+          paymentNumber:
+          paymentNumber,
+
+          billId:
+          billId,
+
+          billNumber:
+          billNumber,
+
+          amountReceived:
+          paidAmount,
+
+          amountAppliedToBill:
+          amountAppliedToBill,
+
+          billRemainingAfter:
+          newBillRemaining,
+
+          pendingAfter:
+          newPending,
+
+          advanceAfter:
+          newAdvance,
+
+          paymentMethod:
+          paymentMethod.trim(),
         );
       },
     ).timeout(_timeout);

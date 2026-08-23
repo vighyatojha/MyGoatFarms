@@ -104,14 +104,18 @@ class _MonthlyBillsScreenState
     }
 
     try {
+      // Only filter by customerId in Firestore.
+      //
+      // We intentionally do NOT use:
+      // .orderBy('billingMonth')
+      //
+      // because that combination requires a composite Firestore index.
+      //
+      // We sort the customer's bills locally instead.
       final snapshot = await _billsCollection
           .where(
         'customerId',
         isEqualTo: widget.customerId,
-      )
-          .orderBy(
-        'billingMonth',
-        descending: true,
       )
           .get();
 
@@ -120,6 +124,12 @@ class _MonthlyBillsScreenState
             (doc) => MonthlyBill.fromDoc(doc),
       )
           .toList();
+
+      bills.sort(
+            (a, b) => b.billingMonth.compareTo(
+          a.billingMonth,
+        ),
+      );
 
       if (!mounted) return;
 
