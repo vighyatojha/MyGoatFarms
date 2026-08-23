@@ -2,34 +2,35 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 
 import '../models/monthly_report_model.dart';
 
-/// Builds the new structured monthly Palai reports.
+/// Service for the structured Monthly Report.
 ///
-/// IMPORTANT:
-/// - This service is READ-ONLY.
-/// - It does not create/update/delete Firestore records.
-/// - It does NOT use the old GoatReport / reports collection.
-/// - It reads the actual historical collections used by Palai.
+/// Each goat contains ONLY:
 ///
-/// Firestore structure:
+/// goatName
+/// tagNumber
+/// weightRecordsCount
+/// healthRecordsCount
+/// vaccinationCount
+/// medicineCount
+/// hoofCuttingCount
+/// hairTrimmingCount
+/// monthlyPhotoCount
 ///
-/// farms/{farmId}
-///   └── palaiCustomers/{customerId}
-///       └── goats/{goatId}
-///           ├── healthRecords
-///           ├── healthEvents
-///           └── monthlyPhotos
+/// This service is READ-ONLY.
 class MonthlyReportService {
   MonthlyReportService._();
 
   static final MonthlyReportService instance =
   MonthlyReportService._();
 
-  final FirebaseFirestore _db = FirebaseFirestore.instance;
+  final FirebaseFirestore _db =
+      FirebaseFirestore.instance;
 
-  static const Duration timeout = Duration(seconds: 15);
+  static const Duration timeout =
+  Duration(seconds: 15);
 
   // ---------------------------------------------------------------------------
-  // ROOT REFERENCES
+  // FIRESTORE REFERENCES
   // ---------------------------------------------------------------------------
 
   CollectionReference<Map<String, dynamic>> _customers(
@@ -55,7 +56,10 @@ class MonthlyReportService {
       String customerId,
       String goatId,
       ) {
-    return _goats(farmId, customerId)
+    return _goats(
+      farmId,
+      customerId,
+    )
         .doc(goatId)
         .collection('healthRecords');
   }
@@ -65,7 +69,10 @@ class MonthlyReportService {
       String customerId,
       String goatId,
       ) {
-    return _goats(farmId, customerId)
+    return _goats(
+      farmId,
+      customerId,
+    )
         .doc(goatId)
         .collection('healthEvents');
   }
@@ -75,25 +82,19 @@ class MonthlyReportService {
       String customerId,
       String goatId,
       ) {
-    return _goats(farmId, customerId)
+    return _goats(
+      farmId,
+      customerId,
+    )
         .doc(goatId)
         .collection('monthlyPhotos');
   }
 
   // ---------------------------------------------------------------------------
-  // PUBLIC API
+  // GENERATE MONTHLY REPORT
   // ---------------------------------------------------------------------------
 
-  /// Builds reports for every goat that was present during [month].
-  ///
-  /// [month] can be any date inside the desired month.
-  ///
-  /// Example:
-  ///
-  ///     DateTime(2026, 8, 15)
-  ///
-  /// produces the August 2026 report.
-  Future<List<MonthlyReport>> buildMonthlyReports({
+  Future<MonthlyReport> generateMonthlyReport({
     required String farmId,
     required DateTime month,
   }) async {
@@ -113,7 +114,7 @@ class MonthlyReportService {
         .get()
         .timeout(timeout);
 
-    final reports = <MonthlyReport>[];
+    final reportGoats = <MonthlyReportGoat>[];
 
     for (final customerDoc in customersSnapshot.docs) {
       final customerId = customerDoc.id;
@@ -121,20 +122,26 @@ class MonthlyReportService {
       final goatsSnapshot = await _goats(
         farmId,
         customerId,
-      ).get().timeout(timeout);
+      )
+          .get()
+          .timeout(timeout);
 
       for (final goatDoc in goatsSnapshot.docs) {
         final goatData = goatDoc.data();
 
-        if (!_goatWasPresentDuringMonth(
+        final goatWasPresent =
+        _goatWasPresentDuringMonth(
           goatData,
           monthStart,
           nextMonthStart,
-        )) {
+        );
+
+        if (!goatWasPresent) {
           continue;
         }
 
-        final report = await _buildReportForGoat(
+        final reportGoat =
+        await _buildGoatReport(
           farmId: farmId,
           customerId: customerId,
           goatId: goatDoc.id,
@@ -143,81 +150,44 @@ class MonthlyReportService {
           nextMonthStart: nextMonthStart,
         );
 
-        reports.add(report);
+        reportGoats.add(reportGoat);
       }
     }
 
-    // Stable ordering for the UI/PDF.
-    reports.sort((a, b) {
-      final nameCompare = a.goatName
-          .toLowerCase()
-          .compareTo(b.goatName.toLowerCase());
+    reportGoats.sort(
+          (a, b) {
+        final nameCompare = a.goatName
+            .toLowerCase()
+            .compareTo(
+          b.goatName.toLowerCase(),
+        );
 
-      if (nameCompare != 0) {
-        return nameCompare;
-      }
+        if (nameCompare != 0) {
+          return nameCompare;
+        }
 
-      return a.goatCode
-          .toLowerCase()
-          .compareTo(b.goatCode.toLowerCase());
-    });
-
-    return reports;
-  }
-
-  /// Builds the monthly report for one specific goat.
-  Future<MonthlyReport?> buildMonthlyReport({
-    required String farmId,
-    required String customerId,
-    required String goatId,
-    required DateTime month,
-  }) async {
-    final goatDoc = await _goats(
-      farmId,
-      customerId,
-    ).doc(goatId).get().timeout(timeout);
-
-    if (!goatDoc.exists) {
-      return null;
-    }
-
-    final monthStart = DateTime(
-      month.year,
-      month.month,
-      1,
+        return a.tagNumber
+            .toLowerCase()
+            .compareTo(
+          b.tagNumber.toLowerCase(),
+        );
+      },
     );
 
-    final nextMonthStart = DateTime(
-      month.year,
-      month.month + 1,
-      1,
-    );
-
-    final goatData = goatDoc.data() ?? <String, dynamic>{};
-
-    if (!_goatWasPresentDuringMonth(
-      goatData,
-      monthStart,
-      nextMonthStart,
-    )) {
-      return null;
-    }
-
-    return _buildReportForGoat(
+    return MonthlyReport(
+      id: '',
       farmId: farmId,
-      customerId: customerId,
-      goatId: goatId,
-      goatData: goatData,
-      monthStart: monthStart,
-      nextMonthStart: nextMonthStart,
+      month: monthStart,
+      generatedAt: DateTime.now(),
+      goats: reportGoats,
     );
   }
 
   // ---------------------------------------------------------------------------
-  // REPORT BUILDER
+  // BUILD ONE GOAT REPORT
   // ---------------------------------------------------------------------------
 
-  Future<MonthlyReport> _buildReportForGoat({
+  Future<MonthlyReportGoat> _buildGoatReport({
     required String farmId,
     required String customerId,
     required String goatId,
@@ -225,294 +195,170 @@ class MonthlyReportService {
     required DateTime monthStart,
     required DateTime nextMonthStart,
   }) async {
-    // -------------------------------------------------------------------------
-    // Load all historical sources.
-    //
-    // These are independent reads, so they can run in parallel.
-    // -------------------------------------------------------------------------
-
     final results = await Future.wait([
       _healthRecords(
         farmId,
         customerId,
         goatId,
-      ).get().timeout(timeout),
+      )
+          .get()
+          .timeout(timeout),
 
       _healthEvents(
         farmId,
         customerId,
         goatId,
-      ).get().timeout(timeout),
+      )
+          .get()
+          .timeout(timeout),
 
       _monthlyPhotos(
         farmId,
         customerId,
         goatId,
-      ).get().timeout(timeout),
+      )
+          .get()
+          .timeout(timeout),
     ]);
 
     final healthRecordsSnapshot =
-    results[0] as QuerySnapshot<Map<String, dynamic>>;
+    results[0]
+    as QuerySnapshot<Map<String, dynamic>>;
 
     final healthEventsSnapshot =
-    results[1] as QuerySnapshot<Map<String, dynamic>>;
+    results[1]
+    as QuerySnapshot<Map<String, dynamic>>;
 
-    final photosSnapshot =
-    results[2] as QuerySnapshot<Map<String, dynamic>>;
-
-    // -------------------------------------------------------------------------
-    // Filter records to the selected month.
-    // -------------------------------------------------------------------------
-
-    final healthRecords = healthRecordsSnapshot.docs
-        .map((doc) => doc.data())
-        .where(
-          (data) => _isInsideMonth(
-        _readDate(
-          data['recordedAt'],
-        ),
-        monthStart,
-        nextMonthStart,
-      ),
-    )
-        .toList();
-
-    final healthEvents = healthEventsSnapshot.docs
-        .map((doc) => doc.data())
-        .where(
-          (data) => _isInsideMonth(
-        _readDate(
-          data['date'],
-        ),
-        monthStart,
-        nextMonthStart,
-      ),
-    )
-        .toList();
-
-    final monthlyPhotos = photosSnapshot.docs
-        .map((doc) => doc.data())
-        .where(
-          (data) => _photoBelongsToMonth(
-        data,
-        monthStart,
-      ),
-    )
-        .toList();
+    final monthlyPhotosSnapshot =
+    results[2]
+    as QuerySnapshot<Map<String, dynamic>>;
 
     // -------------------------------------------------------------------------
-    // WEIGHT
+    // HEALTH RECORDS
     // -------------------------------------------------------------------------
 
-    final weights = <_DatedWeight>[];
-
-    for (final record in healthRecords) {
-      final date = _readDate(record['recordedAt']);
-      final weight = _readDouble(record['weight']);
-
-      if (date != null && weight != null) {
-        weights.add(
-          _DatedWeight(
-            date: date,
-            weight: weight,
-          ),
+    final healthRecordsList =
+    healthRecordsSnapshot.docs.where(
+          (doc) {
+        final date = _readDate(
+          doc.data()['recordedAt'],
         );
-      }
-    }
 
-    weights.sort(
-          (a, b) => a.date.compareTo(b.date),
+        return _isInsideMonth(
+          date,
+          monthStart,
+          nextMonthStart,
+        );
+      },
+    ).toList();
+
+    final weightRecordsCount =
+        healthRecordsList.where(
+              (doc) {
+            return doc.data()['weight'] != null;
+          },
+        ).length;
+
+    final healthRecordsCount =
+        healthRecordsList.length;
+
+    // -------------------------------------------------------------------------
+    // HEALTH EVENTS
+    // -------------------------------------------------------------------------
+
+    final healthEvents =
+    healthEventsSnapshot.docs.where(
+          (doc) {
+        final date = _readDate(
+          doc.data()['date'],
+        );
+
+        return _isInsideMonth(
+          date,
+          monthStart,
+          nextMonthStart,
+        );
+      },
     );
-
-    final double? startingWeight =
-    weights.isNotEmpty ? weights.first.weight : null;
-
-    final double? endingWeight =
-    weights.isNotEmpty ? weights.last.weight : null;
-
-    final double? weightChange =
-    startingWeight != null && endingWeight != null
-        ? endingWeight - startingWeight
-        : null;
-
-    // -------------------------------------------------------------------------
-    // HEALTH EVENT COUNTS
-    // -------------------------------------------------------------------------
 
     var vaccinationCount = 0;
     var medicineCount = 0;
     var hoofCuttingCount = 0;
     var hairTrimmingCount = 0;
 
-    for (final event in healthEvents) {
+    for (final doc in healthEvents) {
       final type = _normaliseType(
-        event['type'],
+        doc.data()['type'],
       );
 
       if (_isVaccination(type)) {
         vaccinationCount++;
-      } else if (_isMedicine(type)) {
+      }
+
+      if (_isMedicine(type)) {
         medicineCount++;
-      } else if (_isHoofCutting(type)) {
+      }
+
+      if (_isHoofCutting(type)) {
         hoofCuttingCount++;
-      } else if (_isHairTrimming(type)) {
+      }
+
+      if (_isHairTrimming(type)) {
         hairTrimmingCount++;
       }
     }
 
     // -------------------------------------------------------------------------
-    // PHOTOS
+    // MONTHLY PHOTOS
     // -------------------------------------------------------------------------
 
-    final photoUrls = <String>[];
-
-    for (final photo in monthlyPhotos) {
-      final url = _readPhotoUrl(photo);
-
-      if (url != null && url.isNotEmpty) {
-        photoUrls.add(url);
-      }
-    }
-
-    // Prevent duplicate URLs from appearing twice in the report.
-    final uniquePhotoUrls = photoUrls.toSet().toList();
-
-    // -------------------------------------------------------------------------
-    // BOARDING
-    // -------------------------------------------------------------------------
-
-    final checkInDate =
-        _readDate(goatData['checkInDate']) ??
-            monthStart;
-
-    final checkOutDate =
-    _readDate(goatData['checkOutDate']);
-
-    final boardingDays = _calculateBoardingDays(
-      checkInDate: checkInDate,
-      checkOutDate: checkOutDate,
-      monthStart: monthStart,
-      nextMonthStart: nextMonthStart,
-    );
-
-    // -------------------------------------------------------------------------
-    // HEALTH STATUS
-    // -------------------------------------------------------------------------
-
-    String healthStatus =
-    _readString(
-      goatData['healthStatus'],
-    );
-
-    // If the goat document does not have a usable health status,
-    // fall back to the latest health record from the selected month.
-    if (healthStatus.isEmpty && healthRecords.isNotEmpty) {
-      final latestRecord = [...healthRecords]
-        ..sort(
-              (a, b) {
-            final aDate =
-                _readDate(a['recordedAt']) ??
-                    DateTime.fromMillisecondsSinceEpoch(0);
-
-            final bDate =
-                _readDate(b['recordedAt']) ??
-                    DateTime.fromMillisecondsSinceEpoch(0);
-
-            return bDate.compareTo(aDate);
+    final monthlyPhotoCount =
+        monthlyPhotosSnapshot.docs.where(
+              (doc) {
+            return _photoBelongsToMonth(
+              doc.data(),
+              monthStart,
+            );
           },
-        );
-
-      healthStatus = _readString(
-        latestRecord.first['healthStatus'],
-      );
-    }
-
-    if (healthStatus.isEmpty) {
-      healthStatus = 'Not Available';
-    }
+        ).length;
 
     // -------------------------------------------------------------------------
-    // NOTES
+    // GOAT INFORMATION
     // -------------------------------------------------------------------------
 
-    final notes = _buildNotes(
-      healthRecords: healthRecords,
-      healthEvents: healthEvents,
+    final goatName = _readFirstString(
+      goatData,
+      const [
+        'name',
+        'goatName',
+      ],
     );
 
-    // -------------------------------------------------------------------------
-    // REPORT
-    // -------------------------------------------------------------------------
+    final tagNumber = _readFirstString(
+      goatData,
+      const [
+        'tagNumber',
+        'goatCode',
+        'code',
+        'tagId',
+      ],
+    );
 
-    return MonthlyReport(
-      // Not persisted yet.
-      // The save layer will provide the Firestore document ID later.
-      id: '',
-
-      customerId: customerId,
-      goatId: goatId,
-
-      month: monthStart,
-      generatedAt: DateTime.now(),
-
-      goatName: _readFirstString(
-        goatData,
-        const [
-          'name',
-          'goatName',
-        ],
-      ),
-
-      goatCode: _readFirstString(
-        goatData,
-        const [
-          'goatCode',
-          'code',
-          'tagNumber',
-          'tagId',
-        ],
-      ),
-
-      breed: _readString(
-        goatData['breed'],
-      ),
-
-      gender: _readString(
-        goatData['gender'],
-      ),
-
-      color: _readString(
-        goatData['color'],
-      ),
-
-      checkInDate: checkInDate,
-      checkOutDate: checkOutDate,
-
-      boardingDays: boardingDays,
-
-      startingWeight: startingWeight,
-      endingWeight: endingWeight,
-      weightChange: weightChange,
-
-      healthRecordCount: healthRecords.length,
-
+    return MonthlyReportGoat(
+      goatName: goatName,
+      tagNumber: tagNumber,
+      weightRecordsCount: weightRecordsCount,
+      healthRecordsCount: healthRecordsCount,
       vaccinationCount: vaccinationCount,
       medicineCount: medicineCount,
       hoofCuttingCount: hoofCuttingCount,
       hairTrimmingCount: hairTrimmingCount,
-
-      monthlyPhotoCount: uniquePhotoUrls.length,
-
-      healthStatus: healthStatus,
-
-      photoUrls: uniquePhotoUrls,
-
-      notes: notes,
+      monthlyPhotoCount: monthlyPhotoCount,
     );
   }
 
   // ---------------------------------------------------------------------------
-  // MONTH / BOARDING
+  // GOAT PRESENCE
   // ---------------------------------------------------------------------------
 
   bool _goatWasPresentDuringMonth(
@@ -526,18 +372,14 @@ class MonthlyReportService {
     final checkOutDate =
     _readDate(goatData['checkOutDate']);
 
-    // Without a check-in date we cannot reliably establish
-    // whether the goat belonged to this monthly report.
     if (checkInDate == null) {
       return false;
     }
 
-    // Goat entered after the month ended.
     if (!checkInDate.isBefore(nextMonthStart)) {
       return false;
     }
 
-    // Goat checked out before the month started.
     if (checkOutDate != null &&
         !checkOutDate.isAfter(monthStart)) {
       return false;
@@ -546,95 +388,66 @@ class MonthlyReportService {
     return true;
   }
 
-  int _calculateBoardingDays({
-    required DateTime checkInDate,
-    required DateTime? checkOutDate,
-    required DateTime monthStart,
-    required DateTime nextMonthStart,
-  }) {
-    final effectiveStart = checkInDate.isAfter(monthStart)
-        ? _dateOnly(checkInDate)
-        : _dateOnly(monthStart);
+  // ---------------------------------------------------------------------------
+  // MONTH FILTER
+  // ---------------------------------------------------------------------------
 
-    final rawEnd = checkOutDate ?? nextMonthStart;
-
-    final effectiveEnd = rawEnd.isBefore(nextMonthStart)
-        ? _dateOnly(rawEnd)
-        : _dateOnly(nextMonthStart);
-
-    if (!effectiveStart.isBefore(effectiveEnd)) {
-      return 0;
+  bool _isInsideMonth(
+      DateTime? date,
+      DateTime monthStart,
+      DateTime nextMonthStart,
+      ) {
+    if (date == null) {
+      return false;
     }
 
-    return effectiveEnd
-        .difference(effectiveStart)
-        .inDays;
+    return !date.isBefore(monthStart) &&
+        date.isBefore(nextMonthStart);
   }
 
   // ---------------------------------------------------------------------------
-  // PHOTO MONTH MATCHING
+  // PHOTO FILTER
   // ---------------------------------------------------------------------------
 
   bool _photoBelongsToMonth(
       Map<String, dynamic> data,
       DateTime monthStart,
       ) {
-    // MonthlyPhoto is normally keyed by a "month" field.
     final monthValue = data['month'];
 
     if (monthValue != null) {
-      final date = _readDate(monthValue);
+      final monthDate = _readDate(monthValue);
 
-      if (date != null) {
-        return date.year == monthStart.year &&
-            date.month == monthStart.month;
+      if (monthDate != null) {
+        return monthDate.year == monthStart.year &&
+            monthDate.month == monthStart.month;
       }
 
-      // Some older records may store month as:
-      // "2026-08"
       final monthString = monthValue.toString();
 
-      if (monthString == _monthKey(monthStart)) {
+      final expected =
+          '${monthStart.year}-'
+          '${monthStart.month.toString().padLeft(2, '0')}';
+
+      if (monthString == expected) {
         return true;
       }
     }
 
-    // Fallback for records which may have been saved with a date field.
-    final date = _readDate(
+    final fallbackDate = _readDate(
       data['date'] ?? data['createdAt'],
     );
 
-    if (date == null) {
+    if (fallbackDate == null) {
       return false;
     }
 
-    return date.year == monthStart.year &&
-        date.month == monthStart.month;
-  }
-
-  String? _readPhotoUrl(
-      Map<String, dynamic> data,
-      ) {
-    final candidates = [
-      data['photoUrl'],
-      data['imageUrl'],
-      data['url'],
-      data['downloadUrl'],
-    ];
-
-    for (final candidate in candidates) {
-      final value = _readString(candidate);
-
-      if (value.isNotEmpty) {
-        return value;
-      }
-    }
-
-    return null;
+    return fallbackDate.year == monthStart.year &&
+        fallbackDate.month == monthStart.month;
   }
 
   // ---------------------------------------------------------------------------
-  // EVENT TYPE HELPERS
+  // EVENT TYPES
   // ---------------------------------------------------------------------------
 
   String _normaliseType(dynamic value) {
@@ -668,51 +481,7 @@ class MonthlyReportService {
   }
 
   // ---------------------------------------------------------------------------
-  // NOTES
-  // ---------------------------------------------------------------------------
-
-  String _buildNotes({
-    required List<Map<String, dynamic>> healthRecords,
-    required List<Map<String, dynamic>> healthEvents,
-  }) {
-    final notes = <String>[];
-
-    for (final record in healthRecords) {
-      final note = _readFirstString(
-        record,
-        const [
-          'notes',
-          'note',
-          'remarks',
-        ],
-      );
-
-      if (note.isNotEmpty) {
-        notes.add(note);
-      }
-    }
-
-    for (final event in healthEvents) {
-      final note = _readFirstString(
-        event,
-        const [
-          'notes',
-          'note',
-          'remarks',
-        ],
-      );
-
-      if (note.isNotEmpty) {
-        notes.add(note);
-      }
-    }
-
-    // Keep the generated report compact and avoid repeating identical notes.
-    return notes.toSet().join('\n');
-  }
-
-  // ---------------------------------------------------------------------------
-  // FIRESTORE VALUE HELPERS
+  // HELPERS
   // ---------------------------------------------------------------------------
 
   DateTime? _readDate(dynamic value) {
@@ -735,26 +504,8 @@ class MonthlyReportService {
     return null;
   }
 
-  double? _readDouble(dynamic value) {
-    if (value == null) {
-      return null;
-    }
-
-    if (value is num) {
-      return value.toDouble();
-    }
-
-    return double.tryParse(
-      value.toString(),
-    );
-  }
-
   String _readString(dynamic value) {
-    if (value == null) {
-      return '';
-    }
-
-    return value.toString().trim();
+    return value?.toString().trim() ?? '';
   }
 
   String _readFirstString(
@@ -762,9 +513,7 @@ class MonthlyReportService {
       List<String> keys,
       ) {
     for (final key in keys) {
-      final value = _readString(
-        data[key],
-      );
+      final value = _readString(data[key]);
 
       if (value.isNotEmpty) {
         return value;
@@ -773,43 +522,4 @@ class MonthlyReportService {
 
     return '';
   }
-
-  DateTime _dateOnly(DateTime date) {
-    return DateTime(
-      date.year,
-      date.month,
-      date.day,
-    );
-  }
-
-  bool _isInsideMonth(
-      DateTime? date,
-      DateTime monthStart,
-      DateTime nextMonthStart,
-      ) {
-    if (date == null) {
-      return false;
-    }
-
-    return !date.isBefore(monthStart) &&
-        date.isBefore(nextMonthStart);
-  }
-
-  String _monthKey(DateTime month) {
-    return '${month.year}-${month.month.toString().padLeft(2, '0')}';
-  }
-}
-
-// -----------------------------------------------------------------------------
-// INTERNAL WEIGHT VALUE
-// -----------------------------------------------------------------------------
-
-class _DatedWeight {
-  final DateTime date;
-  final double weight;
-
-  const _DatedWeight({
-    required this.date,
-    required this.weight,
-  });
 }
