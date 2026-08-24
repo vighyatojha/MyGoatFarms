@@ -162,7 +162,7 @@ class _PalaiScreenState extends State<PalaiScreen> {
               children: [
                 const SizedBox(height: 10),
 
-                // Small drag handle
+                // Drag handle
                 Container(
                   width: 40,
                   height: 4,
@@ -239,7 +239,7 @@ class _PalaiScreenState extends State<PalaiScreen> {
                   color: Colors.grey.shade200,
                 ),
 
-                // Customer list
+                // Firestore customer list
                 Flexible(
                   child: StreamBuilder<List<PalaiCustomer>>(
                     stream: _customersStream,
@@ -264,6 +264,7 @@ class _PalaiScreenState extends State<PalaiScreen> {
                               padding: const EdgeInsets.all(20),
                               child: Text(
                                 'Unable to load customers.',
+                                textAlign: TextAlign.center,
                                 style: AppTheme.body(
                                   size: 13,
                                   color: AppColors.error,
@@ -290,7 +291,7 @@ class _PalaiScreenState extends State<PalaiScreen> {
                                 ),
                                 const SizedBox(height: 10),
                                 Text(
-                                  'No active customers found.',
+                                  'No customers found.',
                                   style: AppTheme.body(
                                     size: 13,
                                     color: AppColors.textGrey,
@@ -303,7 +304,6 @@ class _PalaiScreenState extends State<PalaiScreen> {
                       }
 
                       return ListView.separated(
-                        shrinkWrap: true,
                         padding: const EdgeInsets.fromLTRB(
                           16,
                           12,
@@ -311,25 +311,21 @@ class _PalaiScreenState extends State<PalaiScreen> {
                           20,
                         ),
                         itemCount: customers.length,
-                        separatorBuilder: (_, __) {
-                          return const SizedBox(height: 8);
-                        },
+                        separatorBuilder: (_, __) =>
+                        const SizedBox(height: 8),
                         itemBuilder: (context, index) {
                           final customer = customers[index];
 
                           return Material(
-                            color: AppColors.lightGreen
-                                .withOpacity(0.35),
-                            borderRadius:
-                            BorderRadius.circular(14),
+                            color: AppColors.lightGreen.withOpacity(0.35),
+                            borderRadius: BorderRadius.circular(14),
                             child: InkWell(
-                              borderRadius:
-                              BorderRadius.circular(14),
+                              borderRadius: BorderRadius.circular(14),
                               onTap: () {
-                                // Close popup first
+                                // Close popup
                                 Navigator.of(sheetContext).pop();
 
-                                // Then open existing registration screen
+                                // Open existing registration screen
                                 Navigator.of(context).push(
                                   fastRoute(
                                     CustomerGoatRegistrationScreen(
@@ -339,8 +335,7 @@ class _PalaiScreenState extends State<PalaiScreen> {
                                 );
                               },
                               child: Padding(
-                                padding:
-                                const EdgeInsets.symmetric(
+                                padding: const EdgeInsets.symmetric(
                                   horizontal: 14,
                                   vertical: 11,
                                 ),
@@ -379,7 +374,7 @@ class _PalaiScreenState extends State<PalaiScreen> {
                                           ),
                                           const SizedBox(height: 3),
                                           Text(
-                                            'Active customer',
+                                            customer.mobileNumber,
                                             style: AppTheme.body(
                                               size: 11,
                                               color:
@@ -396,9 +391,7 @@ class _PalaiScreenState extends State<PalaiScreen> {
                                       decoration: BoxDecoration(
                                         color: Colors.white,
                                         borderRadius:
-                                        BorderRadius.circular(
-                                          9,
-                                        ),
+                                        BorderRadius.circular(9),
                                       ),
                                       child: const Icon(
                                         Icons.arrow_forward_ios,

@@ -87,6 +87,14 @@ class CustomerGoatsProgressReportPdfService {
             _buildGoatCard(i + 1, entries[i]),
             pw.SizedBox(height: 14),
           ],
+          pw.NewPage(),
+          _buildContactBar(billSettings),
+          pw.SizedBox(height: 16),
+          _buildTermsAndConditions(),
+          pw.SizedBox(height: 14),
+          _buildImportantNotesAndSignature(),
+          pw.SizedBox(height: 16),
+          _buildClosingBanner(billSettings),
         ],
       ),
     );
@@ -280,7 +288,7 @@ class CustomerGoatsProgressReportPdfService {
         ),
         pw.Container(
           padding: const pw.EdgeInsets.symmetric(horizontal: 4),
-          child: pw.Text('\u2192', style: pw.TextStyle(fontSize: 16, color: PdfColors.green700, fontWeight: pw.FontWeight.bold)),
+          child: _arrowIcon(),
         ),
         pw.Expanded(
           child: _photoBlock(
@@ -290,6 +298,34 @@ class CustomerGoatsProgressReportPdfService {
           ),
         ),
       ],
+    );
+  }
+
+  /// A small filled right-pointing arrow, drawn as a vector path instead
+  /// of a unicode character (e.g. '\u2192'). Some embedded font subsets
+  /// don't include arrow glyphs, which renders as a broken "tofu" box —
+  /// drawing it ourselves avoids that entirely, on every device/printer.
+  pw.Widget _arrowIcon() {
+    return pw.SizedBox(
+      width: 16,
+      height: 16,
+      child: pw.CustomPaint(
+        size: const PdfPoint(16, 16),
+        painter: (PdfGraphics canvas, PdfPoint size) {
+          final midY = size.y / 2;
+          canvas
+            ..setColor(PdfColors.green700)
+            ..moveTo(1, midY - 3)
+            ..lineTo(size.x - 7, midY - 3)
+            ..lineTo(size.x - 7, midY - 6)
+            ..lineTo(size.x - 1, midY)
+            ..lineTo(size.x - 7, midY + 6)
+            ..lineTo(size.x - 7, midY + 3)
+            ..lineTo(1, midY + 3)
+            ..lineTo(1, midY - 3)
+            ..fillPath();
+        },
+      ),
     );
   }
 
@@ -385,6 +421,211 @@ class CustomerGoatsProgressReportPdfService {
             ),
           ),
         ],
+      ),
+    );
+  }
+
+  // ===========================================================================
+  // CONTACT BAR  (dynamic — pulled from this farm's BillSettings, not
+  // hardcoded, so every farm's report shows its own details)
+  // ===========================================================================
+
+  pw.Widget _buildContactBar(BillSettings b) {
+    final items = <pw.Widget>[];
+
+    if (b.phone.trim().isNotEmpty) {
+      items.add(_contactItem('For any queries, contact us anytime.'));
+      items.add(_contactItem(b.phone));
+    }
+    if (b.address.trim().isNotEmpty) {
+      items.add(_contactItem(b.address));
+    }
+
+    if (items.isEmpty) return pw.SizedBox();
+
+    return pw.Container(
+      width: double.infinity,
+      padding: const pw.EdgeInsets.symmetric(vertical: 10, horizontal: 14),
+      decoration: pw.BoxDecoration(
+        border: pw.Border.all(color: PdfColors.grey400),
+        borderRadius: const pw.BorderRadius.all(pw.Radius.circular(6)),
+      ),
+      child: pw.Wrap(
+        alignment: pw.WrapAlignment.center,
+        spacing: 10,
+        runSpacing: 4,
+        children: [
+          for (int i = 0; i < items.length; i++) ...[
+            if (i > 0) pw.Text('|', style: const pw.TextStyle(fontSize: 9, color: PdfColors.grey400)),
+            items[i],
+          ],
+        ],
+      ),
+    );
+  }
+
+  pw.Widget _contactItem(String text) {
+    return pw.Text(text, style: const pw.TextStyle(fontSize: 9, color: PdfColors.grey800));
+  }
+
+  // ===========================================================================
+  // TERMS & CONDITIONS
+  // ===========================================================================
+
+  static const List<List<String>> _terms = [
+    [
+      'Animal Care',
+      'We provide the best care, feeding and shelter for your goats. However, the owner is advised to inform any special instructions or medical conditions in advance.',
+    ],
+    [
+      'Health & Vaccination',
+      'Regular vaccination, deworming and health checkups are done as per the schedule. Any extra medicines or treatment will be charged separately.',
+    ],
+    [
+      'Payment Terms',
+      'Payment should be cleared on or before the next billing date. A late fee may be applicable on overdue amounts.',
+    ],
+    [
+      'Liability',
+      'We are not responsible for any loss or injury due to natural calamities, disease outbreaks or any unforeseen events beyond our control.',
+    ],
+    [
+      'Ownership',
+      'The goat(s) will always remain the property of the owner. We do not claim any ownership.',
+    ],
+    [
+      'Notice',
+      'Please inform us before taking your goat(s) out from the farm. A minimum notice period is required.',
+    ],
+  ];
+
+  pw.Widget _buildTermsAndConditions() {
+    final left = <pw.Widget>[];
+    final right = <pw.Widget>[];
+    for (int i = 0; i < _terms.length; i++) {
+      final widget = _termItem(i + 1, _terms[i][0], _terms[i][1]);
+      if (i % 2 == 0) {
+        left.add(widget);
+      } else {
+        right.add(widget);
+      }
+    }
+
+    return pw.Column(
+      crossAxisAlignment: pw.CrossAxisAlignment.start,
+      children: [
+        pw.Text('TERMS & CONDITIONS', style: pw.TextStyle(fontSize: 12, fontWeight: pw.FontWeight.bold, color: PdfColors.green900)),
+        pw.SizedBox(height: 8),
+        pw.Divider(color: PdfColors.grey300, height: 1),
+        pw.SizedBox(height: 10),
+        pw.Row(
+          crossAxisAlignment: pw.CrossAxisAlignment.start,
+          children: [
+            pw.Expanded(child: pw.Column(crossAxisAlignment: pw.CrossAxisAlignment.start, children: left)),
+            pw.SizedBox(width: 16),
+            pw.Expanded(child: pw.Column(crossAxisAlignment: pw.CrossAxisAlignment.start, children: right)),
+          ],
+        ),
+      ],
+    );
+  }
+
+  pw.Widget _termItem(int number, String title, String body) {
+    return pw.Padding(
+      padding: const pw.EdgeInsets.only(bottom: 10),
+      child: pw.Row(
+        crossAxisAlignment: pw.CrossAxisAlignment.start,
+        children: [
+          pw.Container(
+            width: 15,
+            height: 15,
+            alignment: pw.Alignment.center,
+            decoration: const pw.BoxDecoration(color: PdfColors.green700, shape: pw.BoxShape.circle),
+            child: pw.Text('$number', style: pw.TextStyle(fontSize: 8, fontWeight: pw.FontWeight.bold, color: PdfColors.white)),
+          ),
+          pw.SizedBox(width: 8),
+          pw.Expanded(
+            child: pw.Column(
+              crossAxisAlignment: pw.CrossAxisAlignment.start,
+              children: [
+                pw.Text(title, style: pw.TextStyle(fontSize: 9.5, fontWeight: pw.FontWeight.bold)),
+                pw.SizedBox(height: 2),
+                pw.Text(body, style: const pw.TextStyle(fontSize: 8, color: PdfColors.grey700)),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ===========================================================================
+  // IMPORTANT NOTES + SIGNATURE
+  // ===========================================================================
+
+  pw.Widget _buildImportantNotesAndSignature() {
+    return pw.Row(
+      crossAxisAlignment: pw.CrossAxisAlignment.start,
+      children: [
+        pw.Expanded(
+          flex: 3,
+          child: pw.Column(
+            crossAxisAlignment: pw.CrossAxisAlignment.start,
+            children: [
+              pw.Text('IMPORTANT NOTES', style: pw.TextStyle(fontSize: 10, fontWeight: pw.FontWeight.bold, color: PdfColors.green900)),
+              pw.SizedBox(height: 6),
+              _bullet('Please check all details in this report and inform us if any correction is required.'),
+              _bullet('Keep this report for your records.'),
+              _bullet('All goats are under our care and supervision.'),
+            ],
+          ),
+        ),
+        pw.SizedBox(width: 16),
+        pw.Expanded(
+          flex: 2,
+          child: pw.Column(
+            crossAxisAlignment: pw.CrossAxisAlignment.end,
+            children: [
+              pw.SizedBox(height: 26),
+              pw.Container(width: 140, height: 1, color: PdfColors.grey500),
+              pw.SizedBox(height: 4),
+              pw.Text('Farm Owner Signature', style: const pw.TextStyle(fontSize: 8, color: PdfColors.grey700)),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  pw.Widget _bullet(String text) {
+    return pw.Padding(
+      padding: const pw.EdgeInsets.only(bottom: 4),
+      child: pw.Row(
+        crossAxisAlignment: pw.CrossAxisAlignment.start,
+        children: [
+          pw.Text('\u2022  ', style: const pw.TextStyle(fontSize: 8, color: PdfColors.grey700)),
+          pw.Expanded(child: pw.Text(text, style: const pw.TextStyle(fontSize: 8, color: PdfColors.grey700))),
+        ],
+      ),
+    );
+  }
+
+  // ===========================================================================
+  // CLOSING BANNER  (dynamic — uses this farm's own footer note/name)
+  // ===========================================================================
+
+  pw.Widget _buildClosingBanner(BillSettings b) {
+    final message = b.footerNote.trim().isNotEmpty
+        ? b.footerNote
+        : 'We care for your goats as our own.';
+    return pw.Container(
+      width: double.infinity,
+      padding: const pw.EdgeInsets.symmetric(vertical: 10, horizontal: 12),
+      decoration: pw.BoxDecoration(color: PdfColors.green900, borderRadius: pw.BorderRadius.circular(8)),
+      child: pw.Text(
+        message,
+        style: pw.TextStyle(fontSize: 10, fontWeight: pw.FontWeight.bold, color: PdfColors.white),
+        textAlign: pw.TextAlign.center,
       ),
     );
   }
