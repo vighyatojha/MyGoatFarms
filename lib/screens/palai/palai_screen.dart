@@ -10,7 +10,7 @@ import '../home/widgets/home_widgets.dart';
 import 'add_customer_screen.dart';
 import 'check_in_screen.dart';
 import 'goat_list_screen.dart';
-import 'billing_screen.dart';
+
 import '../../models/palai_models.dart';
 import 'own_farm/own_farm_palai_content.dart';
 import '../monthly_report_screen.dart';
@@ -294,13 +294,6 @@ class _PalaiScreenState extends State<PalaiScreen> {
             onTap: () => Navigator.of(context).push(fastRoute(const AddCustomerScreen())),
           ),
           ModuleTile(
-            icon: Icons.receipt_long_outlined,
-            label: 'Billing',
-            sub: 'Generate',
-            color: AppColors.warning,
-            onTap: () => Navigator.of(context).push(fastRoute(const BillingScreen())),
-          ),
-          ModuleTile(
             icon: Icons.local_shipping_outlined,
             label: 'Delivery',
             sub: 'Return',
@@ -362,8 +355,8 @@ class _PalaiScreenState extends State<PalaiScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text('Generate Monthly Report & Bill', style: AppTheme.heading(size: 13, color: Colors.white)),
-                Text('Send goat report with photos, weight & bill to customer',
+                Text('Generate Monthly Report', style: AppTheme.heading(size: 13, color: Colors.white)),
+                Text('Send goat report with photos and weight updates to customer',
                     style: AppTheme.body(size: 11, color: Colors.white70)),
               ],
             ),

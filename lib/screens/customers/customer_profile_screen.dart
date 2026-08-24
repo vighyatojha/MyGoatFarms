@@ -547,7 +547,7 @@ class _CustomerProfileScreenState
         color: Colors.white,
         borderRadius: BorderRadius.circular(15),
         border: Border.all(
-            color: Colors.grey.shade300,
+          color: Colors.grey.shade300,
         ),
       ),
       child: InkWell(
@@ -3217,13 +3217,31 @@ class _AddOutstandingSheetState
           (data['pendingAmount'] ?? 0)
               .toDouble();
 
+          final oldAdvance =
+          (data['advanceAmount'] ?? 0)
+              .toDouble();
+
+          // New outstanding is first netted against any
+          // existing advance the customer is holding.
+          final advanceUsed =
+          _amount
+              .clamp(0, oldAdvance)
+              .toDouble();
+
+          final remainingOutstanding =
+              _amount - advanceUsed;
+
+          final newAdvance =
+              oldAdvance - advanceUsed;
+
           final newPending =
-              oldPending + _amount;
+              oldPending + remainingOutstanding;
 
           transaction.update(
             customerRef,
             {
               'pendingAmount': newPending,
+              'advanceAmount': newAdvance,
               'updatedAt':
               FieldValue.serverTimestamp(),
             },
@@ -3240,12 +3258,12 @@ class _AddOutstandingSheetState
               'Outstanding amount added',
               'newCharges': _amount,
               'previousPending': oldPending,
+              'advanceBefore': oldAdvance,
+              'advanceUsed': advanceUsed,
               'totalDue': newPending,
               'amountPaid': 0,
               'pendingAfter': newPending,
-              'advanceAfter':
-              (data['advanceAmount'] ?? 0)
-                  .toDouble(),
+              'advanceAfter': newAdvance,
               'note':
               _noteController.text.trim(),
               'status': 'pending',
