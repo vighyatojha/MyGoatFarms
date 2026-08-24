@@ -1,45 +1,27 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
-import 'add_customer_screen.dart';
-import 'customer_profile_screen.dart';
 
-/// ============================================================================
-/// CUSTOMER PALAI - CUSTOMER LIST
-/// ============================================================================
-///
-/// This is the NEW Customer Palai entry screen.
-///
-/// Responsibilities:
-/// - Show Customer Palai customers
-/// - Search customers
-/// - Add a customer
-/// - Open customer profile
-/// - Show basic customer information
-///
-/// This screen intentionally does NOT handle:
-/// - Goat management
-/// - Billing
-/// - Payments
-/// - Reminders
-/// - Health records
-/// - Vaccinations
-///
-/// Those features will be handled by their own screens/services.
-///
-/// ============================================================================
+import '../../../models/palai_models.dart';
+import 'customer_goat_registration_screen.dart';
+import 'customer_palai_goat_profile_screen.dart';
 
-class CustomerPalaiListScreen extends StatefulWidget {
-  const CustomerPalaiListScreen({
+class CustomerGoatListScreen extends StatefulWidget {
+  final String customerId;
+  final String? customerName;
+
+  const CustomerGoatListScreen({
     super.key,
+    required this.customerId,
+    this.customerName,
   });
 
   @override
-  State<CustomerPalaiListScreen> createState() =>
-      _CustomerPalaiListScreenState();
+  State<CustomerGoatListScreen> createState() =>
+      _CustomerGoatListScreenState();
 }
 
-class _CustomerPalaiListScreenState
-    extends State<CustomerPalaiListScreen> {
+class _CustomerGoatListScreenState
+    extends State<CustomerGoatListScreen> {
   final FirebaseFirestore _firestore =
       FirebaseFirestore.instance;
 
@@ -60,641 +42,447 @@ class _CustomerPalaiListScreenState
   @override
   void dispose() {
     _searchController
-      ..removeListener(_onSearchChanged)
+      ..removeListener(
+        _onSearchChanged,
+      )
       ..dispose();
 
     super.dispose();
   }
 
   void _onSearchChanged() {
-    if (!mounted) {
+    final query =
+    _searchController.text
+        .trim()
+        .toLowerCase();
+
+    if (query == _searchQuery) {
       return;
     }
 
     setState(() {
-      _searchQuery =
-          _searchController.text.trim().toLowerCase();
+      _searchQuery = query;
     });
   }
 
-  // ==========================================================================
-  // FIRESTORE QUERY
-  // ==========================================================================
+  // ===========================================================================
+  // FIRESTORE
+  // ===========================================================================
 
   Stream<QuerySnapshot<Map<String, dynamic>>>
-  _customerStream() {
+  _goatsStream() {
     return _firestore
         .collection('palaiCustomers')
+        .doc(widget.customerId)
+        .collection('goats')
         .orderBy(
-      'name',
-      descending: false,
+      'registrationDate',
+      descending: true,
     )
         .snapshots();
   }
 
-  // ==========================================================================
-  // SEARCH
-  // ==========================================================================
+  // ===========================================================================
+  // ADD GOAT
+  // ===========================================================================
 
-  List<QueryDocumentSnapshot<Map<String, dynamic>>>
-  _filterCustomers(
-      List<QueryDocumentSnapshot<Map<String, dynamic>>>
-      customers,
-      ) {
-    if (_searchQuery.isEmpty) {
-      return customers;
-    }
-
-    return customers.where((customer) {
-      final data = customer.data();
-
-      final name =
-      (data['name'] ?? '')
-          .toString()
-          .toLowerCase();
-
-      final mobile =
-      (data['mobileNumber'] ??
-          data['mobile'] ??
-          '')
-          .toString()
-          .toLowerCase();
-
-      final address =
-      (data['address'] ?? '')
-          .toString()
-          .toLowerCase();
-
-      return name.contains(_searchQuery) ||
-          mobile.contains(_searchQuery) ||
-          address.contains(_searchQuery);
-    }).toList();
-  }
-
-  // ==========================================================================
-  // ADD CUSTOMER
-  // ==========================================================================
-
-  Future<void> _showAddCustomerDialog() async {
-    final nameController =
-    TextEditingController();
-
-    final mobileController =
-    TextEditingController();
-
-    final addressController =
-    TextEditingController();
-
-    final packageController =
-    TextEditingController(
-      text: 'Basic Palai',
-    );
-
-    final formKey =
-    GlobalKey<FormState>();
-
-    bool saving = false;
-
-    await showDialog<void>(
-      context: context,
-      barrierDismissible: false,
-      builder: (dialogContext) {
-        return StatefulBuilder(
-          builder: (
-              context,
-              setDialogState,
-              ) {
-            Future<void> saveCustomer() async {
-              if (!formKey.currentState!
-                  .validate()) {
-                return;
-              }
-
-              setDialogState(() {
-                saving = true;
-              });
-
-              try {
-                final customerRef =
-                _firestore
-                    .collection(
-                  'palaiCustomers',
-                )
-                    .doc();
-
-                final now =
-                Timestamp.now();
-
-                await customerRef.set({
-                  'name':
-                  nameController.text.trim(),
-
-                  'mobileNumber':
-                  mobileController.text.trim(),
-
-                  'address':
-                  addressController.text.trim(),
-
-                  'package':
-                  packageController.text.trim(),
-
-                  'joiningDate':
-                  now,
-
-                  'pendingAmount':
-                  0.0,
-
-                  'price':
-                  0.0,
-
-                  'createdAt':
-                  now,
-
-                  'updatedAt':
-                  now,
-
-                  'active':
-                  true,
-                });
-
-                if (!context.mounted) {
-                  return;
-                }
-
-                Navigator.of(
-                  context,
-                ).pop();
-
-                ScaffoldMessenger.of(
-                  this.context,
-                ).showSnackBar(
-                  const SnackBar(
-                    content: Text(
-                      'Customer added successfully.',
-                    ),
-                  ),
-                );
-              } catch (e) {
-                setDialogState(() {
-                  saving = false;
-                });
-
-                if (!context.mounted) {
-                  return;
-                }
-
-                ScaffoldMessenger.of(
-                  context,
-                ).showSnackBar(
-                  SnackBar(
-                    content: Text(
-                      'Unable to add customer: $e',
-                    ),
-                  ),
-                );
-              }
-            }
-
-            return AlertDialog(
-              title: const Text(
-                'Add Customer',
-              ),
-              content: Form(
-                key: formKey,
-                child: SingleChildScrollView(
-                  child: Column(
-                    mainAxisSize:
-                    MainAxisSize.min,
-                    children: [
-                      _buildDialogField(
-                        controller:
-                        nameController,
-                        label:
-                        'Customer Name',
-                        hint:
-                        'Enter customer name',
-                        icon:
-                        Icons.person_outline,
-                        validator:
-                            (value) {
-                          if (value == null ||
-                              value
-                                  .trim()
-                                  .isEmpty) {
-                            return 'Enter customer name';
-                          }
-
-                          return null;
-                        },
-                      ),
-
-                      const SizedBox(
-                        height: 14,
-                      ),
-
-                      _buildDialogField(
-                        controller:
-                        mobileController,
-                        label:
-                        'Mobile Number',
-                        hint:
-                        'Enter mobile number',
-                        icon:
-                        Icons.phone_outlined,
-                        keyboardType:
-                        TextInputType.phone,
-                      ),
-
-                      const SizedBox(
-                        height: 14,
-                      ),
-
-                      _buildDialogField(
-                        controller:
-                        addressController,
-                        label:
-                        'Address',
-                        hint:
-                        'Enter address',
-                        icon:
-                        Icons.location_on_outlined,
-                        maxLines: 2,
-                      ),
-
-                      const SizedBox(
-                        height: 14,
-                      ),
-
-                      _buildDialogField(
-                        controller:
-                        packageController,
-                        label:
-                        'Palai Package',
-                        hint:
-                        'Example: Basic Palai',
-                        icon:
-                        Icons.inventory_2_outlined,
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-              actions: [
-                TextButton(
-                  onPressed: saving
-                      ? null
-                      : () {
-                    Navigator.of(
-                      context,
-                    ).pop();
-                  },
-                  child: const Text(
-                    'Cancel',
-                  ),
-                ),
-                FilledButton(
-                  onPressed: saving
-                      ? null
-                      : saveCustomer,
-                  child: saving
-                      ? const SizedBox(
-                    height: 18,
-                    width: 18,
-                    child:
-                    CircularProgressIndicator(
-                      strokeWidth: 2,
-                    ),
-                  )
-                      : const Text(
-                    'Save Customer',
-                  ),
-                ),
-              ],
-            );
-          },
-        );
-      },
-    );
-
-    nameController.dispose();
-    mobileController.dispose();
-    addressController.dispose();
-    packageController.dispose();
-  }
-
-  // ==========================================================================
-  // CUSTOMER PROFILE
-  // ==========================================================================
-
-  void _openCustomerProfile(
-      QueryDocumentSnapshot<Map<String, dynamic>>
-      customer,
-      ) {
-    final customerId = customer.id;
-
-    Navigator.of(context).push(
+  Future<void> _addGoat() async {
+    final result =
+    await Navigator.of(context).push(
       MaterialPageRoute(
         builder: (_) =>
-            CustomerProfileScreen(
-              customerId: customerId,
+            CustomerGoatRegistrationScreen(
+              customerId:
+              widget.customerId,
             ),
       ),
     );
+
+    if (!mounted) {
+      return;
+    }
+
+    if (result is PalaiGoat) {
+      final goatCode =
+      result.goatCode.trim();
+
+      ScaffoldMessenger.of(context)
+          .showSnackBar(
+        SnackBar(
+          content: Text(
+            goatCode.isEmpty
+                ? 'Goat registered successfully.'
+                : 'Goat $goatCode registered and checked in successfully.',
+          ),
+        ),
+      );
+    }
   }
 
-  // ==========================================================================
-  // UI
-  // ==========================================================================
+  // ===========================================================================
+  // BUILD
+  // ===========================================================================
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text(
-          'Customer Palai',
-        ),
+        title:
+        const Text('Customer Goats'),
       ),
-      floatingActionButton:
-      FloatingActionButton.extended(
-        onPressed: () {
-          Navigator.of(context).push(
-            MaterialPageRoute(
-              builder: (_) =>
-              const AddCustomerScreen(),
+
+      body:
+      StreamBuilder<
+          QuerySnapshot<
+              Map<String, dynamic>>>(
+        stream:
+        _goatsStream(),
+
+        builder:
+            (context, snapshot) {
+          if (snapshot.hasError) {
+            return _buildErrorState(
+              snapshot.error,
+            );
+          }
+
+          if (snapshot.connectionState ==
+              ConnectionState.waiting) {
+            return _buildLoadingState();
+          }
+
+          final documents =
+              snapshot.data?.docs ?? [];
+
+          final goats =
+          documents
+              .map(
+                (document) =>
+                PalaiGoat.fromDoc(
+                  document,
+                ),
+          )
+              .toList();
+
+          final filteredGoats =
+          _filterGoats(goats);
+
+          return RefreshIndicator(
+            onRefresh:
+            _refresh,
+
+            child:
+            CustomScrollView(
+              physics:
+              const AlwaysScrollableScrollPhysics(),
+
+              slivers: [
+                SliverToBoxAdapter(
+                  child: Padding(
+                    padding:
+                    const EdgeInsets.fromLTRB(
+                      16,
+                      16,
+                      16,
+                      0,
+                    ),
+
+                    child: Column(
+                      crossAxisAlignment:
+                      CrossAxisAlignment.start,
+
+                      children: [
+                        _buildHeader(
+                          goats.length,
+                        ),
+
+                        const SizedBox(
+                          height: 16,
+                        ),
+
+                        _buildSearchField(),
+
+                        const SizedBox(
+                          height: 18,
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+
+                if (filteredGoats.isEmpty)
+                  SliverFillRemaining(
+                    hasScrollBody:
+                    false,
+
+                    child:
+                    _buildEmptyState(
+                      hasGoats:
+                      goats.isNotEmpty,
+                    ),
+                  )
+                else
+                  SliverPadding(
+                    padding:
+                    const EdgeInsets.fromLTRB(
+                      16,
+                      0,
+                      16,
+                      100,
+                    ),
+
+                    sliver:
+                    SliverList(
+                      delegate:
+                      SliverChildBuilderDelegate(
+                            (
+                            context,
+                            index,
+                            ) {
+                          final goat =
+                          filteredGoats[
+                          index];
+
+                          return Padding(
+                            padding:
+                            const EdgeInsets.only(
+                              bottom: 12,
+                            ),
+
+                            child:
+                            _buildGoatCard(
+                              goat,
+                            ),
+                          );
+                        },
+
+                        childCount:
+                        filteredGoats.length,
+                      ),
+                    ),
+                  ),
+              ],
             ),
           );
         },
-        icon: const Icon(
-          Icons.person_add_alt_1,
-        ),
-        label: const Text(
-          'Add Customer',
-        ),
       ),
-      body: SafeArea(
-        child: Column(
-          children: [
-            _buildHeader(),
 
-            _buildSearchBar(),
+      floatingActionButton:
+      FloatingActionButton.extended(
+        onPressed:
+        _addGoat,
 
-            Expanded(
-              child: StreamBuilder<
-                  QuerySnapshot<
-                      Map<String, dynamic>>>(
-                stream:
-                _customerStream(),
-                builder: (
-                    context,
-                    snapshot,
-                    ) {
-                  if (snapshot
-                      .hasError) {
-                    return _buildErrorState(
-                      snapshot.error
-                          .toString(),
-                    );
-                  }
+        icon:
+        const Icon(Icons.add),
 
-                  if (snapshot
-                      .connectionState ==
-                      ConnectionState.waiting) {
-                    return const Center(
-                      child:
-                      CircularProgressIndicator(),
-                    );
-                  }
-
-                  final documents =
-                      snapshot.data?.docs ??
-                          [];
-
-                  final customers =
-                  _filterCustomers(
-                    documents,
-                  );
-
-                  if (documents
-                      .isEmpty) {
-                    return _buildEmptyState(
-                      isSearchResult:
-                      false,
-                    );
-                  }
-
-                  if (customers
-                      .isEmpty) {
-                    return _buildEmptyState(
-                      isSearchResult:
-                      true,
-                    );
-                  }
-
-                  return RefreshIndicator(
-                    onRefresh:
-                    _refreshCustomers,
-                    child: ListView.separated(
-                      padding:
-                      const EdgeInsets.fromLTRB(
-                        16,
-                        8,
-                        16,
-                        100,
-                      ),
-                      itemCount:
-                      customers.length,
-                      separatorBuilder:
-                          (_, __) =>
-                      const SizedBox(
-                        height: 10,
-                      ),
-                      itemBuilder: (
-                          context,
-                          index,
-                          ) {
-                        final customer =
-                        customers[index];
-
-                        return _buildCustomerCard(
-                          customer,
-                        );
-                      },
-                    ),
-                  );
-                },
-              ),
-            ),
-          ],
-        ),
+        label:
+        const Text('Add Goat'),
       ),
     );
   }
 
-  // ==========================================================================
+  // ===========================================================================
   // HEADER
-  // ==========================================================================
+  // ===========================================================================
 
-  Widget _buildHeader() {
-    return Padding(
-      padding:
-      const EdgeInsets.fromLTRB(
-        16,
-        16,
-        16,
-        10,
-      ),
-      child: Row(
-        children: [
-          Expanded(
-            child: Column(
-              crossAxisAlignment:
-              CrossAxisAlignment.start,
-              children: [
-                Text(
-                  'Customers',
-                  style: Theme.of(context)
-                      .textTheme
-                      .headlineSmall
-                      ?.copyWith(
-                    fontWeight:
-                    FontWeight.w700,
-                  ),
-                ),
-                const SizedBox(
-                  height: 4,
-                ),
-                Text(
-                  'Manage goats, health, billing and records.',
-                  style: Theme.of(context)
-                      .textTheme
-                      .bodyMedium,
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
+  Widget _buildHeader(
+      int totalGoats,
+      ) {
+    final customerName =
+    widget.customerName?.trim();
 
-  // ==========================================================================
-  // SEARCH BAR
-  // ==========================================================================
+    return Column(
+      crossAxisAlignment:
+      CrossAxisAlignment.start,
 
-  Widget _buildSearchBar() {
-    return Padding(
-      padding:
-      const EdgeInsets.symmetric(
-        horizontal: 16,
-        vertical: 6,
-      ),
-      child: TextField(
-        controller:
-        _searchController,
-        textInputAction:
-        TextInputAction.search,
-        decoration:
-        InputDecoration(
-          hintText:
-          'Search customer...',
-          prefixIcon:
-          const Icon(
-            Icons.search,
-          ),
-          suffixIcon:
-          _searchQuery.isEmpty
-              ? null
-              : IconButton(
-            onPressed: () {
-              _searchController
-                  .clear();
-            },
-            icon:
-            const Icon(
-              Icons.clear,
-            ),
-          ),
-          border:
-          OutlineInputBorder(
-            borderRadius:
-            BorderRadius.circular(
-              14,
-            ),
+      children: [
+        Text(
+          customerName == null ||
+              customerName.isEmpty
+              ? 'Goats'
+              : '$customerName\'s Goats',
+
+          style:
+          Theme.of(context)
+              .textTheme
+              .headlineSmall
+              ?.copyWith(
+            fontWeight:
+            FontWeight.w800,
           ),
         ),
+
+        const SizedBox(
+          height: 6,
+        ),
+
+        Text(
+          totalGoats == 0
+              ? 'No goats registered yet.'
+              : '$totalGoats ${totalGoats == 1 ? 'goat' : 'goats'} registered',
+
+          style:
+          Theme.of(context)
+              .textTheme
+              .bodyMedium
+              ?.copyWith(
+            color:
+            Theme.of(context)
+                .colorScheme
+                .onSurfaceVariant,
+          ),
+        ),
+      ],
+    );
+  }
+
+  // ===========================================================================
+  // SEARCH
+  // ===========================================================================
+
+  Widget _buildSearchField() {
+    return TextField(
+      controller:
+      _searchController,
+
+      textInputAction:
+      TextInputAction.search,
+
+      decoration:
+      InputDecoration(
+        hintText:
+        'Search by goat code or breed',
+
+        prefixIcon:
+        const Icon(
+          Icons.search,
+        ),
+
+        suffixIcon:
+        _searchQuery.isEmpty
+            ? null
+            : IconButton(
+          tooltip:
+          'Clear search',
+
+          onPressed: () {
+            _searchController
+                .clear();
+          },
+
+          icon:
+          const Icon(
+            Icons.clear,
+          ),
+        ),
+
+        border:
+        const OutlineInputBorder(),
       ),
     );
   }
 
-  // ==========================================================================
-  // CUSTOMER CARD
-  // ==========================================================================
+  // ===========================================================================
+  // FILTER
+  // ===========================================================================
 
-  Widget _buildCustomerCard(
-      QueryDocumentSnapshot<
-          Map<String, dynamic>>
-      customer,
+  List<PalaiGoat> _filterGoats(
+      List<PalaiGoat> goats,
       ) {
-    final data =
-    customer.data();
+    if (_searchQuery.isEmpty) {
+      return goats;
+    }
 
-    final name =
-    _stringValue(
-      data['name'],
-      fallback: 'Unnamed Customer',
-    );
+    return goats.where((goat) {
+      final goatCode =
+      goat.goatCode
+          .trim()
+          .toLowerCase();
 
-    final mobile =
-    _stringValue(
-      data['mobileNumber'] ??
-          data['mobile'],
-    );
+      final name =
+      goat.name
+          .trim()
+          .toLowerCase();
 
-    final address =
-    _stringValue(
-      data['address'],
-    );
+      final breed =
+      goat.breed
+          .trim()
+          .toLowerCase();
 
-    final package =
-    _stringValue(
-      data['package'],
-      fallback: 'Palai',
-    );
+      final tagNumber =
+      goat.tagNumber
+          .trim()
+          .toLowerCase();
 
-    final pendingAmount =
-    _doubleValue(
-      data['pendingAmount'],
-    );
+      return goatCode.contains(
+        _searchQuery,
+      ) ||
+          name.contains(
+            _searchQuery,
+          ) ||
+          breed.contains(
+            _searchQuery,
+          ) ||
+          tagNumber.contains(
+            _searchQuery,
+          );
+    }).toList();
+  }
 
-    final active =
-        data['active'] != false;
+  // ===========================================================================
+  // GOAT CARD
+  // ===========================================================================
 
-    final initial =
-    name.trim().isEmpty
-        ? '?'
-        : name
-        .trim()
-        .substring(0, 1)
-        .toUpperCase();
+  Widget _buildGoatCard(
+      PalaiGoat goat,
+      ) {
+    final status =
+    goat.status.trim().isEmpty
+        ? 'active'
+        : goat.status;
+
+    final isActive =
+        status.toLowerCase() ==
+            'active' ||
+            status.toLowerCase() ==
+                'checkedin';
+
+    final displayName =
+    goat.goatCode.trim().isNotEmpty
+        ? goat.goatCode.trim()
+        : goat.name.trim().isNotEmpty
+        ? goat.name.trim()
+        : goat.tagNumber.trim().isNotEmpty
+        ? goat.tagNumber.trim()
+        : 'Unnamed Goat';
 
     return Card(
-      elevation: 0,
       clipBehavior:
       Clip.antiAlias,
-      child: InkWell(
-        onTap: () =>
-            _openCustomerProfile(
-              customer,
-            ),
-        child: Padding(
+
+      child:
+      InkWell(
+        onTap: () {
+          _openGoatProfile(
+            goat,
+          );
+        },
+
+        child:
+        Padding(
           padding:
-          const EdgeInsets.all(16),
-          child: Row(
+          const EdgeInsets.all(
+            14,
+          ),
+
+          child:
+          Row(
             crossAxisAlignment:
             CrossAxisAlignment.start,
+
             children: [
-              _buildAvatar(
-                initial,
+              _buildGoatAvatar(
+                goat,
               ),
 
               const SizedBox(
@@ -702,137 +490,116 @@ class _CustomerPalaiListScreenState
               ),
 
               Expanded(
-                child: Column(
+                child:
+                Column(
                   crossAxisAlignment:
                   CrossAxisAlignment.start,
+
                   children: [
                     Row(
+                      crossAxisAlignment:
+                      CrossAxisAlignment.start,
+
                       children: [
                         Expanded(
-                          child: Text(
-                            name,
+                          child:
+                          Text(
+                            displayName,
+
                             maxLines: 1,
+
                             overflow:
                             TextOverflow
                                 .ellipsis,
+
                             style:
-                            const TextStyle(
-                              fontSize: 17,
+                            Theme.of(context)
+                                .textTheme
+                                .titleMedium
+                                ?.copyWith(
                               fontWeight:
-                              FontWeight
-                                  .w700,
+                              FontWeight.w700,
                             ),
                           ),
                         ),
 
-                        if (!active)
-                          _buildStatusChip(
-                            'Inactive',
-                          ),
+                        const SizedBox(
+                          width: 8,
+                        ),
+
+                        _buildStatusChip(
+                          status,
+                          isActive,
+                        ),
                       ],
                     ),
 
-                    if (mobile
-                        .isNotEmpty) ...[
-                      const SizedBox(
-                        height: 6,
-                      ),
-                      Row(
-                        children: [
-                          const Icon(
-                            Icons
-                                .phone_outlined,
-                            size: 16,
-                          ),
-                          const SizedBox(
-                            width: 6,
-                          ),
-                          Expanded(
-                            child: Text(
-                              mobile,
-                              overflow:
-                              TextOverflow
-                                  .ellipsis,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ],
+                    const SizedBox(
+                      height: 6,
+                    ),
 
-                    if (address
-                        .isNotEmpty) ...[
-                      const SizedBox(
-                        height: 5,
+                    Text(
+                      _goatSubtitle(
+                        goat,
                       ),
-                      Row(
-                        crossAxisAlignment:
-                        CrossAxisAlignment
-                            .start,
-                        children: [
-                          const Icon(
-                            Icons
-                                .location_on_outlined,
-                            size: 16,
-                          ),
-                          const SizedBox(
-                            width: 6,
-                          ),
-                          Expanded(
-                            child: Text(
-                              address,
-                              maxLines: 2,
-                              overflow:
-                              TextOverflow
-                                  .ellipsis,
-                            ),
-                          ),
-                        ],
+
+                      maxLines: 2,
+
+                      overflow:
+                      TextOverflow
+                          .ellipsis,
+
+                      style:
+                      Theme.of(context)
+                          .textTheme
+                          .bodySmall
+                          ?.copyWith(
+                        color:
+                        Theme.of(context)
+                            .colorScheme
+                            .onSurfaceVariant,
                       ),
-                    ],
+                    ),
 
                     const SizedBox(
                       height: 12,
                     ),
 
-                    Wrap(
-                      spacing: 8,
-                      runSpacing: 6,
+                    Row(
                       children: [
-                        _buildInfoChip(
-                          icon:
+                        if (goat.currentWeight !=
+                            null)
+                          _buildInfoItem(
+                            Icons
+                                .monitor_weight_outlined,
+                            '${_formatWeight(goat.currentWeight!)} kg',
+                          ),
+
+                        if (goat.currentWeight !=
+                            null)
+                          const SizedBox(
+                            width: 16,
+                          ),
+
+                        _buildInfoItem(
                           Icons
-                              .inventory_2_outlined,
-                          label:
-                          package,
+                              .calendar_today_outlined,
+                          _formatDate(
+                            goat.registrationDate,
+                          ),
                         ),
 
-                        if (pendingAmount >
-                            0)
-                          _buildPendingChip(
-                            pendingAmount,
-                          )
-                        else
-                          _buildInfoChip(
-                            icon:
-                            Icons
-                                .check_circle_outline,
-                            label:
-                            'No pending',
-                          ),
+                        const Spacer(),
+
+                        const Icon(
+                          Icons
+                              .chevron_right,
+                          size: 22,
+                        ),
                       ],
                     ),
                   ],
                 ),
-              ),
-
-              const SizedBox(
-                width: 8,
-              ),
-
-              const Icon(
-                Icons
-                    .arrow_forward_ios,
-                size: 16,
               ),
             ],
           ),
@@ -841,20 +608,133 @@ class _CustomerPalaiListScreenState
     );
   }
 
-  // ==========================================================================
+  // ===========================================================================
   // AVATAR
-  // ==========================================================================
+  // ===========================================================================
 
-  Widget _buildAvatar(
-      String initial,
+  Widget _buildGoatAvatar(
+      PalaiGoat goat,
       ) {
-    return CircleAvatar(
-      radius: 28,
-      child: Text(
-        initial,
+    final imageUrl =
+    goat.imageUrl?.trim();
+
+    if (imageUrl != null &&
+        imageUrl.isNotEmpty) {
+      return ClipRRect(
+        borderRadius:
+        BorderRadius.circular(
+          14,
+        ),
+
+        child:
+        Image.network(
+          imageUrl,
+
+          width: 68,
+          height: 68,
+
+          fit:
+          BoxFit.cover,
+
+          errorBuilder:
+              (_, __, ___) {
+            return _buildDefaultAvatar();
+          },
+
+          loadingBuilder:
+              (
+              context,
+              child,
+              loadingProgress,
+              ) {
+            if (loadingProgress ==
+                null) {
+              return child;
+            }
+
+            return _buildDefaultAvatar();
+          },
+        ),
+      );
+    }
+
+    return _buildDefaultAvatar();
+  }
+
+  Widget _buildDefaultAvatar() {
+    return Container(
+      width: 68,
+      height: 68,
+
+      decoration:
+      BoxDecoration(
+        borderRadius:
+        BorderRadius.circular(
+          14,
+        ),
+
+        color:
+        Theme.of(context)
+            .colorScheme
+            .surfaceContainerHighest,
+      ),
+
+      child:
+      Icon(
+        Icons.pets_outlined,
+
+        size: 32,
+
+        color:
+        Theme.of(context)
+            .colorScheme
+            .onSurfaceVariant,
+      ),
+    );
+  }
+
+  // ===========================================================================
+  // STATUS
+  // ===========================================================================
+
+  Widget _buildStatusChip(
+      String status,
+      bool isActive,
+      ) {
+    return Container(
+      padding:
+      const EdgeInsets.symmetric(
+        horizontal: 9,
+        vertical: 5,
+      ),
+
+      decoration:
+      BoxDecoration(
+        borderRadius:
+        BorderRadius.circular(
+          20,
+        ),
+
+        color: isActive
+            ? Theme.of(context)
+            .colorScheme
+            .primaryContainer
+            : Theme.of(context)
+            .colorScheme
+            .surfaceContainerHighest,
+      ),
+
+      child:
+      Text(
+        _formatStatus(
+          status,
+        ),
+
         style:
-        const TextStyle(
-          fontSize: 21,
+        Theme.of(context)
+            .textTheme
+            .labelSmall
+            ?.copyWith(
           fontWeight:
           FontWeight.w700,
         ),
@@ -862,175 +742,162 @@ class _CustomerPalaiListScreenState
     );
   }
 
-  // ==========================================================================
-  // CHIPS
-  // ==========================================================================
+  // ===========================================================================
+  // INFO ITEM
+  // ===========================================================================
 
-  Widget _buildInfoChip({
-    required IconData icon,
-    required String label,
-  }) {
-    return Container(
-      padding:
-      const EdgeInsets.symmetric(
-        horizontal: 9,
-        vertical: 6,
-      ),
-      decoration:
-      BoxDecoration(
-        color: Theme.of(context)
-            .colorScheme
-            .surfaceContainerHighest,
-        borderRadius:
-        BorderRadius.circular(
-          8,
-        ),
-      ),
-      child: Row(
-        mainAxisSize:
-        MainAxisSize.min,
-        children: [
-          Icon(
-            icon,
-            size: 15,
-          ),
-          const SizedBox(
-            width: 5,
-          ),
-          Text(
-            label,
-            style:
-            const TextStyle(
-              fontSize: 12,
-              fontWeight:
-              FontWeight.w600,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildPendingChip(
-      double amount,
+  Widget _buildInfoItem(
+      IconData icon,
+      String text,
       ) {
-    return Container(
-      padding:
-      const EdgeInsets.symmetric(
-        horizontal: 9,
-        vertical: 6,
-      ),
-      decoration:
-      BoxDecoration(
-        color: Theme.of(context)
-            .colorScheme
-            .errorContainer,
-        borderRadius:
-        BorderRadius.circular(
-          8,
+    return Row(
+      mainAxisSize:
+      MainAxisSize.min,
+
+      children: [
+        Icon(
+          icon,
+          size: 16,
+          color:
+          Theme.of(context)
+              .colorScheme
+              .onSurfaceVariant,
         ),
-      ),
-      child: Row(
-        mainAxisSize:
-        MainAxisSize.min,
-        children: [
-          Icon(
-            Icons
-                .account_balance_wallet_outlined,
-            size: 15,
-            color: Theme.of(context)
-                .colorScheme
-                .onErrorContainer,
+
+        const SizedBox(
+          width: 5,
+        ),
+
+        Text(
+          text,
+          style:
+          Theme.of(context)
+              .textTheme
+              .bodySmall
+              ?.copyWith(
+            fontWeight:
+            FontWeight.w600,
           ),
-          const SizedBox(
-            width: 5,
-          ),
-          Text(
-            'Pending ₹${amount.toStringAsFixed(0)}',
-            style:
-            TextStyle(
-              fontSize: 12,
-              fontWeight:
-              FontWeight.w700,
-              color: Theme.of(context)
-                  .colorScheme
-                  .onErrorContainer,
-            ),
-          ),
-        ],
-      ),
+        ),
+      ],
     );
   }
 
-  Widget _buildStatusChip(
-      String label,
-      ) {
-    return Container(
-      padding:
-      const EdgeInsets.symmetric(
-        horizontal: 8,
-        vertical: 4,
-      ),
-      decoration:
-      BoxDecoration(
-        color: Theme.of(context)
-            .colorScheme
-            .surfaceContainerHighest,
-        borderRadius:
-        BorderRadius.circular(
-          8,
-        ),
-      ),
-      child: Text(
-        label,
-        style:
-        const TextStyle(
-          fontSize: 11,
-          fontWeight:
-          FontWeight.w600,
-        ),
-      ),
-    );
-  }
-
-  // ==========================================================================
-  // EMPTY STATES
-  // ==========================================================================
+  // ===========================================================================
+  // EMPTY STATE
+  // ===========================================================================
 
   Widget _buildEmptyState({
-    required bool isSearchResult,
+    required bool hasGoats,
   }) {
+    if (hasGoats &&
+        _searchQuery.isNotEmpty) {
+      return Center(
+        child:
+        Padding(
+          padding:
+          const EdgeInsets.all(
+            24,
+          ),
+
+          child:
+          Column(
+            mainAxisSize:
+            MainAxisSize.min,
+
+            children: [
+              Icon(
+                Icons.search_off,
+                size: 52,
+                color:
+                Theme.of(context)
+                    .colorScheme
+                    .onSurfaceVariant,
+              ),
+
+              const SizedBox(
+                height: 14,
+              ),
+
+              Text(
+                'No goat found',
+                style:
+                Theme.of(context)
+                    .textTheme
+                    .titleMedium
+                    ?.copyWith(
+                  fontWeight:
+                  FontWeight.w700,
+                ),
+              ),
+
+              const SizedBox(
+                height: 6,
+              ),
+
+              Text(
+                'Try searching with a different goat code, tag number or breed.',
+                textAlign:
+                TextAlign.center,
+                style:
+                Theme.of(context)
+                    .textTheme
+                    .bodyMedium,
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
     return Center(
-      child: Padding(
+      child:
+      Padding(
         padding:
         const EdgeInsets.all(
-          32,
+          24,
         ),
-        child: Column(
-          mainAxisAlignment:
-          MainAxisAlignment.center,
+
+        child:
+        Column(
+          mainAxisSize:
+          MainAxisSize.min,
+
           children: [
-            Icon(
-              isSearchResult
-                  ? Icons.search_off
-                  : Icons.people_outline,
-              size: 64,
-              color: Theme.of(context)
-                  .colorScheme
-                  .outline,
+            Container(
+              width: 84,
+              height: 84,
+
+              decoration:
+              BoxDecoration(
+                shape:
+                BoxShape.circle,
+
+                color:
+                Theme.of(context)
+                    .colorScheme
+                    .surfaceContainerHighest,
+              ),
+
+              child:
+              Icon(
+                Icons.pets_outlined,
+                size: 42,
+                color:
+                Theme.of(context)
+                    .colorScheme
+                    .onSurfaceVariant,
+              ),
             ),
 
             const SizedBox(
-              height: 16,
+              height: 18,
             ),
 
             Text(
-              isSearchResult
-                  ? 'No customer found'
-                  : 'No customers yet',
-              textAlign:
-              TextAlign.center,
-              style: Theme.of(context)
+              'No goats registered',
+              style:
+              Theme.of(context)
                   .textTheme
                   .titleLarge
                   ?.copyWith(
@@ -1044,105 +911,31 @@ class _CustomerPalaiListScreenState
             ),
 
             Text(
-              isSearchResult
-                  ? 'Try another name or mobile number.'
-                  : 'Add your first Customer Palai customer to get started.',
-              textAlign:
-              TextAlign.center,
-              style: Theme.of(context)
-                  .textTheme
-                  .bodyMedium,
-            ),
-
-            if (!isSearchResult) ...[
-              const SizedBox(
-                height: 20,
-              ),
-              FilledButton.icon(
-                onPressed: () {
-                  Navigator.of(context).push(
-                    MaterialPageRoute(
-                      builder: (_) =>
-                      const AddCustomerScreen(),
-                    ),
-                  );
-                },
-                icon: const Icon(
-                  Icons
-                      .person_add_alt_1,
-                ),
-                label: const Text(
-                  'Add Customer',
-                ),
-              ),
-            ],
-          ],
-        ),
-      ),
-    );
-  }
-
-  // ==========================================================================
-  // ERROR
-  // ==========================================================================
-
-  Widget _buildErrorState(
-      String error,
-      ) {
-    return Center(
-      child: Padding(
-        padding:
-        const EdgeInsets.all(
-          24,
-        ),
-        child: Column(
-          mainAxisAlignment:
-          MainAxisAlignment.center,
-          children: [
-            Icon(
-              Icons
-                  .error_outline,
-              size: 60,
-              color: Theme.of(context)
-                  .colorScheme
-                  .error,
-            ),
-            const SizedBox(
-              height: 16,
-            ),
-            const Text(
-              'Unable to load customers',
-              style:
-              TextStyle(
-                fontSize: 18,
-                fontWeight:
-                FontWeight.w700,
-              ),
-            ),
-            const SizedBox(
-              height: 8,
-            ),
-            Text(
-              error,
+              'Start by registering the first goat for this customer.',
               textAlign:
               TextAlign.center,
               style:
               Theme.of(context)
                   .textTheme
-                  .bodySmall,
+                  .bodyMedium,
             ),
+
             const SizedBox(
               height: 20,
             ),
+
             FilledButton.icon(
-              onPressed: () {
-                setState(() {});
-              },
-              icon: const Icon(
-                Icons.refresh,
+              onPressed:
+              _addGoat,
+
+              icon:
+              const Icon(
+                Icons.add,
               ),
-              label: const Text(
-                'Try Again',
+
+              label:
+              const Text(
+                'Register First Goat',
               ),
             ),
           ],
@@ -1151,364 +944,200 @@ class _CustomerPalaiListScreenState
     );
   }
 
-  // ==========================================================================
-  // REFRESH
-  // ==========================================================================
+  // ===========================================================================
+  // LOADING
+  // ===========================================================================
 
-  Future<void> _refreshCustomers() async {
-    // Firestore snapshots automatically refresh the UI.
-    //
-    // We keep this small delay so RefreshIndicator has a visible interaction
-    // when the user pulls down.
-    await Future<void>.delayed(
-      const Duration(
-        milliseconds: 400,
-      ),
+  Widget _buildLoadingState() {
+    return const Center(
+      child:
+      CircularProgressIndicator(),
     );
   }
 
-  // ==========================================================================
-  // FORM FIELD
-  // ==========================================================================
+  // ===========================================================================
+  // ERROR
+  // ===========================================================================
 
-  Widget _buildDialogField({
-    required TextEditingController
-    controller,
-    required String label,
-    required String hint,
-    required IconData icon,
-    TextInputType? keyboardType,
-    int maxLines = 1,
-    String? Function(String?)? validator,
-  }) {
-    return TextFormField(
-      controller: controller,
-      keyboardType:
-      keyboardType,
-      maxLines: maxLines,
-      validator: validator,
-      decoration:
-      InputDecoration(
-        labelText: label,
-        hintText: hint,
-        prefixIcon:
-        Icon(icon),
-        border:
-        OutlineInputBorder(
-          borderRadius:
-          BorderRadius.circular(
-            12,
-          ),
-        ),
-      ),
-    );
-  }
-
-  // ==========================================================================
-  // VALUE HELPERS
-  // ==========================================================================
-
-  String _stringValue(
-      dynamic value, {
-        String fallback = '',
-      }) {
-    if (value == null) {
-      return fallback;
-    }
-
-    final result =
-    value.toString().trim();
-
-    if (result.isEmpty) {
-      return fallback;
-    }
-
-    return result;
-  }
-
-  double _doubleValue(
-      dynamic value, {
-        double fallback = 0,
-      }) {
-    if (value == null) {
-      return fallback;
-    }
-
-    if (value is num) {
-      return value.toDouble();
-    }
-
-    return double.tryParse(
-      value.toString(),
-    ) ??
-        fallback;
-  }
-}
-
-// ============================================================================
-// TEMPORARY PROFILE SCREEN
-// ============================================================================
-//
-// This is deliberately temporary.
-//
-// We need the Customer List to be testable immediately without waiting for
-// the complete Customer Profile implementation.
-//
-// Later this screen will be replaced with:
-//
-// Customer Profile
-//      ├── Customer Details
-//      ├── Settings
-//      ├── Goat List
-//      ├── Billing
-//      ├── Payments
-//      ├── Reports
-//      └── Reminders
-//
-// ============================================================================
-
-class _TemporaryCustomerProfileScreen
-    extends StatelessWidget {
-  final String customerId;
-
-  final Map<String, dynamic>
-  customerData;
-
-  const _TemporaryCustomerProfileScreen({
-    required this.customerId,
-    required this.customerData,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final name =
-    customerData['name']
-        ?.toString()
-        .trim()
-        .isNotEmpty ==
-        true
-        ? customerData['name']
-        .toString()
-        : 'Customer';
-
-    final mobile =
-        customerData['mobileNumber']
-            ?.toString() ??
-            '';
-
-    final address =
-        customerData['address']
-            ?.toString() ??
-            '';
-
-    final package =
-        customerData['package']
-            ?.toString() ??
-            '';
-
-    return Scaffold(
-      appBar: AppBar(
-        title: Text(name),
-      ),
-      body: ListView(
+  Widget _buildErrorState(
+      Object? error,
+      ) {
+    return Center(
+      child:
+      Padding(
         padding:
         const EdgeInsets.all(
-          16,
+          24,
         ),
-        children: [
-          Card(
-            child: Padding(
-              padding:
-              const EdgeInsets.all(
-                20,
-              ),
-              child: Column(
-                crossAxisAlignment:
-                CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    name,
-                    style: Theme.of(
-                      context,
-                    )
-                        .textTheme
-                        .headlineSmall
-                        ?.copyWith(
-                      fontWeight:
-                      FontWeight.w700,
-                    ),
-                  ),
 
-                  const SizedBox(
-                    height: 16,
-                  ),
+        child:
+        Column(
+          mainAxisSize:
+          MainAxisSize.min,
 
-                  if (mobile
-                      .isNotEmpty)
-                    _detailRow(
-                      context,
-                      Icons
-                          .phone_outlined,
-                      'Mobile',
-                      mobile,
-                    ),
-
-                  if (address
-                      .isNotEmpty)
-                    _detailRow(
-                      context,
-                      Icons
-                          .location_on_outlined,
-                      'Address',
-                      address,
-                    ),
-
-                  if (package
-                      .isNotEmpty)
-                    _detailRow(
-                      context,
-                      Icons
-                          .inventory_2_outlined,
-                      'Package',
-                      package,
-                    ),
-
-                  _detailRow(
-                    context,
-                    Icons
-                        .fingerprint,
-                    'Customer ID',
-                    customerId,
-                  ),
-                ],
-              ),
+          children: [
+            const Icon(
+              Icons.error_outline,
+              size: 52,
             ),
-          ),
 
-          const SizedBox(
-            height: 20,
-          ),
+            const SizedBox(
+              height: 14,
+            ),
 
-          _featurePlaceholder(
-            context,
-            icon:
-            Icons.pets_outlined,
-            title:
-            'Goats',
-            subtitle:
-            'Goat registration and management will be added next.',
-          ),
+            const Text(
+              'Unable to load goats.',
+            ),
 
-          _featurePlaceholder(
-            context,
-            icon:
-            Icons.settings_outlined,
-            title:
-            'Customer Settings',
-            subtitle:
-            'Vaccination, hoof and hair reminder settings will be added here.',
-          ),
+            const SizedBox(
+              height: 8,
+            ),
 
-          _featurePlaceholder(
-            context,
-            icon:
-            Icons.receipt_long_outlined,
-            title:
-            'Billing & Payments',
-            subtitle:
-            'Monthly billing and payment history will be connected later.',
-          ),
-        ],
+            Text(
+              error?.toString() ??
+                  'Unknown error',
+              textAlign:
+              TextAlign.center,
+            ),
+          ],
+        ),
       ),
     );
   }
 
-  Widget _detailRow(
-      BuildContext context,
-      IconData icon,
-      String label,
-      String value,
+  // ===========================================================================
+  // REFRESH
+  // ===========================================================================
+
+  Future<void> _refresh() async {
+    await Future<void>.delayed(
+      const Duration(
+        milliseconds: 300,
+      ),
+    );
+
+    if (mounted) {
+      setState(() {});
+    }
+  }
+
+  // ===========================================================================
+  // PROFILE
+  // ===========================================================================
+
+  void _openGoatProfile(
+      PalaiGoat goat,
       ) {
-    return Padding(
-      padding:
-      const EdgeInsets.only(
-        bottom: 12,
-      ),
-      child: Row(
-        crossAxisAlignment:
-        CrossAxisAlignment.start,
-        children: [
-          Icon(
-            icon,
-            size: 20,
-            color: Theme.of(context)
-                .colorScheme
-                .primary,
-          ),
-          const SizedBox(
-            width: 10,
-          ),
-          SizedBox(
-            width: 90,
-            child: Text(
-              label,
-              style:
-              const TextStyle(
-                fontWeight:
-                FontWeight.w600,
-              ),
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) =>
+            CustomerPalaiGoatProfileScreen(
+              customerId:
+              widget.customerId,
+              goat:
+              goat,
             ),
-          ),
-          Expanded(
-            child: Text(
-              value,
-            ),
-          ),
-        ],
       ),
     );
   }
 
-  Widget _featurePlaceholder(
-      BuildContext context, {
-        required IconData icon,
-        required String title,
-        required String subtitle,
-      }) {
-    return Card(
-      margin:
-      const EdgeInsets.only(
-        bottom: 10,
-      ),
-      child: ListTile(
-        leading: CircleAvatar(
-          child: Icon(icon),
-        ),
-        title: Text(
-          title,
-          style:
-          const TextStyle(
-            fontWeight:
-            FontWeight.w600,
-          ),
-        ),
-        subtitle:
-        Padding(
-          padding:
-          const EdgeInsets.only(
-            top: 4,
-          ),
-          child: Text(
-            subtitle,
-          ),
-        ),
-        trailing:
-        const Icon(
-          Icons
-              .arrow_forward_ios,
-          size: 16,
-        ),
-      ),
-    );
+  // ===========================================================================
+  // SUBTITLE
+  // ===========================================================================
+
+  String _goatSubtitle(
+      PalaiGoat goat,
+      ) {
+    final parts =
+    <String>[];
+
+    if (goat.breed.trim().isNotEmpty) {
+      parts.add(
+        goat.breed.trim(),
+      );
+    }
+
+    if (goat.gender.trim().isNotEmpty) {
+      parts.add(
+        goat.gender.trim(),
+      );
+    }
+
+    if (goat.color.trim().isNotEmpty) {
+      parts.add(
+        goat.color.trim(),
+      );
+    }
+
+    if (goat.monthlyPackage
+        .trim()
+        .isNotEmpty) {
+      parts.add(
+        goat.monthlyPackage
+            .trim(),
+      );
+    }
+
+    if (parts.isEmpty) {
+      return 'Palai goat';
+    }
+
+    return parts.join(' · ');
+  }
+
+  // ===========================================================================
+  // FORMATTING
+  // ===========================================================================
+
+  String _formatWeight(
+      double value,
+      ) {
+    if (value == value.roundToDouble()) {
+      return value
+          .toInt()
+          .toString();
+    }
+
+    return value
+        .toStringAsFixed(1);
+  }
+
+  String _formatDate(
+      DateTime date,
+      ) {
+    return '${date.day.toString().padLeft(2, '0')}/'
+        '${date.month.toString().padLeft(2, '0')}/'
+        '${date.year}';
+  }
+
+  String _formatStatus(
+      String status,
+      ) {
+    if (status.trim().isEmpty) {
+      return 'Active';
+    }
+
+    final normalized =
+    status.trim();
+
+    switch (normalized
+        .toLowerCase()) {
+      case 'active':
+        return 'Active';
+
+      case 'checkedin':
+      case 'checked_in':
+        return 'Checked In';
+
+      case 'checkedout':
+      case 'checked_out':
+        return 'Checked Out';
+
+      case 'inactive':
+        return 'Inactive';
+
+      default:
+        return normalized;
+    }
   }
 }

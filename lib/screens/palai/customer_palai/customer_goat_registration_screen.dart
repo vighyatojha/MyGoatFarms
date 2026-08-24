@@ -1,7 +1,15 @@
+import 'dart:typed_data';
+
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 
+import '../../../app_theme.dart';
+import '../../../models/activity_model.dart';
 import '../../../models/palai_models.dart';
+import '../../../services/firestore_service.dart';
+import '../../../services/image_service.dart';
+import '../../../widgets/image_source_sheet.dart';
+import '../../../widgets/photo_upload_circle.dart';
 
 class CustomerGoatRegistrationScreen extends StatefulWidget {
   final String customerId;
@@ -22,28 +30,112 @@ class _CustomerGoatRegistrationScreenState
 
   final _goatCodeController = TextEditingController();
   final _breedController = TextEditingController();
+  final _colorController = TextEditingController();
   final _weightController = TextEditingController();
+  final _pricingController = TextEditingController();
   final _notesController = TextEditingController();
 
   final FirebaseFirestore _firestore =
       FirebaseFirestore.instance;
 
   String _gender = 'Male';
-  String _color = '';
+  String _healthStatus = 'Healthy';
+  String _monthlyPackage = 'Basic Palai';
 
   bool _saving = false;
+
+  // ---------------------------------------------------------------------------
+  // BEFORE PALAI PHOTO
+  // ---------------------------------------------------------------------------
+
+  Uint8List? _beforeImageBytes;
+  String? _beforeImageContentType;
+
+  static const List<String> _genders = [
+    'Male',
+    'Female',
+  ];
+
+  static const List<String> _healthOptions = [
+    'Healthy',
+    'Under Observation',
+    'Sick',
+  ];
+
+  static const List<String> _packages = [
+    'Basic Palai',
+    'Standard Palai',
+    'Special Palai',
+  ];
 
   @override
   void dispose() {
     _goatCodeController.dispose();
     _breedController.dispose();
+    _colorController.dispose();
     _weightController.dispose();
+    _pricingController.dispose();
     _notesController.dispose();
+
     super.dispose();
   }
 
   // ===========================================================================
-  // SAVE GOAT
+  // BEFORE PALAI PHOTO
+  // ===========================================================================
+
+  Future<void> _pickBeforePhoto() async {
+    try {
+      final picked = await showImageSourceSheet(
+        context,
+        isGoatPhoto: true,
+      );
+
+      if (picked == null) {
+        return;
+      }
+
+      setState(() {
+        _beforeImageBytes = picked.bytes;
+        _beforeImageContentType = picked.contentType;
+      });
+    } on ImageTooLargeException catch (e) {
+      _showSnack(
+        e.message,
+        isError: true,
+      );
+    } catch (_) {
+      _showSnack(
+        'Could not add photo. Please try again.',
+        isError: true,
+      );
+    }
+  }
+
+  // ===========================================================================
+  // SNACKBAR
+  // ===========================================================================
+
+  void _showSnack(
+      String message, {
+        bool isError = false,
+      }) {
+    if (!mounted) {
+      return;
+    }
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        backgroundColor: isError
+            ? AppColors.error
+            : AppColors.primaryGreen,
+      ),
+    );
+  }
+
+  // ===========================================================================
+  // SAVE / REGISTER + CHECK-IN
   // ===========================================================================
 
   Future<void> _saveGoat() async {
@@ -57,11 +149,66 @@ class _CustomerGoatRegistrationScreenState
       return;
     }
 
+    final weight =
+    double.tryParse(
+      _weightController.text.trim(),
+    );
+
+    if (weight == null || weight <= 0) {
+      _showSnack(
+        'Please enter a valid goat weight.',
+        isError: true,
+      );
+      return;
+    }
+
+    final pricingText =
+    _pricingController.text.trim();
+
+    final pricing = pricingText.isEmpty
+        ? 0.0
+        : double.tryParse(pricingText);
+
+    if (pricing == null || pricing < 0) {
+      _showSnack(
+        'Please enter a valid pricing amount.',
+        isError: true,
+      );
+      return;
+    }
+
     setState(() {
       _saving = true;
     });
 
     try {
+      // -----------------------------------------------------------------------
+      // GET CUSTOMER
+      // -----------------------------------------------------------------------
+
+      final customerReference = _firestore
+          .collection('palaiCustomers')
+          .doc(widget.customerId);
+
+      final customerSnapshot =
+      await customerReference.get();
+
+      if (!customerSnapshot.exists) {
+        throw StateError(
+          'Customer no longer exists.',
+        );
+      }
+
+      final customerData =
+          customerSnapshot.data() ?? {};
+
+      final customerName =
+          customerData['name']?.toString() ?? '';
+
+      // -----------------------------------------------------------------------
+      // CREATE GOAT DOCUMENT
+      // -----------------------------------------------------------------------
+
       final goatReference = _firestore
           .collection('palaiCustomers')
           .doc(widget.customerId)
@@ -70,130 +217,172 @@ class _CustomerGoatRegistrationScreenState
 
       final now = DateTime.now();
 
-      final weightText = _weightController.text.trim();
-
-      final double? weight = weightText.isEmpty
-          ? null
-          : double.tryParse(weightText);
-
-      if (weight == null || weight <= 0) {
-        if (!mounted) {
-          return;
-        }
-
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text(
-              'Please enter a valid goat weight.',
-            ),
-          ),
-        );
-
-        return;
-      }
-
       // -----------------------------------------------------------------------
-      // CREATE UNIFIED PALAI GOAT
-      // -----------------------------------------------------------------------
-      //
-      // This uses the single PalaiGoat model from palai_models.dart.
-      //
-      // DOB is intentionally NOT supplied because it is optional and this
-      // registration screen does not collect DOB.
-      //
+      // CREATE UNIFIED GOAT
       // -----------------------------------------------------------------------
 
       final goat = PalaiGoat(
         id: goatReference.id,
-        customerId: widget.customerId,
 
-        // New registration model fields.
-        //
-        // The current screen uses goatCode instead of name/tagNumber.
-        goatCode: _goatCodeController.text.trim(),
+        customerId:
+        widget.customerId,
 
-        breed: _breedController.text.trim(),
+        // Identity
+        goatCode:
+        _goatCodeController.text.trim(),
 
-        gender: _gender,
+        breed:
+        _breedController.text.trim(),
 
-        color: _color.trim(),
+        gender:
+        _gender,
 
-        // DOB is optional.
-        // Do NOT pass dateOfBirth here.
+        color:
+        _colorController.text.trim(),
 
-        // Initial weight becomes the permanent check-in/start weight.
-        weightAtCheckIn: weight,
-        currentWeight: weight,
+        // Weight
+        weightAtCheckIn:
+        weight,
 
-        healthStatus: 'Healthy',
+        currentWeight:
+        weight,
 
-        // The goat is considered checked in when registered.
-        checkInDate: now,
-        checkOutDate: null,
+        // Health
+        healthStatus:
+        _healthStatus,
 
-        // Current Palai state.
-        status: 'active',
-        isCheckedOut: false,
+        // Check-in
+        checkInDate:
+        now,
 
-        // Package/pricing can be assigned later.
-        monthlyPackage: '',
-        pricing: 0,
+        checkOutDate:
+        null,
 
-        notes: _notesController.text.trim(),
+        status:
+        'active',
 
-        // No image at registration.
-        imageUrl: null,
+        isCheckedOut:
+        false,
 
-        // Registration metadata.
-        registrationDate: now,
-        updatedAt: now,
+        // Package / pricing
+        monthlyPackage:
+        _monthlyPackage,
+
+        pricing:
+        pricing,
+
+        // Registration
+        registrationDate:
+        now,
+
+        updatedAt:
+        now,
+
+        // Other
+        notes:
+        _notesController.text.trim(),
+
+        imageUrl:
+        null,
+
+        // Before Palai image
+        beforeImage:
+        _beforeImageBytes,
+
+        beforeImageContentType:
+        _beforeImageContentType,
+
+        // Report defaults
+        reportStatus:
+        'Not Generated',
+
+        lastReportType:
+        null,
+
+        lastReportDate:
+        null,
+
+        reportsCount:
+        0,
       );
 
       // -----------------------------------------------------------------------
-      // SAVE TO FIRESTORE
+      // SAVE GOAT
       // -----------------------------------------------------------------------
 
       await goatReference.set(
         goat.toMap(),
       );
 
+      // -----------------------------------------------------------------------
+      // ACTIVITY LOG
+      // -----------------------------------------------------------------------
+      //
+      // This preserves the old Check-In functionality.
+      //
+      // The goat creation and activity are now part of the SAME user action.
+      //
+
+      try {
+        final farmId =
+        await FirestoreService.instance.currentFarmId();
+
+        if (farmId != null &&
+            farmId.trim().isNotEmpty) {
+          await FirestoreService.instance.logActivity(
+            farmId,
+            ActivityLog(
+              id: '',
+              type: ActivityType.goatCheckIn,
+              title: 'Goat Check-In',
+              subtitle:
+              '${goat.goatCode} · $customerName',
+              module: 'palai',
+              timestamp: now,
+            ),
+          );
+        }
+      } catch (_) {
+        // Do not fail goat registration just because
+        // the activity log could not be created.
+      }
+
       if (!mounted) {
         return;
       }
 
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text(
-            'Goat registered successfully.',
-          ),
-        ),
+      _showSnack(
+        'Goat registered and checked in successfully.',
       );
 
-      // Return the same PalaiGoat type from palai_models.dart.
+      // Return the newly created goat to the previous screen.
       Navigator.of(context).pop(goat);
     } on FirebaseException catch (e) {
       if (!mounted) {
         return;
       }
 
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            _firebaseErrorMessage(e),
-          ),
-        ),
+      _showSnack(
+        _firebaseErrorMessage(e),
+        isError: true,
       );
-    } catch (_) {
+    } on StateError catch (e) {
       if (!mounted) {
         return;
       }
 
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text(
-            'Unable to register the goat. Please try again.',
-          ),
-        ),
+      _showSnack(
+        e.message,
+        isError: true,
+      );
+    } catch (e) {
+      if (!mounted) {
+        return;
+      }
+
+      _showSnack(
+        'Unable to register the goat. Please try again.',
+        isError: true,
       );
     } finally {
       if (mounted) {
@@ -211,9 +400,19 @@ class _CustomerGoatRegistrationScreenState
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      backgroundColor: AppColors.paleGreen,
+
       appBar: AppBar(
-        title: const Text(
+        backgroundColor:
+        AppColors.paleGreen,
+        elevation: 0,
+        foregroundColor:
+        AppColors.textDark,
+        title: Text(
           'Register Goat',
+          style: AppTheme.heading(
+            size: 17,
+          ),
         ),
       ),
 
@@ -221,15 +420,20 @@ class _CustomerGoatRegistrationScreenState
         key: _formKey,
 
         child: ListView(
-          padding: const EdgeInsets.fromLTRB(
+          padding:
+          const EdgeInsets.fromLTRB(
+            20,
             16,
-            16,
-            16,
+            20,
             120,
           ),
 
           children: [
             _buildIntroCard(),
+
+            const SizedBox(height: 22),
+
+            _buildPhotoSection(),
 
             const SizedBox(height: 24),
 
@@ -241,17 +445,25 @@ class _CustomerGoatRegistrationScreenState
 
             _buildGoatCodeField(),
 
-            const SizedBox(height: 14),
+            const SizedBox(height: 16),
 
             _buildBreedField(),
 
-            const SizedBox(height: 14),
+            const SizedBox(height: 16),
 
-            _buildGenderField(),
+            Row(
+              children: [
+                Expanded(
+                  child: _buildGenderField(),
+                ),
 
-            const SizedBox(height: 14),
+                const SizedBox(width: 12),
 
-            _buildColorField(),
+                Expanded(
+                  child: _buildColorField(),
+                ),
+              ],
+            ),
 
             const SizedBox(height: 28),
 
@@ -263,9 +475,17 @@ class _CustomerGoatRegistrationScreenState
 
             _buildWeightField(),
 
-            const SizedBox(height: 14),
+            const SizedBox(height: 16),
 
-            _buildHealthInformation(),
+            _buildHealthField(),
+
+            const SizedBox(height: 16),
+
+            _buildPackageField(),
+
+            const SizedBox(height: 16),
+
+            _buildPricingField(),
 
             const SizedBox(height: 28),
 
@@ -277,30 +497,49 @@ class _CustomerGoatRegistrationScreenState
 
             _buildNotesField(),
 
-            const SizedBox(height: 24),
+            const SizedBox(height: 22),
 
             _buildInformationCard(),
           ],
         ),
       ),
 
-      bottomNavigationBar: SafeArea(
+      bottomNavigationBar:
+      SafeArea(
         child: Padding(
-          padding: const EdgeInsets.fromLTRB(
-            16,
+          padding:
+          const EdgeInsets.fromLTRB(
+            20,
             10,
-            16,
+            20,
             16,
           ),
 
           child: SizedBox(
             height: 54,
 
-            child: FilledButton.icon(
+            child: ElevatedButton.icon(
               onPressed:
               _saving
                   ? null
                   : _saveGoat,
+
+              style:
+              ElevatedButton.styleFrom(
+                backgroundColor:
+                AppColors.primaryGreen,
+                foregroundColor:
+                Colors.white,
+                disabledBackgroundColor:
+                Colors.grey.shade400,
+                shape:
+                RoundedRectangleBorder(
+                  borderRadius:
+                  BorderRadius.circular(
+                    12,
+                  ),
+                ),
+              ),
 
               icon:
               _saving
@@ -310,16 +549,23 @@ class _CustomerGoatRegistrationScreenState
                 child:
                 CircularProgressIndicator(
                   strokeWidth: 2,
+                  color:
+                  Colors.white,
                 ),
               )
                   : const Icon(
-                Icons.save_outlined,
+                Icons
+                    .check_circle_outline,
               ),
 
               label: Text(
                 _saving
-                    ? 'Saving...'
-                    : 'Register Goat',
+                    ? 'Registering...'
+                    : 'Register & Check-In Goat',
+                style: const TextStyle(
+                  fontWeight:
+                  FontWeight.w600,
+                ),
               ),
             ),
           ),
@@ -333,60 +579,105 @@ class _CustomerGoatRegistrationScreenState
   // ===========================================================================
 
   Widget _buildIntroCard() {
-    return Card(
-      child: Padding(
-        padding:
-        const EdgeInsets.all(18),
+    return Container(
+      padding:
+      const EdgeInsets.all(18),
 
-        child: Row(
-          crossAxisAlignment:
-          CrossAxisAlignment.start,
-
-          children: [
-            const CircleAvatar(
-              radius: 25,
-
-              child: Icon(
-                Icons.pets_outlined,
-                size: 27,
-              ),
-            ),
-
-            const SizedBox(width: 14),
-
-            Expanded(
-              child: Column(
-                crossAxisAlignment:
-                CrossAxisAlignment.start,
-
-                children: [
-                  Text(
-                    'Register a Customer Goat',
-
-                    style: Theme.of(context)
-                        .textTheme
-                        .titleMedium
-                        ?.copyWith(
-                      fontWeight:
-                      FontWeight.w700,
-                    ),
-                  ),
-
-                  const SizedBox(height: 6),
-
-                  Text(
-                    'Register the goat directly into the Palai boarding system. The goat will be checked in immediately and can then be managed from its profile.',
-
-                    style: Theme.of(context)
-                        .textTheme
-                        .bodyMedium,
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ),
+      decoration:
+      AppTheme.card(
+        radius: 16,
       ),
+
+      child: Row(
+        crossAxisAlignment:
+        CrossAxisAlignment.start,
+
+        children: [
+          Container(
+            width: 50,
+            height: 50,
+
+            decoration:
+            BoxDecoration(
+              shape:
+              BoxShape.circle,
+              color:
+              AppColors.primaryGreen
+                  .withOpacity(0.12),
+            ),
+
+            child: const Icon(
+              Icons.pets_outlined,
+              color:
+              AppColors.primaryGreen,
+              size: 27,
+            ),
+          ),
+
+          const SizedBox(width: 14),
+
+          Expanded(
+            child: Column(
+              crossAxisAlignment:
+              CrossAxisAlignment.start,
+
+              children: [
+                Text(
+                  'Register & Check-In Goat',
+                  style:
+                  AppTheme.heading(
+                    size: 17,
+                  ),
+                ),
+
+                const SizedBox(height: 6),
+
+                Text(
+                  'Register this customer goat directly into the Palai boarding system. The goat will be checked in immediately and can then be managed from its profile.',
+                  style:
+                  AppTheme.body(
+                    size: 13,
+                    color:
+                    AppColors.textGrey,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ===========================================================================
+  // PHOTO
+  // ===========================================================================
+
+  Widget _buildPhotoSection() {
+    return Column(
+      children: [
+        PhotoUploadCircle(
+          imageBytes:
+          _beforeImageBytes,
+          label:
+          'Before Palai Photo',
+          onTap:
+          _pickBeforePhoto,
+        ),
+
+        const SizedBox(height: 8),
+
+        Text(
+          'Optional photo taken before Palai care begins.',
+          textAlign:
+          TextAlign.center,
+          style: AppTheme.body(
+            size: 12,
+            color:
+            AppColors.textGrey,
+          ),
+        ),
+      ],
     );
   }
 
@@ -395,41 +686,20 @@ class _CustomerGoatRegistrationScreenState
   // ===========================================================================
 
   Widget _buildGoatCodeField() {
-    return TextFormField(
+    return _textField(
       controller:
       _goatCodeController,
-
-      textCapitalization:
+      label:
+      'Goat Code / Tag Number',
+      hint:
+      'Example: G-1001',
+      icon:
+      Icons.qr_code_2_outlined,
+      capitalization:
       TextCapitalization.characters,
-
-      textInputAction:
-      TextInputAction.next,
-
-      decoration:
-      const InputDecoration(
-        labelText:
-        'Goat Code / Tag Number',
-
-        hintText:
-        'Example: G-102',
-
-        prefixIcon:
-        Icon(
-          Icons.qr_code_2_outlined,
-        ),
-
-        border:
-        OutlineInputBorder(),
-
-        helperText:
-        'Use the unique number written on the goat tag.',
-      ),
-
       validator: (value) {
-        final text =
-            value?.trim() ?? '';
-
-        if (text.isEmpty) {
+        if (value == null ||
+            value.trim().isEmpty) {
           return 'Enter the goat code / tag number';
         }
 
@@ -443,38 +713,20 @@ class _CustomerGoatRegistrationScreenState
   // ===========================================================================
 
   Widget _buildBreedField() {
-    return TextFormField(
+    return _textField(
       controller:
       _breedController,
-
-      textCapitalization:
+      label:
+      'Breed',
+      hint:
+      'Example: Sirohi, Sojat, Jamnapari',
+      icon:
+      Icons.category_outlined,
+      capitalization:
       TextCapitalization.words,
-
-      textInputAction:
-      TextInputAction.next,
-
-      decoration:
-      const InputDecoration(
-        labelText:
-        'Breed',
-
-        hintText:
-        'Example: Sirohi',
-
-        prefixIcon:
-        Icon(
-          Icons.category_outlined,
-        ),
-
-        border:
-        OutlineInputBorder(),
-      ),
-
       validator: (value) {
-        final text =
-            value?.trim() ?? '';
-
-        if (text.isEmpty) {
+        if (value == null ||
+            value.trim().isEmpty) {
           return 'Enter the goat breed';
         }
 
@@ -488,58 +740,20 @@ class _CustomerGoatRegistrationScreenState
   // ===========================================================================
 
   Widget _buildGenderField() {
-    return InputDecorator(
-      decoration:
-      const InputDecoration(
-        labelText:
-        'Gender',
-
-        prefixIcon:
-        Icon(
-          Icons.wc_outlined,
-        ),
-
-        border:
-        OutlineInputBorder(),
-      ),
-
-      child:
-      DropdownButtonHideUnderline(
-        child:
-        DropdownButton<String>(
-          value:
-          _gender,
-
-          isExpanded:
-          true,
-
-          items: const [
-            DropdownMenuItem(
-              value: 'Male',
-              child:
-              Text('Male'),
-            ),
-
-            DropdownMenuItem(
-              value: 'Female',
-              child:
-              Text('Female'),
-            ),
-          ],
-
-          onChanged:
-              (value) {
-            if (value == null) {
-              return;
-            }
-
-            setState(() {
-              _gender =
-                  value;
-            });
-          },
-        ),
-      ),
+    return _dropdownField(
+      label:
+      'Gender',
+      value:
+      _gender,
+      icon:
+      Icons.wc_outlined,
+      options:
+      _genders,
+      onChanged: (value) {
+        setState(() {
+          _gender = value;
+        });
+      },
     );
   }
 
@@ -548,36 +762,19 @@ class _CustomerGoatRegistrationScreenState
   // ===========================================================================
 
   Widget _buildColorField() {
-    return TextFormField(
-      onChanged: (value) {
-        _color = value;
-      },
-
-      textCapitalization:
+    return _textField(
+      controller:
+      _colorController,
+      label:
+      'Color',
+      hint:
+      'e.g. Brown & White',
+      icon:
+      Icons.palette_outlined,
+      capitalization:
       TextCapitalization.words,
-
-      textInputAction:
-      TextInputAction.next,
-
-      decoration:
-      const InputDecoration(
-        labelText:
-        'Color',
-
-        hintText:
-        'Example: White / Black & White',
-
-        prefixIcon:
-        Icon(
-          Icons.palette_outlined,
-        ),
-
-        border:
-        OutlineInputBorder(),
-
-        helperText:
-        'Optional.',
-      ),
+      optional:
+      true,
     );
   }
 
@@ -586,41 +783,19 @@ class _CustomerGoatRegistrationScreenState
   // ===========================================================================
 
   Widget _buildWeightField() {
-    return TextFormField(
+    return _textField(
       controller:
       _weightController,
-
+      label:
+      'Weight at Check-In (kg)',
+      hint:
+      'Example: 35.5',
+      icon:
+      Icons.monitor_weight_outlined,
       keyboardType:
       const TextInputType.numberWithOptions(
         decimal: true,
       ),
-
-      textInputAction:
-      TextInputAction.next,
-
-      decoration:
-      const InputDecoration(
-        labelText:
-        'Weight at Check-In (kg)',
-
-        hintText:
-        'Example: 32.5',
-
-        prefixIcon:
-        Icon(
-          Icons.monitor_weight_outlined,
-        ),
-
-        suffixText:
-        'kg',
-
-        border:
-        OutlineInputBorder(),
-
-        helperText:
-        'This becomes the goat\'s initial Palai weight.',
-      ),
-
       validator: (value) {
         final text =
             value?.trim() ?? '';
@@ -653,34 +828,87 @@ class _CustomerGoatRegistrationScreenState
   // HEALTH
   // ===========================================================================
 
-  Widget _buildHealthInformation() {
-    return InputDecorator(
-      decoration:
-      const InputDecoration(
-        labelText:
-        'Initial Health Status',
+  Widget _buildHealthField() {
+    return _dropdownField(
+      label:
+      'Initial Health Status',
+      value:
+      _healthStatus,
+      icon:
+      Icons.health_and_safety_outlined,
+      options:
+      _healthOptions,
+      onChanged: (value) {
+        setState(() {
+          _healthStatus = value;
+        });
+      },
+    );
+  }
 
-        prefixIcon:
-        Icon(
-          Icons
-              .health_and_safety_outlined,
-        ),
+  // ===========================================================================
+  // PACKAGE
+  // ===========================================================================
 
-        border:
-        OutlineInputBorder(),
+  Widget _buildPackageField() {
+    return _dropdownField(
+      label:
+      'Monthly Package',
+      value:
+      _monthlyPackage,
+      icon:
+      Icons.inventory_2_outlined,
+      options:
+      _packages,
+      onChanged: (value) {
+        setState(() {
+          _monthlyPackage = value;
+        });
+      },
+    );
+  }
+
+  // ===========================================================================
+  // PRICING
+  // ===========================================================================
+
+  Widget _buildPricingField() {
+    return _textField(
+      controller:
+      _pricingController,
+      label:
+      'Pricing (₹)',
+      hint:
+      'Example: 1500',
+      icon:
+      Icons.currency_rupee,
+      keyboardType:
+      const TextInputType.numberWithOptions(
+        decimal: true,
       ),
+      optional:
+      true,
+      validator: (value) {
+        final text =
+            value?.trim() ?? '';
 
-      child:
-      const Padding(
-        padding:
-        EdgeInsets.symmetric(
-          vertical: 4,
-        ),
+        if (text.isEmpty) {
+          return null;
+        }
 
-        child: Text(
-          'Healthy',
-        ),
-      ),
+        final amount =
+        double.tryParse(text);
+
+        if (amount == null) {
+          return 'Enter a valid price';
+        }
+
+        if (amount < 0) {
+          return 'Price cannot be negative';
+        }
+
+        return null;
+      },
     );
   }
 
@@ -689,43 +917,21 @@ class _CustomerGoatRegistrationScreenState
   // ===========================================================================
 
   Widget _buildNotesField() {
-    return TextFormField(
+    return _textField(
       controller:
       _notesController,
-
-      textCapitalization:
-      TextCapitalization.sentences,
-
-      minLines:
-      3,
-
+      label:
+      'Notes',
+      hint:
+      'Optional notes about this goat...',
+      icon:
+      Icons.notes_outlined,
       maxLines:
-      5,
-
-      decoration:
-      const InputDecoration(
-        labelText:
-        'Notes',
-
-        hintText:
-        'Add any useful information about this goat...',
-
-        prefixIcon:
-        Padding(
-          padding:
-          EdgeInsets.only(
-            bottom: 45,
-          ),
-
-          child:
-          Icon(
-            Icons.notes_outlined,
-          ),
-        ),
-
-        border:
-        OutlineInputBorder(),
-      ),
+      4,
+      optional:
+      true,
+      capitalization:
+      TextCapitalization.sentences,
     );
   }
 
@@ -734,32 +940,156 @@ class _CustomerGoatRegistrationScreenState
   // ===========================================================================
 
   Widget _buildInformationCard() {
-    return Card(
-      child: Padding(
-        padding:
-        const EdgeInsets.all(16),
+    return Container(
+      padding:
+      const EdgeInsets.all(16),
 
-        child: Row(
-          crossAxisAlignment:
-          CrossAxisAlignment.start,
+      decoration:
+      AppTheme.card(
+        radius: 14,
+      ),
 
-          children: [
-            const Icon(
-              Icons.info_outline,
-            ),
+      child: Row(
+        crossAxisAlignment:
+        CrossAxisAlignment.start,
 
-            const SizedBox(width: 12),
+        children: [
+          const Icon(
+            Icons.info_outline,
+            color:
+            AppColors.primaryGreen,
+          ),
 
-            Expanded(
-              child: Text(
-                'After registration, the goat will be considered checked in. From the goat profile you can manage weight, health, vaccination, hoof cutting, hair trimming, medicine, monthly photos, reports and checkout.',
+          const SizedBox(width: 12),
 
-                style: Theme.of(context)
-                    .textTheme
-                    .bodySmall,
+          Expanded(
+            child: Text(
+              'After registration, the goat will be considered checked in. From the goat profile you can manage weight, health, vaccination, hoof cutting, hair trimming, medicine, monthly photos, reports and checkout.',
+              style:
+              AppTheme.body(
+                size: 12,
+                color:
+                AppColors.textGrey,
               ),
             ),
-          ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ===========================================================================
+  // TEXT FIELD
+  // ===========================================================================
+
+  Widget _textField(
+      TextEditingController controller, {
+        required String label,
+        required String hint,
+        IconData? icon,
+        TextInputType? keyboardType,
+        int maxLines = 1,
+        bool optional = false,
+        TextCapitalization capitalization =
+            TextCapitalization.none,
+        String? Function(String?)? validator,
+      }) {
+    return TextFormField(
+      controller:
+      controller,
+
+      keyboardType:
+      keyboardType,
+
+      maxLines:
+      maxLines,
+
+      textCapitalization:
+      capitalization,
+
+      textInputAction:
+      maxLines > 1
+          ? TextInputAction.newline
+          : TextInputAction.next,
+
+      validator:
+      validator ??
+          (optional
+              ? null
+              : (value) {
+            if (value == null ||
+                value.trim().isEmpty) {
+              return 'Required';
+            }
+
+            return null;
+          }),
+
+      decoration:
+      InputDecoration(
+        labelText:
+        label,
+        hintText:
+        hint,
+        prefixIcon:
+        icon == null
+            ? null
+            : Icon(icon),
+        border:
+        const OutlineInputBorder(),
+      ),
+    );
+  }
+
+  // ===========================================================================
+  // DROPDOWN
+  // ===========================================================================
+
+  Widget _dropdownField({
+    required String label,
+    required String value,
+    required IconData icon,
+    required List<String> options,
+    required ValueChanged<String> onChanged,
+  }) {
+    return InputDecorator(
+      decoration:
+      InputDecoration(
+        labelText:
+        label,
+        prefixIcon:
+        Icon(icon),
+        border:
+        const OutlineInputBorder(),
+      ),
+
+      child:
+      DropdownButtonHideUnderline(
+        child:
+        DropdownButton<String>(
+          value:
+          value,
+          isExpanded:
+          true,
+
+          items:
+          options.map(
+                (option) {
+              return DropdownMenuItem<String>(
+                value:
+                option,
+                child:
+                Text(option),
+              );
+            },
+          ).toList(),
+
+          onChanged:
+              (value) {
+            if (value != null) {
+              onChanged(value);
+            }
+          },
         ),
       ),
     );
@@ -774,13 +1104,9 @@ class _CustomerGoatRegistrationScreenState
       ) {
     return Text(
       title,
-
-      style: Theme.of(context)
-          .textTheme
-          .titleLarge
-          ?.copyWith(
-        fontWeight:
-        FontWeight.w700,
+      style:
+      AppTheme.heading(
+        size: 18,
       ),
     );
   }
@@ -800,7 +1126,7 @@ class _CustomerGoatRegistrationScreenState
         return 'Network error. Please check your internet connection.';
 
       case 'unavailable':
-        return 'Service is temporarily unavailable. Please try again.';
+        return 'Firebase is temporarily unavailable. Please try again.';
 
       default:
         return 'Unable to register the goat. Please try again.';
