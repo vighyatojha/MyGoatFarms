@@ -1341,82 +1341,46 @@ class _StockScreenState extends State<StockScreen> {
 
   Widget _buildQuickActions() {
     return LayoutBuilder(
-      builder:
-          (context, constraints) {
-        final columns =
-        constraints.maxWidth >=
-            600
-            ? 4
-            : 2;
+      builder: (context, constraints) {
+        final columns = constraints.maxWidth >= 600 ? 4 : 2;
+        // Fixed tile height prevents pixel overflow on smaller Android screens.
+        final tileHeight = columns == 4 ? 118.0 : 128.0;
 
         return GridView.count(
-          crossAxisCount:
-          columns,
+          crossAxisCount: columns,
           crossAxisSpacing: 10,
           mainAxisSpacing: 10,
-          childAspectRatio:
-          columns == 4
-              ? 1.15
-              : 1.55,
+          mainAxisExtent: tileHeight,
           shrinkWrap: true,
-          physics:
-          const NeverScrollableScrollPhysics(),
+          physics: const NeverScrollableScrollPhysics(),
           children: [
             _quickAction(
-              icon:
-              Icons
-                  .add_box_rounded,
-              title:
-              'Add Feed',
-              subtitle:
-              'Purchase stock',
-              color:
-              AppColors
-                  .primaryGreen,
-              onTap:
-              _openAddFeed,
+              icon: Icons.add_box_rounded,
+              title: 'Add Feed',
+              subtitle: 'Purchase stock',
+              color: AppColors.primaryGreen,
+              onTap: _openAddFeed,
             ),
-
             _quickAction(
-              icon:
-              Icons
-                  .medication_rounded,
-              title:
-              'Add Medicine',
-              subtitle:
-              'Add medicine',
-              color:
-              AppColors.info,
-              onTap:
-              _openAddMedicine,
+              icon: Icons.medication_rounded,
+              title: 'Add Medicine',
+              subtitle: 'Add medicine',
+              color: AppColors.info,
+              onTap: _openAddMedicine,
             ),
-
             _quickAction(
-              icon:
-              Icons
-                  .remove_circle_outline_rounded,
-              title:
-              'Feed Used',
-              subtitle:
-              'Record usage',
-              color:
-              AppColors.warning,
-              onTap:
-              _openFeedUsed,
+              icon: Icons.remove_circle_outline_rounded,
+              title: 'Feed Used',
+              subtitle: 'Record usage',
+              color: AppColors.warning,
+              onTap: _openFeedUsed,
             ),
-
             _quickAction(
-              icon:
-              Icons
-                  .medical_information_rounded,
-              title:
-              'Medicine Used',
-              subtitle:
-              'Record usage',
-              color:
-              AppColors.error,
-              onTap:
-              _openMedicineUsed,
+              icon: Icons.medical_information_rounded,
+              title: 'Medicine Used',
+              subtitle: 'Record usage',
+              color: AppColors.error,
+              onTap: _openMedicineUsed,
             ),
           ],
         );

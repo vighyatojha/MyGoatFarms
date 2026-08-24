@@ -19,17 +19,33 @@ class _AddMedicineScreenState extends State<AddMedicineScreen> {
   final _nameController = TextEditingController();
   final _quantityController = TextEditingController();
   final _thresholdController = TextEditingController(text: '5');
+  final _notesController = TextEditingController();
 
-  String _unit = 'bottle';
   bool _saving = false;
+  String? _farmId;
+  StockItem? _selectedMedicine;
+  String _unit = 'bottle';
 
-  static const _units = ['bottle', 'pack', 'strip', 'unit'];
+  static const _units = ['Kg', 'Bag'];
+
+  @override
+  void initState() {
+    super.initState();
+    _loadFarm();
+  }
+
+  Future<void> _loadFarm() async {
+    final farmId = await FirestoreService.instance.currentFarmId();
+    if (!mounted) return;
+    setState(() => _farmId = farmId);
+  }
 
   @override
   void dispose() {
     _nameController.dispose();
     _quantityController.dispose();
     _thresholdController.dispose();
+    _notesController.dispose();
     super.dispose();
   }
 
@@ -75,6 +91,7 @@ class _AddMedicineScreenState extends State<AddMedicineScreen> {
         quantity: quantity,
         unit: _unit,
         lowStockThreshold: threshold,
+        notes: _notesController.text.trim(),
       );
 
       await FirestoreService.instance.logActivity(
@@ -110,32 +127,9 @@ class _AddMedicineScreenState extends State<AddMedicineScreen> {
         elevation: 0,
         foregroundColor: AppColors.textDark,
         titleSpacing: 4,
-        title: Text('Add Medicine', style: AppTheme.heading(size: 18)),
+        title: Text('Add Medicine Stock', style: AppTheme.heading(size: 18)),
       ),
-      bottomNavigationBar: SafeArea(
-        minimum: const EdgeInsets.fromLTRB(16, 8, 16, 14),
-        child: SizedBox(
-          height: 54,
-          child: ElevatedButton.icon(
-            onPressed: _saving ? null : _save,
-            icon: _saving
-                ? const SizedBox(
-                    width: 19,
-                    height: 19,
-                    child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
-                  )
-                : const Icon(Icons.add_rounded),
-            label: Text(_saving ? 'Saving...' : 'Add to Medicine Stock'),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: AppColors.primaryGreen,
-              foregroundColor: Colors.white,
-              elevation: 4,
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-              textStyle: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14),
-            ),
-          ),
-        ),
-      ),
+      bottomNavigationBar: _bottomAction(),
       body: SafeArea(
         child: Form(
           key: _formKey,
@@ -146,14 +140,9 @@ class _AddMedicineScreenState extends State<AddMedicineScreen> {
               const SizedBox(height: 16),
               _section(
                 title: 'Medicine details',
-                icon: Icons.medication_outlined,
+                icon: Icons.medication_rounded,
                 children: [
-                  _field(
-                    controller: _nameController,
-                    label: 'Medicine name',
-                    hint: 'Deworming Syrup, Liver Tonic...',
-                    icon: Icons.medication_rounded,
-                  ),
+                  _medicineSelector(),
                   const SizedBox(height: 14),
                   Row(
                     crossAxisAlignment: CrossAxisAlignment.start,
@@ -172,7 +161,10 @@ class _AddMedicineScreenState extends State<AddMedicineScreen> {
                         ),
                       ),
                       const SizedBox(width: 12),
-                      Expanded(flex: 2, child: _unitSelector()),
+                      Expanded(
+                        flex: 2,
+                        child: _unitSelector(),
+                      ),
                     ],
                   ),
                 ],
@@ -195,13 +187,28 @@ class _AddMedicineScreenState extends State<AddMedicineScreen> {
                   ),
                   const SizedBox(height: 8),
                   Text(
-                    'Use a threshold that should trigger an early reorder warning.',
+                    'You will see a low-stock warning when the quantity reaches this level.',
                     style: AppTheme.body(size: 11, color: AppColors.textGrey),
                   ),
                 ],
               ),
               const SizedBox(height: 14),
-              _infoCard(),
+              _section(
+                title: 'Notes',
+                icon: Icons.notes_rounded,
+                children: [
+                  _field(
+                    controller: _notesController,
+                    label: 'Additional note',
+                    hint: 'Supplier, quality, storage location...',
+                    icon: Icons.edit_note_rounded,
+                    maxLines: 3,
+                    optional: true,
+                  ),
+                ],
+              ),
+              const SizedBox(height: 16),
+              _tip(),
             ],
           ),
         ),
@@ -243,10 +250,13 @@ class _AddMedicineScreenState extends State<AddMedicineScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text('Add medicine to inventory', style: AppTheme.heading(size: 17, color: Colors.white)),
+                Text(
+                  'Add medicine to inventory',
+                  style: AppTheme.heading(size: 17, color: Colors.white),
+                ),
                 const SizedBox(height: 4),
                 Text(
-                  'Keep medicine quantities and reorder alerts accurate.',
+                  'Record what arrived and set the alert level.',
                   style: AppTheme.body(size: 11, color: Colors.white70),
                 ),
               ],
@@ -290,33 +300,431 @@ class _AddMedicineScreenState extends State<AddMedicineScreen> {
     );
   }
 
+  Widget _medicineSelector() {
+    if (_farmId == null) {
+      return _field(
+        controller: _nameController,
+        label: 'Medicine name',
+        hint: 'Loading existing medicines...',
+        icon: Icons.medication_outlined,
+        readOnly: true,
+      );
+    }
+
+    return StreamBuilder<List<StockItem>>(
+      stream: FirestoreService.instance.stockItemsStream(
+        _farmId!,
+        type: StockType.medicine,
+      ),
+      builder: (context, snapshot) {
+        final medicines = snapshot.data ?? <StockItem>[];
+
+        // Keep the selected object synced with Firestore after a stock update.
+        StockItem? selected;
+        if (_selectedMedicine != null) {
+          for (final item in medicines) {
+            if (item.id == _selectedMedicine!.id) {
+              selected = item;
+              break;
+            }
+          }
+        }
+
+        if (selected != null && selected != _selectedMedicine) {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (mounted) setState(() => _selectedMedicine = selected);
+          });
+        }
+
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            GestureDetector(
+              onTap: _saving ? null : () => _showMedicinePicker(medicines),
+              child: AbsorbPointer(
+                child: _field(
+                  controller: _nameController,
+                  label: 'Medicine name',
+                  hint: medicines.isEmpty
+                      ? 'Select or enter a medicine name'
+                      : 'Select an existing medicine',
+                  icon: Icons.medication_outlined,
+                  readOnly: true,
+                  suffixIcon: const Icon(
+                    Icons.keyboard_arrow_down_rounded,
+                    color: AppColors.primaryGreen,
+                  ),
+                ),
+              ),
+            ),
+            if (selected != null) ...[
+              const SizedBox(height: 9),
+              _selectedMedicineSummary(selected),
+              const SizedBox(height: 5),
+              Text(
+                'Existing medicine selected • stock will be added to this medicine.',
+                style: AppTheme.body(
+                  size: 10,
+                  color: AppColors.darkGreen,
+                  weight: FontWeight.w600,
+                ),
+              ),
+            ],
+          ],
+        );
+      },
+    );
+  }
+
+  Future<void> _showMedicinePicker(List<StockItem> medicines) async {
+    final result = await showModalBottomSheet<Object?>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (sheetContext) {
+        return SafeArea(
+          child: Container(
+            constraints: const BoxConstraints(maxHeight: 560),
+            decoration: const BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.vertical(top: Radius.circular(26)),
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const SizedBox(height: 10),
+                Container(
+                  width: 42,
+                  height: 5,
+                  decoration: BoxDecoration(
+                    color: Colors.black12,
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                ),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(20, 18, 20, 10),
+                  child: Row(
+                    children: [
+                      Container(
+                        width: 42,
+                        height: 42,
+                        decoration: BoxDecoration(
+                          color: AppColors.lightGreen,
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: const Icon(
+                          Icons.medication_outlined,
+                          color: AppColors.primaryGreen,
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text('Select medicine', style: AppTheme.heading(size: 17)),
+                            const SizedBox(height: 2),
+                            Text(
+                              medicines.isEmpty
+                                  ? 'No medicine has been added yet.'
+                                  : 'Choose an existing medicine or enter a new medicine name.',
+                              style: AppTheme.body(size: 11, color: AppColors.textGrey),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                if (medicines.isNotEmpty)
+                  Flexible(
+                    child: ListView.separated(
+                      shrinkWrap: true,
+                      padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
+                      itemCount: medicines.length,
+                      separatorBuilder: (_, __) => const SizedBox(height: 8),
+                      itemBuilder: (_, index) {
+                        final item = medicines[index];
+                        return _medicinePickerTile(item, sheetContext);
+                      },
+                    ),
+                  ),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 8, 16, 18),
+                  child: InkWell(
+                    borderRadius: BorderRadius.circular(15),
+                    onTap: () => Navigator.pop(sheetContext, 'new'),
+                    child: Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 16),
+                      decoration: BoxDecoration(
+                        color: AppColors.lightGreen,
+                        borderRadius: BorderRadius.circular(15),
+                        border: Border.all(color: AppColors.primaryGreen.withOpacity(.25)),
+                      ),
+                      child: Row(
+                        children: [
+                          const Icon(Icons.add_circle_rounded, color: AppColors.primaryGreen),
+                          const SizedBox(width: 10),
+                          Expanded(
+                            child: Text(
+                              'Enter New Medicine Name',
+                              style: AppTheme.body(
+                                size: 13,
+                                color: AppColors.darkGreen,
+                                weight: FontWeight.w700,
+                              ),
+                            ),
+                          ),
+                          const Icon(Icons.chevron_right_rounded, color: AppColors.primaryGreen),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+
+    if (result == 'new') {
+      await _addNewMedicineName();
+    } else if (result is StockItem) {
+      _selectExistingMedicine(result);
+    }
+  }
+
+  Widget _medicinePickerTile(StockItem item, BuildContext sheetContext) {
+    final selected = _selectedMedicine?.id == item.id;
+    final status = item.isLowStock ? 'Low stock' : 'Good stock';
+
+    return InkWell(
+      borderRadius: BorderRadius.circular(16),
+      onTap: () => Navigator.pop(sheetContext, item),
+      child: Container(
+        padding: const EdgeInsets.all(13),
+        decoration: BoxDecoration(
+          color: selected ? AppColors.lightGreen : Colors.white,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(
+            color: selected
+                ? AppColors.primaryGreen
+                : AppColors.divider,
+          ),
+        ),
+        child: Row(
+          children: [
+            Container(
+              width: 42,
+              height: 42,
+              decoration: BoxDecoration(
+                color: AppColors.lightGreen,
+                shape: BoxShape.circle,
+              ),
+              child: const Icon(Icons.medication_rounded, color: AppColors.primaryGreen),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(item.name, style: AppTheme.heading(size: 13)),
+                  const SizedBox(height: 3),
+                  Text(
+                    'Current stock: ${item.quantity.toStringAsFixed(item.quantity % 1 == 0 ? 0 : 1)} ${item.unit}',
+                    style: AppTheme.body(size: 11, color: AppColors.textGrey),
+                  ),
+                ],
+              ),
+            ),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
+              decoration: BoxDecoration(
+                color: item.isLowStock
+                    ? AppColors.warning.withOpacity(.12)
+                    : AppColors.lightGreen,
+                borderRadius: BorderRadius.circular(20),
+              ),
+              child: Text(
+                status,
+                style: AppTheme.body(
+                  size: 10,
+                  color: item.isLowStock ? AppColors.warning : AppColors.darkGreen,
+                  weight: FontWeight.w700,
+                ),
+              ),
+            ),
+            if (selected) ...[
+              const SizedBox(width: 6),
+              const Icon(Icons.check_circle_rounded, color: AppColors.primaryGreen, size: 20),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _selectExistingMedicine(StockItem item) {
+    setState(() {
+      _selectedMedicine = item;
+      _nameController.text = item.name;
+      _unit = item.unit;
+      _thresholdController.text = item.lowStockThreshold.toStringAsFixed(
+        item.lowStockThreshold % 1 == 0 ? 0 : 1,
+      );
+    });
+  }
+
+  Future<void> _addNewMedicineName() async {
+    final controller = TextEditingController();
+    final name = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) {
+        return AlertDialog(
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+          title: Text('Enter medicine name', style: AppTheme.heading(size: 17)),
+          content: TextField(
+            controller: controller,
+            autofocus: true,
+            textCapitalization: TextCapitalization.words,
+            decoration: InputDecoration(
+              labelText: 'Enter medicine name',
+              hintText: 'e.g. Deworming Syrup, Liver Tonic, Calcium',
+              prefixIcon: const Icon(Icons.medication_outlined, color: AppColors.primaryGreen),
+              border: OutlineInputBorder(borderRadius: BorderRadius.circular(14)),
+              focusedBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(14),
+                borderSide: const BorderSide(color: AppColors.primaryGreen, width: 1.5),
+              ),
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('Cancel'),
+            ),
+            ElevatedButton(
+              onPressed: () {
+                final value = controller.text.trim();
+                if (value.isEmpty) return;
+                Navigator.pop(dialogContext, value);
+              },
+              style: ElevatedButton.styleFrom(
+                backgroundColor: AppColors.primaryGreen,
+                foregroundColor: Colors.white,
+              ),
+              child: const Text('Use This Name'),
+            ),
+          ],
+        );
+      },
+    );
+
+    // Note: we intentionally do NOT call controller.dispose() here.
+    // showDialog's Future completes as soon as Navigator.pop() is called,
+    // but the dialog's exit transition is still playing for several more
+    // frames, and the (still-focused) TextField above is still mounted
+    // during that time. Disposing the controller immediately races with
+    // that teardown and throws:
+    //   "'_dependents.isEmpty': is not true" (framework.dart)
+    // This controller is only ever used for this single dialog, so it's
+    // safe to just let it be garbage-collected once it's dropped.
+
+    if (!mounted || name == null || name.trim().isEmpty) return;
+
+    setState(() {
+      _selectedMedicine = null;
+      _nameController.text = name.trim();
+      _unit = 'bottle';
+      _thresholdController.text = '5';
+    });
+  }
+
+  Widget _selectedMedicineSummary(StockItem item) {
+    final newQuantity = double.tryParse(_quantityController.text.trim()) ?? 0;
+    final projected = item.quantity + newQuantity;
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 11),
+      decoration: BoxDecoration(
+        color: AppColors.lightGreen,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: AppColors.primaryGreen.withOpacity(.16)),
+      ),
+      child: Row(
+        children: [
+          const Icon(Icons.inventory_2_outlined, color: AppColors.primaryGreen, size: 18),
+          const SizedBox(width: 9),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Current stock  ${item.quantity.toStringAsFixed(item.quantity % 1 == 0 ? 0 : 1)} ${item.unit}',
+                  style: AppTheme.body(size: 11, color: AppColors.textGrey),
+                ),
+                if (newQuantity > 0)
+                  Text(
+                    'After addition  ${projected.toStringAsFixed(projected % 1 == 0 ? 0 : 1)} ${item.unit}',
+                    style: AppTheme.body(
+                      size: 12,
+                      color: AppColors.darkGreen,
+                      weight: FontWeight.w700,
+                    ),
+                  ),
+              ],
+            ),
+          ),
+          const Icon(Icons.check_circle_rounded, color: AppColors.primaryGreen, size: 20),
+        ],
+      ),
+    );
+  }
+
   Widget _unitSelector() {
+    final locked = _selectedMedicine != null;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text('Unit', style: AppTheme.body(size: 11, color: AppColors.textGrey, weight: FontWeight.w600)),
         const SizedBox(height: 8),
         Container(
-          padding: const EdgeInsets.symmetric(horizontal: 11),
+          padding: const EdgeInsets.all(4),
           decoration: BoxDecoration(
-            color: Colors.white,
+            color: AppColors.lightGreen,
             borderRadius: BorderRadius.circular(13),
-            border: Border.all(color: AppColors.divider),
           ),
-          child: DropdownButtonHideUnderline(
-            child: DropdownButton<String>(
-              value: _unit,
-              isExpanded: true,
-              items: _units
-                  .map(
-                    (u) => DropdownMenuItem(
-                      value: u,
-                      child: Text(u, style: AppTheme.body(size: 12, color: AppColors.textDark)),
+          child: Row(
+            children: _units.map((unit) {
+              final selected = _unit == unit;
+              return Expanded(
+                child: GestureDetector(
+                  onTap: locked ? null : () => setState(() => _unit = unit),
+                  child: AnimatedContainer(
+                    duration: const Duration(milliseconds: 180),
+                    padding: const EdgeInsets.symmetric(vertical: 11),
+                    decoration: BoxDecoration(
+                      color: selected ? Colors.white : Colors.transparent,
+                      borderRadius: BorderRadius.circular(10),
+                      boxShadow: selected
+                          ? [BoxShadow(color: Colors.black.withOpacity(.06), blurRadius: 5)]
+                          : null,
                     ),
-                  )
-                  .toList(),
-              onChanged: (v) => setState(() => _unit = v ?? _unit),
-            ),
+                    child: Text(
+                      unit,
+                      textAlign: TextAlign.center,
+                      style: AppTheme.body(
+                        size: 12,
+                        color: selected ? AppColors.darkGreen : AppColors.textGrey,
+                        weight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
+                ),
+              );
+            }).toList(),
           ),
         ),
       ],
@@ -331,18 +739,30 @@ class _AddMedicineScreenState extends State<AddMedicineScreen> {
     String? suffix,
     TextInputType? keyboardType,
     List<TextInputFormatter>? inputFormatters,
+    int maxLines = 1,
+    bool optional = false,
+    bool readOnly = false,
+    Widget? suffixIcon,
+    ValueChanged<String>? onChanged,
   }) {
     return TextFormField(
       controller: controller,
       keyboardType: keyboardType,
       inputFormatters: inputFormatters,
-      validator: (value) => value == null || value.trim().isEmpty ? 'Required' : null,
+      maxLines: maxLines,
+      readOnly: readOnly,
+      onChanged: onChanged,
+      validator: (value) {
+        if (!optional && (value == null || value.trim().isEmpty)) return 'Required';
+        return null;
+      },
       style: AppTheme.body(size: 13, color: AppColors.textDark),
       decoration: InputDecoration(
         labelText: label,
         hintText: hint,
         prefixIcon: Icon(icon, color: AppColors.primaryGreen, size: 20),
         suffixText: suffix,
+        suffixIcon: suffixIcon,
         labelStyle: AppTheme.body(size: 12, color: AppColors.textGrey),
         hintStyle: AppTheme.body(size: 12, color: AppColors.textGrey),
         filled: true,
@@ -364,24 +784,53 @@ class _AddMedicineScreenState extends State<AddMedicineScreen> {
     );
   }
 
-  Widget _infoCard() {
+  Widget _tip() {
     return Container(
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
-        color: AppColors.lightGreen,
+        color: AppColors.info.withOpacity(.08),
         borderRadius: BorderRadius.circular(15),
+        border: Border.all(color: AppColors.info.withOpacity(.18)),
       ),
       child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Icon(Icons.info_outline_rounded, color: AppColors.darkGreen, size: 20),
+          const Icon(Icons.lightbulb_outline_rounded, color: AppColors.info, size: 19),
           const SizedBox(width: 10),
           Expanded(
             child: Text(
-              'Record medicines using the unit shown on the package. This makes usage history easier to understand.',
+              'Tip: use the same unit shown on the medicine package so stock usage and alerts stay consistent.',
               style: AppTheme.body(size: 11, color: AppColors.textDark),
             ),
           ),
         ],
+      ),
+    );
+  }
+
+  Widget _bottomAction() {
+    return SafeArea(
+      minimum: const EdgeInsets.fromLTRB(16, 8, 16, 14),
+      child: SizedBox(
+        height: 54,
+        child: ElevatedButton.icon(
+          onPressed: _saving ? null : _save,
+          icon: _saving
+              ? const SizedBox(
+            width: 19,
+            height: 19,
+            child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+          )
+              : const Icon(Icons.add_rounded),
+          label: Text(_saving ? 'Saving...' : 'Add to Stock'),
+          style: ElevatedButton.styleFrom(
+            backgroundColor: AppColors.primaryGreen,
+            foregroundColor: Colors.white,
+            elevation: 4,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+            textStyle: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14),
+          ),
+        ),
       ),
     );
   }

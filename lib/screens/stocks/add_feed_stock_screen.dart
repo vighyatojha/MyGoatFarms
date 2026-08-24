@@ -612,7 +612,16 @@ class _AddFeedStockScreenState extends State<AddFeedStockScreen> {
         );
       },
     );
-    controller.dispose();
+
+    // Note: we intentionally do NOT call controller.dispose() here.
+    // showDialog's Future completes as soon as Navigator.pop() is called,
+    // but the dialog's exit transition is still playing for several more
+    // frames, and the (still-focused) TextField above is still mounted
+    // during that time. Disposing the controller immediately races with
+    // that teardown and throws:
+    //   "'_dependents.isEmpty': is not true" (framework.dart)
+    // This controller is only ever used for this single dialog, so it's
+    // safe to just let it be garbage-collected once it's dropped.
 
     if (!mounted || name == null || name.trim().isEmpty) return;
 
