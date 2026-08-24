@@ -1651,11 +1651,57 @@ class FirestoreService {
   CollectionReference<Map<String, dynamic>> _partners(String farmId) =>
       _farms.doc(farmId).collection('partners');
 
+
+  // ---------------------------------------------------------------------
+// Farm Partners
+// ---------------------------------------------------------------------
+
   Stream<List<PartnerModel>> partnersStream(String farmId) {
-    return _partners(farmId)
-        .orderBy('createdAt', descending: true)
+    return _farms
+        .doc(farmId)
+        .collection('partners')
+        .orderBy('createdAt', descending: false)
         .snapshots()
-        .map((s) => s.docs.map(PartnerModel.fromDoc).toList());
+        .map(
+          (snapshot) => snapshot.docs
+          .map((doc) => PartnerModel.fromDoc(doc))
+          .toList(),
+    );
+  }
+
+  Future<String> createPartner(
+      String farmId, {
+        required String name,
+        required String mobileNumber,
+        required String email,
+        required String authUid,
+      }) async {
+    final partnerRef = _farms
+        .doc(farmId)
+        .collection('partners')
+        .doc(authUid);
+
+    await partnerRef.set({
+      'name': name.trim(),
+      'mobileNumber': mobileNumber.trim(),
+      'email': email.trim(),
+      'authUid': authUid,
+      'createdAt': FieldValue.serverTimestamp(),
+      'updatedAt': FieldValue.serverTimestamp(),
+    });
+
+    return partnerRef.id;
+  }
+
+  Future<void> deletePartner({
+    required String farmId,
+    required String partnerId,
+  }) async {
+    await _farms
+        .doc(farmId)
+        .collection('partners')
+        .doc(partnerId)
+        .delete();
   }
 
   /// Adds a partner. The document id is deliberately the partner's own
