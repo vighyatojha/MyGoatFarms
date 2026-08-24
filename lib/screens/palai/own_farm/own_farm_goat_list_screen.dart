@@ -55,57 +55,57 @@ class _OwnFarmGoatListScreenState extends State<OwnFarmGoatListScreen> {
       body: _farmId == null
           ? const Center(child: CircularProgressIndicator(color: AppColors.primaryGreen))
           : Column(
-              children: [
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(20, 12, 20, 8),
-                  child: Container(
-                    decoration: AppTheme.card(radius: 12),
-                    child: TextField(
-                      controller: _searchController,
-                      onChanged: (v) => setState(() => _search = v.trim().toLowerCase()),
-                      decoration: InputDecoration(
-                        hintText: 'Search by Goat ID or breed',
-                        hintStyle: AppTheme.body(size: 12),
-                        prefixIcon: const Icon(Icons.search, size: 18),
-                        border: InputBorder.none,
-                        contentPadding: const EdgeInsets.symmetric(vertical: 12),
-                      ),
-                      style: AppTheme.body(size: 13, color: AppColors.textDark),
-                    ),
-                  ),
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(20, 12, 20, 8),
+            child: Container(
+              decoration: AppTheme.card(radius: 12),
+              child: TextField(
+                controller: _searchController,
+                onChanged: (v) => setState(() => _search = v.trim().toLowerCase()),
+                decoration: InputDecoration(
+                  hintText: 'Search by Goat ID or breed',
+                  hintStyle: AppTheme.body(size: 12),
+                  prefixIcon: const Icon(Icons.search, size: 18),
+                  border: InputBorder.none,
+                  contentPadding: const EdgeInsets.symmetric(vertical: 12),
                 ),
-                Expanded(
-                  child: StreamBuilder<List<OwnFarmGoat>>(
-                    stream: FirestoreService.instance.ownFarmGoatsStream(_farmId!),
-                    builder: (context, snap) {
-                      if (!snap.hasData) {
-                        return const Center(child: CircularProgressIndicator(color: AppColors.primaryGreen));
-                      }
-                      var goats = snap.data!;
-                      if (_search.isNotEmpty) {
-                        goats = goats
-                            .where((g) => g.goatCode.toLowerCase().contains(_search) || g.breed.toLowerCase().contains(_search))
-                            .toList();
-                      }
-                      if (goats.isEmpty) {
-                        return Center(
-                          child: Padding(
-                            padding: const EdgeInsets.all(24),
-                            child: Text('No farm goats registered yet. Tap + to add one.', style: AppTheme.body(size: 13)),
-                          ),
-                        );
-                      }
-                      return ListView.separated(
-                        padding: const EdgeInsets.fromLTRB(20, 4, 20, 24),
-                        itemCount: goats.length,
-                        separatorBuilder: (_, __) => const SizedBox(height: 10),
-                        itemBuilder: (context, i) => _goatCard(goats[i]),
-                      );
-                    },
-                  ),
-                ),
-              ],
+                style: AppTheme.body(size: 13, color: AppColors.textDark),
+              ),
             ),
+          ),
+          Expanded(
+            child: StreamBuilder<List<OwnFarmGoat>>(
+              stream: FirestoreService.instance.ownFarmGoatsStream(_farmId!),
+              builder: (context, snap) {
+                if (!snap.hasData) {
+                  return const Center(child: CircularProgressIndicator(color: AppColors.primaryGreen));
+                }
+                var goats = snap.data!;
+                if (_search.isNotEmpty) {
+                  goats = goats
+                      .where((g) => g.goatCode.toLowerCase().contains(_search) || g.breed.toLowerCase().contains(_search))
+                      .toList();
+                }
+                if (goats.isEmpty) {
+                  return Center(
+                    child: Padding(
+                      padding: const EdgeInsets.all(24),
+                      child: Text('No farm goats registered yet. Tap + to add one.', style: AppTheme.body(size: 13)),
+                    ),
+                  );
+                }
+                return ListView.separated(
+                  padding: const EdgeInsets.fromLTRB(20, 4, 20, 24),
+                  itemCount: goats.length,
+                  separatorBuilder: (_, __) => const SizedBox(height: 10),
+                  itemBuilder: (context, i) => _goatCard(goats[i]),
+                );
+              },
+            ),
+          ),
+        ],
+      ),
     );
   }
 
@@ -113,8 +113,8 @@ class _OwnFarmGoatListScreenState extends State<OwnFarmGoatListScreen> {
     final statusColor = goat.healthStatus == 'Healthy'
         ? AppColors.success
         : goat.healthStatus == 'Under Treatment'
-            ? AppColors.warning
-            : AppColors.error;
+        ? AppColors.warning
+        : AppColors.error;
 
     return GestureDetector(
       onTap: () => Navigator.of(context).push(fastRoute(OwnFarmGoatDetailScreen(goat: goat))),

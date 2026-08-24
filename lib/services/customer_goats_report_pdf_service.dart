@@ -403,7 +403,7 @@ class CustomerGoatsReportPdfService {
       ),
       child: pw.Row(
         children: [
-           pw.Text(
+          pw.Text(
             'Goats Report',
             style: pw.TextStyle(fontSize: 7, color: PdfColors.grey600),
           ),
