@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:animate_do/animate_do.dart';
-
+import '../home/income_detail_screen.dart';
 import '../../app_theme.dart';
 import '../../models/activity_model.dart';
 import '../../services/firestore_service.dart';
@@ -246,12 +246,17 @@ class _PalaiScreenState extends State<PalaiScreen> {
             children: [
               Expanded(
                 child: StreamBuilder<double>(
-                  stream: _incomeStream,
+                  stream: FirestoreService.instance
+                      .monthlyPaymentsReceivedStream(_farmId!),
                   builder: (context, snap) => StatCard(
-                    icon: Icons.currency_rupee,
-                    label: 'Monthly Income',
-                    value: snap.hasData ? '₹${snap.data!.toStringAsFixed(0)}' : '—',
+                    icon: Icons.receipt_long_outlined,
+                    label: 'Payments',
+                    value: snap.hasData
+                        ? '₹${snap.data!.toStringAsFixed(0)}'
+                        : '—',
                     color: AppColors.warning,
+                    onTap: () => Navigator.of(context)
+                        .push(fastRoute(const IncomeDetailScreen())),
                   ),
                 ),
               ),

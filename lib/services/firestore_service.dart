@@ -1133,6 +1133,31 @@ class FirestoreService {
     ));
   }
 
+  /// Streams total payments received (income only) so far this calendar
+  /// month, across all transactions for the farm.
+  Stream<double> monthlyPaymentsReceivedStream(String farmId) {
+    final now = DateTime.now();
+    final startOfMonth = DateTime(now.year, now.month, 1);
+    final startOfNextMonth = DateTime(now.year, now.month + 1, 1);
+
+    return _farms
+        .doc(farmId)
+        .collection('transactions')
+        .where('date', isGreaterThanOrEqualTo: Timestamp.fromDate(startOfMonth))
+        .where('date', isLessThan: Timestamp.fromDate(startOfNextMonth))
+        .snapshots()
+        .map((snap) {
+      double total = 0;
+      for (final doc in snap.docs) {
+        final data = doc.data();
+        if (data['isIncome'] == true) {
+          total += (data['amount'] ?? 0).toDouble();
+        }
+      }
+      return total;
+    });
+  }
+
   // ---------------------------------------------------------------------
   // Palai — customers
   // ---------------------------------------------------------------------

@@ -16,6 +16,12 @@ class _IncomeDetailScreenState
     extends State<IncomeDetailScreen> {
   String? _farmId;
 
+  Stream<double>? _monthlyPaymentsStream;
+  Stream<double>? _outstandingStream;
+
+  DateTime? _selectedDate;
+  bool _showCalendar = false;
+
   @override
   void initState() {
     super.initState();
@@ -31,6 +37,12 @@ class _IncomeDetailScreenState
 
       setState(() {
         _farmId = id;
+        if (id != null) {
+          _monthlyPaymentsStream = FirestoreService.instance
+              .monthlyPaymentsReceivedStream(id);
+          _outstandingStream = FirestoreService.instance
+              .totalPendingPaymentsStream(id);
+        }
       });
     } catch (e) {
       debugPrint('Income screen farm error: $e');
@@ -74,6 +86,14 @@ class _IncomeDetailScreenState
         '$hour:$minute $period';
   }
 
+  String _formatDayLabel(DateTime date) {
+    const months = [
+      'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+      'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+    ];
+    return '${date.day} ${months[date.month - 1]} ${date.year}';
+  }
+
   double _number(dynamic value) {
     if (value is num) {
       return value.toDouble();
@@ -103,6 +123,23 @@ class _IncomeDetailScreenState
           'Income & Payments',
           style: AppTheme.heading(size: 17),
         ),
+
+        actions: [
+          IconButton(
+            tooltip: 'Browse by date',
+            icon: Icon(
+              _showCalendar
+                  ? Icons.calendar_month
+                  : Icons.calendar_month_outlined,
+              color: AppColors.primaryGreen,
+            ),
+            onPressed: () {
+              setState(() {
+                _showCalendar = !_showCalendar;
+              });
+            },
+          ),
+        ],
       ),
 
       body: _farmId == null
@@ -113,7 +150,9 @@ class _IncomeDetailScreenState
       )
           : Column(
         children: [
-          _buildTodaySummary(),
+          _buildSummaryBoxes(),
+          if (_showCalendar) _buildCalendar(),
+          if (_selectedDate != null) _buildFilterChip(),
           const SizedBox(height: 4),
           Expanded(
             child: _buildTransactions(),
@@ -124,80 +163,163 @@ class _IncomeDetailScreenState
   }
 
   // ================================================================
-  // TODAY SUMMARY
+  // SUMMARY BOXES — THIS MONTH'S PAYMENTS + TOTAL OUTSTANDING
   // ================================================================
 
-  Widget _buildTodaySummary() {
+  Widget _buildSummaryBoxes() {
     return Padding(
-      padding: const EdgeInsets.fromLTRB(
-        16,
-        8,
-        16,
-        12,
+      padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
+      child: Row(
+        children: [
+          Expanded(
+            child: StreamBuilder<double>(
+              stream: _monthlyPaymentsStream,
+              builder: (context, snapshot) {
+                final value = snapshot.data ?? 0;
+                return _summaryBox(
+                  icon: Icons.account_balance_wallet,
+                  iconColor: AppColors.success,
+                  label: "This Month's Payments",
+                  value: snapshot.hasData
+                      ? _rupees(value)
+                      : '—',
+                  valueColor: AppColors.primaryGreen,
+                );
+              },
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: StreamBuilder<double>(
+              stream: _outstandingStream,
+              builder: (context, snapshot) {
+                final value = snapshot.data ?? 0;
+                return _summaryBox(
+                  icon: Icons.credit_card_outlined,
+                  iconColor: AppColors.error,
+                  label: 'Total Outstanding',
+                  value: snapshot.hasData
+                      ? _rupees(value)
+                      : '—',
+                  valueColor: AppColors.error,
+                );
+              },
+            ),
+          ),
+        ],
       ),
-      child: StreamBuilder<double>(
-        stream: FirestoreService.instance
-            .todaysIncomeStream(_farmId!),
+    );
+  }
 
-        builder: (context, snapshot) {
-          final value = snapshot.data ?? 0;
+  Widget _summaryBox({
+    required IconData icon,
+    required Color iconColor,
+    required String label,
+    required String value,
+    required Color valueColor,
+  }) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(16),
+      decoration: AppTheme.card(radius: 16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            padding: const EdgeInsets.all(7),
+            decoration: BoxDecoration(
+              color: iconColor.withOpacity(0.12),
+              shape: BoxShape.circle,
+            ),
+            child: Icon(icon, color: iconColor, size: 16),
+          ),
+          const SizedBox(height: 10),
+          Text(
+            value,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: AppTheme.heading(size: 18, color: valueColor),
+          ),
+          const SizedBox(height: 3),
+          Text(
+            label,
+            style: AppTheme.body(size: 10, color: AppColors.textMuted),
+          ),
+        ],
+      ),
+    );
+  }
 
-          return Container(
-            width: double.infinity,
-            padding: const EdgeInsets.all(20),
-            decoration: AppTheme.card(radius: 18),
+  // ================================================================
+  // CALENDAR
+  // ================================================================
 
-            child: Column(
+  Widget _buildCalendar() {
+    return Container(
+      margin: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+      decoration: AppTheme.card(radius: 16),
+      clipBehavior: Clip.antiAlias,
+      child: CalendarDatePicker(
+        initialDate: _selectedDate ?? DateTime.now(),
+        firstDate: DateTime(DateTime.now().year - 5),
+        lastDate: DateTime.now(),
+        onDateChanged: (date) {
+          setState(() {
+            _selectedDate = date;
+            _showCalendar = false;
+          });
+        },
+      ),
+    );
+  }
+
+  Widget _buildFilterChip() {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+      child: Row(
+        children: [
+          Container(
+            padding: const EdgeInsets.symmetric(
+              horizontal: 12,
+              vertical: 8,
+            ),
+            decoration: BoxDecoration(
+              color: AppColors.primaryGreen.withOpacity(0.12),
+              borderRadius: BorderRadius.circular(20),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
               children: [
-                Row(
-                  mainAxisAlignment:
-                  MainAxisAlignment.center,
-                  children: [
-                    Container(
-                      padding:
-                      const EdgeInsets.all(8),
-                      decoration: BoxDecoration(
-                        color: AppColors.success
-                            .withOpacity(0.12),
-                        shape: BoxShape.circle,
-                      ),
-                      child: const Icon(
-                        Icons.account_balance_wallet,
-                        color: AppColors.success,
-                        size: 18,
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    Text(
-                      'Net Income Today',
-                      style: AppTheme.body(size: 12),
-                    ),
-                  ],
+                const Icon(
+                  Icons.event,
+                  size: 14,
+                  color: AppColors.primaryGreen,
                 ),
-
-                const SizedBox(height: 7),
-
+                const SizedBox(width: 6),
                 Text(
-                  _rupees(value),
-                  style: AppTheme.heading(
-                    size: 28,
-                    color: AppColors.primaryGreen,
-                  ),
-                ),
-
-                const SizedBox(height: 4),
-
-                Text(
-                  'Income minus expenses',
+                  _formatDayLabel(_selectedDate!),
                   style: AppTheme.body(
-                    size: 10,
-                    color: AppColors.textMuted,
+                    size: 12,
+                    color: AppColors.darkGreen,
+                    weight: FontWeight.w600,
                   ),
                 ),
               ],
             ),
-          );
-        },
+          ),
+          const SizedBox(width: 8),
+          GestureDetector(
+            onTap: () => setState(() => _selectedDate = null),
+            child: Text(
+              'Clear',
+              style: AppTheme.body(
+                size: 12,
+                color: AppColors.textMuted,
+                weight: FontWeight.w600,
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -207,18 +329,32 @@ class _IncomeDetailScreenState
   // ================================================================
 
   Widget _buildTransactions() {
-    return StreamBuilder<
-        QuerySnapshot<Map<String, dynamic>>>(
-      stream: FirebaseFirestore.instance
-          .collection('farms')
-          .doc(_farmId)
-          .collection('transactions')
-          .orderBy(
+    Query<Map<String, dynamic>> query = FirebaseFirestore.instance
+        .collection('farms')
+        .doc(_farmId)
+        .collection('transactions')
+        .orderBy('date', descending: true);
+
+    if (_selectedDate != null) {
+      final day = _selectedDate!;
+      final startOfDay = DateTime(day.year, day.month, day.day);
+      final startOfNextDay = startOfDay.add(const Duration(days: 1));
+
+      query = query
+          .where(
         'date',
-        descending: true,
+        isGreaterThanOrEqualTo: Timestamp.fromDate(startOfDay),
       )
-          .limit(50)
-          .snapshots(),
+          .where(
+        'date',
+        isLessThan: Timestamp.fromDate(startOfNextDay),
+      );
+    } else {
+      query = query.limit(50);
+    }
+
+    return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+      stream: query.snapshots(),
 
       builder: (context, snapshot) {
         if (snapshot.hasError) {
@@ -302,7 +438,9 @@ class _IncomeDetailScreenState
             const SizedBox(height: 14),
 
             Text(
-              'No transactions yet',
+              _selectedDate != null
+                  ? 'No transactions on this day'
+                  : 'No transactions yet',
               style: AppTheme.heading(
                 size: 15,
               ),
@@ -311,7 +449,9 @@ class _IncomeDetailScreenState
             const SizedBox(height: 6),
 
             Text(
-              'Payments and expenses will appear here automatically.',
+              _selectedDate != null
+                  ? 'Try picking a different date from the calendar.'
+                  : 'Payments and expenses will appear here automatically.',
               textAlign: TextAlign.center,
               style: AppTheme.body(
                 size: 12,
@@ -672,7 +812,8 @@ class _TransactionCard extends StatelessWidget {
                           style:
                           AppTheme.body(
                             size: 10,
-                            color: AppColors
+                            color:
+                            AppColors
                                 .darkGreen,
                           ),
                         ),
@@ -1006,3 +1147,8 @@ class _TransactionCard extends StatelessWidget {
     );
   }
 }
+
+// ====================================================================
+// TRANSACTION CARD  — unchanged, keep the existing class below this
+// point exactly as it is in your current file.
+// ====================================================================

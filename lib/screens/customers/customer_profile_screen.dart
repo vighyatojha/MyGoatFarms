@@ -3,6 +3,7 @@ import 'package:animate_do/animate_do.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'monthly_bills_screen.dart';
+import 'customer_goats_report_screen.dart';
 import '../../models/monthly_bill_model.dart';
 import '../../services/monthly_billing_service.dart';
 import '../../app_theme.dart';
@@ -176,6 +177,17 @@ class _CustomerProfileScreenState
     if (!mounted) return;
 
     await _refreshCustomer();
+  }
+
+  Future<void> _openGoatsReport() async {
+    await Navigator.of(context).push(
+      fastRoute(
+        CustomerGoatsReportScreen(
+          farmId: widget.farmId,
+          customer: _customer,
+        ),
+      ),
+    );
   }
 
   // ================================================================
@@ -459,6 +471,10 @@ class _CustomerProfileScreenState
 
                 const SizedBox(height: 20),
 
+                _buildGoatsReportButton(),
+
+                const SizedBox(height: 20),
+
                 _buildPaymentHistory(),
 
                 const SizedBox(height: 26),
@@ -588,6 +604,75 @@ class _CustomerProfileScreenState
 
                     Text(
                       'Generate and manage monthly bills',
+                      style: AppTheme.body(
+                        size: 11,
+                        color: AppColors.textGrey,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+
+              const Icon(
+                Icons.arrow_forward_ios_rounded,
+                size: 16,
+                color: AppColors.textGrey,
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildGoatsReportButton() {
+    return Container(
+      width: double.infinity,
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(15),
+        border: Border.all(
+          color: Colors.grey.shade300,
+        ),
+      ),
+      child: InkWell(
+        onTap: _openGoatsReport,
+        borderRadius: BorderRadius.circular(15),
+        child: Padding(
+          padding: const EdgeInsets.all(15),
+          child: Row(
+            children: [
+              Container(
+                width: 44,
+                height: 44,
+                decoration: const BoxDecoration(
+                  color: AppColors.lightGreen,
+                  shape: BoxShape.circle,
+                ),
+                child: const Icon(
+                  Icons.pets_outlined,
+                  color: AppColors.primaryGreen,
+                ),
+              ),
+
+              const SizedBox(width: 12),
+
+              Expanded(
+                child: Column(
+                  crossAxisAlignment:
+                  CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Goats Report',
+                      style: AppTheme.heading(
+                        size: 14,
+                      ),
+                    ),
+
+                    const SizedBox(height: 3),
+
+                    Text(
+                      'Generate one report for all goats at once',
                       style: AppTheme.body(
                         size: 11,
                         color: AppColors.textGrey,

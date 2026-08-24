@@ -6,7 +6,6 @@ import 'package:path_provider/path_provider.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
-
 import '../models/monthly_bill_model.dart';
 
 /// Generates, previews, saves and shares Monthly Bill PDFs.
@@ -25,8 +24,28 @@ class MonthlyBillPdfService {
   // ===========================================================================
 
   /// Generates the monthly bill PDF and returns the raw PDF bytes.
+  /// Generates the monthly bill PDF and returns the raw PDF bytes.
   Future<Uint8List> generatePdf(MonthlyBill bill,) async {
-    final pdf = pw.Document();
+    // -------------------------------------------------------------------------
+    // Load a Unicode-aware font that supports the ₹ (Rupee) glyph.
+    //
+    // The PDF package's default base font (Helvetica) has no ₹ character,
+    // which is why amounts were rendering with a broken box instead of ₹.
+    // Noto Sans covers ₹ (and most other currency symbols), so we load it
+    // once and set it as the document's theme — every pw.Text/pw.TextStyle
+    // below picks it up automatically since none of them set an explicit
+    // `font`.
+    // -------------------------------------------------------------------------
+
+    final baseFont = await PdfGoogleFonts.notoSansRegular();
+    final boldFont = await PdfGoogleFonts.notoSansBold();
+
+    final pdf = pw.Document(
+      theme: pw.ThemeData.withFont(
+        base: baseFont,
+        bold: boldFont,
+      ),
+    );
 
     // -------------------------------------------------------------------------
     // Load farm logo.

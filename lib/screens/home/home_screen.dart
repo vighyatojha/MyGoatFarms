@@ -247,7 +247,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     final value = snap.data ?? 0;
                     return StatCard(
                       icon: Icons.currency_rupee,
-                      label: "Today's Income",
+                      label: "Income & Payments",
                       value: snap.hasData ? '₹${value.toStringAsFixed(0)}' : '—',
                       color: AppColors.warning,
                       onTap: () => Navigator.of(context)
