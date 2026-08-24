@@ -1,6 +1,7 @@
 import 'dart:typed_data';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
 import '../../../app_theme.dart';
@@ -42,6 +43,10 @@ class _CustomerGoatRegistrationScreenState
   String _healthStatus = 'Healthy';
   String _monthlyPackage = 'Basic Palai';
 
+  // Date the goat actually arrived at the farm.
+  // This is different from checkInDate, which is the Palai registration/check-in time.
+  DateTime? _farmArrivalDate;
+
   bool _saving = false;
 
   // ---------------------------------------------------------------------------
@@ -67,6 +72,127 @@ class _CustomerGoatRegistrationScreenState
     'Standard Palai',
     'Special Palai',
   ];
+
+  // ===========================================================================
+  // PALAI PERMISSION CHECK
+  // ===========================================================================
+  //
+  // Without this, the form lets ANY signed-in user fill everything out and
+  // only finds out they're blocked when _saveGoat() runs — either with
+  // "Unable to determine the current farm." (partner accounts, since
+  // FirestoreService.currentFarmId() only resolves the FARM OWNER's uid)
+  // or a Firestore `permission-denied` error if farmId does resolve but
+  // the security rules still reject the write.
+  //
+  // This mirrors the permission a farm owner actually sets in Profile ->
+  // Partners -> Partner Permissions (`palai` flag stored at
+  // farms/{farmId}/partners/{partnerId}/settings/permissions) so the user
+  // is warned BEFORE filling in the whole form, not after.
+  //
+  // Fail-open by design: if this check can't be resolved (offline, some
+  // unforeseen account shape, etc.) the button stays enabled and the
+  // existing try/catch in _saveGoat() remains the real fallback.
+
+  bool _permissionChecked = false;
+  bool _canRegister = true;
+  String? _permissionMessage;
+
+  @override
+  void initState() {
+    super.initState();
+    _checkPalaiPermission();
+  }
+
+  Future<void> _checkPalaiPermission() async {
+    try {
+      final uid = FirebaseAuth.instance.currentUser?.uid;
+
+      if (uid == null) {
+        return;
+      }
+
+      // Farm owners always have full access.
+      final ownerFarm = await _firestore
+          .collection('farms')
+          .where('authUid', isEqualTo: uid)
+          .limit(1)
+          .get();
+
+      if (ownerFarm.docs.isNotEmpty) {
+        return;
+      }
+
+      // Otherwise, check whether this user is a partner/staff account.
+      final partnerQuery = await _firestore
+          .collectionGroup('partners')
+          .where('authUid', isEqualTo: uid)
+          .limit(1)
+          .get();
+
+      if (partnerQuery.docs.isEmpty) {
+        // Not resolvable as owner or partner. This is the case that
+        // currently produces "Unable to determine the current farm." —
+        // surface that plainly instead of letting the user discover it
+        // only after filling in the whole form.
+        if (mounted) {
+          setState(() {
+            _permissionChecked = true;
+            _canRegister = false;
+            _permissionMessage =
+            'Could not confirm which farm this account belongs to, so goats can\'t be registered right now. Please contact the farm owner.';
+          });
+        }
+        return;
+      }
+
+      final partnerDoc = partnerQuery.docs.first;
+      final partnerData = partnerDoc.data();
+
+      if (partnerData['isActive'] == false) {
+        if (mounted) {
+          setState(() {
+            _permissionChecked = true;
+            _canRegister = false;
+            _permissionMessage =
+            'Your partner account has been deactivated by the farm owner.';
+          });
+        }
+        return;
+      }
+
+      final permissionsSnapshot = await partnerDoc.reference
+          .collection('settings')
+          .doc('permissions')
+          .get();
+
+      // Matches the default used in the Partner Permissions screen: a
+      // partner with no permissions document yet defaults to allowed.
+      final hasPalaiAccess = permissionsSnapshot.exists
+          ? (permissionsSnapshot.data()?['palai'] ?? true) == true
+          : true;
+
+      if (mounted) {
+        setState(() {
+          _permissionChecked = true;
+          _canRegister = hasPalaiAccess;
+          _permissionMessage = hasPalaiAccess
+              ? null
+              : 'You do not have Palai access on this account. Ask the farm owner to enable it from Profile > Partners > Partner Permissions.';
+        });
+      }
+
+      // NOTE: since a partner's `currentFarmId()` currently resolves to
+      // null even when they DO have Palai access (that helper only
+      // matches the farm owner's uid), fixing that resolution in
+      // FirestoreService is also required for a permitted partner to
+      // actually complete registration. This check only prevents a
+      // blocked user from filling in the form for nothing — it can't
+      // grant access _saveGoat() itself can't resolve.
+    } catch (_) {
+      // Fail open client-side; the real gate is Firestore's rules /
+      // _saveGoat()'s own error handling.
+    }
+  }
 
   @override
   void dispose() {
@@ -149,8 +275,7 @@ class _CustomerGoatRegistrationScreenState
       return;
     }
 
-    final weight =
-    double.tryParse(
+    final weight = double.tryParse(
       _weightController.text.trim(),
     );
 
@@ -162,8 +287,7 @@ class _CustomerGoatRegistrationScreenState
       return;
     }
 
-    final pricingText =
-    _pricingController.text.trim();
+    final pricingText = _pricingController.text.trim();
 
     final pricing = pricingText.isEmpty
         ? 0.0
@@ -182,47 +306,45 @@ class _CustomerGoatRegistrationScreenState
     });
 
     try {
-      // -----------------------------------------------------------------------
+      // ---------------------------------------------------------------
+      // GET CURRENT FARM
+      // ---------------------------------------------------------------
+
+      final farmId =
+      await FirestoreService.instance.currentFarmId();
+
+      if (farmId == null || farmId.trim().isEmpty) {
+        throw StateError(
+          'Unable to determine the current farm.',
+        );
+      }
+
+      // ---------------------------------------------------------------
       // GET CUSTOMER
-      // -----------------------------------------------------------------------
+      // ---------------------------------------------------------------
 
-      final customerReference = _firestore
-          .collection('palaiCustomers')
-          .doc(widget.customerId);
+      final customer =
+      await FirestoreService.instance.getCustomer(
+        farmId,
+        widget.customerId,
+      );
 
-      final customerSnapshot =
-      await customerReference.get();
-
-      if (!customerSnapshot.exists) {
+      if (customer == null) {
         throw StateError(
           'Customer no longer exists.',
         );
       }
 
-      final customerData =
-          customerSnapshot.data() ?? {};
-
-      final customerName =
-          customerData['name']?.toString() ?? '';
-
-      // -----------------------------------------------------------------------
-      // CREATE GOAT DOCUMENT
-      // -----------------------------------------------------------------------
-
-      final goatReference = _firestore
-          .collection('palaiCustomers')
-          .doc(widget.customerId)
-          .collection('goats')
-          .doc();
+      // ---------------------------------------------------------------
+      // CREATE UNIFIED PALAI GOAT
+      // ---------------------------------------------------------------
 
       final now = DateTime.now();
 
-      // -----------------------------------------------------------------------
-      // CREATE UNIFIED GOAT
-      // -----------------------------------------------------------------------
-
       final goat = PalaiGoat(
-        id: goatReference.id,
+        // FirestoreService.checkInGoat() generates
+        // the actual Firestore document ID.
+        id: '',
 
         customerId:
         widget.customerId,
@@ -252,8 +374,13 @@ class _CustomerGoatRegistrationScreenState
         _healthStatus,
 
         // Check-in
+        // Keep the existing Palai check-in behavior unchanged.
         checkInDate:
         now,
+
+        // Actual date the goat arrived at the farm.
+        farmArrivalDate:
+        _farmArrivalDate,
 
         checkOutDate:
         null,
@@ -285,14 +412,14 @@ class _CustomerGoatRegistrationScreenState
         imageUrl:
         null,
 
-        // Before Palai image
+        // Before Palai photo
         beforeImage:
         _beforeImageBytes,
 
         beforeImageContentType:
         _beforeImageContentType,
 
-        // Report defaults
+        // Reports
         reportStatus:
         'Not Generated',
 
@@ -306,45 +433,38 @@ class _CustomerGoatRegistrationScreenState
         0,
       );
 
-      // -----------------------------------------------------------------------
-      // SAVE GOAT
-      // -----------------------------------------------------------------------
+      // ---------------------------------------------------------------
+      // SAVE USING THE SAME SERVICE AS OLD CHECK-IN
+      // ---------------------------------------------------------------
 
-      await goatReference.set(
-        goat.toMap(),
+      final goatId =
+      await FirestoreService.instance.checkInGoat(
+        farmId,
+        widget.customerId,
+        goat,
       );
 
-      // -----------------------------------------------------------------------
+      // ---------------------------------------------------------------
       // ACTIVITY LOG
-      // -----------------------------------------------------------------------
-      //
-      // This preserves the old Check-In functionality.
-      //
-      // The goat creation and activity are now part of the SAME user action.
-      //
+      // ---------------------------------------------------------------
 
       try {
-        final farmId =
-        await FirestoreService.instance.currentFarmId();
-
-        if (farmId != null &&
-            farmId.trim().isNotEmpty) {
-          await FirestoreService.instance.logActivity(
-            farmId,
-            ActivityLog(
-              id: '',
-              type: ActivityType.goatCheckIn,
-              title: 'Goat Check-In',
-              subtitle:
-              '${goat.goatCode} · $customerName',
-              module: 'palai',
-              timestamp: now,
-            ),
-          );
-        }
+        await FirestoreService.instance.logActivity(
+          farmId,
+          ActivityLog(
+            id: '',
+            type: ActivityType.goatCheckIn,
+            title: 'Goat Check-In',
+            subtitle:
+            '${goat.goatCode} · ${customer.name}',
+            module: 'palai',
+            timestamp: now,
+          ),
+        );
       } catch (_) {
-        // Do not fail goat registration just because
-        // the activity log could not be created.
+        // Goat has already been saved.
+        // Do not fail registration only because
+        // activity logging failed.
       }
 
       if (!mounted) {
@@ -355,7 +475,8 @@ class _CustomerGoatRegistrationScreenState
         'Goat registered and checked in successfully.',
       );
 
-      // Return the newly created goat to the previous screen.
+      // The list will reload from Firestore.
+      // goatId is intentionally not required here.
       Navigator.of(context).pop(goat);
     } on FirebaseException catch (e) {
       if (!mounted) {
@@ -375,7 +496,7 @@ class _CustomerGoatRegistrationScreenState
         e.message,
         isError: true,
       );
-    } catch (e) {
+    } catch (_) {
       if (!mounted) {
         return;
       }
@@ -429,6 +550,11 @@ class _CustomerGoatRegistrationScreenState
           ),
 
           children: [
+            if (_permissionChecked && !_canRegister) ...[
+              _buildPermissionWarningBanner(),
+              const SizedBox(height: 16),
+            ],
+
             _buildIntroCard(),
 
             const SizedBox(height: 22),
@@ -470,6 +596,10 @@ class _CustomerGoatRegistrationScreenState
             _buildSectionTitle(
               'Check-In Information',
             ),
+
+            const SizedBox(height: 12),
+
+            _buildFarmArrivalDateField(),
 
             const SizedBox(height: 12),
 
@@ -520,7 +650,7 @@ class _CustomerGoatRegistrationScreenState
 
             child: ElevatedButton.icon(
               onPressed:
-              _saving
+              (_saving || (_permissionChecked && !_canRegister))
                   ? null
                   : _saveGoat,
 
@@ -939,6 +1069,47 @@ class _CustomerGoatRegistrationScreenState
   // INFORMATION CARD
   // ===========================================================================
 
+  Widget _buildPermissionWarningBanner() {
+    return Container(
+      padding:
+      const EdgeInsets.all(16),
+
+      decoration: BoxDecoration(
+        color: AppColors.error.withOpacity(0.08),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(
+          color: AppColors.error.withOpacity(0.4),
+        ),
+      ),
+
+      child: Row(
+        crossAxisAlignment:
+        CrossAxisAlignment.start,
+
+        children: [
+          const Icon(
+            Icons.lock_outline,
+            color: AppColors.error,
+          ),
+
+          const SizedBox(width: 12),
+
+          Expanded(
+            child: Text(
+              _permissionMessage ??
+                  'You do not have permission to register goats on this account.',
+              style:
+              AppTheme.body(
+                size: 12,
+                color: AppColors.error,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildInformationCard() {
     return Container(
       padding:
@@ -982,18 +1153,18 @@ class _CustomerGoatRegistrationScreenState
   // TEXT FIELD
   // ===========================================================================
 
-  Widget _textField(
-      TextEditingController controller, {
-        required String label,
-        required String hint,
-        IconData? icon,
-        TextInputType? keyboardType,
-        int maxLines = 1,
-        bool optional = false,
-        TextCapitalization capitalization =
-            TextCapitalization.none,
-        String? Function(String?)? validator,
-      }) {
+  Widget _textField({
+    required TextEditingController controller,
+    required String label,
+    required String hint,
+    IconData? icon,
+    TextInputType? keyboardType,
+    int maxLines = 1,
+    bool optional = false,
+    TextCapitalization capitalization =
+        TextCapitalization.none,
+    String? Function(String?)? validator,
+  }) {
     return TextFormField(
       controller:
       controller,
@@ -1109,6 +1280,91 @@ class _CustomerGoatRegistrationScreenState
         size: 18,
       ),
     );
+  }
+
+  Widget _buildFarmArrivalDateField() {
+    final date = _farmArrivalDate;
+
+    final dateText = date == null
+        ? 'Select date'
+        : '${date.day.toString().padLeft(2, '0')}/'
+        '${date.month.toString().padLeft(2, '0')}/'
+        '${date.year}';
+
+    return FormField<DateTime>(
+      validator: (_) {
+        if (_farmArrivalDate == null) {
+          return 'Please select the date the goat came into the farm';
+        }
+        return null;
+      },
+      builder: (field) {
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            InkWell(
+              onTap: () async {
+                await _selectFarmArrivalDate();
+                field.didChange(_farmArrivalDate);
+              },
+              borderRadius: BorderRadius.circular(4),
+              child: InputDecorator(
+                decoration: InputDecoration(
+                  labelText: 'Date Goat Came Into Farm',
+                  hintText: 'Select arrival date',
+                  prefixIcon: const Icon(
+                    Icons.calendar_month_outlined,
+                  ),
+                  border: const OutlineInputBorder(),
+                  errorText: field.errorText,
+                ),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        dateText,
+                        style: TextStyle(
+                          color: date == null
+                              ? AppColors.textGrey
+                              : AppColors.textDark,
+                          fontSize: 16,
+                        ),
+                      ),
+                    ),
+                    const Icon(
+                      Icons.calendar_today_outlined,
+                      size: 20,
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Future<void> _selectFarmArrivalDate() async {
+    final now = DateTime.now();
+
+    final selectedDate = await showDatePicker(
+      context: context,
+      initialDate: _farmArrivalDate ?? now,
+      firstDate: DateTime(2000),
+      lastDate: now,
+      helpText: 'Select Goat Arrival Date',
+      cancelText: 'Cancel',
+      confirmText: 'Select',
+    );
+
+    if (selectedDate == null) {
+      return;
+    }
+
+    setState(() {
+      _farmArrivalDate = selectedDate;
+    });
   }
 
   // ===========================================================================

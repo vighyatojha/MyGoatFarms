@@ -30,6 +30,7 @@ class _CustomerGoatListScreenState
 
   String _searchQuery = '';
 
+
   @override
   void initState() {
     super.initState();

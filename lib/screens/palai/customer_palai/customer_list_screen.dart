@@ -2,6 +2,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 
 import '../../../models/palai_models.dart';
+import '../../../services/firestore_service.dart';
 import 'customer_goat_registration_screen.dart';
 import 'customer_palai_goat_profile_screen.dart';
 
@@ -29,6 +30,7 @@ class _CustomerGoatListScreenState
   TextEditingController();
 
   String _searchQuery = '';
+  String? _farmId;
 
   @override
   void initState() {
@@ -37,6 +39,21 @@ class _CustomerGoatListScreenState
     _searchController.addListener(
       _onSearchChanged,
     );
+
+    _loadFarmId();
+  }
+
+  Future<void> _loadFarmId() async {
+    final farmId =
+    await FirestoreService.instance.currentFarmId();
+
+    if (!mounted) {
+      return;
+    }
+
+    setState(() {
+      _farmId = farmId;
+    });
   }
 
   @override
@@ -69,17 +86,16 @@ class _CustomerGoatListScreenState
   // FIRESTORE
   // ===========================================================================
 
-  Stream<QuerySnapshot<Map<String, dynamic>>>
-  _goatsStream() {
-    return _firestore
-        .collection('palaiCustomers')
-        .doc(widget.customerId)
-        .collection('goats')
-        .orderBy(
-      'registrationDate',
-      descending: true,
-    )
-        .snapshots();
+  Stream<List<PalaiGoat>> _goatsStream() {
+    if (_farmId == null) {
+      return const Stream.empty();
+    }
+
+    return FirestoreService.instance
+        .goatsForCustomerStream(
+      _farmId!,
+      widget.customerId,
+    );
   }
 
   // ===========================================================================
@@ -132,9 +148,7 @@ class _CustomerGoatListScreenState
       ),
 
       body:
-      StreamBuilder<
-          QuerySnapshot<
-              Map<String, dynamic>>>(
+      StreamBuilder<List<PalaiGoat>>(
         stream:
         _goatsStream(),
 
@@ -151,18 +165,9 @@ class _CustomerGoatListScreenState
             return _buildLoadingState();
           }
 
-          final documents =
-              snapshot.data?.docs ?? [];
-
           final goats =
-          documents
-              .map(
-                (document) =>
-                PalaiGoat.fromDoc(
-                  document,
-                ),
-          )
-              .toList();
+              snapshot.data ?? [];
+
 
           final filteredGoats =
           _filterGoats(goats);
@@ -1025,18 +1030,12 @@ class _CustomerGoatListScreenState
   // PROFILE
   // ===========================================================================
 
-  void _openGoatProfile(
-      PalaiGoat goat,
-      ) {
+  void _openGoatProfile(PalaiGoat goat) {
     Navigator.of(context).push(
       MaterialPageRoute(
-        builder: (_) =>
-            CustomerPalaiGoatProfileScreen(
-              customerId:
-              widget.customerId,
-              goat:
-              goat,
-            ),
+        builder: (_) => CustomerPalaiGoatProfileScreen(
+          goat: goat,
+        ),
       ),
     );
   }

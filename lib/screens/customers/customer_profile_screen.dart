@@ -2,6 +2,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:animate_do/animate_do.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
+import 'customer_goats_progress_report_pdf_screen.dart';
 import 'monthly_bills_screen.dart';
 import 'customer_goats_report_screen.dart';
 import '../../models/monthly_bill_model.dart';
@@ -182,7 +183,7 @@ class _CustomerProfileScreenState
   Future<void> _openGoatsReport() async {
     await Navigator.of(context).push(
       fastRoute(
-        CustomerGoatsReportScreen(
+        CustomerGoatsProgressReportScreen(
           farmId: widget.farmId,
           customer: _customer,
         ),

@@ -196,11 +196,24 @@ class PalaiGoat {
   // CHECK-IN / CHECK-OUT
   // --------------------------------------------------------------------------
 
+  // --------------------------------------------------------------------------
+  // CHECK-IN / CHECK-OUT
+  // --------------------------------------------------------------------------
+
   /// Date when goat entered Palai.
   final DateTime checkInDate;
 
+  /// Date when goat actually arrived at the farm.
+  ///
+  /// This is intentionally separate from [checkInDate].
+  /// [checkInDate] represents the Palai check-in/registration time,
+  /// while this field represents the actual farm arrival date.
+  final DateTime? farmArrivalDate;
+
   /// Date when goat left Palai.
   final DateTime? checkOutDate;
+
+
 
   /// Current operational status.
   ///
@@ -289,6 +302,8 @@ class PalaiGoat {
   /// Total number of generated reports.
   final int reportsCount;
 
+
+
   // ==========================================================================
   // CONSTRUCTOR
   // ==========================================================================
@@ -318,7 +333,9 @@ class PalaiGoat {
     this.healthStatus = 'Healthy',
 
     // Check-in/out
+    // Check-in/out
     required this.checkInDate,
+    this.farmArrivalDate,
     this.checkOutDate,
     this.status = 'active',
     this.isCheckedOut = false,
@@ -439,8 +456,16 @@ class PalaiGoat {
       // CHECK-IN / CHECK-OUT
       // ----------------------------------------------------------------------
 
+      // ----------------------------------------------------------------------
+      // CHECK-IN / CHECK-OUT
+      // ----------------------------------------------------------------------
+
       checkInDate:
       checkInDate,
+
+      farmArrivalDate:
+      _readDate(data['farmArrivalDate']) ??
+          checkInDate,
 
       checkOutDate:
       _readDate(data['checkOutDate']),
@@ -606,6 +631,10 @@ class PalaiGoat {
       checkInDate:
       checkInDate,
 
+      farmArrivalDate:
+      _readDate(data['farmArrivalDate']) ??
+          checkInDate,
+
       checkOutDate:
       _readDate(data['checkOutDate']),
 
@@ -715,6 +744,11 @@ class PalaiGoat {
       'checkInDate':
       Timestamp.fromDate(checkInDate),
 
+      'farmArrivalDate':
+      farmArrivalDate != null
+          ? Timestamp.fromDate(farmArrivalDate!)
+          : null,
+
       'checkOutDate':
       checkOutDate != null
           ? Timestamp.fromDate(checkOutDate!)
@@ -815,6 +849,12 @@ class PalaiGoat {
           ? Timestamp.fromDate(checkOutDate!)
           : null,
 
+      // Farm arrival
+      'farmArrivalDate':
+      farmArrivalDate != null
+          ? Timestamp.fromDate(farmArrivalDate!)
+          : null,
+
       'status': status,
       'isCheckedOut': isCheckedOut,
 
@@ -890,6 +930,7 @@ class PalaiGoat {
     String? healthStatus,
 
     DateTime? checkInDate,
+    DateTime? farmArrivalDate,
     DateTime? checkOutDate,
 
     String? status,

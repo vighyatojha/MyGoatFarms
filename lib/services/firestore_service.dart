@@ -1474,6 +1474,44 @@ class FirestoreService {
         .map((s) => s.docs.map(GoatReport.fromDoc).toList());
   }
 
+  /// One-time fetch of the most recently generated report for this goat,
+  /// or null if none exists yet. Used by CustomerGoatsProgressReportScreen
+  /// to decide the "previous" photo for a goat: the last report's photo
+  /// if one exists, otherwise the goat's check-in photo.
+  Future<GoatReport?> getLatestGoatReport(
+      String farmId,
+      String customerId,
+      String goatId,
+      ) async {
+    final snap = await _reports(farmId, customerId, goatId)
+        .orderBy('generatedAt', descending: true)
+        .limit(1)
+        .get()
+        .timeout(timeout);
+    if (snap.docs.isEmpty) return null;
+    return GoatReport.fromDoc(snap.docs.first);
+  }
+
+  /// One-time fetch of the most recently logged health record for this
+  /// goat, or null if none exists yet. Used the same way as
+  /// [getLatestGoatReport] — a single read instead of opening a stream,
+  /// since the caller just needs the latest values, not live updates.
+  Future<HealthRecordEntry?> getLatestHealthRecord(
+      String farmId,
+      String customerId,
+      String goatId,
+      ) async {
+    final snap = await _goats(farmId, customerId)
+        .doc(goatId)
+        .collection('healthRecords')
+        .orderBy('recordedAt', descending: true)
+        .limit(1)
+        .get()
+        .timeout(timeout);
+    if (snap.docs.isEmpty) return null;
+    return HealthRecordEntry.fromDoc(snap.docs.first);
+  }
+
   // ---------------------------------------------------------------------
   // Stock — feed & medicine
   // ---------------------------------------------------------------------
