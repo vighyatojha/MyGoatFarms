@@ -82,6 +82,11 @@ class _CustomerGoatsProgressReportScreenState
   final Map<String, PickedImage> _capturedByGoatId = {};
   String? _capturingGoatId;
 
+  /// One weight-entry controller per goat, created lazily as each goat's
+  /// capture tile is built, and reused across rebuilds so the owner's
+  /// typing isn't lost mid-flow.
+  final Map<String, TextEditingController> _weightControllers = {};
+
   bool _generating = false;
 
   @override
@@ -91,6 +96,14 @@ class _CustomerGoatsProgressReportScreenState
       widget.farmId,
       widget.customer.id,
     );
+  }
+
+  @override
+  void dispose() {
+    for (final controller in _weightControllers.values) {
+      controller.dispose();
+    }
+    super.dispose();
   }
 
   // ================================================================
@@ -188,6 +201,10 @@ class _CustomerGoatsProgressReportScreenState
       _phase = _Phase.selecting;
       _previousByGoatId.clear();
       _capturedByGoatId.clear();
+      for (final controller in _weightControllers.values) {
+        controller.dispose();
+      }
+      _weightControllers.clear();
     });
   }
 
@@ -217,6 +234,33 @@ class _CustomerGoatsProgressReportScreenState
   bool get _allPhotosCaptured =>
       _selectedGoats.every((g) => _capturedByGoatId.containsKey(g.id));
 
+  /// Controller for a given goat's "new weight" field. Created once,
+  /// pre-filled with the previous known weight (if any) as a starting
+  /// point so the owner only has to adjust it rather than type from
+  /// scratch — but they can still clear it and leave it blank.
+  TextEditingController _weightControllerFor(String goatId) {
+    return _weightControllers.putIfAbsent(goatId, () {
+      final previous = _previousByGoatId[goatId];
+      final initial = previous?.weight;
+      return TextEditingController(
+        text: initial != null ? initial.toStringAsFixed(1) : '',
+      );
+    });
+  }
+
+  double? _enteredWeight(String goatId) {
+    final controller = _weightControllers[goatId];
+    if (controller == null) return null;
+    return double.tryParse(controller.text.trim());
+  }
+
+  bool get _allWeightsEntered => _selectedGoats.every((g) {
+    final weight = _enteredWeight(g.id);
+    return weight != null && weight > 0;
+  });
+
+  bool get _readyToGenerate => _allPhotosCaptured && _allWeightsEntered;
+
   // ================================================================
   // GENERATE
   // ================================================================
@@ -224,6 +268,11 @@ class _CustomerGoatsProgressReportScreenState
   Future<void> _generate({required bool share}) async {
     if (!_allPhotosCaptured) {
       _showSnack('Take a photo for every goat before generating the report.');
+      return;
+    }
+
+    if (!_allWeightsEntered) {
+      _showSnack('Enter the current weight for every goat before generating the report.');
       return;
     }
 
@@ -239,7 +288,7 @@ class _CustomerGoatsProgressReportScreenState
       for (final goat in _selectedGoats) {
         final previous = _previousByGoatId[goat.id]!;
         final captured = _capturedByGoatId[goat.id]!;
-        final currentWeight = goat.currentWeight ?? previous.latestHealthRecord?.weight ?? previous.weight;
+        final currentWeight = _enteredWeight(goat.id)!;
 
         entries.add(GoatProgressEntry(
           goat: goat,
@@ -282,6 +331,29 @@ class _CustomerGoatsProgressReportScreenState
           widget.customer.id,
           goat.id,
           report,
+        );
+
+        // Record the freshly-entered weight as a health record too, so it
+        // becomes the goat's new "current weight" everywhere in the app
+        // (goat list, health history, and the next progress report's
+        // "previous weight").
+        await FirestoreService.instance.addHealthRecord(
+          widget.farmId,
+          widget.customer.id,
+          goat.id,
+          HealthRecordEntry(
+            id: '',
+            weight: currentWeight,
+            vaccination: '',
+            deworming: '',
+            hoofCutting: '',
+            medicineGiven: '',
+            healthStatus: previous.latestHealthRecord?.healthStatus.isNotEmpty == true
+                ? previous.latestHealthRecord!.healthStatus
+                : goat.healthStatus,
+            doctorNotes: 'Recorded during Progress Report generation.',
+            recordedAt: now,
+          ),
         );
       }
 
@@ -416,6 +488,9 @@ class _CustomerGoatsProgressReportScreenState
       itemBuilder: (context, index) {
         final goat = goats[index];
         final selected = _selectedIds.contains(goat.id);
+        final goatId = goat.goatCode.trim().isNotEmpty
+            ? goat.goatCode
+            : (goat.tagNumber.trim().isNotEmpty ? goat.tagNumber : goat.id);
 
         return Container(
           margin: const EdgeInsets.only(bottom: 10),
@@ -425,9 +500,28 @@ class _CustomerGoatsProgressReportScreenState
             onChanged: (_) => _toggleGoat(goat.id),
             activeColor: AppColors.primaryGreen,
             controlAffinity: ListTileControlAffinity.leading,
-            title: Text(
-              goat.name.trim().isNotEmpty ? goat.name : goat.tagNumber,
-              style: AppTheme.heading(size: 13),
+            title: Row(
+              children: [
+                Flexible(
+                  child: Text(
+                    goat.name.trim().isNotEmpty ? goat.name : goatId,
+                    style: AppTheme.heading(size: 13),
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+                const SizedBox(width: 6),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+                  decoration: BoxDecoration(
+                    color: AppColors.primaryGreen.withOpacity(0.12),
+                    borderRadius: BorderRadius.circular(6),
+                  ),
+                  child: Text(
+                    'ID: $goatId',
+                    style: AppTheme.body(size: 10, color: AppColors.primaryGreen),
+                  ),
+                ),
+              ],
             ),
             subtitle: Text(
               '${goat.breed.isNotEmpty ? goat.breed : 'Breed unknown'} • '
@@ -504,6 +598,10 @@ class _CustomerGoatsProgressReportScreenState
 
     final goats = _selectedGoats;
     final capturedCount = _capturedByGoatId.length;
+    final weighedCount = goats.where((g) {
+      final w = _enteredWeight(g.id);
+      return w != null && w > 0;
+    }).length;
 
     return Column(
       children: [
@@ -519,17 +617,17 @@ class _CustomerGoatsProgressReportScreenState
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text('Take a photo for each goat', style: AppTheme.heading(size: 14)),
+                      Text('Take a photo & weight for each goat', style: AppTheme.heading(size: 14)),
                       const SizedBox(height: 3),
                       Text(
-                        '$capturedCount of ${goats.length} photos captured',
+                        '$capturedCount of ${goats.length} photos • $weighedCount of ${goats.length} weights',
                         style: AppTheme.body(size: 11, color: AppColors.textMuted),
                       ),
                     ],
                   ),
                 ),
                 Icon(
-                  capturedCount == goats.length ? Icons.check_circle : Icons.camera_alt_outlined,
+                  _readyToGenerate ? Icons.check_circle : Icons.camera_alt_outlined,
                   color: AppColors.primaryGreen,
                 ),
               ],
@@ -552,65 +650,142 @@ class _CustomerGoatsProgressReportScreenState
     final captured = _capturedByGoatId[goat.id];
     final capturing = _capturingGoatId == goat.id;
     final previous = _previousByGoatId[goat.id];
+    final goatId = goat.goatCode.trim().isNotEmpty
+        ? goat.goatCode
+        : (goat.tagNumber.trim().isNotEmpty ? goat.tagNumber : goat.id);
+    final weightController = _weightControllerFor(goat.id);
 
     return Container(
       margin: const EdgeInsets.only(bottom: 10),
       decoration: AppTheme.card(radius: 14),
       padding: const EdgeInsets.all(12),
-      child: Row(
+      child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          ClipRRect(
-            borderRadius: BorderRadius.circular(10),
-            child: (previous != null && previous.bytes.isNotEmpty)
-                ? Image.memory(previous.bytes, width: 52, height: 52, fit: BoxFit.cover)
-                : Container(
-              width: 52,
-              height: 52,
-              color: AppColors.lightGreen,
-              child: const Icon(Icons.image_not_supported_outlined, color: AppColors.textMuted, size: 20),
-            ),
-          ),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  goat.name.trim().isNotEmpty ? goat.name : goat.tagNumber,
-                  style: AppTheme.heading(size: 13),
-                ),
-                const SizedBox(height: 2),
-                Text(
-                  previous != null ? 'Previous: ${previous.label}' : '',
-                  style: AppTheme.body(size: 10, color: AppColors.textMuted),
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(width: 10),
-          GestureDetector(
-            onTap: capturing ? null : () => _capturePhoto(goat.id),
-            child: Container(
-              width: 64,
-              height: 64,
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(
-                  color: captured != null ? AppColors.primaryGreen : AppColors.primaryGreen.withOpacity(0.4),
-                  width: captured != null ? 2 : 1.5,
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              ClipRRect(
+                borderRadius: BorderRadius.circular(10),
+                child: (previous != null && previous.bytes.isNotEmpty)
+                    ? Image.memory(previous.bytes, width: 52, height: 52, fit: BoxFit.cover)
+                    : Container(
+                  width: 52,
+                  height: 52,
+                  color: AppColors.lightGreen,
+                  child: const Icon(Icons.image_not_supported_outlined, color: AppColors.textMuted, size: 20),
                 ),
               ),
-              child: capturing
-                  ? const Center(child: CircularProgressIndicator(strokeWidth: 2, color: AppColors.primaryGreen))
-                  : captured != null
-                  ? ClipRRect(
-                borderRadius: BorderRadius.circular(10.5),
-                child: Image.memory(captured.bytes, fit: BoxFit.cover),
-              )
-                  : const Icon(Icons.camera_alt, color: AppColors.primaryGreen, size: 24),
-            ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Flexible(
+                          child: Text(
+                            goat.name.trim().isNotEmpty ? goat.name : goatId,
+                            style: AppTheme.heading(size: 13),
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                        const SizedBox(width: 6),
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+                          decoration: BoxDecoration(
+                            color: AppColors.primaryGreen.withOpacity(0.12),
+                            borderRadius: BorderRadius.circular(5),
+                          ),
+                          child: Text(
+                            'ID: $goatId',
+                            style: AppTheme.body(size: 9, color: AppColors.primaryGreen),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      previous != null ? 'Previous: ${previous.label}' : '',
+                      style: AppTheme.body(size: 10, color: AppColors.textMuted),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 10),
+              GestureDetector(
+                onTap: capturing ? null : () => _capturePhoto(goat.id),
+                child: Container(
+                  width: 64,
+                  height: 64,
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(
+                      color: captured != null ? AppColors.primaryGreen : AppColors.primaryGreen.withOpacity(0.4),
+                      width: captured != null ? 2 : 1.5,
+                    ),
+                  ),
+                  child: capturing
+                      ? const Center(child: CircularProgressIndicator(strokeWidth: 2, color: AppColors.primaryGreen))
+                      : captured != null
+                      ? ClipRRect(
+                    borderRadius: BorderRadius.circular(10.5),
+                    child: Image.memory(captured.bytes, fit: BoxFit.cover),
+                  )
+                      : const Icon(Icons.camera_alt, color: AppColors.primaryGreen, size: 24),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          const Divider(height: 1),
+          const SizedBox(height: 10),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              Expanded(
+                flex: 4,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Last weight',
+                      style: AppTheme.body(size: 10, color: AppColors.textMuted),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      previous?.weight != null
+                          ? '${previous!.weight!.toStringAsFixed(1)} kg'
+                          : 'Not recorded',
+                      style: AppTheme.heading(size: 13),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 10),
+              Icon(Icons.arrow_forward, size: 16, color: AppColors.textMuted),
+              const SizedBox(width: 10),
+              Expanded(
+                flex: 5,
+                child: TextField(
+                  controller: weightController,
+                  keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                  onChanged: (_) => setState(() {}),
+                  style: AppTheme.heading(size: 13),
+                  decoration: InputDecoration(
+                    isDense: true,
+                    labelText: 'New weight (kg)',
+                    labelStyle: AppTheme.body(size: 11, color: AppColors.textMuted),
+                    contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    prefixIcon: const Icon(Icons.monitor_weight_outlined, size: 18),
+                  ),
+                ),
+              ),
+            ],
           ),
         ],
       ),
@@ -630,7 +805,7 @@ class _CustomerGoatsProgressReportScreenState
           children: [
             Expanded(
               child: OutlinedButton.icon(
-                onPressed: (_generating || !_allPhotosCaptured) ? null : () => _generate(share: false),
+                onPressed: (_generating || !_readyToGenerate) ? null : () => _generate(share: false),
                 icon: const Icon(Icons.visibility_outlined),
                 label: const Text('Preview'),
                 style: OutlinedButton.styleFrom(
@@ -643,7 +818,7 @@ class _CustomerGoatsProgressReportScreenState
             const SizedBox(width: 12),
             Expanded(
               child: ElevatedButton.icon(
-                onPressed: (_generating || !_allPhotosCaptured) ? null : () => _generate(share: true),
+                onPressed: (_generating || !_readyToGenerate) ? null : () => _generate(share: true),
                 icon: _generating
                     ? const SizedBox(
                   width: 18,
