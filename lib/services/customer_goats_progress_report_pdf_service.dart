@@ -90,7 +90,7 @@ class CustomerGoatsProgressReportPdfService {
             pw.SizedBox(height: 14),
           ],
           if (monthlyBill != null) ...[
-            _buildBillingSummary(monthlyBill),
+            _buildBillingSummary(monthlyBill, entries),
             pw.SizedBox(height: 14),
           ],
           pw.NewPage(),
@@ -438,7 +438,7 @@ class CustomerGoatsProgressReportPdfService {
   // BILLING SUMMARY  (previous outstanding + this month's Palai bill)
   // ===========================================================================
 
-  pw.Widget _buildBillingSummary(MonthlyBill bill) {
+  pw.Widget _buildBillingSummary(MonthlyBill bill, List<GoatProgressEntry> entries) {
     return pw.Container(
       width: double.infinity,
       decoration: pw.BoxDecoration(
@@ -476,6 +476,28 @@ class CustomerGoatsProgressReportPdfService {
           pw.SizedBox(height: 8),
           pw.Divider(color: PdfColors.grey300, height: 1),
           pw.SizedBox(height: 8),
+
+          // Goat-wise Palai charges — each goat's price is the amount
+          // entered when that goat was registered for Palai.
+          if (entries.isNotEmpty) ...[
+            pw.Text(
+              'Palai Charges (goat-wise)',
+              style: pw.TextStyle(fontSize: 8.5, fontWeight: pw.FontWeight.bold, color: PdfColors.grey800),
+            ),
+            pw.SizedBox(height: 3),
+            for (final entry in entries)
+              _billRow(
+                entry.goat.name.trim().isNotEmpty
+                    ? entry.goat.name
+                    : (entry.goat.goatCode.trim().isNotEmpty ? entry.goat.goatCode : entry.goat.tagNumber),
+                _currency(entry.goat.pricing),
+                small: true,
+              ),
+            pw.SizedBox(height: 3),
+            pw.Divider(color: PdfColors.grey300, height: 1),
+            pw.SizedBox(height: 6),
+          ],
+
           pw.Row(
             crossAxisAlignment: pw.CrossAxisAlignment.start,
             children: [
@@ -483,10 +505,11 @@ class CustomerGoatsProgressReportPdfService {
                 child: pw.Column(
                   crossAxisAlignment: pw.CrossAxisAlignment.start,
                   children: [
-                    _billRow('Previous Outstanding', _currency(bill.previousOutstanding)),
+                    _billRow('Outstanding Before This Bill', _currency(bill.previousOutstanding)),
                     _billRow('This Month\'s Palai Charges', _currency(bill.palaiCharges)),
                     if (bill.otherCharges > 0) _billRow('Other Charges', _currency(bill.otherCharges)),
                     if (bill.discount > 0) _billRow('Discount', '- ${_currency(bill.discount)}'),
+                    if (bill.advanceApplied > 0) _billRow('Advance Applied', '- ${_currency(bill.advanceApplied)}'),
                   ],
                 ),
               ),
@@ -496,6 +519,7 @@ class CustomerGoatsProgressReportPdfService {
                   crossAxisAlignment: pw.CrossAxisAlignment.start,
                   children: [
                     _billRow('This Bill Amount', _currency(bill.currentBillAmount)),
+                    _billRow('Total Due (before payments)', _currency(bill.totalDue)),
                     _billRow('Amount Paid', _currency(bill.amountPaid)),
                     pw.SizedBox(height: 3),
                     pw.Divider(color: PdfColors.grey300, height: 1),
@@ -506,6 +530,14 @@ class CustomerGoatsProgressReportPdfService {
               ),
             ],
           ),
+          if (bill.amountPaid > 0) ...[
+            pw.SizedBox(height: 6),
+            pw.Text(
+              'Amount Paid reflects a payment recorded separately against this bill. Generating a Progress '
+                  'Report does not, by itself, mark any amount as paid.',
+              style: const pw.TextStyle(fontSize: 7, color: PdfColors.grey600),
+            ),
+          ],
           pw.SizedBox(height: 6),
           pw.Text(
             'Bill No: ${bill.billNumber}',
@@ -516,7 +548,7 @@ class CustomerGoatsProgressReportPdfService {
     );
   }
 
-  pw.Widget _billRow(String label, String value, {bool emphasize = false}) {
+  pw.Widget _billRow(String label, String value, {bool emphasize = false, bool small = false}) {
     return pw.Padding(
       padding: const pw.EdgeInsets.only(bottom: 5),
       child: pw.Row(
@@ -525,7 +557,7 @@ class CustomerGoatsProgressReportPdfService {
           pw.Text(
             label,
             style: pw.TextStyle(
-              fontSize: emphasize ? 9.5 : 8.5,
+              fontSize: emphasize ? 9.5 : (small ? 8 : 8.5),
               fontWeight: emphasize ? pw.FontWeight.bold : pw.FontWeight.normal,
               color: emphasize ? PdfColors.black : PdfColors.grey700,
             ),
@@ -533,8 +565,8 @@ class CustomerGoatsProgressReportPdfService {
           pw.Text(
             value,
             style: pw.TextStyle(
-              fontSize: emphasize ? 10.5 : 9,
-              fontWeight: pw.FontWeight.bold,
+              fontSize: emphasize ? 10.5 : (small ? 8.5 : 9),
+              fontWeight: small ? pw.FontWeight.normal : pw.FontWeight.bold,
               color: emphasize ? PdfColors.green900 : PdfColors.black,
             ),
           ),

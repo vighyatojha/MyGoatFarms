@@ -73,11 +73,19 @@ class MonthlyBill {
   /// palaiCharges + otherCharges - discount
   final double currentBillAmount;
 
-  /// Total amount due after adding this bill to the previous outstanding.
+  /// Amount of the customer's existing advance balance that was used to
+  /// offset this bill, if any.
+  ///
+  /// This is a snapshot taken when the bill was generated and should never
+  /// be recalculated later.
+  final double advanceApplied;
+
+  /// Total amount due after adding this bill to the previous outstanding
+  /// and subtracting any advance that was applied.
   ///
   /// Formula:
   ///
-  /// previousOutstanding + currentBillAmount
+  /// previousOutstanding + currentBillAmount - advanceApplied
   final double totalDue;
 
   /// Amount paid against THIS monthly bill.
@@ -124,6 +132,7 @@ class MonthlyBill {
     required this.discount,
     required this.previousOutstanding,
     required this.currentBillAmount,
+    this.advanceApplied = 0,
     required this.totalDue,
     required this.amountPaid,
     required this.remainingAmount,
@@ -296,6 +305,9 @@ class MonthlyBill {
       currentBillAmount:
       (data['currentBillAmount'] as num?)?.toDouble() ?? 0,
 
+      advanceApplied:
+      (data['advanceApplied'] as num?)?.toDouble() ?? 0,
+
       totalDue:
       (data['totalDue'] as num?)?.toDouble() ?? 0,
 
@@ -366,6 +378,9 @@ class MonthlyBill {
       'currentBillAmount':
       currentBillAmount,
 
+      'advanceApplied':
+      advanceApplied,
+
       'totalDue':
       totalDue,
 
@@ -415,6 +430,7 @@ class MonthlyBill {
     double? discount,
     double? previousOutstanding,
     double? currentBillAmount,
+    double? advanceApplied,
     double? totalDue,
     double? amountPaid,
     double? remainingAmount,
@@ -442,6 +458,7 @@ class MonthlyBill {
       previousOutstanding ?? this.previousOutstanding,
       currentBillAmount:
       currentBillAmount ?? this.currentBillAmount,
+      advanceApplied: advanceApplied ?? this.advanceApplied,
       totalDue: totalDue ?? this.totalDue,
       amountPaid: amountPaid ?? this.amountPaid,
       remainingAmount:

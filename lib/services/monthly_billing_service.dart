@@ -200,6 +200,14 @@ class MonthlyBillingService {
     double discount = 0,
     int goatCount = 0,
     String notes = '',
+    /// When true, any existing customer advance balance is used to offset
+    /// this bill (previous outstanding + this month's charges) before the
+    /// remainder is added to the customer's pending amount. The advance
+    /// balance itself is reduced by the amount applied.
+    ///
+    /// Defaults to false so existing callers keep their current behaviour
+    /// (advance handling stays with the payment system for them).
+    bool applyAdvance = false,
   }) async {
     if (palaiCharges < 0) {
       throw ArgumentError(
@@ -321,15 +329,20 @@ class MonthlyBillingService {
           customerData['pendingAmount'],
         );
 
+        final advanceBefore =
+        _doubleValue(
+          customerData['advanceAmount'],
+        );
+
+        final totalBeforeAdvance =
+            previousOutstanding + newCharges;
+
         // -------------------------------------------------------------------
         // NEW OUTSTANDING
         // -------------------------------------------------------------------
         //
-        // IMPORTANT:
-        //
-        // Monthly billing does NOT automatically use advance.
-        //
-        // The user's requirement is:
+        // By default, monthly billing does NOT automatically use advance —
+        // advance handling stays with the payment system.
         //
         //     Monthly Bill
         //          ↓
@@ -337,11 +350,28 @@ class MonthlyBillingService {
         //          ↓
         //     Outstanding
         //
-        // Advance handling remains part of the payment system.
+        // When the caller explicitly opts in via [applyAdvance], any
+        // existing advance balance is used to offset the bill first
+        // (read fresh, inside this transaction, so it can't race with a
+        // concurrent update), and the advance balance itself is reduced by
+        // the amount applied.
         // -------------------------------------------------------------------
 
+        final advanceApplied = applyAdvance
+            ? advanceBefore
+            .clamp(0, totalBeforeAdvance)
+            .toDouble()
+            : 0.0;
+
         final totalDue =
-            previousOutstanding + newCharges;
+        (totalBeforeAdvance - advanceApplied)
+            .clamp(0, double.infinity)
+            .toDouble();
+
+        final advanceAfter =
+        (advanceBefore - advanceApplied)
+            .clamp(0, double.infinity)
+            .toDouble();
 
         // -------------------------------------------------------------------
         // BILL NUMBER
@@ -437,6 +467,8 @@ class MonthlyBillingService {
             'previousOutstanding':
             previousOutstanding,
 
+            'advanceApplied': advanceApplied,
+
             'totalDue': totalDue,
 
             'amountPaid': 0,
@@ -502,6 +534,8 @@ class MonthlyBillingService {
           customerRef,
           {
             'pendingAmount': totalDue,
+            if (applyAdvance)
+              'advanceAmount': advanceAfter,
             'updatedAt':
             FieldValue.serverTimestamp(),
           },
@@ -567,6 +601,9 @@ class MonthlyBillingService {
 
           currentBillAmount:
           newCharges,
+
+          advanceApplied:
+          advanceApplied,
 
           totalDue:
           totalDue,
