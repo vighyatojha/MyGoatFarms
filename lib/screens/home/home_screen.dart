@@ -64,7 +64,11 @@ class _HomeScreenState extends State<HomeScreen> {
     final uid = FirebaseAuth.instance.currentUser?.uid;
     if (uid == null) return;
 
-    final farm = await FirestoreService.instance.getFarmByAuthUid(uid);
+    // Resolves the farm for BOTH farm owners and partners — a partner's
+    // uid never matches a farm's own `authUid`, so looking that up alone
+    // (the old behaviour) left partners stuck with `_farm`/`_farmId`
+    // permanently null and the dashboard permanently empty.
+    final farm = await FirestoreService.instance.getFarmForUser(uid);
     if (!mounted) return;
     setState(() {
       _farm = farm;
@@ -130,6 +134,62 @@ class _HomeScreenState extends State<HomeScreen> {
         ? _farm!.ownerName
         : FirebaseAuth.instance.currentUser?.displayName ?? 'Farmer';
     final farmName = _farm?.farmName.isNotEmpty == true ? _farm!.farmName : 'My Goat Farms';
+
+    // Still resolving the farm/partner lookup — show a real spinner
+    // instead of the empty placeholder boxes.
+    if (_loadingFarm) {
+      return const Scaffold(
+        backgroundColor: AppColors.paleGreen,
+        body: Center(
+          child: CircularProgressIndicator(color: AppColors.primaryGreen),
+        ),
+      );
+    }
+
+    // Resolution finished but this account isn't linked to any farm as
+    // either an owner or a partner — surface that instead of silently
+    // leaving the dashboard permanently empty (which looked like it was
+    // "stuck loading" with nothing ever appearing).
+    if (_farm == null) {
+      return Scaffold(
+        backgroundColor: AppColors.paleGreen,
+        body: SafeArea(
+          child: Center(
+            child: Padding(
+              padding: const EdgeInsets.all(24),
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  const Icon(Icons.link_off, size: 48, color: AppColors.textGrey),
+                  const SizedBox(height: 16),
+                  Text(
+                    'This account isn\'t linked to any farm yet',
+                    style: AppTheme.heading(size: 16),
+                    textAlign: TextAlign.center,
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    'If you were added as a partner, ask the farm owner to '
+                        'double-check your invite, or pull down to refresh.',
+                    style: AppTheme.body(size: 13, color: AppColors.textGrey),
+                    textAlign: TextAlign.center,
+                  ),
+                  const SizedBox(height: 20),
+                  ElevatedButton(
+                    onPressed: () {
+                      setState(() => _loadingFarm = true);
+                      _loadFarmData();
+                    },
+                    style: ElevatedButton.styleFrom(backgroundColor: AppColors.primaryGreen),
+                    child: const Text('Try again', style: TextStyle(color: Colors.white)),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      );
+    }
 
     return Scaffold(
       backgroundColor: AppColors.paleGreen,

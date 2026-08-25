@@ -99,12 +99,20 @@ class PartnerModel {
   final bool isActive;
   final PartnerPermissions permissions;
 
+  /// The id of the farm this partner belongs to — i.e. the id of the
+  /// `farms/{farmId}` document that owns the `partners` subcollection
+  /// this record lives in. Not stored in Firestore itself; derived from
+  /// [doc]'s path in [fromDoc] so callers (e.g. resolving which farm a
+  /// partner should land on after login) don't need a second lookup.
+  final String farmId;
+
   PartnerModel({
     required this.id,
     required this.name,
     required this.mobileNumber,
     required this.email,
     required this.authUid,
+    required this.farmId,
     this.createdAt,
     this.isActive = true,
     this.permissions = const PartnerPermissions(),
@@ -121,6 +129,9 @@ class PartnerModel {
       mobileNumber: data['mobileNumber'] ?? '',
       email: data['email'] ?? '',
       authUid: data['authUid'] ?? doc.id,
+      // doc.reference is farms/{farmId}/partners/{partnerId}, so the
+      // grandparent (parent.parent) is the farms/{farmId} document.
+      farmId: doc.reference.parent.parent?.id ?? '',
       createdAt: (data['createdAt'] as Timestamp?)?.toDate(),
       isActive: data['isActive'] != false,
       permissions: PartnerPermissions.fromMap(

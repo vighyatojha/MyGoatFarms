@@ -1,15 +1,13 @@
-import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 
 import '../models/partner_model.dart';
+import 'firestore_service.dart';
 
 class PartnerAccessService {
   PartnerAccessService._();
 
   static final PartnerAccessService instance =
   PartnerAccessService._();
-
-  final FirebaseFirestore _db = FirebaseFirestore.instance;
 
   PartnerModel? _partner;
 
@@ -22,6 +20,11 @@ class PartnerAccessService {
   PartnerPermissions get permissions =>
       _partner?.permissions ?? PartnerPermissions.none();
 
+  /// Delegates to [FirestoreService.getPartnerByAuthUid], which wraps the
+  /// query in a timeout + try/catch. Previously this ran the
+  /// `collectionGroup('partners')` query directly with no timeout, so a
+  /// missing Firestore index/rule for the query could leave any caller
+  /// awaiting this `Future` forever instead of failing gracefully.
   Future<PartnerModel?> loadForCurrentUser() async {
     final uid = FirebaseAuth.instance.currentUser?.uid;
 
@@ -30,19 +33,7 @@ class PartnerAccessService {
       return null;
     }
 
-    final result = await _db
-        .collectionGroup('partners')
-        .where('authUid', isEqualTo: uid)
-        .limit(1)
-        .get();
-
-    if (result.docs.isEmpty) {
-      _partner = null;
-      return null;
-    }
-
-    _partner = PartnerModel.fromDoc(result.docs.first);
-
+    _partner = await FirestoreService.instance.getPartnerByAuthUid(uid);
     return _partner;
   }
 

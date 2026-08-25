@@ -932,14 +932,34 @@ class FirestoreService {
 
   /// Resolves the email linked to a mobile number, used for mobile-number
   /// login (Firebase Auth itself only signs in with email + password).
+  ///
+  /// Checks farm OWNER accounts first, then falls back to PARTNER
+  /// accounts (`farms/{farmId}/partners`) — previously this only looked
+  /// at farm owners, so a partner logging in with their mobile number
+  /// always got "No farm account found", never their email resolved.
   Future<String?> findEmailByMobile(String mobileNumber) async {
     final query = await _farms
         .where('mobileNumber', isEqualTo: mobileNumber)
         .limit(1)
         .get()
         .timeout(timeout);
-    if (query.docs.isEmpty) return null;
-    return query.docs.first.data()['email'] as String?;
+    if (query.docs.isNotEmpty) {
+      return query.docs.first.data()['email'] as String?;
+    }
+
+    try {
+      final partnerQuery = await FirebaseFirestore.instance
+          .collectionGroup('partners')
+          .where('mobileNumber', isEqualTo: mobileNumber)
+          .limit(1)
+          .get()
+          .timeout(timeout);
+      if (partnerQuery.docs.isEmpty) return null;
+      return partnerQuery.docs.first.data()['email'] as String?;
+    } catch (e) {
+      debugPrint('FirestoreService.findEmailByMobile partner lookup error: $e');
+      return null;
+    }
   }
 
   Future<FarmModel?> getFarmByAuthUid(String uid) async {
@@ -957,12 +977,55 @@ class FirestoreService {
     }
   }
 
+  /// Looks up the partner record (if any) linked to [uid] across every
+  /// farm's `partners` subcollection, using a `collectionGroup` query.
+  ///
+  /// Returns null both when [uid] simply isn't a partner anywhere, AND
+  /// when the query itself fails (e.g. missing Firestore security rule
+  /// or index) — in both cases the caller should fall back to treating
+  /// this as "no linked account" rather than hanging indefinitely.
+  Future<PartnerModel?> getPartnerByAuthUid(String uid) async {
+    try {
+      final query = await FirebaseFirestore.instance
+          .collectionGroup('partners')
+          .where('authUid', isEqualTo: uid)
+          .limit(1)
+          .get()
+          .timeout(timeout);
+      if (query.docs.isEmpty) return null;
+      return PartnerModel.fromDoc(query.docs.first);
+    } catch (e) {
+      debugPrint('FirestoreService.getPartnerByAuthUid error: $e');
+      return null;
+    }
+  }
+
+  /// Resolves the farm that [uid] should land on after login, regardless
+  /// of whether they are the farm owner or a partner.
+  ///
+  /// 1. First tries [uid] as a farm OWNER (`farms.authUid == uid`).
+  /// 2. If that finds nothing, tries [uid] as a PARTNER — looks up their
+  ///    partner record via [getPartnerByAuthUid], then loads the farm
+  ///    that partner record belongs to.
+  ///
+  /// Returns null if [uid] isn't linked to any farm as either role.
+  Future<FarmModel?> getFarmForUser(String uid) async {
+    final ownerFarm = await getFarmByAuthUid(uid);
+    if (ownerFarm != null) return ownerFarm;
+
+    final partner = await getPartnerByAuthUid(uid);
+    if (partner == null || partner.farmId.isEmpty) return null;
+
+    return getFarmById(partner.farmId);
+  }
+
   /// Convenience getter used by every module to resolve the current
-  /// farm's document id before reading/writing sub-collections.
+  /// farm's document id before reading/writing sub-collections. Works
+  /// for both farm owners and partners — see [getFarmForUser].
   Future<String?> currentFarmId() async {
     final uid = FirebaseAuth.instance.currentUser?.uid;
     if (uid == null) return null;
-    final farm = await getFarmByAuthUid(uid);
+    final farm = await getFarmForUser(uid);
     return farm?.id;
   }
 
