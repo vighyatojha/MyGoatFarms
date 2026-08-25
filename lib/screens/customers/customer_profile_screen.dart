@@ -1329,10 +1329,14 @@ class _CustomerProfileScreenState
     final note =
     (data['note'] ?? '').toString();
 
-    final applied =
-        data['amountAppliedToPending'] ??
-            data['amountAppliedToBill'] ??
-            0;
+    // The amount actually still owed by the customer AFTER this payment
+    // was recorded. Previously this line used `amountAppliedToPending` /
+    // `amountAppliedToBill` — how much of THIS payment went toward the
+    // balance, which is usually equal to the amount paid — so the red
+    // "Pending ₹X" line was showing the paid amount instead of the real
+    // remaining balance.
+    final pendingAfter =
+        data['pendingAfter'] ?? 0;
 
     final advance =
         data['advanceAmount'] ?? 0;
@@ -1442,13 +1446,13 @@ class _CustomerProfileScreenState
                     ),
                   ),
 
-                  if ((applied is num && applied > 0) ||
+                  if ((pendingAfter is num && pendingAfter > 0) ||
                       (advance is num && advance > 0)) ...[
                     const SizedBox(height: 4),
 
-                    if (applied is num && applied > 0)
+                    if (pendingAfter is num && pendingAfter > 0)
                       Text(
-                        'Pending ${_rupees(applied)}',
+                        'Pending ${_rupees(pendingAfter)}',
                         style: AppTheme.body(
                           size: 9,
                           color: AppColors.error,

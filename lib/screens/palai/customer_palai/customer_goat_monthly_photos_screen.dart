@@ -141,10 +141,34 @@ class _CustomerGoatMonthlyPhotosScreenState
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    'Goat ${widget.goat.goatCode}',
+                    widget.goat.name.trim().isNotEmpty
+                        ? widget.goat.name
+                        : widget.goat.goatCode,
                     style: theme.textTheme.titleLarge?.copyWith(
                       fontWeight: FontWeight.w800,
                     ),
+                  ),
+                  const SizedBox(height: 4),
+                  Row(
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 8,
+                          vertical: 2,
+                        ),
+                        decoration: BoxDecoration(
+                          color: colors.primaryContainer,
+                          borderRadius: BorderRadius.circular(6),
+                        ),
+                        child: Text(
+                          'ID: ${widget.goat.goatCode}',
+                          style: theme.textTheme.labelSmall?.copyWith(
+                            color: colors.onPrimaryContainer,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
                   const SizedBox(height: 5),
                   Text(
@@ -494,6 +518,29 @@ class _CustomerGoatMonthlyPhotosScreenState
                 );
               },
             ),
+            if (photo.weightKg != null)
+              Positioned(
+                top: 8,
+                right: 8,
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 4,
+                  ),
+                  decoration: BoxDecoration(
+                    color: Colors.black54,
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Text(
+                    '${photo.weightKg!.toStringAsFixed(1)} kg',
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.w700,
+                      fontSize: 11,
+                    ),
+                  ),
+                ),
+              ),
             Positioned(
               left: 0,
               right: 0,
@@ -706,6 +753,7 @@ class _CustomerGoatMonthlyPhotosScreenState
         contentType: picked.contentType,
         month: result.month,
         notes: result.notes,
+        weightKg: result.weightKg,
       );
 
       if (!mounted) {
@@ -739,6 +787,7 @@ class _CustomerGoatMonthlyPhotosScreenState
       DateTime initialMonth,
       ) async {
     final notesController = TextEditingController();
+    final weightController = TextEditingController();
 
     DateTime selectedMonth = DateTime(
       initialMonth.year,
@@ -750,6 +799,7 @@ class _CustomerGoatMonthlyPhotosScreenState
       context: context,
       builder: (dialogContext) {
         bool saving = false;
+        String? weightError;
 
         return StatefulBuilder(
           builder: (context, setDialogState) {
@@ -810,6 +860,29 @@ class _CustomerGoatMonthlyPhotosScreenState
                     ),
                     const SizedBox(height: 14),
                     TextField(
+                      controller: weightController,
+                      keyboardType: const TextInputType.numberWithOptions(
+                        decimal: true,
+                      ),
+                      decoration: InputDecoration(
+                        labelText: 'Weight (kg)',
+                        hintText: 'e.g. 24.5',
+                        border: const OutlineInputBorder(),
+                        prefixIcon: const Icon(
+                          Icons.monitor_weight_outlined,
+                        ),
+                        errorText: weightError,
+                      ),
+                      onChanged: (_) {
+                        if (weightError != null) {
+                          setDialogState(() {
+                            weightError = null;
+                          });
+                        }
+                      },
+                    ),
+                    const SizedBox(height: 14),
+                    TextField(
                       controller: notesController,
                       maxLines: 3,
                       textCapitalization:
@@ -840,11 +913,24 @@ class _CustomerGoatMonthlyPhotosScreenState
                   onPressed: saving
                       ? null
                       : () {
+                    final weight = double.tryParse(
+                      weightController.text.trim(),
+                    );
+
+                    if (weight == null || weight <= 0) {
+                      setDialogState(() {
+                        weightError =
+                        'Enter the goat\'s weight in kg';
+                      });
+                      return;
+                    }
+
                     Navigator.pop(
                       dialogContext,
                       _PhotoDetailsResult(
                         month: selectedMonth,
                         notes: notesController.text.trim(),
+                        weightKg: weight,
                       ),
                     );
                   },
@@ -858,6 +944,7 @@ class _CustomerGoatMonthlyPhotosScreenState
     );
 
     notesController.dispose();
+    weightController.dispose();
 
     return result;
   }
@@ -871,6 +958,7 @@ class _CustomerGoatMonthlyPhotosScreenState
     required String contentType,
     required DateTime month,
     required String notes,
+    required double weightKg,
   }) async {
     final reference = _photosCollection.doc();
 
@@ -884,6 +972,7 @@ class _CustomerGoatMonthlyPhotosScreenState
       image: bytes,
       imageContentType: contentType,
       notes: notes,
+      weightKg: weightKg,
       capturedAt: DateTime.now(),
     );
 
@@ -980,6 +1069,16 @@ class _CustomerGoatMonthlyPhotosScreenState
                           fontSize: 16,
                         ),
                       ),
+                      if (photo.weightKg != null) ...[
+                        const SizedBox(height: 4),
+                        Text(
+                          'Weight: ${photo.weightKg!.toStringAsFixed(1)} kg',
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ],
                       if (photo.notes.trim().isNotEmpty) ...[
                         const SizedBox(height: 4),
                         Text(
@@ -1254,9 +1353,11 @@ class _CustomerGoatMonthlyPhotosScreenState
 class _PhotoDetailsResult {
   final DateTime month;
   final String notes;
+  final double weightKg;
 
   const _PhotoDetailsResult({
     required this.month,
     required this.notes,
+    required this.weightKg,
   });
 }

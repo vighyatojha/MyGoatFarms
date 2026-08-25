@@ -207,6 +207,12 @@ class _CustomerGoatsReportScreenState
         final goat = goats[index];
         final selected = _selectedIds.contains(goat.id);
 
+        final goatId = goat.goatCode.trim().isNotEmpty
+            ? goat.goatCode
+            : (goat.tagNumber.trim().isNotEmpty
+            ? goat.tagNumber
+            : goat.id);
+
         return Container(
           margin: const EdgeInsets.only(bottom: 10),
           decoration: AppTheme.card(radius: 14),
@@ -215,9 +221,34 @@ class _CustomerGoatsReportScreenState
             onChanged: (_) => _toggleGoat(goat.id),
             activeColor: AppColors.primaryGreen,
             controlAffinity: ListTileControlAffinity.leading,
-            title: Text(
-              goat.name.trim().isNotEmpty ? goat.name : goat.tagNumber,
-              style: AppTheme.heading(size: 13),
+            title: Row(
+              children: [
+                Flexible(
+                  child: Text(
+                    goat.name.trim().isNotEmpty ? goat.name : goatId,
+                    style: AppTheme.heading(size: 13),
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+                const SizedBox(width: 6),
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 7,
+                    vertical: 2,
+                  ),
+                  decoration: BoxDecoration(
+                    color: AppColors.primaryGreen.withOpacity(0.12),
+                    borderRadius: BorderRadius.circular(6),
+                  ),
+                  child: Text(
+                    'ID: $goatId',
+                    style: AppTheme.body(
+                      size: 10,
+                      color: AppColors.primaryGreen,
+                    ),
+                  ),
+                ),
+              ],
             ),
             subtitle: Text(
               '${goat.breed.isNotEmpty ? goat.breed : 'Breed unknown'} • '

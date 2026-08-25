@@ -1330,6 +1330,11 @@ class MonthlyPhoto {
 
   final String notes;
 
+  /// Goat's weight (in kg) recorded at the time this photo was taken.
+  ///
+  /// Nullable/optional since older records won't have this value.
+  final double? weightKg;
+
   final DateTime capturedAt;
 
   MonthlyPhoto({
@@ -1338,6 +1343,7 @@ class MonthlyPhoto {
     required this.image,
     this.imageContentType = 'image/jpeg',
     this.notes = '',
+    this.weightKg,
     required this.capturedAt,
   });
 
@@ -1348,6 +1354,8 @@ class MonthlyPhoto {
 
     final imageField =
     data['image'];
+
+    final weightField = data['weightKg'];
 
     return MonthlyPhoto(
       id: doc.id,
@@ -1368,6 +1376,9 @@ class MonthlyPhoto {
       notes:
       data['notes']?.toString() ?? '',
 
+      weightKg:
+      weightField is num ? weightField.toDouble() : null,
+
       capturedAt:
       (data['capturedAt'] as Timestamp?)?.toDate() ??
           DateTime.now(),
@@ -1386,6 +1397,7 @@ class MonthlyPhoto {
       'image': Blob(image),
       'imageContentType': imageContentType,
       'notes': notes,
+      'weightKg': weightKg,
       'capturedAt':
       Timestamp.fromDate(capturedAt),
     };
