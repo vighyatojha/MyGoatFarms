@@ -1,14 +1,17 @@
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
+import 'package:intl/intl.dart';
 
 import '../../app_theme.dart';
 import '../../models/bill_settings_model.dart';
+import '../../models/monthly_bill_model.dart';
 import '../../models/palai_models.dart';
 import '../../models/report_models.dart';
 import '../../services/customer_goats_progress_report_pdf_service.dart';
 import '../../services/firestore_service.dart';
 import '../../services/image_service.dart';
+import '../../services/monthly_billing_service.dart';
 
 /// Lets the owner generate ONE consolidated Progress Report covering all
 /// (or a chosen subset of) the goats under a single Palai customer —
@@ -87,6 +90,27 @@ class _CustomerGoatsProgressReportScreenState
   /// typing isn't lost mid-flow.
   final Map<String, TextEditingController> _weightControllers = {};
 
+  // ------------------------------------------------------------------
+  // BILLING (this month's Palai amount + old pending amount)
+  // ------------------------------------------------------------------
+
+  /// The customer's pending/outstanding amount *before* this month's
+  /// bill, re-fetched fresh (not from `widget.customer`, which may be
+  /// stale) the moment we enter the capture step.
+  double _previousOutstanding = 0;
+
+  /// If a monthly bill for the current month already exists for this
+  /// customer, it's loaded here so we don't create a duplicate — we
+  /// just reuse its numbers in the report instead.
+  MonthlyBill? _existingMonthlyBill;
+
+  bool _loadingBilling = false;
+  String? _billingLoadError;
+
+  final TextEditingController _palaiChargesController = TextEditingController();
+  final TextEditingController _otherChargesController = TextEditingController();
+  final TextEditingController _discountController = TextEditingController();
+
   bool _generating = false;
 
   @override
@@ -103,6 +127,9 @@ class _CustomerGoatsProgressReportScreenState
     for (final controller in _weightControllers.values) {
       controller.dispose();
     }
+    _palaiChargesController.dispose();
+    _otherChargesController.dispose();
+    _discountController.dispose();
     super.dispose();
   }
 
@@ -148,6 +175,7 @@ class _CustomerGoatsProgressReportScreenState
 
     try {
       final results = await Future.wait(_selectedGoats.map(_fetchPrevious));
+      await _loadBillingInfo();
       if (!mounted) return;
       setState(() {
         for (int i = 0; i < _selectedGoats.length; i++) {
@@ -163,6 +191,64 @@ class _CustomerGoatsProgressReportScreenState
       });
       _showSnack('Could not load previous report data: $e', isError: true);
     }
+  }
+
+  /// Loads the customer's current pending/outstanding amount, and checks
+  /// whether a monthly bill already exists for the current month so we
+  /// don't accidentally create a duplicate one.
+  Future<void> _loadBillingInfo() async {
+    setState(() {
+      _loadingBilling = true;
+      _billingLoadError = null;
+    });
+
+    try {
+      final freshCustomer = await FirestoreService.instance.getCustomer(
+        widget.farmId,
+        widget.customer.id,
+      );
+
+      final now = DateTime.now();
+      final billId = _monthlyBillId(widget.customer.id, now.year, now.month);
+
+      final existingBill = await MonthlyBillingService.instance.getMonthlyBill(
+        farmId: widget.farmId,
+        billId: billId,
+      );
+
+      if (!mounted) return;
+
+      setState(() {
+        _previousOutstanding = freshCustomer?.pendingAmount ?? widget.customer.pendingAmount;
+        _existingMonthlyBill = existingBill;
+        _loadingBilling = false;
+
+        if (existingBill != null) {
+          _palaiChargesController.text = existingBill.palaiCharges.toStringAsFixed(2);
+          _otherChargesController.text = existingBill.otherCharges.toStringAsFixed(2);
+          _discountController.text = existingBill.discount.toStringAsFixed(2);
+        } else {
+          final suggested = freshCustomer?.price ?? widget.customer.price;
+          _palaiChargesController.text = suggested > 0 ? suggested.toStringAsFixed(2) : '';
+          _otherChargesController.text = '0';
+          _discountController.text = '0';
+        }
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _loadingBilling = false;
+        _billingLoadError = 'Could not load billing info: $e';
+      });
+    }
+  }
+
+  /// Mirrors MonthlyBillingService's private document-ID format so we can
+  /// look up "does this month already have a bill" without needing a new
+  /// public method on the service.
+  String _monthlyBillId(String customerId, int year, int month) {
+    final periodKey = '$year-${month.toString().padLeft(2, '0')}';
+    return 'monthly_${customerId}_$periodKey';
   }
 
   Future<_PreviousInfo> _fetchPrevious(PalaiGoat goat) async {
@@ -205,6 +291,12 @@ class _CustomerGoatsProgressReportScreenState
         controller.dispose();
       }
       _weightControllers.clear();
+
+      _existingMonthlyBill = null;
+      _billingLoadError = null;
+      _palaiChargesController.clear();
+      _otherChargesController.clear();
+      _discountController.clear();
     });
   }
 
@@ -259,7 +351,27 @@ class _CustomerGoatsProgressReportScreenState
     return weight != null && weight > 0;
   });
 
-  bool get _readyToGenerate => _allPhotosCaptured && _allWeightsEntered;
+  double? get _enteredPalaiCharges =>
+      double.tryParse(_palaiChargesController.text.trim());
+
+  double get _enteredOtherCharges =>
+      double.tryParse(_otherChargesController.text.trim()) ?? 0;
+
+  double get _enteredDiscount =>
+      double.tryParse(_discountController.text.trim()) ?? 0;
+
+  /// True once billing is ready to include in the report: either an
+  /// existing bill for this month was found (nothing more to enter), or
+  /// the owner has typed a valid Palai amount for a fresh bill.
+  bool get _billingReady {
+    if (_loadingBilling) return false;
+    if (_existingMonthlyBill != null) return true;
+    final palai = _enteredPalaiCharges;
+    return palai != null && palai > 0;
+  }
+
+  bool get _readyToGenerate =>
+      _allPhotosCaptured && _allWeightsEntered && _billingReady;
 
   // ================================================================
   // GENERATE
@@ -276,12 +388,52 @@ class _CustomerGoatsProgressReportScreenState
       return;
     }
 
+    if (!_billingReady) {
+      _showSnack('Enter this month\'s Palai amount before generating the report.');
+      return;
+    }
+
     setState(() => _generating = true);
 
     try {
       final farm = await FirestoreService.instance.getFarmById(widget.farmId);
       final billSettings = farm?.billSettings ?? const BillSettings();
       final now = DateTime.now();
+
+      // ------------------------------------------------------------
+      // BILLING — reuse this month's bill if one already exists,
+      // otherwise create it now. Creating it also folds in the
+      // customer's old pending amount and writes the new outstanding
+      // total straight to the customer profile.
+      // ------------------------------------------------------------
+      MonthlyBill monthlyBill;
+      if (_existingMonthlyBill != null) {
+        monthlyBill = _existingMonthlyBill!;
+      } else {
+        try {
+          monthlyBill = await MonthlyBillingService.instance.createMonthlyBill(
+            farmId: widget.farmId,
+            customerId: widget.customer.id,
+            year: now.year,
+            month: now.month,
+            palaiCharges: _enteredPalaiCharges!,
+            otherCharges: _enteredOtherCharges,
+            discount: _enteredDiscount,
+            goatCount: _selectedGoats.length,
+            notes: 'Auto-generated with Progress Report.',
+          );
+        } on StateError {
+          // Someone else generated this month's bill in the meantime —
+          // fall back to reading it instead of failing the whole report.
+          final billId = _monthlyBillId(widget.customer.id, now.year, now.month);
+          final existing = await MonthlyBillingService.instance.getMonthlyBill(
+            farmId: widget.farmId,
+            billId: billId,
+          );
+          if (existing == null) rethrow;
+          monthlyBill = existing;
+        }
+      }
 
       final entries = <GoatProgressEntry>[];
 
@@ -362,12 +514,14 @@ class _CustomerGoatsProgressReportScreenState
           customer: widget.customer,
           entries: entries,
           billSettings: billSettings,
+          monthlyBill: monthlyBill,
         );
       } else {
         await CustomerGoatsProgressReportPdfService.instance.preview(
           customer: widget.customer,
           entries: entries,
           billSettings: billSettings,
+          monthlyBill: monthlyBill,
         );
       }
     } catch (e) {
@@ -620,7 +774,8 @@ class _CustomerGoatsProgressReportScreenState
                       Text('Take a photo & weight for each goat', style: AppTheme.heading(size: 14)),
                       const SizedBox(height: 3),
                       Text(
-                        '$capturedCount of ${goats.length} photos • $weighedCount of ${goats.length} weights',
+                        '$capturedCount of ${goats.length} photos • $weighedCount of ${goats.length} weights'
+                            '${_billingReady ? ' • billing ready' : ' • billing pending'}',
                         style: AppTheme.body(size: 11, color: AppColors.textMuted),
                       ),
                     ],
@@ -637,8 +792,13 @@ class _CustomerGoatsProgressReportScreenState
         Expanded(
           child: ListView.builder(
             padding: const EdgeInsets.fromLTRB(16, 4, 16, 16),
-            itemCount: goats.length,
-            itemBuilder: (context, index) => _captureTile(goats[index]),
+            itemCount: goats.length + 1,
+            itemBuilder: (context, index) {
+              if (index == goats.length) {
+                return _buildBillingCard();
+              }
+              return _captureTile(goats[index]);
+            },
           ),
         ),
         _buildCaptureBottomBar(),
@@ -788,6 +948,152 @@ class _CustomerGoatsProgressReportScreenState
             ],
           ),
         ],
+      ),
+    );
+  }
+
+  String _currency(double value) {
+    return NumberFormat.currency(
+      locale: 'en_IN',
+      symbol: '₹',
+      decimalDigits: 2,
+    ).format(value);
+  }
+
+  // ------------------------------------------------------------------
+  // BILLING CARD — old pending amount + this month's Palai amount
+  // ------------------------------------------------------------------
+
+  Widget _buildBillingCard() {
+    final existing = _existingMonthlyBill;
+    final now = DateTime.now();
+    final monthLabel = DateFormat('MMMM yyyy').format(now);
+
+    return Container(
+      margin: const EdgeInsets.only(top: 4, bottom: 10),
+      decoration: AppTheme.card(radius: 14),
+      padding: const EdgeInsets.all(14),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.receipt_long_outlined, color: AppColors.primaryGreen, size: 20),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text('Monthly Billing — $monthLabel', style: AppTheme.heading(size: 14)),
+              ),
+            ],
+          ),
+          const SizedBox(height: 4),
+          Text(
+            existing != null
+                ? 'A bill for this month already exists — its amount will be used in the report.'
+                : 'This will create this month\'s bill and add it to the customer\'s pending amount.',
+            style: AppTheme.body(size: 11, color: AppColors.textMuted),
+          ),
+          const SizedBox(height: 14),
+
+          if (_loadingBilling)
+            const Center(
+              child: Padding(
+                padding: EdgeInsets.symmetric(vertical: 12),
+                child: CircularProgressIndicator(strokeWidth: 2, color: AppColors.primaryGreen),
+              ),
+            )
+          else if (_billingLoadError != null)
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(_billingLoadError!, style: AppTheme.body(size: 11, color: AppColors.error)),
+                const SizedBox(height: 8),
+                OutlinedButton.icon(
+                  onPressed: _loadBillingInfo,
+                  icon: const Icon(Icons.refresh, size: 16),
+                  label: const Text('Retry'),
+                ),
+              ],
+            )
+          else ...[
+              _billingRow('Old Pending Amount', _currency(_previousOutstanding)),
+              const SizedBox(height: 10),
+              if (existing != null) ...[
+                _billingRow('This Month\'s Palai Charges', _currency(existing.palaiCharges)),
+                if (existing.otherCharges > 0) _billingRow('Other Charges', _currency(existing.otherCharges)),
+                if (existing.discount > 0) _billingRow('Discount', '- ${_currency(existing.discount)}'),
+                const Divider(height: 20),
+                _billingRow('Total Outstanding', _currency(existing.totalDue - existing.amountPaid), bold: true),
+              ] else ...[
+                _billingField(
+                  controller: _palaiChargesController,
+                  label: 'This Month\'s Palai Amount',
+                  icon: Icons.home_work_outlined,
+                ),
+                const SizedBox(height: 10),
+                _billingField(
+                  controller: _otherChargesController,
+                  label: 'Other Charges (optional)',
+                  icon: Icons.add_card_outlined,
+                ),
+                const SizedBox(height: 10),
+                _billingField(
+                  controller: _discountController,
+                  label: 'Discount (optional)',
+                  icon: Icons.discount_outlined,
+                ),
+                const Divider(height: 24),
+                _billingRow(
+                  'Total Outstanding (after this bill)',
+                  _currency(
+                    _previousOutstanding +
+                        (_enteredPalaiCharges ?? 0) +
+                        _enteredOtherCharges -
+                        _enteredDiscount,
+                  ),
+                  bold: true,
+                ),
+              ],
+            ],
+        ],
+      ),
+    );
+  }
+
+  Widget _billingRow(String label, String value, {bool bold = false}) {
+    return Row(
+      children: [
+        Expanded(
+          child: Text(
+            label,
+            style: bold ? AppTheme.heading(size: 13) : AppTheme.body(size: 12, color: AppColors.textMuted),
+          ),
+        ),
+        Text(
+          value,
+          style: bold
+              ? AppTheme.heading(size: 14).copyWith(color: AppColors.primaryGreen)
+              : AppTheme.body(size: 12),
+        ),
+      ],
+    );
+  }
+
+  Widget _billingField({
+    required TextEditingController controller,
+    required String label,
+    required IconData icon,
+  }) {
+    return TextField(
+      controller: controller,
+      keyboardType: const TextInputType.numberWithOptions(decimal: true),
+      onChanged: (_) => setState(() {}),
+      decoration: InputDecoration(
+        isDense: true,
+        labelText: label,
+        prefixIcon: Icon(icon, size: 18),
+        prefixText: '₹ ',
+        border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+        contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
       ),
     );
   }

@@ -8,6 +8,7 @@ import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
 
 import '../models/bill_settings_model.dart';
+import '../models/monthly_bill_model.dart';
 import '../models/palai_models.dart';
 
 /// One goat's worth of data needed to render its card in the Progress
@@ -68,6 +69,7 @@ class CustomerGoatsProgressReportPdfService {
     required PalaiCustomer customer,
     required List<GoatProgressEntry> entries,
     required BillSettings billSettings,
+    MonthlyBill? monthlyBill,
   }) async {
     final baseFont = await PdfGoogleFonts.notoSansRegular();
     final boldFont = await PdfGoogleFonts.notoSansBold();
@@ -85,6 +87,10 @@ class CustomerGoatsProgressReportPdfService {
         build: (context) => [
           for (int i = 0; i < entries.length; i++) ...[
             _buildGoatCard(i + 1, entries[i]),
+            pw.SizedBox(height: 14),
+          ],
+          if (monthlyBill != null) ...[
+            _buildBillingSummary(monthlyBill),
             pw.SizedBox(height: 14),
           ],
           pw.NewPage(),
@@ -106,8 +112,9 @@ class CustomerGoatsProgressReportPdfService {
     required PalaiCustomer customer,
     required List<GoatProgressEntry> entries,
     required BillSettings billSettings,
+    MonthlyBill? monthlyBill,
   }) async {
-    final bytes = await generatePdf(customer: customer, entries: entries, billSettings: billSettings);
+    final bytes = await generatePdf(customer: customer, entries: entries, billSettings: billSettings, monthlyBill: monthlyBill);
     await Printing.layoutPdf(onLayout: (_) async => bytes, name: _safeFileName(customer));
   }
 
@@ -115,8 +122,9 @@ class CustomerGoatsProgressReportPdfService {
     required PalaiCustomer customer,
     required List<GoatProgressEntry> entries,
     required BillSettings billSettings,
+    MonthlyBill? monthlyBill,
   }) async {
-    final bytes = await generatePdf(customer: customer, entries: entries, billSettings: billSettings);
+    final bytes = await generatePdf(customer: customer, entries: entries, billSettings: billSettings, monthlyBill: monthlyBill);
     await Printing.sharePdf(bytes: bytes, filename: _safeFileName(customer));
   }
 
@@ -124,8 +132,9 @@ class CustomerGoatsProgressReportPdfService {
     required PalaiCustomer customer,
     required List<GoatProgressEntry> entries,
     required BillSettings billSettings,
+    MonthlyBill? monthlyBill,
   }) async {
-    final bytes = await generatePdf(customer: customer, entries: entries, billSettings: billSettings);
+    final bytes = await generatePdf(customer: customer, entries: entries, billSettings: billSettings, monthlyBill: monthlyBill);
     final directory = await getApplicationDocumentsDirectory();
     final fileName = _safeFileName(customer);
     final file = File('${directory.path}/$fileName');
@@ -418,6 +427,115 @@ class CustomerGoatsProgressReportPdfService {
               value.isEmpty ? '-' : value,
               style: pw.TextStyle(fontSize: 7, fontWeight: pw.FontWeight.bold, color: valueColor),
               textAlign: pw.TextAlign.right,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ===========================================================================
+  // BILLING SUMMARY  (previous outstanding + this month's Palai bill)
+  // ===========================================================================
+
+  pw.Widget _buildBillingSummary(MonthlyBill bill) {
+    return pw.Container(
+      width: double.infinity,
+      decoration: pw.BoxDecoration(
+        border: pw.Border.all(color: PdfColors.grey400, width: 0.8),
+        borderRadius: const pw.BorderRadius.all(pw.Radius.circular(6)),
+      ),
+      padding: const pw.EdgeInsets.all(12),
+      child: pw.Column(
+        crossAxisAlignment: pw.CrossAxisAlignment.start,
+        children: [
+          pw.Row(
+            mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+            children: [
+              pw.Text(
+                'BILLING SUMMARY — ${bill.monthYear}',
+                style: pw.TextStyle(fontSize: 11, fontWeight: pw.FontWeight.bold, color: PdfColors.green900),
+              ),
+              pw.Container(
+                padding: const pw.EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                decoration: pw.BoxDecoration(
+                  color: bill.isPaid ? PdfColors.green100 : (bill.isPartiallyPaid ? PdfColors.orange100 : PdfColors.red100),
+                  borderRadius: const pw.BorderRadius.all(pw.Radius.circular(4)),
+                ),
+                child: pw.Text(
+                  bill.statusLabel,
+                  style: pw.TextStyle(
+                    fontSize: 7.5,
+                    fontWeight: pw.FontWeight.bold,
+                    color: bill.isPaid ? PdfColors.green900 : (bill.isPartiallyPaid ? PdfColors.orange900 : PdfColors.red900),
+                  ),
+                ),
+              ),
+            ],
+          ),
+          pw.SizedBox(height: 8),
+          pw.Divider(color: PdfColors.grey300, height: 1),
+          pw.SizedBox(height: 8),
+          pw.Row(
+            crossAxisAlignment: pw.CrossAxisAlignment.start,
+            children: [
+              pw.Expanded(
+                child: pw.Column(
+                  crossAxisAlignment: pw.CrossAxisAlignment.start,
+                  children: [
+                    _billRow('Previous Outstanding', _currency(bill.previousOutstanding)),
+                    _billRow('This Month\'s Palai Charges', _currency(bill.palaiCharges)),
+                    if (bill.otherCharges > 0) _billRow('Other Charges', _currency(bill.otherCharges)),
+                    if (bill.discount > 0) _billRow('Discount', '- ${_currency(bill.discount)}'),
+                  ],
+                ),
+              ),
+              pw.SizedBox(width: 16),
+              pw.Expanded(
+                child: pw.Column(
+                  crossAxisAlignment: pw.CrossAxisAlignment.start,
+                  children: [
+                    _billRow('This Bill Amount', _currency(bill.currentBillAmount)),
+                    _billRow('Amount Paid', _currency(bill.amountPaid)),
+                    pw.SizedBox(height: 3),
+                    pw.Divider(color: PdfColors.grey300, height: 1),
+                    pw.SizedBox(height: 3),
+                    _billRow('Total Outstanding', _currency(bill.totalDue - bill.amountPaid), emphasize: true),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          pw.SizedBox(height: 6),
+          pw.Text(
+            'Bill No: ${bill.billNumber}',
+            style: const pw.TextStyle(fontSize: 7, color: PdfColors.grey600),
+          ),
+        ],
+      ),
+    );
+  }
+
+  pw.Widget _billRow(String label, String value, {bool emphasize = false}) {
+    return pw.Padding(
+      padding: const pw.EdgeInsets.only(bottom: 5),
+      child: pw.Row(
+        mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+        children: [
+          pw.Text(
+            label,
+            style: pw.TextStyle(
+              fontSize: emphasize ? 9.5 : 8.5,
+              fontWeight: emphasize ? pw.FontWeight.bold : pw.FontWeight.normal,
+              color: emphasize ? PdfColors.black : PdfColors.grey700,
+            ),
+          ),
+          pw.Text(
+            value,
+            style: pw.TextStyle(
+              fontSize: emphasize ? 10.5 : 9,
+              fontWeight: pw.FontWeight.bold,
+              color: emphasize ? PdfColors.green900 : PdfColors.black,
             ),
           ),
         ],
