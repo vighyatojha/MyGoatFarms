@@ -35,6 +35,7 @@ class _CustomerProfileScreenState
   late PalaiCustomer _customer;
 
   bool _loadingCustomer = false;
+  bool _syncingOutstanding = false;
 
   @override
   void initState() {
@@ -60,6 +61,51 @@ class _CustomerProfileScreenState
     if (!mounted) return;
 
     await _refreshCustomer();
+  }
+
+  // ================================================================
+  // SYNC OUTSTANDING WITH MONTHLY BILLS
+  //
+  // Recomputes this customer's Outstanding as the sum of every still-
+  // open Monthly Bill's remaining amount. Fixes the case where a
+  // general "Add Payment" (or any other older action) left the
+  // customer's profile number out of sync with what Monthly Bills
+  // actually shows as owed.
+  // ================================================================
+
+  Future<void> _syncOutstandingWithBills() async {
+    if (_syncingOutstanding) return;
+
+    setState(() => _syncingOutstanding = true);
+
+    try {
+      final trueOutstanding =
+      await MonthlyBillingService.instance.reconcileCustomerOutstanding(
+        farmId: widget.farmId,
+        customerId: _customer.id,
+      );
+
+      if (!mounted) return;
+
+      await _refreshCustomer();
+
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'Outstanding synced with Monthly Bills: ₹${trueOutstanding.toStringAsFixed(0)}',
+          ),
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not sync outstanding: $e')),
+      );
+    } finally {
+      if (mounted) setState(() => _syncingOutstanding = false);
+    }
   }
 
   // ================================================================
@@ -1047,6 +1093,18 @@ class _CustomerProfileScreenState
                     ),
                   ],
                 ),
+              ),
+
+              IconButton(
+                tooltip: 'Sync with Monthly Bills',
+                icon: _syncingOutstanding
+                    ? const SizedBox(
+                  width: 18,
+                  height: 18,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+                    : const Icon(Icons.sync, size: 20, color: AppColors.textMuted),
+                onPressed: _syncingOutstanding ? null : _syncOutstandingWithBills,
               ),
             ],
           ),

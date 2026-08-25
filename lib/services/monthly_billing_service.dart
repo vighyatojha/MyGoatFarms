@@ -1460,6 +1460,47 @@ class MonthlyBillingService {
   }
 
   // ===========================================================================
+  // RECONCILE CUSTOMER OUTSTANDING WITH MONTHLY BILLS
+  // ===========================================================================
+
+  /// Fixes a customer whose profile balance has drifted out of sync with
+  /// their actual Monthly Bills — e.g. a general "Add Payment" was
+  /// recorded against the customer directly (before that flow reconciled
+  /// bills) and the specific bill it was meant to cover never got its
+  /// own amountPaid/remainingAmount/status updated. The customer profile
+  /// then shows "settled" while Monthly Bills still shows that bill as
+  /// unpaid or partial.
+  ///
+  /// Recomputes the customer's pendingAmount as the sum of every
+  /// still-open monthly bill's remainingAmount. This only touches the
+  /// customer's outstanding number — no bill document is changed — so
+  /// run it after confirming (from Monthly Bills) which bill(s) are
+  /// actually still owed.
+  Future<double> reconcileCustomerOutstanding({
+    required String farmId,
+    required String customerId,
+  }) async {
+    final customerRef = _customers(farmId).doc(customerId);
+
+    final bills = await getMonthlyBills(
+      farmId: farmId,
+      customerId: customerId,
+    );
+
+    final trueOutstanding = bills.fold<double>(
+      0,
+          (sum, bill) => sum + bill.remainingAmount,
+    );
+
+    await customerRef.update({
+      'pendingAmount': trueOutstanding,
+      'updatedAt': FieldValue.serverTimestamp(),
+    }).timeout(_timeout);
+
+    return trueOutstanding;
+  }
+
+  // ===========================================================================
   // APPLY PAYMENT TO MONTHLY BILL
   // ===========================================================================
 

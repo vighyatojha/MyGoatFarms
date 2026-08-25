@@ -1018,6 +1018,18 @@ class _CustomerGoatsProgressReportScreenState
               Expanded(
                 child: Text('Monthly Billing — $monthLabel', style: AppTheme.heading(size: 14)),
               ),
+              if (existing == null)
+                IconButton(
+                  tooltip: 'Re-fetch live Outstanding & Advance',
+                  icon: _loadingBilling
+                      ? const SizedBox(
+                    width: 16,
+                    height: 16,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                      : const Icon(Icons.refresh, size: 18, color: AppColors.textMuted),
+                  onPressed: _loadingBilling ? null : _loadBillingInfo,
+                ),
             ],
           ),
           const SizedBox(height: 4),

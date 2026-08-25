@@ -456,7 +456,8 @@ class _CustomerGoatRegistrationScreenState
             type: ActivityType.goatCheckIn,
             title: 'Goat Check-In',
             subtitle:
-            '${goat.goatCode} · ${customer.name}',
+            '${goat.goatCode} · ${customer.name}'
+                '${goat.notes.isEmpty ? '' : ' — ${goat.notes}'}',
             module: 'palai',
             timestamp: now,
           ),

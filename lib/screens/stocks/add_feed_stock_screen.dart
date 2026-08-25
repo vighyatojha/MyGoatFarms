@@ -100,7 +100,8 @@ class _AddFeedStockScreenState extends State<AddFeedStockScreen> {
           id: '',
           type: ActivityType.feedStockAdded,
           title: 'Feed Stock Added',
-          subtitle: '${quantity.toStringAsFixed(0)} $_unit of $name added',
+          subtitle: '${quantity.toStringAsFixed(0)} $_unit of $name added'
+              '${_notesController.text.trim().isEmpty ? '' : ' — ${_notesController.text.trim()}'}',
           module: 'stock',
           timestamp: DateTime.now(),
         ),

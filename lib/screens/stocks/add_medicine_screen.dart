@@ -100,7 +100,8 @@ class _AddMedicineScreenState extends State<AddMedicineScreen> {
           id: '',
           type: ActivityType.medicineAdded,
           title: 'Medicine Stock Added',
-          subtitle: '${quantity.toStringAsFixed(0)} $_unit of $name added',
+          subtitle: '${quantity.toStringAsFixed(0)} $_unit of $name added'
+              '${_notesController.text.trim().isEmpty ? '' : ' — ${_notesController.text.trim()}'}',
           module: 'stock',
           timestamp: DateTime.now(),
         ),

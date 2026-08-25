@@ -125,7 +125,8 @@ class _AddOwnFarmGoatScreenState extends State<AddOwnFarmGoatScreen> {
           id: '',
           type: ActivityType.ownFarmGoatAdded,
           title: 'Farm Goat Registered',
-          subtitle: goat.goatCode,
+          subtitle: goat.goatCode +
+              (goat.notes.isEmpty ? '' : ' — ${goat.notes}'),
           module: 'ownFarm',
           timestamp: DateTime.now(),
         ),
@@ -154,129 +155,129 @@ class _AddOwnFarmGoatScreenState extends State<AddOwnFarmGoatScreen> {
       body: _farmId == null
           ? const Center(child: CircularProgressIndicator(color: AppColors.primaryGreen))
           : SingleChildScrollView(
-              padding: const EdgeInsets.all(20),
-              child: Form(
-                key: _formKey,
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Center(
-                      child: PhotoUploadCircle(
-                        imageBytes: _photoBytes,
-                        label: 'Goat Photo',
-                        onTap: _pickPhoto,
-                      ),
-                    ),
-                    const SizedBox(height: 22),
-                    _label('Goat ID'),
-                    _textField(_goatCodeController, hint: 'e.g. OF-1001'),
-                    const SizedBox(height: 16),
-                    _label('Breed'),
-                    _textField(_breedController, hint: 'e.g. Sojat, Jamnapari'),
-                    const SizedBox(height: 16),
-                    Row(
-                      children: [
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              _label('Gender'),
-                              _dropdown(_gender, _genders, (v) => setState(() => _gender = v)),
-                            ],
-                          ),
-                        ),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              _label('Color'),
-                              _textField(_colorController, hint: 'e.g. Brown & White'),
-                            ],
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 16),
-                    _label('Date of Birth'),
-                    GestureDetector(
-                      onTap: _pickDateOfBirth,
-                      child: Container(
-                        decoration: AppTheme.card(radius: 12),
-                        padding: const EdgeInsets.all(14),
-                        child: Row(
-                          children: [
-                            const Icon(Icons.calendar_today, size: 16, color: AppColors.textGrey),
-                            const SizedBox(width: 10),
-                            Text(
-                              '${_dateOfBirth.day}/${_dateOfBirth.month}/${_dateOfBirth.year}',
-                              style: AppTheme.body(size: 13, color: AppColors.textDark),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 16),
-                    _label('Birth Weight (kg)'),
-                    _textField(_birthWeightController, hint: 'e.g. 3', keyboardType: TextInputType.number),
-                    const SizedBox(height: 16),
-                    _label('Health Status'),
-                    _dropdown(_healthStatus, _healthOptions, (v) => setState(() => _healthStatus = v)),
-                    const SizedBox(height: 16),
-                    Row(
-                      children: [
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              _label('Mother ID'),
-                              _textField(_motherCodeController, hint: 'Optional', optional: true),
-                            ],
-                          ),
-                        ),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              _label('Father ID'),
-                              _textField(_fatherCodeController, hint: 'Optional', optional: true),
-                            ],
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 16),
-                    _label('Notes'),
-                    _textField(_notesController, hint: 'Optional notes', maxLines: 3, optional: true),
-                    const SizedBox(height: 28),
-                    SizedBox(
-                      width: double.infinity,
-                      child: ElevatedButton(
-                        onPressed: _saving ? null : _save,
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: AppColors.primaryGreen,
-                          foregroundColor: Colors.white,
-                          padding: const EdgeInsets.symmetric(vertical: 16),
-                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                        ),
-                        child: _saving
-                            ? const SizedBox(
-                                height: 18, width: 18, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
-                            : const Text('Register Goat', style: TextStyle(fontWeight: FontWeight.w600)),
-                      ),
-                    ),
-                  ],
+        padding: const EdgeInsets.all(20),
+        child: Form(
+          key: _formKey,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Center(
+                child: PhotoUploadCircle(
+                  imageBytes: _photoBytes,
+                  label: 'Goat Photo',
+                  onTap: _pickPhoto,
                 ),
               ),
-            ),
+              const SizedBox(height: 22),
+              _label('Goat ID'),
+              _textField(_goatCodeController, hint: 'e.g. OF-1001'),
+              const SizedBox(height: 16),
+              _label('Breed'),
+              _textField(_breedController, hint: 'e.g. Sojat, Jamnapari'),
+              const SizedBox(height: 16),
+              Row(
+                children: [
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        _label('Gender'),
+                        _dropdown(_gender, _genders, (v) => setState(() => _gender = v)),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        _label('Color'),
+                        _textField(_colorController, hint: 'e.g. Brown & White'),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 16),
+              _label('Date of Birth'),
+              GestureDetector(
+                onTap: _pickDateOfBirth,
+                child: Container(
+                  decoration: AppTheme.card(radius: 12),
+                  padding: const EdgeInsets.all(14),
+                  child: Row(
+                    children: [
+                      const Icon(Icons.calendar_today, size: 16, color: AppColors.textGrey),
+                      const SizedBox(width: 10),
+                      Text(
+                        '${_dateOfBirth.day}/${_dateOfBirth.month}/${_dateOfBirth.year}',
+                        style: AppTheme.body(size: 13, color: AppColors.textDark),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              const SizedBox(height: 16),
+              _label('Birth Weight (kg)'),
+              _textField(_birthWeightController, hint: 'e.g. 3', keyboardType: TextInputType.number),
+              const SizedBox(height: 16),
+              _label('Health Status'),
+              _dropdown(_healthStatus, _healthOptions, (v) => setState(() => _healthStatus = v)),
+              const SizedBox(height: 16),
+              Row(
+                children: [
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        _label('Mother ID'),
+                        _textField(_motherCodeController, hint: 'Optional', optional: true),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        _label('Father ID'),
+                        _textField(_fatherCodeController, hint: 'Optional', optional: true),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 16),
+              _label('Notes'),
+              _textField(_notesController, hint: 'Optional notes', maxLines: 3, optional: true),
+              const SizedBox(height: 28),
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton(
+                  onPressed: _saving ? null : _save,
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: AppColors.primaryGreen,
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(vertical: 16),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                  ),
+                  child: _saving
+                      ? const SizedBox(
+                      height: 18, width: 18, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                      : const Text('Register Goat', style: TextStyle(fontWeight: FontWeight.w600)),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 
   Widget _label(String text) => Padding(
-        padding: const EdgeInsets.only(bottom: 6),
-        child: Text(text, style: AppTheme.heading(size: 13)),
-      );
+    padding: const EdgeInsets.only(bottom: 6),
+    child: Text(text, style: AppTheme.heading(size: 13)),
+  );
 
   Widget _dropdown(String value, List<String> options, ValueChanged<String> onChanged) {
     return Container(
@@ -294,12 +295,12 @@ class _AddOwnFarmGoatScreenState extends State<AddOwnFarmGoatScreen> {
   }
 
   Widget _textField(
-    TextEditingController controller, {
-    String? hint,
-    TextInputType? keyboardType,
-    int maxLines = 1,
-    bool optional = false,
-  }) {
+      TextEditingController controller, {
+        String? hint,
+        TextInputType? keyboardType,
+        int maxLines = 1,
+        bool optional = false,
+      }) {
     return Container(
       decoration: AppTheme.card(radius: 12),
       child: TextFormField(

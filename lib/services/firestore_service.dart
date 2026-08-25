@@ -67,6 +67,12 @@ class StandalonePaymentResult {
 
   final String paymentMethod;
 
+  /// How many open Monthly Bill documents were reconciled (their
+  /// amountPaid/remainingAmount/status updated) as part of this payment.
+  /// Lets the caller confirm this wasn't just a customer-level number
+  /// change that left Monthly Bills looking stale.
+  final int billsUpdated;
+
   const StandalonePaymentResult({
     required this.paymentId,
     required this.paymentNumber,
@@ -79,6 +85,7 @@ class StandalonePaymentResult {
     required this.advanceAdded,
     required this.advanceAfter,
     required this.paymentMethod,
+    this.billsUpdated = 0,
   });
 }
 
@@ -722,16 +729,57 @@ class FirestoreService {
     final activitiesCollection =
     _farms.doc(farmId).collection('activities');
 
+    // ------------------------------------------------------------------
+    // FIND OPEN MONTHLY BILLS
+    //
+    // This "Add Payment" used to only touch the customer's pendingAmount
+    // — a general payment never updated any Monthly Bill document. That
+    // let the customer profile show "Account is settled" while Monthly
+    // Bills kept showing an old bill stuck on "Partial" with its old
+    // Remaining amount forever, because nothing had ever written to it.
+    //
+    // Firestore transactions can only re-read documents by reference, not
+    // run a query — so the open bills are found here, just before the
+    // transaction, and then re-read fresh (and updated) by reference
+    // inside it, oldest month first, same as how a customer would expect
+    // their payment to clear the oldest debt first.
+    // ------------------------------------------------------------------
+
+    final monthlyBillsCollection =
+    _farms.doc(farmId).collection('monthlyBills');
+
+    final openBillsSnapshot = await monthlyBillsCollection
+        .where('customerId', isEqualTo: customerId)
+        .get()
+        .timeout(timeout);
+
+    final openBillRefs = openBillsSnapshot.docs.where((doc) {
+      final billData = doc.data();
+      if (billData['type']?.toString() != 'monthly') return false;
+      final remaining = (billData['remainingAmount'] ?? 0).toDouble();
+      return remaining > 0;
+    }).toList()
+      ..sort((a, b) {
+        final aMonth =
+            (a.data()['billingMonth'] as Timestamp?)?.toDate() ??
+                DateTime(0);
+        final bMonth =
+            (b.data()['billingMonth'] as Timestamp?)?.toDate() ??
+                DateTime(0);
+        return aMonth.compareTo(bMonth);
+      });
+
+    final billRefs =
+    openBillRefs.map((doc) => doc.reference).toList();
+
     final paymentRef = paymentsCollection.doc();
     final transactionRef = transactionsCollection.doc();
     final activityRef = activitiesCollection.doc();
 
-    final now = DateTime.now();
-
     return _db.runTransaction<StandalonePaymentResult>(
           (transaction) async {
         // ============================================================
-        // READ CURRENT CUSTOMER
+        // READS FIRST
         // ============================================================
 
         final customerSnapshot =
@@ -739,6 +787,11 @@ class FirestoreService {
 
         if (!customerSnapshot.exists) {
           throw StateError('Customer no longer exists.');
+        }
+
+        final billSnapshots = <DocumentSnapshot<Map<String, dynamic>>>[];
+        for (final ref in billRefs) {
+          billSnapshots.add(await transaction.get(ref));
         }
 
         final data = customerSnapshot.data() ?? {};
@@ -753,12 +806,65 @@ class FirestoreService {
         (data['advanceAmount'] ?? 0).toDouble();
 
         // ============================================================
-        // CALCULATE PAYMENT
+        // ALLOCATE PAYMENT ACROSS OPEN BILLS — oldest month first —
+        // so every Monthly Bill this payment actually covers gets its
+        // own amountPaid/remainingAmount/status updated, not just the
+        // customer's overall number.
         // ============================================================
 
+        double amountLeftForBills = paidAmount;
+        final billUpdates = <DocumentReference<Map<String, dynamic>>,
+            Map<String, dynamic>>{};
+
+        for (final snap in billSnapshots) {
+          if (amountLeftForBills <= 0) break;
+          if (!snap.exists) continue;
+
+          final billData = snap.data() ?? {};
+          final billRemaining =
+          (billData['remainingAmount'] ?? 0).toDouble();
+          if (billRemaining <= 0) continue;
+
+          final currentAmountPaid =
+          (billData['amountPaid'] ?? 0).toDouble();
+
+          final appliedToThisBill =
+          amountLeftForBills < billRemaining
+              ? amountLeftForBills
+              : billRemaining;
+
+          final newRemaining =
+          (billRemaining - appliedToThisBill)
+              .clamp(0, double.infinity)
+              .toDouble();
+
+          final newStatus =
+          newRemaining <= 0 ? 'paid' : 'partial';
+
+          billUpdates[snap.reference] = {
+            'amountPaid': currentAmountPaid + appliedToThisBill,
+            'remainingAmount': newRemaining,
+            'status': newStatus,
+            'paymentStatus': newStatus,
+            'paymentId': paymentRef.id,
+            'paymentMethod': paymentMethod.trim(),
+            'paidAt': newRemaining <= 0
+                ? FieldValue.serverTimestamp()
+                : null,
+            'updatedAt': FieldValue.serverTimestamp(),
+          };
+
+          amountLeftForBills -= appliedToThisBill;
+        }
+
+        // ============================================================
+        // CUSTOMER-LEVEL NUMBERS
+        //
         // Existing advance does not need to be changed by a standalone
         // payment. A new payment first clears pending and then creates
         // additional advance if it exceeds pending.
+        // ============================================================
+
         final amountAppliedToPending =
         paidAmount
             .clamp(0, pendingBefore)
@@ -781,6 +887,14 @@ class FirestoreService {
 
         final paymentNumber =
             'PAY-${paymentRef.id.substring(0, 8).toUpperCase()}';
+
+        // ============================================================
+        // WRITE BILL UPDATES
+        // ============================================================
+
+        for (final entry in billUpdates.entries) {
+          transaction.update(entry.key, entry.value);
+        }
 
         // ============================================================
         // PAYMENT RECORD
@@ -813,6 +927,8 @@ class FirestoreService {
 
           'advanceAfter':
           advanceAfter,
+
+          'billsUpdated': billUpdates.length,
 
           'paymentMethod':
           paymentMethod.trim(),
@@ -923,6 +1039,8 @@ class FirestoreService {
           advanceAfter: advanceAfter,
 
           paymentMethod: paymentMethod.trim(),
+
+          billsUpdated: billUpdates.length,
         );
       },
     ).timeout(timeout);
