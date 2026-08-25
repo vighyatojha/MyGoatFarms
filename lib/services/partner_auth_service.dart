@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 
@@ -9,6 +11,10 @@ class PartnerAuthService {
 
   static const _secondaryAppName = 'PartnerCreation';
 
+  /// Matches FirestoreService.timeout so a hung network call fails loudly
+  /// instead of leaving the Add Partner sheet spinning forever.
+  static const _timeout = Duration(seconds: 15);
+
   Future<String> createPartnerAccount({
     required String email,
     required String password,
@@ -19,23 +25,31 @@ class PartnerAuthService {
     FirebaseAuth.instanceFor(app: secondaryApp);
 
     if (secondaryAuth.currentUser != null) {
-      await secondaryAuth.signOut();
+      await secondaryAuth.signOut().timeout(_timeout);
     }
 
     try {
-      final credential =
-      await secondaryAuth.createUserWithEmailAndPassword(
+      final credential = await secondaryAuth
+          .createUserWithEmailAndPassword(
         email: email.trim(),
         password: password,
-      );
+      )
+          .timeout(_timeout);
 
       final uid = credential.user!.uid;
 
-      await secondaryAuth.signOut();
+      await secondaryAuth.signOut().timeout(_timeout);
 
       return uid;
     } on FirebaseAuthException {
       rethrow;
+    } on TimeoutException {
+      throw FirebaseAuthException(
+        code: 'partner-account-timeout',
+        message:
+        'Could not reach the server to create the partner account. '
+            'Check your connection and try again.',
+      );
     }
   }
 

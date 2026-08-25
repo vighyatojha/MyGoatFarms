@@ -20,7 +20,7 @@ import '../customers/customer_management_screen.dart';
 import '../login_screen.dart';
 import '../palai/palai_screen.dart';
 import '../stocks/stock_screen.dart';
-import 'partner_permissions_screen.dart';
+import 'profile_partner_dashboard.dart';
 
 class ProfileScreen extends StatefulWidget {
   const ProfileScreen({super.key});
@@ -467,61 +467,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
     }
   }
 
-
-  Future<void> _confirmRemovePartner(
-      PartnerModel partner,
-      ) async {
-    if (_farmId == null) return;
-
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (dialogContext) {
-        return AlertDialog(
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(20),
-          ),
-          title: const Text('Remove partner?'),
-          content: Text(
-            '${partner.name} will no longer be listed as a farm partner.',
-          ),
-          actions: [
-            TextButton(
-              onPressed: () {
-                Navigator.pop(dialogContext, false);
-              },
-              child: const Text('Cancel'),
-            ),
-            FilledButton(
-              style: FilledButton.styleFrom(
-                backgroundColor: AppColors.error,
-              ),
-              onPressed: () {
-                Navigator.pop(dialogContext, true);
-              },
-              child: const Text('Remove'),
-            ),
-          ],
-        );
-      },
-    );
-
-    if (confirmed != true) return;
-
-    try {
-      await FirestoreService.instance.deletePartner(
-        farmId: _farmId!,
-        partnerId: partner.id,
-      );
-
-      _showSnack('Partner removed.');
-    } catch (e) {
-      _showSnack(
-        FirestoreService.instance.describeError(e),
-        isError: true,
-      );
-    }
-  }
-
   Future<void> _changeLanguage(
       AppLanguage language,
       ) async {
@@ -713,7 +658,11 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
                         const SizedBox(height: 16),
 
-                        _buildFarmTeamCard(),
+                        ProfilePartnerDashboard(
+                          farmId: _farmId!,
+                          partners: _partners,
+                          onAddPartner: _showAddPartnerSheet,
+                        ),
 
                         const SizedBox(height: 16),
 
@@ -901,6 +850,31 @@ class _ProfileScreenState extends State<ProfileScreen> {
             ),
           ],
 
+          const SizedBox(height: 8),
+
+          Container(
+            padding: const EdgeInsets.symmetric(
+              horizontal: 12,
+              vertical: 5,
+            ),
+            decoration: BoxDecoration(
+              color: Colors.white.withOpacity(.16),
+              borderRadius: BorderRadius.circular(999),
+              border: Border.all(
+                color: Colors.white.withOpacity(.35),
+              ),
+            ),
+            child: const Text(
+              'OWNER',
+              style: TextStyle(
+                color: Colors.white,
+                fontSize: 10,
+                fontWeight: FontWeight.w900,
+                letterSpacing: .8,
+              ),
+            ),
+          ),
+
           const SizedBox(height: 7),
 
           Text(
@@ -1068,108 +1042,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   FontWeight.w700,
                 ),
               ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildFarmTeamCard() {
-    return _sectionCard(
-      title: 'Farm Team',
-      icon: Icons.groups_outlined,
-      child: Column(
-        children: [
-          Row(
-            children: [
-              Expanded(
-                child: Text(
-                  _partners.isEmpty
-                      ? 'No partners added yet'
-                      : '${_partners.length} partner${_partners.length == 1 ? '' : 's'}',
-                  style: AppTheme.body(
-                    size: 13,
-                    color: AppColors.textGrey,
-                  ),
-                ),
-              ),
-              OutlinedButton.icon(
-                onPressed: _showAddPartnerSheet,
-                icon: const Icon(
-                  Icons.person_add_alt_1,
-                  size: 17,
-                ),
-                label: const Text('Add'),
-              ),
-            ],
-          ),
-
-          if (_partners.isNotEmpty) ...[
-            const SizedBox(height: 14),
-            const Divider(),
-            const SizedBox(height: 8),
-
-            ..._partners.map(
-                  (partner) => _buildPartnerTile(
-                partner,
-              ),
-            ),
-          ],
-        ],
-      ),
-    );
-  }
-
-  Widget _buildPartnerTile(
-      PartnerModel partner,
-      ) {
-    return Padding(
-      padding:
-      const EdgeInsets.symmetric(vertical: 7),
-      child: Row(
-        children: [
-          const CircleAvatar(
-            radius: 20,
-            backgroundColor:
-            AppColors.lightGreen,
-            child: Icon(
-              Icons.person,
-              color: AppColors.primaryGreen,
-            ),
-          ),
-
-          const SizedBox(width: 12),
-
-          Expanded(
-            child: Column(
-              crossAxisAlignment:
-              CrossAxisAlignment.start,
-              children: [
-                Text(
-                  partner.name,
-                  style: AppTheme.body(
-                    size: 13,
-                    color: AppColors.textDark,
-                    weight: FontWeight.w700,
-                  ),
-                ),
-                const SizedBox(height: 2),
-                Text(
-                  partner.mobileNumber,
-                  style: AppTheme.body(size: 11),
-                ),
-              ],
-            ),
-          ),
-
-          IconButton(
-            tooltip: 'Remove partner',
-            onPressed: () =>
-                _confirmRemovePartner(partner),
-            icon: const Icon(
-              Icons.delete_outline,
-              color: AppColors.error,
             ),
           ),
         ],
@@ -2018,6 +1890,7 @@ class _AddPartnerSheetState extends State<_AddPartnerSheet> {
 
   bool _saving = false;
   bool _obscurePassword = true;
+  String? _inlineError;
 
   @override
   void dispose() {
@@ -2060,6 +1933,7 @@ class _AddPartnerSheetState extends State<_AddPartnerSheet> {
 
     setState(() {
       _saving = true;
+      _inlineError = null;
     });
 
     try {
@@ -2073,7 +1947,6 @@ class _AddPartnerSheetState extends State<_AddPartnerSheet> {
       );
 
       // Create the partner document.
-      final partnerId =
       await FirestoreService.instance.createPartner(
         widget.farmId,
         name: name,
@@ -2084,24 +1957,27 @@ class _AddPartnerSheetState extends State<_AddPartnerSheet> {
 
       if (!mounted) return;
 
-      // Close the Add Partner sheet first.
+      // Close the Add Partner sheet. Permissions can be
+      // configured later from the partner's profile screen.
       Navigator.pop(context, true);
+    } catch (e, stack) {
+      // Always log the raw error, regardless of type — this line is
+      // what to search for in logcat ("Add Partner failed:") when
+      // diagnosing a silent failure.
+      debugPrint('Add Partner failed: $e');
+      debugPrint('$stack');
 
-      // Open permission configuration.
-      await Navigator.of(context).push(
-        MaterialPageRoute(
-          builder: (_) => PartnerPermissionsScreen(
-            farmId: widget.farmId,
-            partnerId: partnerId,
-          ),
-        ),
-      );
-    } catch (e) {
       if (!mounted) return;
 
-      _showError(
-        FirestoreService.instance.describeError(e),
-      );
+      final message = e is FirebaseAuthException && e.message != null
+          ? e.message!
+          : FirestoreService.instance.describeError(e);
+
+      setState(() {
+        _inlineError = message;
+      });
+
+      _showError(message);
     } finally {
       if (mounted) {
         setState(() {
@@ -2217,6 +2093,41 @@ class _AddPartnerSheetState extends State<_AddPartnerSheet> {
               ),
 
               const SizedBox(height: 20),
+
+              if (_inlineError != null) ...[
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: AppColors.error.withOpacity(.08),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(
+                      color: AppColors.error.withOpacity(.3),
+                    ),
+                  ),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Icon(
+                        Icons.error_outline,
+                        color: AppColors.error,
+                        size: 18,
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          _inlineError!,
+                          style: AppTheme.body(
+                            size: 12,
+                            color: AppColors.error,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 14),
+              ],
 
               SizedBox(
                 width: double.infinity,

@@ -1751,7 +1751,7 @@ class FirestoreService {
       'authUid': authUid,
       'createdAt': FieldValue.serverTimestamp(),
       'updatedAt': FieldValue.serverTimestamp(),
-    });
+    }).timeout(timeout);
 
     return partnerRef.id;
   }
