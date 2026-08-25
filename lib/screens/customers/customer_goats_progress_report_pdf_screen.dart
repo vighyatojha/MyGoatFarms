@@ -113,9 +113,13 @@ class _CustomerGoatsProgressReportScreenState
   bool _loadingBilling = false;
   String? _billingLoadError;
 
-  final TextEditingController _palaiChargesController = TextEditingController();
-  final TextEditingController _otherChargesController = TextEditingController();
-  final TextEditingController _discountController = TextEditingController();
+  /// The two — and only two — fields the owner can edit for a fresh
+  /// bill: Outstanding Amount and Advance Amount. Prefilled from live
+  /// data as a starting point but fully customizable; whatever is typed
+  /// here is exactly what gets saved. There is no "amount paid" field —
+  /// this entry only records what is owed, never a payment.
+  final TextEditingController _outstandingController = TextEditingController();
+  final TextEditingController _advanceController = TextEditingController();
 
   bool _generating = false;
 
@@ -133,9 +137,8 @@ class _CustomerGoatsProgressReportScreenState
     for (final controller in _weightControllers.values) {
       controller.dispose();
     }
-    _palaiChargesController.dispose();
-    _otherChargesController.dispose();
-    _discountController.dispose();
+    _outstandingController.dispose();
+    _advanceController.dispose();
     super.dispose();
   }
 
@@ -230,18 +233,13 @@ class _CustomerGoatsProgressReportScreenState
         _existingMonthlyBill = existingBill;
         _loadingBilling = false;
 
-        if (existingBill != null) {
-          _palaiChargesController.text = existingBill.palaiCharges.toStringAsFixed(2);
-          _otherChargesController.text = existingBill.otherCharges.toStringAsFixed(2);
-          _discountController.text = existingBill.discount.toStringAsFixed(2);
-        } else {
-          // Palai charges are calculated goat-wise: the sum of the price
-          // entered for each selected goat at the time it was registered
-          // (e.g. ₹2500 + ₹3500 + ₹2500), not a single flat customer price.
-          final goatWiseTotal = _palaiChargesTotal;
-          _palaiChargesController.text = goatWiseTotal > 0 ? goatWiseTotal.toStringAsFixed(2) : '';
-          _otherChargesController.text = '0';
-          _discountController.text = '0';
+        if (existingBill == null) {
+          // Prefill Outstanding as the old pending amount plus this
+          // month's goat-wise Palai total, purely as a starting point —
+          // the owner can change it to whatever the real figure is.
+          final suggestedOutstanding = _previousOutstanding + _palaiChargesTotal;
+          _outstandingController.text = suggestedOutstanding.toStringAsFixed(2);
+          _advanceController.text = _advanceAvailable.toStringAsFixed(2);
         }
       });
     } catch (e) {
@@ -306,9 +304,8 @@ class _CustomerGoatsProgressReportScreenState
       _billingLoadError = null;
       _previousOutstanding = 0;
       _advanceAvailable = 0;
-      _palaiChargesController.clear();
-      _otherChargesController.clear();
-      _discountController.clear();
+      _outstandingController.clear();
+      _advanceController.clear();
     });
   }
 
@@ -363,51 +360,38 @@ class _CustomerGoatsProgressReportScreenState
     return weight != null && weight > 0;
   });
 
-  double? get _enteredPalaiCharges =>
-      double.tryParse(_palaiChargesController.text.trim());
-
-  double get _enteredOtherCharges =>
-      double.tryParse(_otherChargesController.text.trim()) ?? 0;
-
-  double get _enteredDiscount =>
-      double.tryParse(_discountController.text.trim()) ?? 0;
-
   /// Sum of each *selected* goat's Palai price — the amount entered when
-  /// that goat was registered/checked in for Palai — so this month's
-  /// charges are always calculated goat-wise (e.g. ₹2500 + ₹3500 +
-  /// ₹2500) instead of one flat customer price.
+  /// that goat was registered/checked in for Palai. Shown as an
+  /// informational, read-only breakdown only — it feeds the *suggested*
+  /// starting value for Outstanding Amount, but the owner can freely
+  /// change that field to whatever the real figure is.
   double get _palaiChargesTotal =>
       _selectedGoats.fold<double>(0, (sum, g) => sum + g.pricing);
 
-  /// This month's new charges only: Palai (goat-wise) + other − discount,
-  /// floored at zero.
-  double get _newChargesTotal => (((_enteredPalaiCharges ?? _palaiChargesTotal)) + _enteredOtherCharges - _enteredDiscount)
-      .clamp(0, double.infinity)
-      .toDouble();
+  /// The two editable numbers, exactly as typed by the owner. Nothing
+  /// else feeds into the bill — no separate Palai/Other/Discount math,
+  /// no "amount paid".
+  double? get _enteredOutstanding =>
+      double.tryParse(_outstandingController.text.trim());
 
-  /// Old outstanding + this month's new charges, before any advance is
-  /// applied.
-  double get _totalBeforeAdvance => _previousOutstanding + _newChargesTotal;
+  double get _enteredAdvance =>
+      double.tryParse(_advanceController.text.trim()) ?? 0;
 
-  /// How much of the customer's advance balance will be used to offset
-  /// this bill — capped at both the advance itself and what's actually
-  /// owed, so it never goes negative or over-applies.
-  double get _advanceApplied => _advanceAvailable.clamp(0, _totalBeforeAdvance).toDouble();
-
-  /// What the customer will actually owe once this bill is generated,
-  /// after the old outstanding, this month's goat-wise charges, and any
-  /// advance are all accounted for.
+  /// Outstanding − Advance, floored at zero — this is exactly what gets
+  /// written to the customer's outstanding balance.
   double get _totalOutstandingAfterBill =>
-      (_totalBeforeAdvance - _advanceApplied).clamp(0, double.infinity).toDouble();
+      ((_enteredOutstanding ?? 0) - _enteredAdvance)
+          .clamp(0, double.infinity)
+          .toDouble();
 
   /// True once billing is ready to include in the report: either an
   /// existing bill for this month was found (nothing more to enter), or
-  /// the owner has typed a valid Palai amount for a fresh bill.
+  /// the owner has typed a valid Outstanding Amount for a fresh bill.
   bool get _billingReady {
     if (_loadingBilling) return false;
     if (_existingMonthlyBill != null) return true;
-    final palai = _enteredPalaiCharges;
-    return palai != null && palai > 0;
+    final outstanding = _enteredOutstanding;
+    return outstanding != null && outstanding >= 0;
   }
 
   bool get _readyToGenerate =>
@@ -429,7 +413,7 @@ class _CustomerGoatsProgressReportScreenState
     }
 
     if (!_billingReady) {
-      _showSnack('Enter this month\'s Palai amount before generating the report.');
+      _showSnack('Enter the Outstanding Amount before generating the report.');
       return;
     }
 
@@ -442,27 +426,25 @@ class _CustomerGoatsProgressReportScreenState
 
       // ------------------------------------------------------------
       // BILLING — reuse this month's bill if one already exists,
-      // otherwise create it now. Creating it also folds in the
-      // customer's old pending amount, applies any existing advance
-      // balance, and writes the new outstanding total (and the reduced
-      // advance) straight to the customer profile.
+      // otherwise create it now from the two numbers the owner typed:
+      // Outstanding Amount and Advance Amount. Their difference is
+      // written straight to the customer's outstanding balance, and the
+      // advance balance is reduced by whatever was applied.
       // ------------------------------------------------------------
       MonthlyBill monthlyBill;
       if (_existingMonthlyBill != null) {
         monthlyBill = _existingMonthlyBill!;
       } else {
         try {
-          monthlyBill = await MonthlyBillingService.instance.createMonthlyBill(
+          monthlyBill = await MonthlyBillingService.instance.createManualMonthlyBill(
             farmId: widget.farmId,
             customerId: widget.customer.id,
             year: now.year,
             month: now.month,
-            palaiCharges: _enteredPalaiCharges ?? _palaiChargesTotal,
-            otherCharges: _enteredOtherCharges,
-            discount: _enteredDiscount,
+            outstandingAmount: _enteredOutstanding ?? 0,
+            advanceAmount: _enteredAdvance,
             goatCount: _selectedGoats.length,
             notes: 'Auto-generated with Progress Report.',
-            applyAdvance: true,
           );
         } on StateError {
           // Someone else generated this month's bill in the meantime —
@@ -1042,7 +1024,7 @@ class _CustomerGoatsProgressReportScreenState
           Text(
             existing != null
                 ? 'A bill for $monthLabel was already generated for this customer. Its saved amounts are shown below exactly as recorded — generating this report again will NOT create a duplicate bill or change these numbers.'
-                : 'Generating this report will create $monthLabel\'s bill now: this month\'s goat-wise Palai charges (plus any advance) will be added to the customer\'s outstanding balance in their profile.',
+                : 'Type the Outstanding Amount and Advance Amount below. Their difference becomes the customer\'s new outstanding balance the moment you generate this report — nothing else affects it.',
             style: AppTheme.body(size: 11, color: AppColors.textMuted),
           ),
           const SizedBox(height: 14),
@@ -1075,84 +1057,49 @@ class _CustomerGoatsProgressReportScreenState
                 // generated). We deliberately do NOT mix in the
                 // customer's current/live outstanding here — the
                 // customer's live pendingAmount already reflects this
-                // bill's charges (it was written into their profile when
-                // this bill was created), so showing it again next to
-                // this bill's numbers would double up and look
-                // contradictory.
+                // bill (it was written into their profile when this
+                // bill was created), so showing it again next to this
+                // bill's numbers would double up and look
+                // contradictory. There is no "amount paid" on bills
+                // created this way, so none is shown.
                 // ------------------------------------------------------
-                _billingRow('Outstanding Before This Bill', _currency(existing.previousOutstanding)),
-                const SizedBox(height: 10),
-                _billingRow('This Month\'s Palai Charges', _currency(existing.palaiCharges)),
-                if (existing.otherCharges > 0) _billingRow('Other Charges', _currency(existing.otherCharges)),
-                if (existing.discount > 0) _billingRow('Discount', '- ${_currency(existing.discount)}'),
-                if (existing.advanceApplied > 0) _billingRow('Advance Applied', '- ${_currency(existing.advanceApplied)}'),
+                _billingRow('Outstanding Amount', _currency(existing.previousOutstanding)),
                 const SizedBox(height: 4),
-                _billingRow('This Bill Amount', _currency(existing.currentBillAmount)),
+                _billingRow('Advance Amount', '- ${_currency(existing.advanceApplied)}'),
                 const Divider(height: 20),
-                _billingRow('Total Due (before payments)', _currency(existing.totalDue)),
-                const SizedBox(height: 4),
-                _billingRow('Amount Paid So Far', _currency(existing.amountPaid)),
-                if (existing.amountPaid > 0) ...[
-                  const SizedBox(height: 4),
-                  Text(
-                    'This reflects a payment recorded separately (e.g. via Monthly Bills → Record Payment). '
-                        'Generating a Progress Report never marks anything as paid on its own.',
-                    style: AppTheme.body(size: 10, color: AppColors.textMuted),
-                  ),
-                ],
-                const Divider(height: 20),
-                _billingRow('Total Outstanding', _currency(existing.totalDue - existing.amountPaid), bold: true),
+                _billingRow('Total Outstanding', _currency(existing.totalDue), bold: true),
               ] else ...[
                 // ------------------------------------------------------
                 // NEW BILL — nothing has been saved to Firestore yet.
-                // Everything here is a live preview computed from the
-                // customer's current outstanding + this session's
-                // selections, and will be written exactly as shown once
-                // you generate the report.
+                // Outstanding Amount and Advance Amount are the ONLY
+                // editable numbers; the goat-wise total below is shown
+                // purely as a reference for filling in Outstanding
+                // Amount. Total Outstanding is a live preview of exactly
+                // what will be written the moment you generate the
+                // report.
                 // ------------------------------------------------------
-                _billingRow('Outstanding Before This Bill', _currency(_previousOutstanding)),
-                const SizedBox(height: 10),
                 _buildGoatWisePricingBreakdown(),
                 const SizedBox(height: 10),
                 _billingField(
-                  controller: _palaiChargesController,
-                  label: 'This Month\'s Palai Amount',
-                  icon: Icons.home_work_outlined,
+                  controller: _outstandingController,
+                  label: 'Outstanding Amount',
+                  icon: Icons.account_balance_wallet_outlined,
                 ),
                 const SizedBox(height: 10),
                 _billingField(
-                  controller: _otherChargesController,
-                  label: 'Other Charges (optional)',
-                  icon: Icons.add_card_outlined,
+                  controller: _advanceController,
+                  label: 'Advance Amount',
+                  icon: Icons.savings_outlined,
                 ),
-                const SizedBox(height: 10),
-                _billingField(
-                  controller: _discountController,
-                  label: 'Discount (optional)',
-                  icon: Icons.discount_outlined,
-                ),
-                if (_advanceAvailable > 0) ...[
-                  const SizedBox(height: 10),
-                  _billingRow('Advance Available', _currency(_advanceAvailable)),
-                  const SizedBox(height: 4),
-                  _billingRow('Advance Applied', '- ${_currency(_advanceApplied)}'),
-                  const SizedBox(height: 4),
-                  Text(
-                    'This customer\'s existing advance credit will be used to reduce this bill automatically — '
-                        'no payment is being recorded, only the advance balance already on file.',
-                    style: AppTheme.body(size: 10, color: AppColors.textMuted),
-                  ),
-                ],
                 const Divider(height: 24),
                 _billingRow(
-                  'Total Outstanding (after this bill)',
+                  'Total Outstanding',
                   _currency(_totalOutstandingAfterBill),
                   bold: true,
                 ),
                 const SizedBox(height: 4),
                 Text(
-                  'No amount is paid yet — this bill only adds to the outstanding balance shown above. '
-                      'It will be saved to the customer\'s profile the moment you generate this report.',
+                  'This will be saved to the customer\'s profile the moment you generate this report.',
                   style: AppTheme.body(size: 10, color: AppColors.textMuted),
                 ),
               ],

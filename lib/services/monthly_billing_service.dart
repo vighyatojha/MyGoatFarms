@@ -635,6 +635,211 @@ class MonthlyBillingService {
   }
 
   // ===========================================================================
+  // MANUAL / CUSTOMIZABLE BILL ENTRY
+  // ===========================================================================
+  //
+  // Simple, fully-editable bill: the owner types the two numbers that
+  // actually matter — Outstanding Amount and Advance Amount — and this
+  // writes their difference straight into the customer's outstanding
+  // balance. There is no separate "amount paid" here: nothing is being
+  // marked as paid, so it is never shown or stored on bills created this
+  // way (amountPaid is always 0).
+  //
+  //   Outstanding Amount  (typed by owner — replaces the old
+  //                          Palai/Other/Discount math entirely)
+  //   − Advance Amount    (typed by owner — capped at the customer's
+  //                          real advance balance so it can't go negative)
+  //   = Total Outstanding  (written to customer.pendingAmount)
+  //
+  // ===========================================================================
+
+  Future<MonthlyBill> createManualMonthlyBill({
+    required String farmId,
+    required String customerId,
+    required int year,
+    required int month,
+    required double outstandingAmount,
+    double advanceAmount = 0,
+    int goatCount = 0,
+    String notes = '',
+  }) async {
+    if (outstandingAmount < 0) {
+      throw ArgumentError('Outstanding amount cannot be negative.');
+    }
+
+    if (advanceAmount < 0) {
+      throw ArgumentError('Advance amount cannot be negative.');
+    }
+
+    if (month < 1 || month > 12) {
+      throw ArgumentError('Invalid billing month.');
+    }
+
+    final customerRef = _customers(farmId).doc(customerId);
+    final farmRef = _farms().doc(farmId);
+    final periodKey = _periodKey(year, month);
+    final billId = _monthlyBillDocumentId(customerId, year, month);
+    final billRef = _bills(farmId).doc(billId);
+    final activityRef = _activities(farmId).doc();
+    final billingMonth = _firstDayOfMonth(year, month);
+    final periodEnd = _lastDayOfMonth(year, month);
+
+    return _db.runTransaction<MonthlyBill>((transaction) async {
+      // ---------------------------------------------------------------
+      // READS FIRST
+      // ---------------------------------------------------------------
+
+      final customerSnapshot = await transaction.get(customerRef);
+
+      if (!customerSnapshot.exists) {
+        throw StateError('Customer no longer exists.');
+      }
+
+      final farmSnapshot = await transaction.get(farmRef);
+      final existingBillSnapshot = await transaction.get(billRef);
+
+      if (existingBillSnapshot.exists) {
+        throw StateError('A monthly bill already exists for $periodKey.');
+      }
+
+      final customerData = customerSnapshot.data() ?? {};
+      final farmData = farmSnapshot.data() ?? {};
+
+      final customerName = (customerData['name'] ?? '').toString();
+      if (customerName.trim().isEmpty) {
+        throw StateError('Customer name is missing.');
+      }
+
+      // ---------------------------------------------------------------
+      // ADVANCE — capped at what the customer actually has and at the
+      // outstanding amount itself, so it never over-applies.
+      // ---------------------------------------------------------------
+
+      final advanceBefore = _doubleValue(customerData['advanceAmount']);
+
+      final advanceApplied = advanceAmount
+          .clamp(0, advanceBefore)
+          .clamp(0, outstandingAmount)
+          .toDouble();
+
+      final totalDue =
+      (outstandingAmount - advanceApplied).clamp(0, double.infinity).toDouble();
+
+      final advanceAfter =
+      (advanceBefore - advanceApplied).clamp(0, double.infinity).toDouble();
+
+      final billNumber = _generateBillNumber(billId, year, month);
+
+      final farmName = (farmData['farmName'] ?? '').toString();
+      final farmAddress = (farmData['address'] ?? '').toString();
+      final farmPhone = (farmData['mobileNumber'] ?? '').toString();
+      final farmEmail = (farmData['email'] ?? '').toString();
+
+      final now = DateTime.now();
+
+      // ---------------------------------------------------------------
+      // WRITE MONTHLY BILL
+      //
+      // No itemized Palai/Other/Discount here — the owner typed the
+      // Outstanding Amount directly, so it's stored as-is in
+      // previousOutstanding, and palaiCharges/otherCharges/discount all
+      // stay at 0. amountPaid always stays 0 too: this only records what
+      // is owed, never a payment.
+      // ---------------------------------------------------------------
+
+      transaction.set(billRef, {
+        'type': 'monthly',
+        'billNumber': billNumber,
+        'customerId': customerId,
+        'customerName': customerName,
+        'billingPeriodKey': periodKey,
+        'periodMonth': periodKey,
+        'month': month,
+        'year': year,
+        'billingMonth': Timestamp.fromDate(billingMonth),
+        'periodEnd': Timestamp.fromDate(periodEnd),
+        'palaiCharges': 0,
+        'otherCharges': 0,
+        'discount': 0,
+        'newCharges': 0,
+        'currentBillAmount': 0,
+        'previousOutstanding': outstandingAmount,
+        'advanceApplied': advanceApplied,
+        'totalDue': totalDue,
+        'amountPaid': 0,
+        'remainingAmount': totalDue,
+        'pendingAfter': totalDue,
+        'status': 'unpaid',
+        'paymentStatus': 'unpaid',
+        'paymentId': null,
+        'paymentMethod': null,
+        'paidAt': null,
+        'goatCount': goatCount,
+        'notes': notes.trim(),
+        'farmName': farmName,
+        'farmAddress': farmAddress,
+        'farmPhone': farmPhone,
+        'farmEmail': farmEmail,
+        'generatedAt': Timestamp.fromDate(now),
+        'createdAt': FieldValue.serverTimestamp(),
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
+
+      // ---------------------------------------------------------------
+      // UPDATE CUSTOMER OUTSTANDING
+      // ---------------------------------------------------------------
+
+      transaction.update(customerRef, {
+        'pendingAmount': totalDue,
+        'advanceAmount': advanceAfter,
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
+
+      // ---------------------------------------------------------------
+      // ACTIVITY
+      // ---------------------------------------------------------------
+
+      transaction.set(activityRef, {
+        'type': 'monthlyBillGenerated',
+        'title': 'Monthly Bill Generated',
+        'subtitle': '$customerName · $periodKey · ₹${totalDue.toStringAsFixed(0)}',
+        'module': 'palai',
+        'customerId': customerId,
+        'billId': billId,
+        'billNumber': billNumber,
+        'timestamp': FieldValue.serverTimestamp(),
+      });
+
+      return MonthlyBill(
+        id: billId,
+        customerId: customerId,
+        customerName: customerName,
+        billNumber: billNumber,
+        billingMonth: billingMonth,
+        periodEnd: periodEnd,
+        goatCount: goatCount,
+        palaiCharges: 0,
+        otherCharges: 0,
+        discount: 0,
+        previousOutstanding: outstandingAmount,
+        currentBillAmount: 0,
+        advanceApplied: advanceApplied,
+        totalDue: totalDue,
+        amountPaid: 0,
+        remainingAmount: totalDue,
+        status: MonthlyBillStatus.unpaid,
+        generatedAt: now,
+        paidAt: null,
+        notes: notes.trim(),
+        farmName: farmName,
+        farmAddress: farmAddress,
+        farmPhone: farmPhone,
+        farmEmail: farmEmail,
+      );
+    }).timeout(_timeout);
+  }
+
+  // ===========================================================================
 // RECEIVE MONTHLY BILL PAYMENT
 // ===========================================================================
 

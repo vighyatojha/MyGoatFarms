@@ -498,46 +498,17 @@ class CustomerGoatsProgressReportPdfService {
             pw.SizedBox(height: 6),
           ],
 
-          pw.Row(
-            crossAxisAlignment: pw.CrossAxisAlignment.start,
-            children: [
-              pw.Expanded(
-                child: pw.Column(
-                  crossAxisAlignment: pw.CrossAxisAlignment.start,
-                  children: [
-                    _billRow('Outstanding Before This Bill', _currency(bill.previousOutstanding)),
-                    _billRow('This Month\'s Palai Charges', _currency(bill.palaiCharges)),
-                    if (bill.otherCharges > 0) _billRow('Other Charges', _currency(bill.otherCharges)),
-                    if (bill.discount > 0) _billRow('Discount', '- ${_currency(bill.discount)}'),
-                    if (bill.advanceApplied > 0) _billRow('Advance Applied', '- ${_currency(bill.advanceApplied)}'),
-                  ],
-                ),
-              ),
-              pw.SizedBox(width: 16),
-              pw.Expanded(
-                child: pw.Column(
-                  crossAxisAlignment: pw.CrossAxisAlignment.start,
-                  children: [
-                    _billRow('This Bill Amount', _currency(bill.currentBillAmount)),
-                    _billRow('Total Due (before payments)', _currency(bill.totalDue)),
-                    _billRow('Amount Paid', _currency(bill.amountPaid)),
-                    pw.SizedBox(height: 3),
-                    pw.Divider(color: PdfColors.grey300, height: 1),
-                    pw.SizedBox(height: 3),
-                    _billRow('Total Outstanding', _currency(bill.totalDue - bill.amountPaid), emphasize: true),
-                  ],
-                ),
-              ),
-            ],
-          ),
-          if (bill.amountPaid > 0) ...[
-            pw.SizedBox(height: 6),
-            pw.Text(
-              'Amount Paid reflects a payment recorded separately against this bill. Generating a Progress '
-                  'Report does not, by itself, mark any amount as paid.',
-              style: const pw.TextStyle(fontSize: 7, color: PdfColors.grey600),
-            ),
-          ],
+          // Simple, fully-editable entry: Outstanding Amount minus Advance
+          // Amount equals Total Outstanding. No Palai/Other/Discount
+          // itemization and no "amount paid" — this only records what is
+          // owed, never a payment.
+          _billRow('Outstanding Amount', _currency(bill.previousOutstanding)),
+          if (bill.advanceApplied > 0)
+            _billRow('Advance Amount', '- ${_currency(bill.advanceApplied)}'),
+          pw.SizedBox(height: 3),
+          pw.Divider(color: PdfColors.grey300, height: 1),
+          pw.SizedBox(height: 3),
+          _billRow('Total Outstanding', _currency(bill.totalDue), emphasize: true),
           pw.SizedBox(height: 6),
           pw.Text(
             'Bill No: ${bill.billNumber}',
