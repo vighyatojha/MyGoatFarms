@@ -5,7 +5,14 @@ import '../../models/palai_models.dart';
 import '../../services/firestore_service.dart';
 
 class ReceivePaymentScreen extends StatefulWidget {
-  const ReceivePaymentScreen({super.key});
+  /// When opened after picking a customer from the "Select Customer"
+  /// sheet (Home quick action, Palai quick action, customer profile,
+  /// etc.), this pre-fills the customer field so the person doesn't have
+  /// to pick the same customer again. The dropdown stays editable, so
+  /// they can still change it before submitting.
+  final PalaiCustomer? presetCustomer;
+
+  const ReceivePaymentScreen({super.key, this.presetCustomer});
 
   @override
   State<ReceivePaymentScreen> createState() =>
@@ -32,6 +39,7 @@ class _ReceivePaymentScreenState
   void initState() {
     super.initState();
 
+    _selectedCustomer = widget.presetCustomer;
     _loadFarm();
   }
 

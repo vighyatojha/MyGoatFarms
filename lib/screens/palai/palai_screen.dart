@@ -9,6 +9,7 @@ import '../../models/palai_models.dart';
 import '../../services/firestore_service.dart';
 import '../../widgets/fast_route.dart';
 import '../../widgets/goat_count_builder.dart';
+import '../../widgets/customer_selection_sheet.dart';
 import '../home/widgets/home_widgets.dart';
 import 'add_customer_screen.dart';
 import 'customer_palai/customer_goat_registration_screen.dart';
@@ -91,10 +92,7 @@ class _PalaiScreenState extends State<PalaiScreen> {
 
   void _comingSoon(String feature) {
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('$feature coming soon'),
-        backgroundColor: AppColors.darkGreen,
-      ),
+      SnackBar(content: Text('$feature coming soon'), backgroundColor: AppColors.darkGreen),
     );
   }
 
@@ -125,296 +123,49 @@ class _PalaiScreenState extends State<PalaiScreen> {
   // PalaiScreen itself does not represent one particular customer, so we
   // cannot use `customer.id` directly here.
   //
-  // The existing customer stream is used to obtain the customers already
-  // belonging to this farm. After the user selects one, we redirect directly
-  // to the existing CustomerGoatRegistrationScreen.
+  // The person first picks a customer from `showCustomerSelectionSheet`
+  // (a shared, timeout/retry-safe bottom sheet — see
+  // widgets/customer_selection_sheet.dart), then we redirect straight to
+  // the existing CustomerGoatRegistrationScreen with that customer's id.
   //
-  // No new registration screen is created.
+  // NOTE: this used to be an inline modal bound to `_customersStream`, a
+  // stream field only ever assigned once during `initState()`'s async
+  // callback. If that listener ever stalled for any reason, the sheet's
+  // StreamBuilder had no way out of `ConnectionState.waiting` and looked
+  // like it was "loading infinitely." `showCustomerSelectionSheet` fixes
+  // this: it starts a brand-new fetch when the sheet opens (or on Retry)
+  // and applies an explicit timeout, so the sheet always resolves to
+  // data, an error, or a timeout — never an indefinite spinner.
   // ===========================================================================
 
   Future<void> _openGoatRegistration() async {
-    if (_customersStream == null) {
+    final farmId = _farmId;
+
+    if (farmId == null) {
       _showMessage(
-        'Customers are still loading. Please try again.',
+        'Farm information is still loading. Please try again.',
         isError: true,
       );
       return;
     }
 
-    await showModalBottomSheet(
-      context: context,
-      backgroundColor: Colors.transparent,
-      isScrollControlled: true,
-      builder: (sheetContext) {
-        return SafeArea(
-          child: Container(
-            constraints: const BoxConstraints(
-              maxHeight: 520,
-            ),
-            decoration: const BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.vertical(
-                top: Radius.circular(22),
-              ),
-            ),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                const SizedBox(height: 10),
+    final customer = await showCustomerSelectionSheet(
+      context,
+      farmId: farmId,
+      title: 'Select Customer',
+      subtitle: 'Choose a customer to register a goat',
+    );
 
-                // Drag handle
-                Container(
-                  width: 40,
-                  height: 4,
-                  decoration: BoxDecoration(
-                    color: Colors.grey.shade300,
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                ),
+    if (customer == null || !mounted) {
+      return;
+    }
 
-                const SizedBox(height: 16),
-
-                // Header
-                Padding(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 20,
-                  ),
-                  child: Row(
-                    children: [
-                      Container(
-                        width: 42,
-                        height: 42,
-                        decoration: BoxDecoration(
-                          color: AppColors.lightGreen,
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                        child: const Icon(
-                          Icons.person_add_alt,
-                          color: AppColors.primaryGreen,
-                        ),
-                      ),
-
-                      const SizedBox(width: 12),
-
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment:
-                          CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              'Select Customer',
-                              style: AppTheme.heading(
-                                size: 17,
-                              ),
-                            ),
-                            const SizedBox(height: 2),
-                            Text(
-                              'Choose a customer to register a goat',
-                              style: AppTheme.body(
-                                size: 12,
-                                color: AppColors.textGrey,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-
-                      IconButton(
-                        onPressed: () {
-                          Navigator.of(sheetContext).pop();
-                        },
-                        icon: const Icon(
-                          Icons.close,
-                          color: AppColors.textGrey,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-
-                const SizedBox(height: 14),
-
-                Divider(
-                  height: 1,
-                  color: Colors.grey.shade200,
-                ),
-
-                // Firestore customer list
-                Flexible(
-                  child: StreamBuilder<List<PalaiCustomer>>(
-                    stream: _customersStream,
-                    builder: (context, snapshot) {
-                      if (snapshot.connectionState ==
-                          ConnectionState.waiting) {
-                        return const SizedBox(
-                          height: 180,
-                          child: Center(
-                            child: CircularProgressIndicator(
-                              color: AppColors.primaryGreen,
-                            ),
-                          ),
-                        );
-                      }
-
-                      if (snapshot.hasError) {
-                        return SizedBox(
-                          height: 180,
-                          child: Center(
-                            child: Padding(
-                              padding: const EdgeInsets.all(20),
-                              child: Text(
-                                'Unable to load customers.',
-                                textAlign: TextAlign.center,
-                                style: AppTheme.body(
-                                  size: 13,
-                                  color: AppColors.error,
-                                ),
-                              ),
-                            ),
-                          ),
-                        );
-                      }
-
-                      final customers = snapshot.data ?? [];
-
-                      if (customers.isEmpty) {
-                        return SizedBox(
-                          height: 180,
-                          child: Center(
-                            child: Column(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                const Icon(
-                                  Icons.people_outline,
-                                  size: 42,
-                                  color: AppColors.textGrey,
-                                ),
-                                const SizedBox(height: 10),
-                                Text(
-                                  'No customers found.',
-                                  style: AppTheme.body(
-                                    size: 13,
-                                    color: AppColors.textGrey,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        );
-                      }
-
-                      return ListView.separated(
-                        padding: const EdgeInsets.fromLTRB(
-                          16,
-                          12,
-                          16,
-                          20,
-                        ),
-                        itemCount: customers.length,
-                        separatorBuilder: (_, __) =>
-                        const SizedBox(height: 8),
-                        itemBuilder: (context, index) {
-                          final customer = customers[index];
-
-                          return Material(
-                            color: AppColors.lightGreen.withOpacity(0.35),
-                            borderRadius: BorderRadius.circular(14),
-                            child: InkWell(
-                              borderRadius: BorderRadius.circular(14),
-                              onTap: () {
-                                // Close popup
-                                Navigator.of(sheetContext).pop();
-
-                                // Open existing registration screen
-                                Navigator.of(context).push(
-                                  fastRoute(
-                                    CustomerGoatRegistrationScreen(
-                                      customerId: customer.id,
-                                    ),
-                                  ),
-                                );
-                              },
-                              child: Padding(
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 14,
-                                  vertical: 11,
-                                ),
-                                child: Row(
-                                  children: [
-                                    CircleAvatar(
-                                      radius: 21,
-                                      backgroundColor:
-                                      AppColors.primaryGreen,
-                                      child: const Icon(
-                                        Icons.person,
-                                        color: Colors.white,
-                                        size: 20,
-                                      ),
-                                    ),
-
-                                    const SizedBox(width: 12),
-
-                                    Expanded(
-                                      child: Column(
-                                        crossAxisAlignment:
-                                        CrossAxisAlignment.start,
-                                        children: [
-                                          Text(
-                                            customer.name,
-                                            maxLines: 1,
-                                            overflow:
-                                            TextOverflow.ellipsis,
-                                            style: AppTheme.body(
-                                              size: 14,
-                                              weight:
-                                              FontWeight.w600,
-                                              color:
-                                              AppColors.textDark,
-                                            ),
-                                          ),
-                                          const SizedBox(height: 3),
-                                          Text(
-                                            customer.mobileNumber,
-                                            style: AppTheme.body(
-                                              size: 11,
-                                              color:
-                                              AppColors.textGrey,
-                                            ),
-                                          ),
-                                        ],
-                                      ),
-                                    ),
-
-                                    Container(
-                                      width: 32,
-                                      height: 32,
-                                      decoration: BoxDecoration(
-                                        color: Colors.white,
-                                        borderRadius:
-                                        BorderRadius.circular(9),
-                                      ),
-                                      child: const Icon(
-                                        Icons.arrow_forward_ios,
-                                        size: 13,
-                                        color:
-                                        AppColors.primaryGreen,
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                            ),
-                          );
-                        },
-                      );
-                    },
-                  ),
-                ),
-              ],
-            ),
-          ),
-        );
-      },
+    Navigator.of(context).push(
+      fastRoute(
+        CustomerGoatRegistrationScreen(
+          customerId: customer.id,
+        ),
+      ),
     );
   }
 

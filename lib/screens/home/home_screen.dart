@@ -8,12 +8,14 @@ import '../../app_theme.dart';
 import '../../models/farm_model.dart';
 import '../../models/activity_model.dart';
 import '../../models/partner_model.dart';
+import '../../models/palai_models.dart';
 import '../../models/stock_model.dart';
 import '../../services/firestore_service.dart';
 import '../../widgets/fast_route.dart';
 import '../../widgets/profile_completion_dialog.dart';
+import '../../widgets/customer_selection_sheet.dart';
 import 'widgets/home_widgets.dart';
-import '../palai/check_in_screen.dart';
+import '../palai/customer_palai/customer_goat_registration_screen.dart';
 import '../stocks/stock_screen.dart';
 import '../stocks/add_feed_stock_screen.dart';
 import '../profile/profile_screen.dart';
@@ -125,6 +127,76 @@ class _HomeScreenState extends State<HomeScreen> {
   void _comingSoon(String feature) {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text('$feature module coming soon'), backgroundColor: AppColors.darkGreen),
+    );
+  }
+
+  void _showMessage(String message, {bool isError = false}) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        backgroundColor: isError ? AppColors.error : AppColors.darkGreen,
+      ),
+    );
+  }
+
+  // ===========================================================================
+  // QUICK ACTION: ADD GOAT
+  // ===========================================================================
+  //
+  // Same pattern as PalaiScreen's "Add Goat" button: the person first
+  // picks which customer the goat belongs to (via the shared, timeout
+  // /retry-safe `showCustomerSelectionSheet`), then we open the same
+  // register-goat screen the Palai screen uses, passing that customer's id.
+  // ===========================================================================
+
+  Future<void> _openAddGoat() async {
+    final farmId = _farmId;
+    if (farmId == null) {
+      _showMessage('Farm information is still loading. Please try again.', isError: true);
+      return;
+    }
+
+    final PalaiCustomer? customer = await showCustomerSelectionSheet(
+      context,
+      farmId: farmId,
+      title: 'Select Customer',
+      subtitle: 'Choose a customer to register a goat',
+    );
+
+    if (customer == null || !mounted) return;
+
+    Navigator.of(context).push(
+      fastRoute(CustomerGoatRegistrationScreen(customerId: customer.id)),
+    );
+  }
+
+  // ===========================================================================
+  // QUICK ACTION: RECEIVE PAYMENT
+  // ===========================================================================
+  //
+  // Same idea: pick the customer first via the shared selection sheet,
+  // then open the payment sheet pre-filled with that customer's id.
+  // ===========================================================================
+
+  Future<void> _openReceivePayment() async {
+    final farmId = _farmId;
+    if (farmId == null) {
+      _showMessage('Farm information is still loading. Please try again.', isError: true);
+      return;
+    }
+
+    final PalaiCustomer? customer = await showCustomerSelectionSheet(
+      context,
+      farmId: farmId,
+      title: 'Select Customer',
+      subtitle: 'Choose a customer to receive a payment from',
+    );
+
+    if (customer == null || !mounted) return;
+
+    Navigator.of(context).push(
+      fastRoute(ReceivePaymentScreen(presetCustomer: customer)),
     );
   }
 
@@ -371,13 +443,13 @@ class _HomeScreenState extends State<HomeScreen> {
             icon: Icons.add,
             label: 'Add Goat',
             color: AppColors.primaryGreen,
-            onTap: () => Navigator.of(context).push(fastRoute(const CheckInGoatScreen())),
+            onTap: _openAddGoat,
           ),
           QuickAction(
             icon: Icons.payments_outlined,
             label: 'Receive\nPayment',
             color: AppColors.success,
-            onTap: () => Navigator.of(context).push(fastRoute(const ReceivePaymentScreen())),
+            onTap: _openReceivePayment,
           ),
           QuickAction(
             icon: Icons.remove,
