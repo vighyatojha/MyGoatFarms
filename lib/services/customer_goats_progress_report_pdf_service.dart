@@ -477,11 +477,25 @@ class CustomerGoatsProgressReportPdfService {
           pw.Divider(color: PdfColors.grey300, height: 1),
           pw.SizedBox(height: 8),
 
-          // Goat-wise Palai charges — each goat's price is the amount
-          // entered when that goat was registered for Palai.
-          if (entries.isNotEmpty) ...[
+          // Goat-wise Palai amounts — pulled from the bill's OWN saved
+          // snapshot (bill.goatBreakdown), i.e. exactly what was typed
+          // for each goat that month. Falls back to each goat's
+          // registered price only for older bills saved before this
+          // breakdown existed.
+          if (bill.goatBreakdown.isNotEmpty) ...[
             pw.Text(
-              'Palai Charges (goat-wise)',
+              'Current Month Palai (goat-wise)',
+              style: pw.TextStyle(fontSize: 8.5, fontWeight: pw.FontWeight.bold, color: PdfColors.grey800),
+            ),
+            pw.SizedBox(height: 3),
+            for (final line in bill.goatBreakdown)
+              _billRow(line.label, _currency(line.palaiAmount), small: true),
+            pw.SizedBox(height: 3),
+            pw.Divider(color: PdfColors.grey300, height: 1),
+            pw.SizedBox(height: 6),
+          ] else if (entries.isNotEmpty) ...[
+            pw.Text(
+              'Current Month Palai (goat-wise)',
               style: pw.TextStyle(fontSize: 8.5, fontWeight: pw.FontWeight.bold, color: PdfColors.grey800),
             ),
             pw.SizedBox(height: 3),
@@ -498,17 +512,23 @@ class CustomerGoatsProgressReportPdfService {
             pw.SizedBox(height: 6),
           ],
 
-          // Simple, fully-editable entry: Outstanding Amount minus Advance
-          // Amount equals Total Outstanding. No Palai/Other/Discount
-          // itemization and no "amount paid" — this only records what is
-          // owed, never a payment.
-          _billRow('Outstanding Amount', _currency(bill.previousOutstanding)),
+          // Three separate, current-state numbers — never reconstructed
+          // from old bills or payment history:
+          //   Current Month Palai + Current Outstanding − Current Advance
+          //   = Current Amount Due
+          _billRow('Current Month Palai', _currency(bill.palaiCharges)),
+          _billRow('Current Outstanding', _currency(bill.previousOutstanding)),
           if (bill.advanceApplied > 0)
-            _billRow('Advance Amount', '- ${_currency(bill.advanceApplied)}'),
+            _billRow('Current Advance', '- ${_currency(bill.advanceApplied)}'),
           pw.SizedBox(height: 3),
           pw.Divider(color: PdfColors.grey300, height: 1),
           pw.SizedBox(height: 3),
-          _billRow('Total Outstanding', _currency(bill.totalDue), emphasize: true),
+          _billRow('Current Amount Due', _currency(bill.totalDue), emphasize: true),
+          pw.SizedBox(height: 3),
+          pw.Text(
+            'Current Month Calculation Only — previous monthly payments and historical transactions are not included above.',
+            style: const pw.TextStyle(fontSize: 6.5, color: PdfColors.grey600, fontStyle: pw.FontStyle.italic),
+          ),
           pw.SizedBox(height: 6),
           pw.Text(
             'Bill No: ${bill.billNumber}',

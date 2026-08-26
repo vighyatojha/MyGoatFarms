@@ -1366,6 +1366,17 @@ class FirestoreService {
     return PalaiCustomer.fromDoc(doc);
   }
 
+  /// Live stream of a single customer — used wherever a screen needs to
+  /// show the customer's CURRENT outstanding/advance balance (e.g.
+  /// current-month billing calculations) without it going stale while
+  /// the screen is open.
+  Stream<PalaiCustomer?> customerStream(String farmId, String customerId) {
+    return _customers(farmId).doc(customerId).snapshots().map((doc) {
+      if (!doc.exists) return null;
+      return PalaiCustomer.fromDoc(doc);
+    });
+  }
+
   Future<void> updateCustomerPendingAmount(String farmId, String customerId, double newPending) {
     return _customers(farmId).doc(customerId).update({'pendingAmount': newPending}).timeout(timeout);
   }

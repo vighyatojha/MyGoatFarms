@@ -840,6 +840,232 @@ class MonthlyBillingService {
   }
 
   // ===========================================================================
+  // CREATE CURRENT-MONTH MONTHLY BILL (goat-wise Palai + current state)
+  // ===========================================================================
+  //
+  // This is the bill creation path for the Customer Goat Progress Report
+  // and the goat-wise Monthly Billing screen.
+  //
+  // It keeps THREE numbers completely separate, exactly as the owner
+  // enters them, and never reconstructs any of them from payment
+  // history or old bills:
+  //
+  //   palaiCharges       — sum of this month's goat-wise Palai amounts
+  //                         (each one editable per goat; see
+  //                         [goatBreakdown]).
+  //   currentOutstanding — the customer's CURRENT outstanding balance,
+  //                         right now. Zero if there is none. Never
+  //                         "previous bill + old payments" math.
+  //   currentAdvance     — the customer's CURRENT advance balance,
+  //                         right now. Zero if there is none.
+  //
+  //   Current Amount Due = palaiCharges + currentOutstanding − currentAdvance
+  //
+  // The three numbers are stored on the bill AS-IS (palaiCharges,
+  // previousOutstanding, advanceApplied) so the bill is an honest,
+  // permanent snapshot — later payments or balance changes never
+  // silently rewrite it.
+  Future<MonthlyBill> createCurrentMonthMonthlyBill({
+    required String farmId,
+    required String customerId,
+    required int year,
+    required int month,
+    required double palaiCharges,
+    required double currentOutstanding,
+    required double currentAdvance,
+    List<GoatBillingLine> goatBreakdown = const [],
+    int goatCount = 0,
+    String notes = '',
+  }) async {
+    if (palaiCharges < 0) {
+      throw ArgumentError('Palai charges cannot be negative.');
+    }
+    if (currentOutstanding < 0) {
+      throw ArgumentError('Current Outstanding cannot be negative.');
+    }
+    if (currentAdvance < 0) {
+      throw ArgumentError('Current Advance cannot be negative.');
+    }
+    if (month < 1 || month > 12) {
+      throw ArgumentError('Invalid billing month.');
+    }
+
+    final customerRef = _customers(farmId).doc(customerId);
+    final farmRef = _farms().doc(farmId);
+    final periodKey = _periodKey(year, month);
+    final billId = _monthlyBillDocumentId(customerId, year, month);
+    final billRef = _bills(farmId).doc(billId);
+    final activityRef = _activities(farmId).doc();
+    final billingMonth = _firstDayOfMonth(year, month);
+    final periodEnd = _lastDayOfMonth(year, month);
+
+    return _db.runTransaction<MonthlyBill>((transaction) async {
+      // ---------------------------------------------------------------
+      // READS FIRST
+      // ---------------------------------------------------------------
+
+      final customerSnapshot = await transaction.get(customerRef);
+
+      if (!customerSnapshot.exists) {
+        throw StateError('Customer no longer exists.');
+      }
+
+      final farmSnapshot = await transaction.get(farmRef);
+      final existingBillSnapshot = await transaction.get(billRef);
+
+      if (existingBillSnapshot.exists) {
+        throw StateError('A monthly bill already exists for $periodKey.');
+      }
+
+      final customerData = customerSnapshot.data() ?? {};
+      final farmData = farmSnapshot.data() ?? {};
+
+      final customerName = (customerData['name'] ?? '').toString();
+      if (customerName.trim().isEmpty) {
+        throw StateError('Customer name is missing.');
+      }
+
+      // ---------------------------------------------------------------
+      // ADVANCE — capped at what the customer actually has and at the
+      // total it's being applied against, so it never over-applies.
+      // currentAdvance is owner-confirmed (usually the live balance,
+      // but the owner may correct it), so we still guard it against
+      // the customer's real advance balance to avoid over-draining it.
+      // ---------------------------------------------------------------
+
+      final advanceBefore = _doubleValue(customerData['advanceAmount']);
+
+      final totalBeforeAdvance = palaiCharges + currentOutstanding;
+
+      final advanceApplied = currentAdvance
+          .clamp(0, advanceBefore)
+          .clamp(0, totalBeforeAdvance)
+          .toDouble();
+
+      final totalDue =
+      (totalBeforeAdvance - advanceApplied).clamp(0, double.infinity).toDouble();
+
+      final advanceAfter =
+      (advanceBefore - advanceApplied).clamp(0, double.infinity).toDouble();
+
+      final billNumber = _generateBillNumber(billId, year, month);
+
+      final farmName = (farmData['farmName'] ?? '').toString();
+      final farmAddress = (farmData['address'] ?? '').toString();
+      final farmPhone = (farmData['mobileNumber'] ?? '').toString();
+      final farmEmail = (farmData['email'] ?? '').toString();
+
+      final now = DateTime.now();
+
+      // ---------------------------------------------------------------
+      // WRITE MONTHLY BILL
+      // ---------------------------------------------------------------
+
+      transaction.set(billRef, {
+        'type': 'monthly',
+        'billNumber': billNumber,
+        'customerId': customerId,
+        'customerName': customerName,
+        'billingPeriodKey': periodKey,
+        'periodMonth': periodKey,
+        'month': month,
+        'year': year,
+        'billingMonth': Timestamp.fromDate(billingMonth),
+        'periodEnd': Timestamp.fromDate(periodEnd),
+
+        // Current month's Palai only — goat-wise, never mixed with
+        // outstanding.
+        'palaiCharges': palaiCharges,
+        'otherCharges': 0,
+        'discount': 0,
+        'newCharges': palaiCharges,
+        'currentBillAmount': palaiCharges,
+
+        // Current-state snapshot, exactly as entered — never
+        // reconstructed from history.
+        'previousOutstanding': currentOutstanding,
+        'advanceApplied': advanceApplied,
+        'totalDue': totalDue,
+
+        'amountPaid': 0,
+        'remainingAmount': totalDue,
+        'pendingAfter': totalDue,
+
+        'status': 'unpaid',
+        'paymentStatus': 'unpaid',
+        'paymentId': null,
+        'paymentMethod': null,
+        'paidAt': null,
+
+        'goatCount': goatCount,
+        'goatBreakdown': goatBreakdown.map((g) => g.toMap()).toList(),
+
+        'notes': notes.trim(),
+        'farmName': farmName,
+        'farmAddress': farmAddress,
+        'farmPhone': farmPhone,
+        'farmEmail': farmEmail,
+        'generatedAt': Timestamp.fromDate(now),
+        'createdAt': FieldValue.serverTimestamp(),
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
+
+      // ---------------------------------------------------------------
+      // UPDATE CUSTOMER OUTSTANDING
+      // ---------------------------------------------------------------
+
+      transaction.update(customerRef, {
+        'pendingAmount': totalDue,
+        'advanceAmount': advanceAfter,
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
+
+      // ---------------------------------------------------------------
+      // ACTIVITY
+      // ---------------------------------------------------------------
+
+      transaction.set(activityRef, {
+        'type': 'monthlyBillGenerated',
+        'title': 'Monthly Bill Generated',
+        'subtitle': '$customerName · $periodKey · ₹${totalDue.toStringAsFixed(0)}',
+        'module': 'palai',
+        'customerId': customerId,
+        'billId': billId,
+        'billNumber': billNumber,
+        'timestamp': FieldValue.serverTimestamp(),
+      });
+
+      return MonthlyBill(
+        id: billId,
+        customerId: customerId,
+        customerName: customerName,
+        billNumber: billNumber,
+        billingMonth: billingMonth,
+        periodEnd: periodEnd,
+        goatCount: goatCount,
+        palaiCharges: palaiCharges,
+        otherCharges: 0,
+        discount: 0,
+        previousOutstanding: currentOutstanding,
+        currentBillAmount: palaiCharges,
+        advanceApplied: advanceApplied,
+        totalDue: totalDue,
+        amountPaid: 0,
+        remainingAmount: totalDue,
+        status: MonthlyBillStatus.unpaid,
+        generatedAt: now,
+        paidAt: null,
+        notes: notes.trim(),
+        farmName: farmName,
+        farmAddress: farmAddress,
+        farmPhone: farmPhone,
+        farmEmail: farmEmail,
+        goatBreakdown: goatBreakdown,
+      );
+    }).timeout(_timeout);
+  }
+
+  // ===========================================================================
 // RECEIVE MONTHLY BILL PAYMENT
 // ===========================================================================
 

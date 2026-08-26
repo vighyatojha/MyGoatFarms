@@ -1,5 +1,44 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 
+/// One goat's line in the goat-wise Palai breakdown of a [MonthlyBill].
+///
+/// This is a snapshot taken at the moment the bill was generated — the
+/// amount is whatever the owner typed for that goat that month (it may
+/// differ from the goat's registered [PalaiGoat.pricing] if the owner
+/// overrode it), so it should never be recalculated later from the
+/// goat's current price.
+class GoatBillingLine {
+  final String goatId;
+
+  /// Display label for the goat (name, or its code/tag if unnamed).
+  final String label;
+
+  /// The Palai amount entered for this goat for this specific bill.
+  final double palaiAmount;
+
+  const GoatBillingLine({
+    required this.goatId,
+    required this.label,
+    required this.palaiAmount,
+  });
+
+  factory GoatBillingLine.fromMap(Map<String, dynamic> map) {
+    return GoatBillingLine(
+      goatId: map['goatId']?.toString() ?? '',
+      label: map['label']?.toString() ?? '',
+      palaiAmount: (map['palaiAmount'] as num?)?.toDouble() ?? 0,
+    );
+  }
+
+  Map<String, dynamic> toMap() {
+    return {
+      'goatId': goatId,
+      'label': label,
+      'palaiAmount': palaiAmount,
+    };
+  }
+}
+
 /// Payment status of a monthly customer bill.
 ///
 /// The UI may show:
@@ -119,6 +158,15 @@ class MonthlyBill {
   /// Optional snapshot of the farm email shown on the PDF.
   final String farmEmail;
 
+  /// Goat-wise Palai breakdown for this bill (one line per goat included
+  /// in the current-month calculation). Empty for older bills generated
+  /// before this breakdown existed, or for bills that don't have a
+  /// goat-wise split (e.g. a purely manual outstanding entry).
+  ///
+  /// This is a snapshot — like every other amount on a MonthlyBill, it
+  /// should never be recalculated from a goat's current price.
+  final List<GoatBillingLine> goatBreakdown;
+
   const MonthlyBill({
     required this.id,
     required this.customerId,
@@ -144,6 +192,7 @@ class MonthlyBill {
     this.farmAddress = '',
     this.farmPhone = '',
     this.farmEmail = '',
+    this.goatBreakdown = const [],
   });
 
   // ================================================================
@@ -347,6 +396,13 @@ class MonthlyBill {
 
       farmEmail:
       data['farmEmail']?.toString() ?? '',
+
+      goatBreakdown: (data['goatBreakdown'] as List<dynamic>?)
+          ?.map((e) => GoatBillingLine.fromMap(
+        Map<String, dynamic>.from(e as Map),
+      ))
+          .toList() ??
+          const [],
     );
   }
 
@@ -410,6 +466,8 @@ class MonthlyBill {
       'farmAddress': farmAddress,
       'farmPhone': farmPhone,
       'farmEmail': farmEmail,
+
+      'goatBreakdown': goatBreakdown.map((g) => g.toMap()).toList(),
     };
   }
 
@@ -442,6 +500,7 @@ class MonthlyBill {
     String? farmAddress,
     String? farmPhone,
     String? farmEmail,
+    List<GoatBillingLine>? goatBreakdown,
   }) {
     return MonthlyBill(
       id: id ?? this.id,
@@ -471,6 +530,7 @@ class MonthlyBill {
       farmAddress: farmAddress ?? this.farmAddress,
       farmPhone: farmPhone ?? this.farmPhone,
       farmEmail: farmEmail ?? this.farmEmail,
+      goatBreakdown: goatBreakdown ?? this.goatBreakdown,
     );
   }
 

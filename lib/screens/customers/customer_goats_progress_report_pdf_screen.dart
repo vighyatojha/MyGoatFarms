@@ -5,7 +5,7 @@ import 'package:intl/intl.dart';
 
 import '../../app_theme.dart';
 import '../../models/bill_settings_model.dart';
-import '../../models/monthly_bill_model.dart';
+import '../../models/monthly_bill_model.dart' show MonthlyBill, GoatBillingLine;
 import '../../models/palai_models.dart';
 import '../../models/report_models.dart';
 import '../../services/customer_goats_progress_report_pdf_service.dart';
@@ -91,19 +91,38 @@ class _CustomerGoatsProgressReportScreenState
   final Map<String, TextEditingController> _weightControllers = {};
 
   // ------------------------------------------------------------------
-  // BILLING (this month's Palai amount + old pending amount)
+  // CURRENT-MONTH CALCULATION
+  //
+  //   Current Month Palai (per goat, editable)
+  //         +
+  //   Current Outstanding (customer's current balance — zero if none)
+  //         −
+  //   Current Advance (customer's current advance — zero if none)
+  //         =
+  //   Current Amount Due
+  //
+  // IMPORTANT: this is a current-period calculation only. Historical
+  // payments and old bills are NEVER summed/subtracted again here —
+  // Current Outstanding and Current Advance are read fresh from the
+  // customer's live profile and nothing else feeds into them.
   // ------------------------------------------------------------------
 
-  /// The customer's pending/outstanding amount *before* this month's
-  /// bill, re-fetched fresh (not from `widget.customer`, which may be
-  /// stale) the moment we enter the capture step.
-  double _previousOutstanding = 0;
+  /// One editable "Monthly Palai Amount" controller per selected goat.
+  /// Seeded from that goat's registered [PalaiGoat.pricing] as a
+  /// starting point, but the owner can freely change it — this is the
+  /// custom, per-goat, current-month Palai amount, not a fixed default.
+  final Map<String, TextEditingController> _palaiControllers = {};
 
-  /// The customer's current advance balance (credit), re-fetched fresh at
-  /// the same time as [_previousOutstanding]. When generating a fresh
-  /// bill, this is applied against the total before it's added to the
-  /// customer's pending amount.
-  double _advanceAvailable = 0;
+  /// The customer's CURRENT outstanding balance, re-fetched fresh (not
+  /// from `widget.customer`, which may be stale) the moment we enter the
+  /// capture step. This is the customer's real current balance — never
+  /// a sum of old bills, old payments, or previous months.
+  double _currentOutstanding = 0;
+
+  /// The customer's CURRENT advance balance (credit), re-fetched fresh at
+  /// the same time as [_currentOutstanding]. Applied against the total
+  /// before the remainder becomes the customer's new outstanding amount.
+  double _currentAdvanceAvailable = 0;
 
   /// If a monthly bill for the current month already exists for this
   /// customer, it's loaded here so we don't create a duplicate — we
@@ -113,11 +132,13 @@ class _CustomerGoatsProgressReportScreenState
   bool _loadingBilling = false;
   String? _billingLoadError;
 
-  /// The two — and only two — fields the owner can edit for a fresh
-  /// bill: Outstanding Amount and Advance Amount. Prefilled from live
-  /// data as a starting point but fully customizable; whatever is typed
-  /// here is exactly what gets saved. There is no "amount paid" field —
-  /// this entry only records what is owed, never a payment.
+  /// Current Outstanding and Current Advance — the two customer-level
+  /// numbers the owner can edit for a fresh bill. Prefilled from the
+  /// customer's live balance as a starting point (zero when there is
+  /// none) but fully customizable; whatever is typed here is exactly
+  /// what gets saved, alongside the goat-wise Palai amounts. There is no
+  /// "amount paid" field here — this entry only records what is owed,
+  /// never a payment.
   final TextEditingController _outstandingController = TextEditingController();
   final TextEditingController _advanceController = TextEditingController();
 
@@ -135,6 +156,9 @@ class _CustomerGoatsProgressReportScreenState
   @override
   void dispose() {
     for (final controller in _weightControllers.values) {
+      controller.dispose();
+    }
+    for (final controller in _palaiControllers.values) {
       controller.dispose();
     }
     _outstandingController.dispose();
@@ -228,18 +252,22 @@ class _CustomerGoatsProgressReportScreenState
       if (!mounted) return;
 
       setState(() {
-        _previousOutstanding = freshCustomer?.pendingAmount ?? widget.customer.pendingAmount;
-        _advanceAvailable = freshCustomer?.advanceAmount ?? widget.customer.advanceAmount;
+        _currentOutstanding = freshCustomer?.pendingAmount ?? widget.customer.pendingAmount;
+        _currentAdvanceAvailable = freshCustomer?.advanceAmount ?? widget.customer.advanceAmount;
         _existingMonthlyBill = existingBill;
         _loadingBilling = false;
 
         if (existingBill == null) {
-          // Prefill Outstanding as the old pending amount plus this
-          // month's goat-wise Palai total, purely as a starting point —
-          // the owner can change it to whatever the real figure is.
-          final suggestedOutstanding = _previousOutstanding + _palaiChargesTotal;
-          _outstandingController.text = suggestedOutstanding.toStringAsFixed(2);
-          _advanceController.text = _advanceAvailable.toStringAsFixed(2);
+          // Current Outstanding and Current Advance are prefilled ONLY
+          // from the customer's live current balance — zero if there is
+          // none. This month's goat-wise Palai amount is a completely
+          // separate line item (see _palaiControllers) and must NEVER be
+          // folded into Current Outstanding here. That mixing is exactly
+          // the old bug: it made the outstanding figure look like it
+          // already contained this month's charges, so the final total
+          // silently double-counted them.
+          _outstandingController.text = _currentOutstanding.toStringAsFixed(2);
+          _advanceController.text = _currentAdvanceAvailable.toStringAsFixed(2);
         }
       });
     } catch (e) {
@@ -299,11 +327,15 @@ class _CustomerGoatsProgressReportScreenState
         controller.dispose();
       }
       _weightControllers.clear();
+      for (final controller in _palaiControllers.values) {
+        controller.dispose();
+      }
+      _palaiControllers.clear();
 
       _existingMonthlyBill = null;
       _billingLoadError = null;
-      _previousOutstanding = 0;
-      _advanceAvailable = 0;
+      _currentOutstanding = 0;
+      _currentAdvanceAvailable = 0;
       _outstandingController.clear();
       _advanceController.clear();
     });
@@ -360,38 +392,78 @@ class _CustomerGoatsProgressReportScreenState
     return weight != null && weight > 0;
   });
 
-  /// Sum of each *selected* goat's Palai price — the amount entered when
-  /// that goat was registered/checked in for Palai. Shown as an
-  /// informational, read-only breakdown only — it feeds the *suggested*
-  /// starting value for Outstanding Amount, but the owner can freely
-  /// change that field to whatever the real figure is.
-  double get _palaiChargesTotal =>
-      _selectedGoats.fold<double>(0, (sum, g) => sum + g.pricing);
+  /// Controller for a given goat's "Monthly Palai Amount" — the custom,
+  /// editable, current-month Palai amount for that goat. Seeded from the
+  /// goat's registered [PalaiGoat.pricing] the first time it's built, as
+  /// a starting point only; the owner can freely change it to whatever
+  /// this month's real amount is (e.g. GP-11 → ₹2,800). Changing one
+  /// goat's amount never affects any other goat's amount or total.
+  TextEditingController _palaiControllerFor(PalaiGoat goat) {
+    return _palaiControllers.putIfAbsent(
+      goat.id,
+          () => TextEditingController(text: goat.pricing.toStringAsFixed(2)),
+    );
+  }
 
-  /// The two editable numbers, exactly as typed by the owner. Nothing
-  /// else feeds into the bill — no separate Palai/Other/Discount math,
-  /// no "amount paid".
-  double? get _enteredOutstanding =>
-      double.tryParse(_outstandingController.text.trim());
+  double _enteredPalai(PalaiGoat goat) {
+    final controller = _palaiControllers[goat.id];
+    if (controller == null) return goat.pricing;
+    return double.tryParse(controller.text.trim()) ?? 0;
+  }
+
+  /// Sum of each *selected* goat's current-month Palai amount, exactly
+  /// as typed in that goat's own "Monthly Palai Amount" field. This is
+  /// the ONLY thing that feeds "Current Month Palai" — it is a
+  /// completely separate line from Current Outstanding and Current
+  /// Advance below, and is never combined with them before display.
+  double get _palaiChargesTotal =>
+      _selectedGoats.fold<double>(0, (sum, g) => sum + _enteredPalai(g));
+
+  /// Goat-wise breakdown, saved with the bill as a permanent snapshot —
+  /// so the bill always shows exactly what each goat's Palai amount was
+  /// that month, even if the goat's registered price changes later.
+  List<GoatBillingLine> get _goatBreakdown => _selectedGoats.map((g) {
+    final label = g.name.trim().isNotEmpty
+        ? g.name
+        : (g.goatCode.trim().isNotEmpty ? g.goatCode : g.tagNumber);
+    return GoatBillingLine(
+      goatId: g.id,
+      label: label,
+      palaiAmount: _enteredPalai(g),
+    );
+  }).toList();
+
+  /// Current Outstanding and Current Advance, exactly as typed by the
+  /// owner. Nothing else feeds into them — no reconstruction from old
+  /// bills or payment history. Defaults to zero when the field is empty
+  /// or the customer simply has no current outstanding/advance.
+  double get _enteredOutstanding =>
+      double.tryParse(_outstandingController.text.trim()) ?? 0;
 
   double get _enteredAdvance =>
       double.tryParse(_advanceController.text.trim()) ?? 0;
 
-  /// Outstanding − Advance, floored at zero — this is exactly what gets
-  /// written to the customer's outstanding balance.
-  double get _totalOutstandingAfterBill =>
-      ((_enteredOutstanding ?? 0) - _enteredAdvance)
+  /// Current Month Palai + Current Outstanding − Current Advance,
+  /// floored at zero — this is exactly what gets written as the
+  /// customer's new outstanding balance.
+  double get _currentAmountDue =>
+      (_palaiChargesTotal + _enteredOutstanding - _enteredAdvance)
           .clamp(0, double.infinity)
           .toDouble();
 
   /// True once billing is ready to include in the report: either an
   /// existing bill for this month was found (nothing more to enter), or
-  /// the owner has typed a valid Outstanding Amount for a fresh bill.
+  /// every selected goat has a valid Palai amount entered.
   bool get _billingReady {
     if (_loadingBilling) return false;
     if (_existingMonthlyBill != null) return true;
-    final outstanding = _enteredOutstanding;
-    return outstanding != null && outstanding >= 0;
+    if (_selectedGoats.isEmpty) return false;
+    return _selectedGoats.every((g) {
+      final controller = _palaiControllers[g.id];
+      if (controller == null) return false;
+      final value = double.tryParse(controller.text.trim());
+      return value != null && value >= 0;
+    });
   }
 
   bool get _readyToGenerate =>
@@ -413,7 +485,7 @@ class _CustomerGoatsProgressReportScreenState
     }
 
     if (!_billingReady) {
-      _showSnack('Enter the Outstanding Amount before generating the report.');
+      _showSnack('Enter the Monthly Palai Amount for every goat before generating the report.');
       return;
     }
 
@@ -426,23 +498,27 @@ class _CustomerGoatsProgressReportScreenState
 
       // ------------------------------------------------------------
       // BILLING — reuse this month's bill if one already exists,
-      // otherwise create it now from the two numbers the owner typed:
-      // Outstanding Amount and Advance Amount. Their difference is
-      // written straight to the customer's outstanding balance, and the
-      // advance balance is reduced by whatever was applied.
+      // otherwise create it now from three separate numbers:
+      //   - this month's goat-wise Palai total (_palaiChargesTotal)
+      //   - Current Outstanding (the customer's real current balance)
+      //   - Current Advance (the customer's real current advance)
+      // These are never merged before being saved — see
+      // createCurrentMonthMonthlyBill for the current-month-only rule.
       // ------------------------------------------------------------
       MonthlyBill monthlyBill;
       if (_existingMonthlyBill != null) {
         monthlyBill = _existingMonthlyBill!;
       } else {
         try {
-          monthlyBill = await MonthlyBillingService.instance.createManualMonthlyBill(
+          monthlyBill = await MonthlyBillingService.instance.createCurrentMonthMonthlyBill(
             farmId: widget.farmId,
             customerId: widget.customer.id,
             year: now.year,
             month: now.month,
-            outstandingAmount: _enteredOutstanding ?? 0,
-            advanceAmount: _enteredAdvance,
+            palaiCharges: _palaiChargesTotal,
+            currentOutstanding: _enteredOutstanding,
+            currentAdvance: _enteredAdvance,
+            goatBreakdown: _goatBreakdown,
             goatCount: _selectedGoats.length,
             notes: 'Auto-generated with Progress Report.',
           );
@@ -1036,9 +1112,34 @@ class _CustomerGoatsProgressReportScreenState
           Text(
             existing != null
                 ? 'A bill for $monthLabel was already generated for this customer. Its saved amounts are shown below exactly as recorded — generating this report again will NOT create a duplicate bill or change these numbers.'
-                : 'Type the Outstanding Amount and Advance Amount below. Their difference becomes the customer\'s new outstanding balance the moment you generate this report — nothing else affects it.',
+                : 'Set each goat\'s Monthly Palai Amount below, then Current Outstanding and Current Advance. Nothing here is combined for you — you always see exactly what each figure is.',
             style: AppTheme.body(size: 11, color: AppColors.textMuted),
           ),
+          if (existing == null) ...[
+            const SizedBox(height: 10),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+              decoration: BoxDecoration(
+                color: AppColors.warning.withOpacity(0.12),
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: AppColors.warning.withOpacity(0.4)),
+              ),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Icon(Icons.info_outline, size: 16, color: AppColors.warning),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      'Current Month Calculation Only — previous monthly payments and historical transactions are not included in this calculation.',
+                      style: AppTheme.body(size: 10.5, color: AppColors.textDark),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
           const SizedBox(height: 14),
 
           if (_loadingBilling)
@@ -1075,38 +1176,48 @@ class _CustomerGoatsProgressReportScreenState
                 // contradictory. There is no "amount paid" on bills
                 // created this way, so none is shown.
                 // ------------------------------------------------------
-                _billingRow('Outstanding Amount', _currency(existing.previousOutstanding)),
+                if (existing.goatBreakdown.isNotEmpty) ...[
+                  for (final line in existing.goatBreakdown)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 4),
+                      child: _billingRow(line.label, _currency(line.palaiAmount)),
+                    ),
+                  const Divider(height: 14),
+                ],
+                _billingRow('Current Month Palai', _currency(existing.palaiCharges)),
                 const SizedBox(height: 4),
-                _billingRow('Advance Amount', '- ${_currency(existing.advanceApplied)}'),
+                _billingRow('Current Outstanding', _currency(existing.previousOutstanding)),
+                const SizedBox(height: 4),
+                _billingRow('Current Advance', '- ${_currency(existing.advanceApplied)}'),
                 const Divider(height: 20),
-                _billingRow('Total Outstanding', _currency(existing.totalDue), bold: true),
+                _billingRow('Current Amount Due', _currency(existing.totalDue), bold: true),
               ] else ...[
                 // ------------------------------------------------------
                 // NEW BILL — nothing has been saved to Firestore yet.
-                // Outstanding Amount and Advance Amount are the ONLY
-                // editable numbers; the goat-wise total below is shown
-                // purely as a reference for filling in Outstanding
-                // Amount. Total Outstanding is a live preview of exactly
-                // what will be written the moment you generate the
-                // report.
+                // Each goat's Monthly Palai Amount, Current Outstanding,
+                // and Current Advance are the editable numbers. They are
+                // shown and summed SEPARATELY — never pre-combined —
+                // right up until the moment the report is generated.
                 // ------------------------------------------------------
-                _buildGoatWisePricingBreakdown(),
-                const SizedBox(height: 10),
+                _buildGoatWisePalaiEntry(),
+                const SizedBox(height: 14),
+                _billingRow('Current Month Palai', _currency(_palaiChargesTotal), bold: true),
+                const SizedBox(height: 14),
                 _billingField(
                   controller: _outstandingController,
-                  label: 'Outstanding Amount',
+                  label: 'Current Outstanding',
                   icon: Icons.account_balance_wallet_outlined,
                 ),
                 const SizedBox(height: 10),
                 _billingField(
                   controller: _advanceController,
-                  label: 'Advance Amount',
+                  label: 'Current Advance',
                   icon: Icons.savings_outlined,
                 ),
                 const Divider(height: 24),
                 _billingRow(
-                  'Total Outstanding',
-                  _currency(_totalOutstandingAfterBill),
+                  'Current Amount Due',
+                  _currency(_currentAmountDue),
                   bold: true,
                 ),
                 const SizedBox(height: 4),
@@ -1121,11 +1232,33 @@ class _CustomerGoatsProgressReportScreenState
     );
   }
 
-  /// Read-only breakdown of the current month's Palai charges, itemised
-  /// per selected goat, using the price entered for each goat at
-  /// registration (e.g. ₹2500 + ₹3500 + ₹2500).
-  Widget _buildGoatWisePricingBreakdown() {
+  /// Editable, per-goat "Monthly Palai Amount" entry. Each goat gets its
+  /// own card clearly labelled with its ID and reference Palai Price
+  /// (e.g. "GP-11 — Palai Price: ₹2,800"), plus its own editable amount
+  /// textbox. Changing one goat's amount only ever affects that goat's
+  /// row and the overall total — never another goat's amount.
+  Widget _buildGoatWisePalaiEntry() {
     if (_selectedGoats.isEmpty) return const SizedBox.shrink();
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text('Monthly Palai Amount (per goat)', style: AppTheme.body(size: 11, color: AppColors.textMuted)),
+        const SizedBox(height: 8),
+        for (final goat in _selectedGoats) ...[
+          _goatPalaiCard(goat),
+          const SizedBox(height: 8),
+        ],
+      ],
+    );
+  }
+
+  Widget _goatPalaiCard(PalaiGoat goat) {
+    final goatId = goat.goatCode.trim().isNotEmpty
+        ? goat.goatCode
+        : (goat.tagNumber.trim().isNotEmpty ? goat.tagNumber : goat.id);
+    final label = goat.name.trim().isNotEmpty ? goat.name : goatId;
+    final controller = _palaiControllerFor(goat);
 
     return Container(
       padding: const EdgeInsets.all(10),
@@ -1136,35 +1269,32 @@ class _CustomerGoatsProgressReportScreenState
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text('Palai Charges (goat-wise)', style: AppTheme.body(size: 11, color: AppColors.textMuted)),
-          const SizedBox(height: 6),
-          for (final goat in _selectedGoats)
-            Padding(
-              padding: const EdgeInsets.only(bottom: 4),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: Text(
-                      goat.name.trim().isNotEmpty
-                          ? goat.name
-                          : (goat.goatCode.trim().isNotEmpty ? goat.goatCode : goat.tagNumber),
-                      style: AppTheme.body(size: 12),
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  ),
-                  Text(_currency(goat.pricing), style: AppTheme.body(size: 12)),
-                ],
-              ),
+          // "GP-11 — Palai Price: ₹2,800"
+          Text.rich(
+            TextSpan(
+              children: [
+                TextSpan(text: label, style: AppTheme.heading(size: 13)),
+                TextSpan(
+                  text: '  •  Palai Price: ${_currency(goat.pricing)}',
+                  style: AppTheme.body(size: 11, color: AppColors.textMuted),
+                ),
+              ],
             ),
-          const Divider(height: 14),
-          Row(
-            children: [
-              Expanded(child: Text('Goat-wise Total', style: AppTheme.heading(size: 12))),
-              Text(
-                _currency(_palaiChargesTotal),
-                style: AppTheme.heading(size: 12).copyWith(color: AppColors.primaryGreen),
-              ),
-            ],
+          ),
+          const SizedBox(height: 8),
+          TextField(
+            controller: controller,
+            keyboardType: const TextInputType.numberWithOptions(decimal: true),
+            onChanged: (_) => setState(() {}),
+            style: AppTheme.heading(size: 13),
+            decoration: InputDecoration(
+              isDense: true,
+              labelText: 'Monthly Palai Amount',
+              labelStyle: AppTheme.body(size: 11, color: AppColors.textMuted),
+              prefixText: '₹ ',
+              contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+              border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+            ),
           ),
         ],
       ),
