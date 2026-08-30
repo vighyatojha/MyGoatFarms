@@ -1066,6 +1066,185 @@ class MonthlyBillingService {
   }
 
   // ===========================================================================
+  // UPDATE CURRENT-MONTH MONTHLY BILL (fix an existing bill in place)
+  // ===========================================================================
+  //
+  // createCurrentMonthMonthlyBill() refuses to run a second time for the
+  // same customer/month (it throws a StateError so a bill is never
+  // silently duplicated). That's correct, but it means a bill that was
+  // generated with a mistake in it — most commonly ₹0 Current Month
+  // Palai because the progress report's goat-wise fields weren't filled
+  // in yet — had no way to be corrected other than deleting Firestore
+  // data by hand.
+  //
+  // This method edits that SAME bill document instead of creating a new
+  // one:
+  //   - the bill's old advance contribution is restored to the
+  //     customer's advance balance before the new amount is re-applied,
+  //     so editing a bill never permanently drains advance twice.
+  //   - the customer's pendingAmount is adjusted by the difference
+  //     between the bill's old totalDue and its new totalDue, not
+  //     replaced outright, so it stays correct even if other bills
+  //     exist.
+  //   - amountPaid (any payment already recorded against this bill) is
+  //     preserved exactly; only remainingAmount/status are recomputed
+  //     against the corrected totalDue.
+  Future<MonthlyBill> updateCurrentMonthMonthlyBill({
+    required String farmId,
+    required String customerId,
+    required String billId,
+    required double palaiCharges,
+    required double currentOutstanding,
+    required double currentAdvance,
+    List<GoatBillingLine> goatBreakdown = const [],
+    int goatCount = 0,
+    String? notes,
+  }) async {
+    if (palaiCharges < 0) {
+      throw ArgumentError('Palai charges cannot be negative.');
+    }
+    if (currentOutstanding < 0) {
+      throw ArgumentError('Current Outstanding cannot be negative.');
+    }
+    if (currentAdvance < 0) {
+      throw ArgumentError('Current Advance cannot be negative.');
+    }
+
+    final customerRef = _customers(farmId).doc(customerId);
+    final billRef = _bills(farmId).doc(billId);
+    final activityRef = _activities(farmId).doc();
+
+    return _db.runTransaction<MonthlyBill>((transaction) async {
+      // ---------------------------------------------------------------
+      // READS FIRST
+      // ---------------------------------------------------------------
+
+      final customerSnapshot = await transaction.get(customerRef);
+      final billSnapshot = await transaction.get(billRef);
+
+      if (!customerSnapshot.exists) {
+        throw StateError('Customer no longer exists.');
+      }
+      if (!billSnapshot.exists) {
+        throw StateError('Monthly bill no longer exists.');
+      }
+
+      final customerData = customerSnapshot.data() ?? {};
+      final billData = billSnapshot.data() ?? {};
+
+      if (billData['type']?.toString() != 'monthly') {
+        throw StateError('This is not a monthly bill.');
+      }
+      if ((billData['customerId'] ?? '').toString() != customerId) {
+        throw StateError('This monthly bill does not belong to this customer.');
+      }
+
+      final currentBill = MonthlyBill.fromDoc(billSnapshot);
+
+      // ---------------------------------------------------------------
+      // RESTORE OLD ADVANCE CONTRIBUTION, THEN RE-APPLY
+      // ---------------------------------------------------------------
+
+      final oldAdvanceApplied = _doubleValue(billData['advanceApplied']);
+      final advanceBeforeEdit =
+          _doubleValue(customerData['advanceAmount']) + oldAdvanceApplied;
+
+      final totalBeforeAdvance = palaiCharges + currentOutstanding;
+
+      final advanceApplied = currentAdvance
+          .clamp(0, advanceBeforeEdit)
+          .clamp(0, totalBeforeAdvance)
+          .toDouble();
+
+      final totalDue =
+      (totalBeforeAdvance - advanceApplied).clamp(0, double.infinity).toDouble();
+
+      final advanceAfter =
+      (advanceBeforeEdit - advanceApplied).clamp(0, double.infinity).toDouble();
+
+      // ---------------------------------------------------------------
+      // AMOUNT PAID IS PRESERVED — only the remaining balance and
+      // status are recomputed against the corrected total.
+      // ---------------------------------------------------------------
+
+      final amountPaid = _doubleValue(billData['amountPaid']);
+      final remainingAmount =
+      (totalDue - amountPaid).clamp(0, double.infinity).toDouble();
+
+      final status = remainingAmount <= 0
+          ? MonthlyBillStatus.paid
+          : (amountPaid > 0 ? MonthlyBillStatus.partial : MonthlyBillStatus.unpaid);
+
+      // ---------------------------------------------------------------
+      // WRITE MONTHLY BILL (edit in place — same document)
+      // ---------------------------------------------------------------
+
+      transaction.update(billRef, {
+        'palaiCharges': palaiCharges,
+        'newCharges': palaiCharges,
+        'currentBillAmount': palaiCharges,
+        'previousOutstanding': currentOutstanding,
+        'advanceApplied': advanceApplied,
+        'totalDue': totalDue,
+        'remainingAmount': remainingAmount,
+        'pendingAfter': totalDue,
+        'status': MonthlyBill.statusToString(status),
+        'paymentStatus': MonthlyBill.statusToString(status),
+        'goatCount': goatCount,
+        'goatBreakdown': goatBreakdown.map((g) => g.toMap()).toList(),
+        if (notes != null) 'notes': notes.trim(),
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
+
+      // ---------------------------------------------------------------
+      // UPDATE CUSTOMER — adjust pendingAmount by the delta this bill
+      // makes, not by replacing it outright (other bills may exist).
+      // ---------------------------------------------------------------
+
+      final oldTotalDue = _doubleValue(billData['totalDue']);
+      final currentPending = _doubleValue(customerData['pendingAmount']);
+      final newPending =
+      (currentPending - oldTotalDue + totalDue).clamp(0, double.infinity).toDouble();
+
+      transaction.update(customerRef, {
+        'pendingAmount': newPending,
+        'advanceAmount': advanceAfter,
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
+
+      // ---------------------------------------------------------------
+      // ACTIVITY
+      // ---------------------------------------------------------------
+
+      transaction.set(activityRef, {
+        'type': 'monthlyBillUpdated',
+        'title': 'Monthly Bill Updated',
+        'subtitle':
+        '${currentBill.customerName} · ${currentBill.billingPeriodKey} · ₹${totalDue.toStringAsFixed(0)}',
+        'module': 'palai',
+        'customerId': customerId,
+        'billId': billId,
+        'billNumber': currentBill.billNumber,
+        'timestamp': FieldValue.serverTimestamp(),
+      });
+
+      return currentBill.copyWith(
+        palaiCharges: palaiCharges,
+        currentBillAmount: palaiCharges,
+        previousOutstanding: currentOutstanding,
+        advanceApplied: advanceApplied,
+        totalDue: totalDue,
+        amountPaid: amountPaid,
+        remainingAmount: remainingAmount,
+        status: status,
+        goatCount: goatCount,
+        goatBreakdown: goatBreakdown,
+        notes: notes?.trim() ?? currentBill.notes,
+      );
+    }).timeout(_timeout);
+  }
+
+  // ===========================================================================
 // RECEIVE MONTHLY BILL PAYMENT
 // ===========================================================================
 

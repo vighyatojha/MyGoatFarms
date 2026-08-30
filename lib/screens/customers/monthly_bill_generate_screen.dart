@@ -36,6 +36,22 @@ class MonthlyBillGenerateScreen extends StatefulWidget {
   final int goatCount;
   final double suggestedMonthlyAmount;
 
+  /// When set, this screen edits that EXISTING bill in place (via
+  /// [MonthlyBillingService.updateCurrentMonthMonthlyBill]) instead of
+  /// creating a new one — used to fix a bill that was generated with a
+  /// mistake in it (most commonly ₹0 Current Month Palai). The month
+  /// selector is locked to that bill's own billing month.
+  final String? editBillId;
+
+  /// True when this screen was opened as a redirect FROM the Customer
+  /// Goat Progress Report screen (e.g. to fill in or fix this month's
+  /// bill before/after generating a report), rather than opened
+  /// directly from the Monthly Bills list. Purely cosmetic: it swaps
+  /// the primary button's label to "Done" so the flow reads naturally
+  /// when the owner is being sent back to finish something, without
+  /// changing what the button actually does.
+  final bool cameFromProgressReport;
+
   const MonthlyBillGenerateScreen({
     super.key,
     required this.farmId,
@@ -43,6 +59,8 @@ class MonthlyBillGenerateScreen extends StatefulWidget {
     required this.customerName,
     this.goatCount = 0,
     this.suggestedMonthlyAmount = 0,
+    this.editBillId,
+    this.cameFromProgressReport = false,
   });
 
   @override
@@ -80,6 +98,14 @@ class _MonthlyBillGenerateScreenState
 
   bool _saving = false;
 
+  bool get _isEditing => widget.editBillId != null;
+
+  /// The bill being corrected, when [_isEditing]. Loaded once up front
+  /// so the month selector can be locked to it and every field can be
+  /// prefilled from its own saved snapshot rather than the customer's
+  /// live state.
+  MonthlyBill? _editingBill;
+
   @override
   void initState() {
     super.initState();
@@ -87,7 +113,11 @@ class _MonthlyBillGenerateScreenState
       widget.farmId,
       widget.customerId,
     );
-    _loadCurrentState();
+    if (_isEditing) {
+      _loadBillToEdit(widget.editBillId!);
+    } else {
+      _loadCurrentState();
+    }
   }
 
   @override
@@ -147,15 +177,87 @@ class _MonthlyBillGenerateScreenState
     }
   }
 
+  /// Loads the bill being fixed and prefills every field from ITS OWN
+  /// saved snapshot — never from the customer's current live state,
+  /// since that state has already moved on (it includes this bill's
+  /// effect). The month selector is locked to this bill's own month;
+  /// per-goat Palai controllers are seeded from its goatBreakdown so a
+  /// bill that shows ₹0 Palai across the board actually starts blank
+  /// rather than silently pulling in each goat's current registered
+  /// price as if that were what was billed.
+  Future<void> _loadBillToEdit(String billId) async {
+    setState(() {
+      _loadingCustomer = true;
+      _loadError = null;
+    });
+
+    try {
+      final bill = await _billingService.getMonthlyBill(
+        farmId: widget.farmId,
+        billId: billId,
+      );
+
+      if (bill == null) {
+        if (!mounted) return;
+        setState(() {
+          _loadingCustomer = false;
+          _loadError = 'This monthly bill could not be found.';
+        });
+        return;
+      }
+
+      final pastBills = await _billingService.getMonthlyBills(
+        farmId: widget.farmId,
+        customerId: widget.customerId,
+      );
+      final oldPaymentsTotal = pastBills
+          .where((b) => b.id != billId)
+          .fold<double>(0, (sum, b) => sum + b.amountPaid);
+
+      if (!mounted) return;
+      setState(() {
+        _editingBill = bill;
+        _selectedMonth = DateTime(bill.year, bill.month);
+        _outstandingController.text = bill.previousOutstanding.toStringAsFixed(2);
+        _advanceController.text = bill.advanceApplied.toStringAsFixed(2);
+        _notesController.text = bill.notes;
+        _oldPaymentsTotal = oldPaymentsTotal;
+        _loadingCustomer = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _loadingCustomer = false;
+        _loadError = 'Could not load this bill: $e';
+      });
+    }
+  }
+
   // ================================================================
   // PER-GOAT PALAI
   // ================================================================
 
   TextEditingController _palaiControllerFor(PalaiGoat goat) {
-    return _palaiControllers.putIfAbsent(
-      goat.id,
-          () => TextEditingController(text: goat.pricing.toStringAsFixed(2)),
-    );
+    return _palaiControllers.putIfAbsent(goat.id, () {
+      if (_isEditing) {
+        // Editing an existing bill: seed from what was actually billed
+        // for this goat, not its current registered price — a goat
+        // with no line in the saved breakdown starts at ₹0 rather than
+        // silently pulling in today's price for a past month.
+        final breakdown = _editingBill?.goatBreakdown ?? const [];
+        GoatBillingLine? savedLine;
+        for (final line in breakdown) {
+          if (line.goatId == goat.id) {
+            savedLine = line;
+            break;
+          }
+        }
+        return TextEditingController(
+          text: (savedLine?.palaiAmount ?? 0).toStringAsFixed(2),
+        );
+      }
+      return TextEditingController(text: goat.pricing.toStringAsFixed(2));
+    });
   }
 
   double _enteredPalai(PalaiGoat goat) {
@@ -216,7 +318,9 @@ class _MonthlyBillGenerateScreenState
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Generate Monthly Bill')),
+      appBar: AppBar(
+        title: Text(_isEditing ? 'Fix Monthly Bill' : 'Generate Monthly Bill'),
+      ),
       body: StreamBuilder<List<PalaiGoat>>(
         stream: _goatsStream,
         builder: (context, snapshot) {
@@ -285,8 +389,14 @@ class _MonthlyBillGenerateScreenState
                     height: 18,
                     child: CircularProgressIndicator(strokeWidth: 2),
                   )
-                      : const Icon(Icons.receipt_long),
-                  label: Text(_saving ? 'Generating...' : 'Generate Monthly Bill'),
+                      : Icon(widget.cameFromProgressReport
+                      ? Icons.check_circle_outline
+                      : Icons.receipt_long),
+                  label: Text(_saving
+                      ? (_isEditing ? 'Saving...' : 'Generating...')
+                      : (widget.cameFromProgressReport
+                      ? 'Done'
+                      : 'Generate Monthly Bill')),
                 ),
               ),
             ],
@@ -329,12 +439,18 @@ class _MonthlyBillGenerateScreenState
     final text = DateFormat('MMMM yyyy').format(_selectedMonth);
     return InkWell(
       borderRadius: BorderRadius.circular(10),
-      onTap: _selectMonth,
+      onTap: _isEditing ? null : _selectMonth,
       child: InputDecorator(
-        decoration: const InputDecoration(
+        decoration: InputDecoration(
           labelText: 'Billing Month',
-          prefixIcon: Icon(Icons.calendar_month),
-          border: OutlineInputBorder(),
+          prefixIcon: const Icon(Icons.calendar_month),
+          border: const OutlineInputBorder(),
+          suffixIcon: _isEditing
+              ? const Tooltip(
+            message: "A bill's month can't be changed once generated.",
+            child: Icon(Icons.lock_outline, size: 18),
+          )
+              : null,
         ),
         child: Text(text, style: const TextStyle(fontSize: 15)),
       ),
@@ -506,10 +622,8 @@ class _MonthlyBillGenerateScreenState
           label: 'Current Month Payment (optional)',
           icon: Icons.payments_outlined,
         ),
-        if (_currentMonthPayment > 0) ...[
-          const SizedBox(height: 10),
-          _paymentMethodDropdown(),
-        ],
+        const SizedBox(height: 10),
+        _paymentMethodDropdown(),
       ],
     );
   }
@@ -652,36 +766,56 @@ class _MonthlyBillGenerateScreenState
     setState(() => _saving = true);
 
     try {
-      final exists = await _billingService.monthlyBillExists(
-        farmId: widget.farmId,
-        customerId: widget.customerId,
-        year: _selectedMonth.year,
-        month: _selectedMonth.month,
-      );
+      final MonthlyBill bill;
 
-      if (exists) {
-        throw StateError(
-          'A monthly bill already exists for '
-              '${DateFormat('MMMM yyyy').format(_selectedMonth)}.',
+      if (_isEditing) {
+        // ---------------------------------------------------------
+        // EDIT — correct the same bill document in place. No
+        // duplicate-bill check needed since we're not creating one.
+        // ---------------------------------------------------------
+        bill = await _billingService.updateCurrentMonthMonthlyBill(
+          farmId: widget.farmId,
+          customerId: widget.customerId,
+          billId: widget.editBillId!,
+          palaiCharges: _palaiChargesTotal,
+          currentOutstanding: _currentOutstanding,
+          currentAdvance: _currentAdvance,
+          goatBreakdown: _goatBreakdown,
+          goatCount: _lastLoadedGoats.length,
+          notes: _notesController.text.trim(),
+        );
+      } else {
+        final exists = await _billingService.monthlyBillExists(
+          farmId: widget.farmId,
+          customerId: widget.customerId,
+          year: _selectedMonth.year,
+          month: _selectedMonth.month,
+        );
+
+        if (exists) {
+          throw StateError(
+            'A monthly bill already exists for '
+                '${DateFormat('MMMM yyyy').format(_selectedMonth)}.',
+          );
+        }
+
+        bill = await _billingService.createCurrentMonthMonthlyBill(
+          farmId: widget.farmId,
+          customerId: widget.customerId,
+          year: _selectedMonth.year,
+          month: _selectedMonth.month,
+          palaiCharges: _palaiChargesTotal,
+          currentOutstanding: _currentOutstanding,
+          currentAdvance: _currentAdvance,
+          goatBreakdown: _goatBreakdown,
+          goatCount: _lastLoadedGoats.length,
+          notes: _notesController.text.trim(),
         );
       }
 
-      final MonthlyBill bill = await _billingService.createCurrentMonthMonthlyBill(
-        farmId: widget.farmId,
-        customerId: widget.customerId,
-        year: _selectedMonth.year,
-        month: _selectedMonth.month,
-        palaiCharges: _palaiChargesTotal,
-        currentOutstanding: _currentOutstanding,
-        currentAdvance: _currentAdvance,
-        goatBreakdown: _goatBreakdown,
-        goatCount: _lastLoadedGoats.length,
-        notes: _notesController.text.trim(),
-      );
-
       // Current Month Payment, if any, is recorded as an ACTUAL payment
-      // against the bill just created — completely separate from Old
-      // Payments, and never folded into the calculation above.
+      // against the bill just created/updated — completely separate
+      // from Old Payments, and never folded into the calculation above.
       if (_currentMonthPayment > 0) {
         await _billingService.receiveMonthlyBillPayment(
           farmId: widget.farmId,
@@ -689,21 +823,27 @@ class _MonthlyBillGenerateScreenState
           billId: bill.id,
           paidAmount: _currentMonthPayment,
           paymentMethod: _paymentMethod,
-          note: 'Current month payment recorded at bill generation.',
+          note: _isEditing
+              ? 'Current month payment recorded while fixing this bill.'
+              : 'Current month payment recorded at bill generation.',
         );
       }
 
       if (!mounted) return;
 
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Monthly bill ${bill.billNumber} generated.')),
+        SnackBar(
+          content: Text(_isEditing
+              ? 'Monthly bill ${bill.billNumber} updated.'
+              : 'Monthly bill ${bill.billNumber} generated.'),
+        ),
       );
 
       Navigator.of(context).pop(bill);
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Unable to generate bill: $e')),
+        SnackBar(content: Text('Unable to ${_isEditing ? 'update' : 'generate'} bill: $e')),
       );
     } finally {
       if (mounted) setState(() => _saving = false);

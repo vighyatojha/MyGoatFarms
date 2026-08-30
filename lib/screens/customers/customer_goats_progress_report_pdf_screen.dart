@@ -12,6 +12,8 @@ import '../../services/customer_goats_progress_report_pdf_service.dart';
 import '../../services/firestore_service.dart';
 import '../../services/image_service.dart';
 import '../../services/monthly_billing_service.dart';
+import '../../widgets/fast_route.dart';
+import 'monthly_bill_generate_screen.dart';
 
 /// Lets the owner generate ONE consolidated Progress Report covering all
 /// (or a chosen subset of) the goats under a single Palai customer —
@@ -285,6 +287,43 @@ class _CustomerGoatsProgressReportScreenState
   String _monthlyBillId(String customerId, int year, int month) {
     final periodKey = '$year-${month.toString().padLeft(2, '0')}';
     return 'monthly_${customerId}_$periodKey';
+  }
+
+  /// Sends the owner to the goat-wise Monthly Billing screen to finish
+  /// or fix this month's bill, then refreshes this screen's billing
+  /// info when they come back — so if they fixed a ₹0-Palai bill there,
+  /// this screen (and the eventual PDF) picks up the corrected numbers
+  /// immediately instead of still showing the stale snapshot.
+  ///
+  /// - If a bill already exists for this month with ₹0 Current Month
+  ///   Palai, this opens it in EDIT mode (same bill document gets
+  ///   corrected in place).
+  /// - Otherwise it opens in CREATE mode for this month.
+  ///
+  /// Either way `cameFromProgressReport: true` is passed so that screen
+  /// shows "Done" instead of "Generate Monthly Bill" — the owner is
+  /// being sent there to finish something, not to start a fresh,
+  /// independent billing flow.
+  Future<void> _openMonthlyBillingToFix() async {
+    final now = DateTime.now();
+    final existing = _existingMonthlyBill;
+    final needsFix = existing != null && existing.palaiCharges <= 0;
+
+    await Navigator.of(context).push(
+      fastRoute(
+        MonthlyBillGenerateScreen(
+          farmId: widget.farmId,
+          customerId: widget.customer.id,
+          customerName: widget.customer.name,
+          goatCount: _selectedGoats.length,
+          editBillId: needsFix ? existing.id : null,
+          cameFromProgressReport: true,
+        ),
+      ),
+    );
+
+    if (!mounted) return;
+    await _loadBillingInfo();
   }
 
   Future<_PreviousInfo> _fetchPrevious(PalaiGoat goat) async {
@@ -1191,6 +1230,49 @@ class _CustomerGoatsProgressReportScreenState
                 _billingRow('Current Advance', '- ${_currency(existing.advanceApplied)}'),
                 const Divider(height: 20),
                 _billingRow('Current Amount Due', _currency(existing.totalDue), bold: true),
+                if (existing.palaiCharges <= 0) ...[
+                  const SizedBox(height: 12),
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(10),
+                    decoration: BoxDecoration(
+                      color: AppColors.warning.withOpacity(0.12),
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: AppColors.warning.withOpacity(0.4)),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Icon(Icons.warning_amber_rounded, size: 16, color: AppColors.warning),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Text(
+                                'This month\'s bill shows ₹0 Current Month Palai. Fix it in Monthly Billing before sharing this report.',
+                                style: AppTheme.body(size: 10.5, color: AppColors.textDark),
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 8),
+                        SizedBox(
+                          width: double.infinity,
+                          child: OutlinedButton.icon(
+                            onPressed: _openMonthlyBillingToFix,
+                            icon: const Icon(Icons.build_outlined, size: 16),
+                            label: const Text('Fix in Monthly Billing'),
+                            style: OutlinedButton.styleFrom(
+                              foregroundColor: AppColors.warning,
+                              side: const BorderSide(color: AppColors.warning),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
               ] else ...[
                 // ------------------------------------------------------
                 // NEW BILL — nothing has been saved to Firestore yet.
@@ -1224,6 +1306,14 @@ class _CustomerGoatsProgressReportScreenState
                 Text(
                   'This will be saved to the customer\'s profile the moment you generate this report.',
                   style: AppTheme.body(size: 10, color: AppColors.textMuted),
+                ),
+                const SizedBox(height: 10),
+                Center(
+                  child: TextButton.icon(
+                    onPressed: _openMonthlyBillingToFix,
+                    icon: const Icon(Icons.open_in_new, size: 15),
+                    label: const Text('Fill in Monthly Billing instead'),
+                  ),
                 ),
               ],
             ],

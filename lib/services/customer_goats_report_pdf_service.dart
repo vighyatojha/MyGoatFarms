@@ -8,6 +8,7 @@ import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
 
 import '../models/bill_settings_model.dart';
+import '../models/monthly_bill_model.dart';
 import '../models/palai_models.dart';
 
 /// Builds ONE consolidated PDF report covering every goat (or every
@@ -30,6 +31,7 @@ class CustomerGoatsReportPdfService {
     required PalaiCustomer customer,
     required List<PalaiGoat> goats,
     required BillSettings billSettings,
+    MonthlyBill? bill,
   }) async {
     // -------------------------------------------------------------------
     // Unicode font (so ₹ renders correctly instead of a broken glyph —
@@ -62,6 +64,10 @@ class CustomerGoatsReportPdfService {
           _buildGoatsTable(goats),
           pw.SizedBox(height: 18),
           _buildSummary(goats),
+          if (bill != null) ...[
+            pw.SizedBox(height: 18),
+            _buildBillingSummary(bill, goats),
+          ],
           pw.SizedBox(height: 22),
           _buildThankYou(billSettings),
         ],
@@ -75,11 +81,13 @@ class CustomerGoatsReportPdfService {
     required PalaiCustomer customer,
     required List<PalaiGoat> goats,
     required BillSettings billSettings,
+    MonthlyBill? bill,
   }) async {
     final bytes = await generatePdf(
       customer: customer,
       goats: goats,
       billSettings: billSettings,
+      bill: bill,
     );
 
     await Printing.layoutPdf(
@@ -92,11 +100,13 @@ class CustomerGoatsReportPdfService {
     required PalaiCustomer customer,
     required List<PalaiGoat> goats,
     required BillSettings billSettings,
+    MonthlyBill? bill,
   }) async {
     final bytes = await generatePdf(
       customer: customer,
       goats: goats,
       billSettings: billSettings,
+      bill: bill,
     );
 
     await Printing.sharePdf(
@@ -109,11 +119,13 @@ class CustomerGoatsReportPdfService {
     required PalaiCustomer customer,
     required List<PalaiGoat> goats,
     required BillSettings billSettings,
+    MonthlyBill? bill,
   }) async {
     final bytes = await generatePdf(
       customer: customer,
       goats: goats,
       billSettings: billSettings,
+      bill: bill,
     );
 
     final directory = await getApplicationDocumentsDirectory();
@@ -360,6 +372,142 @@ class CustomerGoatsReportPdfService {
           pw.Text(
             'Total Monthly Pricing: ${_currency(totalPricing)}',
             style: pw.TextStyle(fontSize: 10, fontWeight: pw.FontWeight.bold),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ===========================================================================
+  // BILLING SUMMARY (only rendered when a MonthlyBill is passed in)
+  // ===========================================================================
+
+  pw.Widget _buildBillingSummary(MonthlyBill bill, List<PalaiGoat> goats) {
+    return pw.Container(
+      width: double.infinity,
+      decoration: pw.BoxDecoration(
+        border: pw.Border.all(color: PdfColors.grey400, width: 0.8),
+        borderRadius: const pw.BorderRadius.all(pw.Radius.circular(6)),
+      ),
+      padding: const pw.EdgeInsets.all(12),
+      child: pw.Column(
+        crossAxisAlignment: pw.CrossAxisAlignment.start,
+        children: [
+          pw.Row(
+            mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+            children: [
+              pw.Text(
+                'BILLING SUMMARY — ${bill.monthYear}',
+                style: pw.TextStyle(fontSize: 11, fontWeight: pw.FontWeight.bold, color: PdfColors.green900),
+              ),
+              pw.Container(
+                padding: const pw.EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                decoration: pw.BoxDecoration(
+                  color: bill.isPaid
+                      ? PdfColors.green100
+                      : (bill.isPartiallyPaid ? PdfColors.orange100 : PdfColors.red100),
+                  borderRadius: const pw.BorderRadius.all(pw.Radius.circular(4)),
+                ),
+                child: pw.Text(
+                  bill.statusLabel,
+                  style: pw.TextStyle(
+                    fontSize: 7.5,
+                    fontWeight: pw.FontWeight.bold,
+                    color: bill.isPaid
+                        ? PdfColors.green900
+                        : (bill.isPartiallyPaid ? PdfColors.orange900 : PdfColors.red900),
+                  ),
+                ),
+              ),
+            ],
+          ),
+          pw.SizedBox(height: 8),
+          pw.Divider(color: PdfColors.grey300, height: 1),
+          pw.SizedBox(height: 8),
+
+          // Goat-wise Palai amounts — pulled from the bill's OWN saved
+          // snapshot (bill.goatBreakdown), i.e. exactly what was typed
+          // for each goat that month. Falls back to each goat's
+          // registered price only for older bills saved before this
+          // breakdown existed.
+          if (bill.goatBreakdown.isNotEmpty) ...[
+            pw.Text(
+              'Current Month Palai (goat-wise)',
+              style: pw.TextStyle(fontSize: 8.5, fontWeight: pw.FontWeight.bold, color: PdfColors.grey800),
+            ),
+            pw.SizedBox(height: 3),
+            for (final line in bill.goatBreakdown)
+              _billRow(line.label, _currency(line.palaiAmount), small: true),
+            pw.SizedBox(height: 3),
+            pw.Divider(color: PdfColors.grey300, height: 1),
+            pw.SizedBox(height: 6),
+          ] else if (goats.isNotEmpty) ...[
+            pw.Text(
+              'Current Month Palai (goat-wise)',
+              style: pw.TextStyle(fontSize: 8.5, fontWeight: pw.FontWeight.bold, color: PdfColors.grey800),
+            ),
+            pw.SizedBox(height: 3),
+            for (final goat in goats)
+              _billRow(
+                goat.name.trim().isNotEmpty
+                    ? goat.name
+                    : (goat.goatCode.trim().isNotEmpty ? goat.goatCode : goat.tagNumber),
+                _currency(goat.pricing),
+                small: true,
+              ),
+            pw.SizedBox(height: 3),
+            pw.Divider(color: PdfColors.grey300, height: 1),
+            pw.SizedBox(height: 6),
+          ],
+
+          // Three separate, current-state numbers — never reconstructed
+          // from old bills or payment history:
+          //   Current Month Palai + Current Outstanding − Current Advance
+          //   = Current Amount Due
+          _billRow('Current Month Palai', _currency(bill.palaiCharges)),
+          _billRow('Current Outstanding', _currency(bill.previousOutstanding)),
+          if (bill.advanceApplied > 0)
+            _billRow('Current Advance', '- ${_currency(bill.advanceApplied)}'),
+          pw.SizedBox(height: 3),
+          pw.Divider(color: PdfColors.grey300, height: 1),
+          pw.SizedBox(height: 3),
+          _billRow('Current Amount Due', _currency(bill.totalDue), emphasize: true),
+          pw.SizedBox(height: 3),
+          pw.Text(
+            'Current Month Calculation Only — previous monthly payments and historical transactions are not included above.',
+            style: const pw.TextStyle(fontSize: 6.5, color: PdfColors.grey600, fontStyle: pw.FontStyle.italic),
+          ),
+          pw.SizedBox(height: 6),
+          pw.Text(
+            'Bill No: ${bill.billNumber}',
+            style: const pw.TextStyle(fontSize: 7, color: PdfColors.grey600),
+          ),
+        ],
+      ),
+    );
+  }
+
+  pw.Widget _billRow(String label, String value, {bool emphasize = false, bool small = false}) {
+    return pw.Padding(
+      padding: const pw.EdgeInsets.only(bottom: 5),
+      child: pw.Row(
+        mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+        children: [
+          pw.Text(
+            label,
+            style: pw.TextStyle(
+              fontSize: emphasize ? 9.5 : (small ? 8 : 8.5),
+              fontWeight: emphasize ? pw.FontWeight.bold : pw.FontWeight.normal,
+              color: emphasize ? PdfColors.black : PdfColors.grey700,
+            ),
+          ),
+          pw.Text(
+            value,
+            style: pw.TextStyle(
+              fontSize: emphasize ? 10.5 : (small ? 8.5 : 9),
+              fontWeight: small ? pw.FontWeight.normal : pw.FontWeight.bold,
+              color: emphasize ? PdfColors.green900 : PdfColors.black,
+            ),
           ),
         ],
       ),
