@@ -141,6 +141,18 @@ class _GoatFinalReportTabState extends State<GoatFinalReportTab> {
     final vaccinations = _healthRecords.where((r) => r.vaccination.trim().isNotEmpty).length;
     final pendingForGoat = (_totalPalaiAllTime - _totalPaidAllTime).clamp(0, double.infinity).toDouble();
 
+    // ------------------------------------------------------------
+    // GAIN IN LAST 3 MONTHS — same rule as the Weight & Progress tab:
+    // current weight vs. whichever weigh-in is closest to (but not
+    // after) 90 days ago, falling back to the arrival weight if every
+    // record is younger than that.
+    // ------------------------------------------------------------
+    final cutoff = DateTime.now().subtract(const Duration(days: 90));
+    final recordsAtOrBeforeCutoff = _healthRecords.where((r) => !r.recordedAt.isAfter(cutoff)).toList()
+      ..sort((a, b) => b.recordedAt.compareTo(a.recordedAt));
+    final threeMonthBaselineWeight = recordsAtOrBeforeCutoff.isNotEmpty ? recordsAtOrBeforeCutoff.first.weight : goat.weightAtCheckIn;
+    final gainLast3Months = finalWeight - threeMonthBaselineWeight;
+
     return ListView(
       padding: const EdgeInsets.fromLTRB(14, 12, 14, 24),
       children: [
@@ -154,6 +166,7 @@ class _GoatFinalReportTabState extends State<GoatFinalReportTab> {
           ('Arrival Weight', '${goat.weightAtCheckIn.toStringAsFixed(1)} kg'),
           (goat.isCheckedOut ? 'Final Weight' : 'Current Weight', '${finalWeight.toStringAsFixed(1)} kg'),
           ('Total Weight Gain', '${totalGain >= 0 ? '+' : ''}${totalGain.toStringAsFixed(1)} kg'),
+          ('Gain (Last 3 Months)', '${gainLast3Months >= 0 ? '+' : ''}${gainLast3Months.toStringAsFixed(1)} kg'),
         ]),
         const SizedBox(height: 12),
         _sectionCard('Health', [

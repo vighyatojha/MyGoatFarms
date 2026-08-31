@@ -59,6 +59,20 @@ class _GoatPhotosGrowthTabState extends State<GoatPhotosGrowthTab> {
     );
   }
 
+  Future<void> _openPhotoViewer(_TimelineEntry entry) async {
+    await Navigator.of(context).push(
+      PageRouteBuilder<void>(
+        opaque: false,
+        barrierColor: Colors.black,
+        pageBuilder: (_, __, ___) => _PhotoZoomView(
+          bytes: entry.bytes,
+          title: entry.label,
+          subtitle: DateFormat('d MMM yyyy').format(entry.date),
+        ),
+      ),
+    );
+  }
+
   Future<void> _addPhoto() async {
     final weightController = TextEditingController(
       text: (widget.goat.currentWeight ?? widget.goat.weightAtCheckIn).toStringAsFixed(1),
@@ -224,15 +238,18 @@ class _GoatPhotosGrowthTabState extends State<GoatPhotosGrowthTab> {
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          ClipRRect(
-            borderRadius: BorderRadius.circular(10),
-            child: entry.bytes.isNotEmpty
-                ? Image.memory(entry.bytes, width: 84, height: 84, fit: BoxFit.cover)
-                : Container(
-              width: 84,
-              height: 84,
-              color: AppColors.lightGreen,
-              child: const Icon(Icons.image_not_supported_outlined, color: AppColors.textMuted),
+          GestureDetector(
+            onTap: entry.bytes.isNotEmpty ? () => _openPhotoViewer(entry) : null,
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(10),
+              child: entry.bytes.isNotEmpty
+                  ? Image.memory(entry.bytes, width: 84, height: 84, fit: BoxFit.cover)
+                  : Container(
+                width: 84,
+                height: 84,
+                color: AppColors.lightGreen,
+                child: const Icon(Icons.image_not_supported_outlined, color: AppColors.textMuted),
+              ),
             ),
           ),
           const SizedBox(width: 12),
@@ -278,6 +295,103 @@ class _GoatPhotosGrowthTabState extends State<GoatPhotosGrowthTab> {
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+/// Full-screen photo viewer with pinch-to-zoom and double-tap-to-zoom,
+/// opened when a Photos & Growth timeline entry is tapped. Dark
+/// backdrop, tap-outside-the-image or the close button to dismiss.
+class _PhotoZoomView extends StatefulWidget {
+  final Uint8List bytes;
+  final String title;
+  final String subtitle;
+
+  const _PhotoZoomView({
+    required this.bytes,
+    required this.title,
+    required this.subtitle,
+  });
+
+  @override
+  State<_PhotoZoomView> createState() => _PhotoZoomViewState();
+}
+
+class _PhotoZoomViewState extends State<_PhotoZoomView> {
+  final TransformationController _transformationController = TransformationController();
+  TapDownDetails? _doubleTapDetails;
+
+  @override
+  void dispose() {
+    _transformationController.dispose();
+    super.dispose();
+  }
+
+  void _handleDoubleTap() {
+    final position = _doubleTapDetails?.localPosition;
+    if (position == null) return;
+
+    if (_transformationController.value != Matrix4.identity()) {
+      _transformationController.value = Matrix4.identity();
+    } else {
+      _transformationController.value = Matrix4.identity()
+        ..translate(-position.dx * 1.5, -position.dy * 1.5)
+        ..scale(2.5);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Colors.black,
+      body: SafeArea(
+        child: Stack(
+          children: [
+            Positioned.fill(
+              child: GestureDetector(
+                onDoubleTapDown: (details) => _doubleTapDetails = details,
+                onDoubleTap: _handleDoubleTap,
+                child: InteractiveViewer(
+                  transformationController: _transformationController,
+                  minScale: 1,
+                  maxScale: 5,
+                  child: Center(
+                    child: Image.memory(widget.bytes, fit: BoxFit.contain),
+                  ),
+                ),
+              ),
+            ),
+            Positioned(
+              top: 6,
+              left: 6,
+              right: 6,
+              child: Row(
+                children: [
+                  IconButton(
+                    icon: const Icon(Icons.close, color: Colors.white, size: 26),
+                    onPressed: () => Navigator.of(context).pop(),
+                  ),
+                  Expanded(
+                    child: Column(
+                      children: [
+                        Text(
+                          widget.title,
+                          style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600, fontSize: 14),
+                        ),
+                        Text(
+                          widget.subtitle,
+                          style: const TextStyle(color: Colors.white70, fontSize: 11.5),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(width: 42),
+                ],
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

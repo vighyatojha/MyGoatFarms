@@ -541,6 +541,17 @@ class _CustomerProfileScreenState
                 _buildSectionHeader(
                   title: 'Goats',
                   icon: Icons.pets,
+                  trailing: (goatSnapshot.hasData && goats.isNotEmpty)
+                      ? TextButton.icon(
+                    onPressed: _openRegisterGoat,
+                    icon: const Icon(Icons.add, size: 18),
+                    label: const Text('Add Goat'),
+                    style: TextButton.styleFrom(
+                      foregroundColor: AppColors.primaryGreen,
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                    ),
+                  )
+                      : null,
                 ),
 
                 const SizedBox(height: 12),
@@ -748,6 +759,7 @@ class _CustomerProfileScreenState
   Widget _buildSectionHeader({
     required String title,
     required IconData icon,
+    Widget? trailing,
   }) {
     return Row(
       children: [
@@ -767,12 +779,16 @@ class _CustomerProfileScreenState
 
         const SizedBox(width: 10),
 
-        Text(
-          title,
-          style: AppTheme.heading(
-            size: 17,
+        Expanded(
+          child: Text(
+            title,
+            style: AppTheme.heading(
+              size: 17,
+            ),
           ),
         ),
+
+        if (trailing != null) trailing,
       ],
     );
   }

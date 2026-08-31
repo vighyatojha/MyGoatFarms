@@ -91,6 +91,23 @@ class _GoatMonthlyReportsTabState extends State<GoatMonthlyReportsTab> {
       final farm = await FirestoreService.instance.getFarmById(widget.farmId);
       final billSettings = farm?.billSettings ?? const BillSettings();
 
+      // Same rule as the fresh-generation flow: current weight vs.
+      // whichever weigh-in is closest to (but not after) 90 days before
+      // today, from the goat's full weight history.
+      final allHealthRecords = await FirestoreService.instance
+          .healthRecordsStream(widget.farmId, widget.customerId, widget.goat.id)
+          .first;
+      final threeMonthCutoff = DateTime.now().subtract(const Duration(days: 90));
+      final recordsAtOrBeforeThreeMonthCutoff = allHealthRecords
+          .where((r) => !r.recordedAt.isAfter(threeMonthCutoff))
+          .toList()
+        ..sort((a, b) => b.recordedAt.compareTo(a.recordedAt));
+      final threeMonthBaselineWeight = recordsAtOrBeforeThreeMonthCutoff.isNotEmpty
+          ? recordsAtOrBeforeThreeMonthCutoff.first.weight
+          : widget.goat.weightAtCheckIn;
+      final currentWeightForGain = widget.goat.currentWeight ?? widget.goat.weightAtCheckIn;
+      final gainLast3Months = allHealthRecords.isNotEmpty ? currentWeightForGain - threeMonthBaselineWeight : null;
+
       final startImage = report.images.isNotEmpty ? report.images.first : null;
       final endImage = report.images.length > 1 ? report.images[1] : startImage;
 
@@ -114,6 +131,7 @@ class _GoatMonthlyReportsTabState extends State<GoatMonthlyReportsTab> {
         monthlyPalaiLines: monthlyPalaiLines,
         currentOutstanding: customer?.pendingAmount ?? 0,
         currentAdvance: customer?.advanceAmount ?? 0,
+        gainLast3Months: gainLast3Months,
       );
 
       await IndividualGoatReportPdfService.instance.preview(data: data, billSettings: billSettings);

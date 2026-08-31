@@ -106,6 +106,18 @@ class _GoatWeightProgressTabState extends State<GoatWeightProgressTab> {
     final months = last.date.difference(first.date).inDays / 30.0;
     final avgMonthlyGain = months > 0.5 ? totalGain / months : null;
 
+    // ------------------------------------------------------------
+    // GAIN IN LAST 3 MONTHS — compares the current weight against
+    // whatever weigh-in is closest to (but not after) 90 days ago.
+    // If every record is younger than 90 days, falls back to the
+    // earliest record so this still shows a real gain rather than
+    // going blank for a goat that's been here less than 3 months.
+    // ------------------------------------------------------------
+    final cutoff = DateTime.now().subtract(const Duration(days: 90));
+    final atOrBeforeCutoff = chain.where((e) => !e.date.isAfter(cutoff)).toList();
+    final threeMonthBaseline = atOrBeforeCutoff.isNotEmpty ? atOrBeforeCutoff.last : first;
+    final gainLast3Months = chain.length > 1 ? last.weight - threeMonthBaseline.weight : null;
+
     return ListView(
       padding: const EdgeInsets.fromLTRB(14, 12, 14, 24),
       children: [
@@ -114,32 +126,26 @@ class _GoatWeightProgressTabState extends State<GoatWeightProgressTab> {
           padding: const EdgeInsets.all(12),
           child: Row(
             children: [
+              Expanded(child: _summaryStat('Total Gain', totalGain, isKg: true)),
+              Container(width: 1, height: 30, color: AppColors.divider),
+              const SizedBox(width: 10),
               Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text('Total Gain', style: AppTheme.body(size: 10.5, color: AppColors.textMuted)),
-                    const SizedBox(height: 2),
-                    Text(
-                      '${totalGain >= 0 ? '+' : ''}${totalGain.toStringAsFixed(1)} kg',
-                      style: AppTheme.heading(size: 16).copyWith(color: totalGain >= 0 ? AppColors.success : AppColors.error),
-                    ),
-                  ],
+                child: _summaryStat(
+                  'Gain (3 mo)',
+                  gainLast3Months,
+                  isKg: true,
+                  fallback: 'Not enough data',
                 ),
               ),
               Container(width: 1, height: 30, color: AppColors.divider),
-              const SizedBox(width: 14),
+              const SizedBox(width: 10),
               Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text('Avg Monthly Gain', style: AppTheme.body(size: 10.5, color: AppColors.textMuted)),
-                    const SizedBox(height: 2),
-                    Text(
-                      avgMonthlyGain != null ? '${avgMonthlyGain >= 0 ? '+' : ''}${avgMonthlyGain.toStringAsFixed(2)} kg' : 'Not enough data',
-                      style: AppTheme.heading(size: 16),
-                    ),
-                  ],
+                child: _summaryStat(
+                  'Avg Monthly',
+                  avgMonthlyGain,
+                  isKg: true,
+                  decimals: 2,
+                  fallback: 'Not enough data',
                 ),
               ),
             ],
@@ -149,6 +155,26 @@ class _GoatWeightProgressTabState extends State<GoatWeightProgressTab> {
         Text('Weight Chain (${chain.length} record${chain.length == 1 ? '' : 's'})', style: AppTheme.heading(size: 13)),
         const SizedBox(height: 8),
         for (int i = 0; i < chain.length; i++) _chainTile(chain[i], i > 0 ? chain[i - 1] : null, isLast: i == chain.length - 1),
+      ],
+    );
+  }
+
+  Widget _summaryStat(String label, double? value, {bool isKg = false, int decimals = 1, String fallback = '-'}) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(label, style: AppTheme.body(size: 10, color: AppColors.textMuted)),
+        const SizedBox(height: 2),
+        Text(
+          value != null
+              ? '${value >= 0 ? '+' : ''}${value.toStringAsFixed(decimals)}${isKg ? ' kg' : ''}'
+              : fallback,
+          style: AppTheme.heading(size: 14).copyWith(
+            color: value == null
+                ? AppColors.textDark
+                : (value >= 0 ? AppColors.success : AppColors.error),
+          ),
+        ),
       ],
     );
   }

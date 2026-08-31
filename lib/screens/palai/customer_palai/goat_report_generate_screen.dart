@@ -248,6 +248,25 @@ class _GoatReportGenerateScreenState extends State<GoatReportGenerateScreen> {
       final farm = await FirestoreService.instance.getFarmById(farmId);
       final billSettings = farm?.billSettings ?? const BillSettings();
 
+      // ------------------------------------------------------------
+      // GAIN (LAST 3 MONTHS) — current weight vs. whichever weigh-in
+      // is closest to (but not after) 90 days before today. Computed
+      // from the goat's FULL weight history (allHealthRecords), not
+      // just what falls inside this report's own date range — this is
+      // a standing fact about the goat, independent of which period
+      // the owner happened to pick for this particular report.
+      // ------------------------------------------------------------
+      final threeMonthCutoff = DateTime.now().subtract(const Duration(days: 90));
+      final recordsAtOrBeforeThreeMonthCutoff = allHealthRecords
+          .where((r) => !r.recordedAt.isAfter(threeMonthCutoff))
+          .toList()
+        ..sort((a, b) => b.recordedAt.compareTo(a.recordedAt));
+      final threeMonthBaselineWeight = recordsAtOrBeforeThreeMonthCutoff.isNotEmpty
+          ? recordsAtOrBeforeThreeMonthCutoff.first.weight
+          : widget.goat.weightAtCheckIn;
+      final currentWeightForGain = widget.goat.currentWeight ?? widget.goat.weightAtCheckIn;
+      final gainLast3Months = allHealthRecords.isNotEmpty ? currentWeightForGain - threeMonthBaselineWeight : null;
+
       final data = IndividualGoatReportData(
         goat: widget.goat,
         customerName: widget.customerName,
@@ -266,6 +285,7 @@ class _GoatReportGenerateScreenState extends State<GoatReportGenerateScreen> {
         monthlyPalaiLines: monthlyPalaiLines,
         currentOutstanding: currentOutstanding,
         currentAdvance: currentAdvance,
+        gainLast3Months: gainLast3Months,
       );
 
       if (share) {

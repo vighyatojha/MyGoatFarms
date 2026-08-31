@@ -59,6 +59,15 @@ class IndividualGoatReportData {
   final double currentOutstanding;
   final double currentAdvance;
 
+  /// Current weight vs. whichever weigh-in is closest to (but not
+  /// after) 90 days before today — computed once at generation time
+  /// from the goat's FULL weight history (not just what falls inside
+  /// this report's own date range), since "last 3 months" is a
+  /// standing fact about the goat, not something scoped to whatever
+  /// period this particular report covers. Null only if there isn't
+  /// enough weight history yet to compute it.
+  final double? gainLast3Months;
+
   const IndividualGoatReportData({
     required this.goat,
     required this.customerName,
@@ -77,6 +86,7 @@ class IndividualGoatReportData {
     required this.monthlyPalaiLines,
     required this.currentOutstanding,
     required this.currentAdvance,
+    this.gainLast3Months,
   });
 
   double get totalPalaiInPeriod =>
@@ -118,6 +128,8 @@ class IndividualGoatReportPdfService {
         footer: (context) => _buildPageFooter(context),
         build: (context) => [
           _buildGoatCard(data),
+          pw.SizedBox(height: 14),
+          _buildPhotoComparison(data),
           pw.SizedBox(height: 14),
           _buildGrowthTimeline(data),
           pw.SizedBox(height: 14),
@@ -247,11 +259,9 @@ class IndividualGoatReportPdfService {
           pw.Row(
             crossAxisAlignment: pw.CrossAxisAlignment.start,
             children: [
-              pw.Expanded(flex: 24, child: _identityColumn(goat)),
-              pw.SizedBox(width: 8),
-              pw.Expanded(flex: 34, child: _photosRow(data)),
-              pw.SizedBox(width: 8),
-              pw.Expanded(flex: 32, child: _weightBox(data)),
+              pw.Expanded(flex: 55, child: _identityColumn(goat)),
+              pw.SizedBox(width: 10),
+              pw.Expanded(flex: 45, child: _weightBox(data)),
             ],
           ),
         ],
@@ -286,73 +296,92 @@ class IndividualGoatReportPdfService {
     );
   }
 
-  pw.Widget _photosRow(IndividualGoatReportData data) {
-    return pw.Row(
-      crossAxisAlignment: pw.CrossAxisAlignment.center,
-      children: [
-        pw.Expanded(
-          child: _photoBlock(
-            title: _formatDate(data.startDate).toUpperCase(),
-            caption: data.startPhotoLabel,
-            bytes: data.startPhotoBytes,
+  // ===========================================================================
+  // BIG PHOTO COMPARISON — previous month vs current month, full width
+  // ===========================================================================
+
+  pw.Widget _buildPhotoComparison(IndividualGoatReportData data) {
+    return pw.Container(
+      width: double.infinity,
+      padding: const pw.EdgeInsets.all(10),
+      decoration: pw.BoxDecoration(
+        border: pw.Border.all(color: PdfColors.grey400, width: 0.8),
+        borderRadius: const pw.BorderRadius.all(pw.Radius.circular(6)),
+      ),
+      child: pw.Column(
+        crossAxisAlignment: pw.CrossAxisAlignment.start,
+        children: [
+          pw.Text('PHOTO COMPARISON', style: pw.TextStyle(fontSize: 9.5, fontWeight: pw.FontWeight.bold, color: PdfColors.green900)),
+          pw.SizedBox(height: 8),
+          pw.Row(
+            crossAxisAlignment: pw.CrossAxisAlignment.center,
+            children: [
+              pw.Expanded(
+                child: _bigPhotoBlock(
+                  title: _formatDate(data.startDate).toUpperCase(),
+                  caption: data.startPhotoLabel,
+                  bytes: data.startPhotoBytes,
+                ),
+              ),
+              pw.Container(padding: const pw.EdgeInsets.symmetric(horizontal: 8), child: _arrowIcon()),
+              pw.Expanded(
+                child: _bigPhotoBlock(
+                  title: _formatDate(data.endDate).toUpperCase(),
+                  caption: data.endPhotoLabel,
+                  bytes: data.endPhotoBytes,
+                ),
+              ),
+            ],
           ),
-        ),
-        pw.Container(padding: const pw.EdgeInsets.symmetric(horizontal: 4), child: _arrowIcon()),
-        pw.Expanded(
-          child: _photoBlock(
-            title: _formatDate(data.endDate).toUpperCase(),
-            caption: data.endPhotoLabel,
-            bytes: data.endPhotoBytes,
-          ),
-        ),
-      ],
+        ],
+      ),
     );
   }
 
   pw.Widget _arrowIcon() {
     return pw.SizedBox(
-      width: 16,
-      height: 16,
+      width: 20,
+      height: 20,
       child: pw.CustomPaint(
-        size: const PdfPoint(16, 16),
+        size: const PdfPoint(20, 20),
         painter: (PdfGraphics canvas, PdfPoint size) {
           final midY = size.y / 2;
           canvas
             ..setColor(PdfColors.green700)
-            ..moveTo(1, midY - 3)
-            ..lineTo(size.x - 7, midY - 3)
-            ..lineTo(size.x - 7, midY - 6)
+            ..moveTo(1, midY - 4)
+            ..lineTo(size.x - 8, midY - 4)
+            ..lineTo(size.x - 8, midY - 7)
             ..lineTo(size.x - 1, midY)
-            ..lineTo(size.x - 7, midY + 6)
-            ..lineTo(size.x - 7, midY + 3)
-            ..lineTo(1, midY + 3)
-            ..lineTo(1, midY - 3)
+            ..lineTo(size.x - 8, midY + 7)
+            ..lineTo(size.x - 8, midY + 4)
+            ..lineTo(1, midY + 4)
+            ..lineTo(1, midY - 4)
             ..fillPath();
         },
       ),
     );
   }
 
-  pw.Widget _photoBlock({required String title, required String caption, required Uint8List bytes}) {
+  pw.Widget _bigPhotoBlock({required String title, required String caption, required Uint8List bytes}) {
     return pw.Column(
       children: [
-        pw.Text(title, style: pw.TextStyle(fontSize: 6.5, fontWeight: pw.FontWeight.bold, color: PdfColors.grey700), textAlign: pw.TextAlign.center),
-        pw.SizedBox(height: 3),
+        pw.Text(title, style: pw.TextStyle(fontSize: 8, fontWeight: pw.FontWeight.bold, color: PdfColors.grey700), textAlign: pw.TextAlign.center),
+        pw.SizedBox(height: 4),
         pw.ClipRRect(
-          horizontalRadius: 5,
-          verticalRadius: 5,
+          horizontalRadius: 6,
+          verticalRadius: 6,
           child: bytes.isNotEmpty
-              ? pw.Image(pw.MemoryImage(bytes), width: 92, height: 92, fit: pw.BoxFit.cover)
+              ? pw.Image(pw.MemoryImage(bytes), width: 220, height: 220, fit: pw.BoxFit.cover)
               : pw.Container(
-            width: 92,
-            height: 92,
+            width: 220,
+            height: 220,
             color: PdfColors.grey200,
             alignment: pw.Alignment.center,
-            child: pw.Text('No Photo', style: const pw.TextStyle(fontSize: 6, color: PdfColors.grey600)),
+            child: pw.Text('No Photo', style: const pw.TextStyle(fontSize: 8, color: PdfColors.grey600)),
           ),
         ),
-        pw.SizedBox(height: 3),
-        pw.Text(caption, style: const pw.TextStyle(fontSize: 6, color: PdfColors.grey600), textAlign: pw.TextAlign.center),
+        pw.SizedBox(height: 4),
+        pw.Text(caption, style: const pw.TextStyle(fontSize: 7.5, color: PdfColors.grey600), textAlign: pw.TextAlign.center),
       ],
     );
   }
@@ -375,6 +404,12 @@ class IndividualGoatReportPdfService {
             gain != null ? '${gain >= 0 ? '+' : ''}${gain.toStringAsFixed(1)} kg' : '-',
             valueColor: gain == null ? PdfColors.grey800 : (gain >= 0 ? PdfColors.green700 : PdfColors.red700),
           ),
+          if (data.gainLast3Months != null)
+            _statRow(
+              'Gain (Last 3 Months)',
+              '${data.gainLast3Months! >= 0 ? '+' : ''}${data.gainLast3Months!.toStringAsFixed(1)} kg',
+              valueColor: data.gainLast3Months! >= 0 ? PdfColors.green700 : PdfColors.red700,
+            ),
         ],
       ),
     );
