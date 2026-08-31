@@ -10,6 +10,7 @@ import 'check_in_screen.dart';
 import 'multi_goat_checkout_screen.dart';
 import 'generate_report_screen.dart';
 import 'health_records_screen.dart';
+import 'customer_palai/goat_profile_screen.dart';
 
 /// Lists every goat currently boarded in Palai.
 ///
@@ -920,6 +921,30 @@ class _GoatListScreenState extends State<GoatListScreen> {
     );
   }
 
+  /// Opens the new unified Goat Profile screen — this SUPERSEDES
+  /// [_openGoatActionSheet] below, which fragmented a goat's lifecycle
+  /// across three disconnected destinations (Health & Care / Monthly
+  /// Report / Final Report & Check-Out). Every one of those is now a
+  /// tab inside one screen scoped to this goat.
+  void _openGoatProfile(PalaiGoat goat) {
+    final farmId = _farmId;
+    if (farmId == null) return;
+
+    Navigator.of(context).push(
+      fastRoute(
+        GoatProfileScreen(
+          farmId: farmId,
+          goat: goat,
+        ),
+      ),
+    );
+  }
+
+  /// Superseded by [_openGoatProfile] — kept only as an interim
+  /// fallback path (Health & Care / Monthly Report / Final Report &
+  /// Check-Out) if it's ever needed while the new Goat Profile tabs
+  /// (Photos & Growth, Weight & Progress, Monthly Reports, Payment,
+  /// Final Report, Checkout) are still being built out.
   Future<void> _openGoatActionSheet(
       PalaiGoat goat,
       ) async {
@@ -1240,7 +1265,7 @@ class _GoatListScreenState extends State<GoatListScreen> {
       color: Colors.transparent,
       child: InkWell(
         borderRadius: BorderRadius.circular(18),
-        onTap: () => _openGoatActionSheet(goat),
+        onTap: () => _openGoatProfile(goat),
         child: Container(
           width: double.infinity,
           decoration: AppTheme.card(radius: 18),

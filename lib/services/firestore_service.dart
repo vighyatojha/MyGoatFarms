@@ -1472,6 +1472,38 @@ class FirestoreService {
     return ref.id;
   }
 
+  /// Edits a goat's registration-time details in place — the "Edit Goat
+  /// Details" screen deliberately only touches the same fields the
+  /// Register Goat screen collects (identity, arrival weight, health
+  /// status, package/pricing, arrival date, before-Palai photo, notes).
+  /// It never touches checkInDate, checkOutDate, status, isCheckedOut,
+  /// currentWeight (driven by Health Updates), or report state — those
+  /// belong to other flows (check-in, checkout, health tracking,
+  /// report generation) and editing basic details shouldn't disturb
+  /// any of them.
+  Future<void> updateGoatDetails(
+      String farmId,
+      String customerId,
+      String goatId,
+      PalaiGoat updated,
+      ) async {
+    await _goats(farmId, customerId).doc(goatId).update({
+      'goatCode': updated.goatCode,
+      'breed': updated.breed,
+      'gender': updated.gender,
+      'color': updated.color,
+      'weightAtCheckIn': updated.weightAtCheckIn,
+      'healthStatus': updated.healthStatus,
+      'farmArrivalDate': updated.farmArrivalDate != null ? Timestamp.fromDate(updated.farmArrivalDate!) : null,
+      'monthlyPackage': updated.monthlyPackage,
+      'pricing': updated.pricing,
+      'notes': updated.notes,
+      if (updated.beforeImage != null) 'beforeImage': Blob(updated.beforeImage!),
+      if (updated.beforeImageContentType != null) 'beforeImageContentType': updated.beforeImageContentType,
+      'updatedAt': FieldValue.serverTimestamp(),
+    }).timeout(timeout);
+  }
+
   /// Self-healing repair step for `allActiveGoatsStream`'s collection-group
   /// query. That query (and the security rule guarding it) only matches
   /// goat documents that have `farmId` denormalized onto them — any goat
@@ -1547,6 +1579,80 @@ class FirestoreService {
       'currentWeight': entry.weight,
       'healthStatus': entry.healthStatus,
     });
+  }
+
+  /// Edits an EXISTING health record in place (Health History's "Edit"
+  /// action) rather than appending a new one — used for correcting a
+  /// mistake in an entry that's already been saved. [entry.id] must be
+  /// the ID of the record being edited; [entry.recordedAt] is preserved
+  /// as originally entered (this is a correction, not a new visit), and
+  /// `updatedAt` is stamped so the history can show it was edited.
+  ///
+  /// If this happens to be the MOST RECENT record for the goat, the
+  /// goat's live `currentWeight`/`healthStatus` are refreshed too, since
+  /// those mirror whichever record is latest.
+  Future<void> updateHealthRecord(
+      String farmId,
+      String customerId,
+      String goatId,
+      HealthRecordEntry entry,
+      ) async {
+    final recordRef = _goats(farmId, customerId)
+        .doc(goatId)
+        .collection('healthRecords')
+        .doc(entry.id);
+
+    final updated = entry.copyWith(updatedAt: DateTime.now());
+    await recordRef.update(updated.toMap());
+
+    final latestSnap = await _goats(farmId, customerId)
+        .doc(goatId)
+        .collection('healthRecords')
+        .orderBy('recordedAt', descending: true)
+        .limit(1)
+        .get()
+        .timeout(timeout);
+
+    if (latestSnap.docs.isNotEmpty && latestSnap.docs.first.id == entry.id) {
+      await _goats(farmId, customerId).doc(goatId).update({
+        'currentWeight': updated.weight,
+        'healthStatus': updated.healthStatus,
+      });
+    }
+  }
+
+  /// Removes a health record entirely. If the removed record was the
+  /// goat's most recent one, the goat's live `currentWeight`/
+  /// `healthStatus` fall back to whatever is now the latest remaining
+  /// record (or are left untouched if none remain).
+  Future<void> deleteHealthRecord(
+      String farmId,
+      String customerId,
+      String goatId,
+      String recordId,
+      ) async {
+    await _goats(farmId, customerId)
+        .doc(goatId)
+        .collection('healthRecords')
+        .doc(recordId)
+        .delete()
+        .timeout(timeout);
+
+    final latestSnap = await _goats(farmId, customerId)
+        .doc(goatId)
+        .collection('healthRecords')
+        .orderBy('recordedAt', descending: true)
+        .limit(1)
+        .get()
+        .timeout(timeout);
+
+    if (latestSnap.docs.isNotEmpty) {
+      final latest = HealthRecordEntry.fromDoc(latestSnap.docs.first);
+      await _goats(farmId, customerId).doc(goatId).update({
+        'currentWeight': latest.weight,
+        'healthStatus': latest.healthStatus,
+      });
+    }
   }
 
   Stream<List<HealthRecordEntry>> healthRecordsStream(

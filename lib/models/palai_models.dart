@@ -1226,6 +1226,45 @@ class HealthRecordEntry {
   final String healthStatus;
   final String doctorNotes;
 
+  // --------------------------------------------------------------------
+  // RICHER HEALTH-UPDATE FIELDS (new Health section)
+  //
+  // These are additive — every record written before this change simply
+  // reads back with empty/null values for these fields, so nothing
+  // existing breaks. [medicineGiven] and [doctorNotes] above are reused
+  // as the "Medicine" and "Notes" fields in the new form rather than
+  // duplicated.
+  // --------------------------------------------------------------------
+
+  /// Free-text symptoms observed at the time of this update (e.g.
+  /// "Slight limp, reduced appetite"). Empty when nothing was noted.
+  final String symptoms;
+
+  /// e.g. "Good", "Normal", "Poor" — a quick one-word read on how much
+  /// the goat has been eating.
+  final String appetite;
+
+  /// e.g. "Normal", "Lethargic", "Active" — a quick one-word read on
+  /// the goat's activity level.
+  final String activity;
+
+  /// Body temperature in °F, as a free-text field (e.g. "101.5") since
+  /// it's often recorded as "Normal" rather than a precise number.
+  final String temperature;
+
+  /// The disease or problem identified, if any (e.g. "Foot rot").
+  /// Empty when the goat is healthy / nothing was found.
+  final String diseaseOrProblem;
+
+  /// Treatment given or planned, separate from [medicineGiven] so a
+  /// record can note "Isolated and kept warm" even when no medicine
+  /// was administered.
+  final String treatment;
+
+  /// When this goat should next be checked, so the Health tab can
+  /// surface a reminder. Null when no follow-up was scheduled.
+  final DateTime? nextCheckDate;
+
   /// Optional photo taken at the time of this checkup (e.g. a visible
   /// wound, condition, or general appearance). Stored as a Firestore
   /// Blob, same approach as [MonthlyPhoto] — no Firebase Storage needed.
@@ -1233,6 +1272,11 @@ class HealthRecordEntry {
   final String imageContentType;
 
   final DateTime recordedAt;
+
+  /// Set only once this record has been edited after creation — lets
+  /// the Health History timeline show an "edited" indicator instead of
+  /// silently rewriting history.
+  final DateTime? updatedAt;
 
   HealthRecordEntry({
     required this.id,
@@ -1243,9 +1287,17 @@ class HealthRecordEntry {
     required this.medicineGiven,
     required this.healthStatus,
     required this.doctorNotes,
+    this.symptoms = '',
+    this.appetite = '',
+    this.activity = '',
+    this.temperature = '',
+    this.diseaseOrProblem = '',
+    this.treatment = '',
+    this.nextCheckDate,
     this.image,
     this.imageContentType = 'image/jpeg',
     required this.recordedAt,
+    this.updatedAt,
   });
 
   factory HealthRecordEntry.fromDoc(
@@ -1280,6 +1332,27 @@ class HealthRecordEntry {
       doctorNotes:
       data['doctorNotes']?.toString() ?? '',
 
+      symptoms:
+      data['symptoms']?.toString() ?? '',
+
+      appetite:
+      data['appetite']?.toString() ?? '',
+
+      activity:
+      data['activity']?.toString() ?? '',
+
+      temperature:
+      data['temperature']?.toString() ?? '',
+
+      diseaseOrProblem:
+      data['diseaseOrProblem']?.toString() ?? '',
+
+      treatment:
+      data['treatment']?.toString() ?? '',
+
+      nextCheckDate:
+      (data['nextCheckDate'] as Timestamp?)?.toDate(),
+
       image:
       imageField is Blob ? imageField.bytes : null,
 
@@ -1289,6 +1362,9 @@ class HealthRecordEntry {
       recordedAt:
       (data['recordedAt'] as Timestamp?)?.toDate() ??
           DateTime.now(),
+
+      updatedAt:
+      (data['updatedAt'] as Timestamp?)?.toDate(),
     );
   }
 
@@ -1301,11 +1377,61 @@ class HealthRecordEntry {
       'medicineGiven': medicineGiven,
       'healthStatus': healthStatus,
       'doctorNotes': doctorNotes,
+      'symptoms': symptoms,
+      'appetite': appetite,
+      'activity': activity,
+      'temperature': temperature,
+      'diseaseOrProblem': diseaseOrProblem,
+      'treatment': treatment,
+      if (nextCheckDate != null) 'nextCheckDate': Timestamp.fromDate(nextCheckDate!),
       if (image != null) 'image': Blob(image!),
       'imageContentType': imageContentType,
       'recordedAt':
       Timestamp.fromDate(recordedAt),
+      if (updatedAt != null) 'updatedAt': Timestamp.fromDate(updatedAt!),
     };
+  }
+
+  HealthRecordEntry copyWith({
+    double? weight,
+    String? vaccination,
+    String? deworming,
+    String? hoofCutting,
+    String? medicineGiven,
+    String? healthStatus,
+    String? doctorNotes,
+    String? symptoms,
+    String? appetite,
+    String? activity,
+    String? temperature,
+    String? diseaseOrProblem,
+    String? treatment,
+    DateTime? nextCheckDate,
+    Uint8List? image,
+    String? imageContentType,
+    DateTime? updatedAt,
+  }) {
+    return HealthRecordEntry(
+      id: id,
+      weight: weight ?? this.weight,
+      vaccination: vaccination ?? this.vaccination,
+      deworming: deworming ?? this.deworming,
+      hoofCutting: hoofCutting ?? this.hoofCutting,
+      medicineGiven: medicineGiven ?? this.medicineGiven,
+      healthStatus: healthStatus ?? this.healthStatus,
+      doctorNotes: doctorNotes ?? this.doctorNotes,
+      symptoms: symptoms ?? this.symptoms,
+      appetite: appetite ?? this.appetite,
+      activity: activity ?? this.activity,
+      temperature: temperature ?? this.temperature,
+      diseaseOrProblem: diseaseOrProblem ?? this.diseaseOrProblem,
+      treatment: treatment ?? this.treatment,
+      nextCheckDate: nextCheckDate ?? this.nextCheckDate,
+      image: image ?? this.image,
+      imageContentType: imageContentType ?? this.imageContentType,
+      recordedAt: recordedAt,
+      updatedAt: updatedAt ?? this.updatedAt,
+    );
   }
 }
 
