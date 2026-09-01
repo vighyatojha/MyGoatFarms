@@ -4,7 +4,7 @@
     <uses-permission android:name="android.permission.CAMERA"/>
     <uses-feature android:name="android.hardware.camera" android:required="false"/>
     <application
-        android:label="mygoatfarms"
+        android:label="My Goat Farms"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
         <activity

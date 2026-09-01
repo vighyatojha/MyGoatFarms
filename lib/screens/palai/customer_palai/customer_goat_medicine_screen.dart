@@ -3,13 +3,16 @@ import 'package:flutter/material.dart';
 
 import '../../../models/medicine_record.dart';
 import '../../../models/palai_models.dart';
+import 'add_medicine_screen.dart';
 
 class CustomerGoatMedicineScreen extends StatefulWidget {
+  final String farmId;
   final String customerId;
   final PalaiGoat goat;
 
   const CustomerGoatMedicineScreen({
     super.key,
+    required this.farmId,
     required this.customerId,
     required this.goat,
   });
@@ -27,6 +30,8 @@ class _CustomerGoatMedicineScreenState
   CollectionReference<Map<String, dynamic>>
   get _medicineCollection {
     return _firestore
+        .collection('farms')
+        .doc(widget.farmId)
         .collection('palaiCustomers')
         .doc(widget.customerId)
         .collection('goats')
@@ -46,207 +51,80 @@ class _CustomerGoatMedicineScreenState
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('Medicine Records'),
-      ),
-      body: StreamBuilder<
-          QuerySnapshot<Map<String, dynamic>>>(
-        stream: _medicineStream(),
-        builder: (context, snapshot) {
-          if (snapshot.hasError) {
-            return _buildErrorState(
-              context,
-              snapshot.error,
-            );
-          }
+    return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+      stream: _medicineStream(),
+      builder: (context, snapshot) {
+        if (snapshot.hasError) {
+          return _buildErrorState(context, snapshot.error);
+        }
 
-          if (snapshot.connectionState ==
-              ConnectionState.waiting) {
-            return const Center(
-              child: CircularProgressIndicator(),
-            );
-          }
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return const Center(child: CircularProgressIndicator());
+        }
 
-          final records = snapshot.data?.docs
-              .map(
-                (doc) =>
-                MedicineRecord.fromDoc(doc),
-          )
-              .toList() ??
-              <MedicineRecord>[];
+        final records = snapshot.data?.docs
+            .map((doc) => MedicineRecord.fromDoc(doc))
+            .toList() ??
+            <MedicineRecord>[];
 
-          return RefreshIndicator(
-            onRefresh: _refresh,
-            child: CustomScrollView(
-              physics:
-              const AlwaysScrollableScrollPhysics(),
-              slivers: [
-                SliverPadding(
-                  padding: const EdgeInsets.fromLTRB(
-                    16,
-                    16,
-                    16,
-                    100,
-                  ),
-                  sliver: SliverList(
-                    delegate: SliverChildListDelegate([
-                      _buildGoatHeader(context),
-                      const SizedBox(height: 20),
-                      _buildSummary(
-                        context,
-                        records,
-                      ),
-                      const SizedBox(height: 28),
-                      _buildHistoryHeader(
-                        context,
-                        records.length,
-                      ),
-                      const SizedBox(height: 12),
-                      if (records.isEmpty)
-                        _buildEmptyState(context)
-                      else
-                        ...records.map(
-                              (record) => Padding(
-                            padding:
-                            const EdgeInsets.only(
-                              bottom: 10,
-                            ),
-                            child:
-                            _buildMedicineCard(
-                              context,
-                              record,
-                            ),
-                          ),
+        return RefreshIndicator(
+          onRefresh: _refresh,
+          child: CustomScrollView(
+            physics: const AlwaysScrollableScrollPhysics(),
+            slivers: [
+              SliverPadding(
+                padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
+                sliver: SliverList(
+                  delegate: SliverChildListDelegate([
+                    _buildSectionHeader(),
+                    const SizedBox(height: 12),
+                    _buildSummary(context, records),
+                    const SizedBox(height: 28),
+                    _buildHistoryHeader(context, records.length),
+                    const SizedBox(height: 12),
+                    if (records.isEmpty)
+                      _buildEmptyState(context)
+                    else
+                      ...records.map(
+                            (record) => Padding(
+                          padding: const EdgeInsets.only(bottom: 10),
+                          child: _buildMedicineCard(context, record),
                         ),
-                    ]),
-                  ),
+                      ),
+                  ]),
                 ),
-              ],
-            ),
-          );
-        },
-      ),
-      floatingActionButton:
-      FloatingActionButton.extended(
-        onPressed:
-        _showAddMedicineDialog,
-        icon: const Icon(
-          Icons.medication_outlined,
-        ),
-        label: const Text(
-          'Add Medicine',
-        ),
-      ),
-    );
-  }
-
-  // ===========================================================================
-  // GOAT HEADER
-  // ===========================================================================
-
-  Widget _buildGoatHeader(
-      BuildContext context,
-      ) {
-    final theme = Theme.of(context);
-    final colors = theme.colorScheme;
-
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Row(
-          children: [
-            _buildGoatAvatar(context),
-            const SizedBox(width: 14),
-            Expanded(
-              child: Column(
-                crossAxisAlignment:
-                CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    widget.goat.name.trim().isEmpty
-                        ? 'Unnamed Goat'
-                        : widget.goat.name,
-                    maxLines: 1,
-                    overflow:
-                    TextOverflow.ellipsis,
-                    style: theme
-                        .textTheme
-                        .titleLarge
-                        ?.copyWith(
-                      fontWeight:
-                      FontWeight.w800,
-                    ),
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    widget.goat.tagNumber.trim().isEmpty
-                        ? 'No tag number'
-                        : 'Tag: ${widget.goat.tagNumber}',
-                    style: theme
-                        .textTheme
-                        .bodyMedium
-                        ?.copyWith(
-                      color: colors
-                          .onSurfaceVariant,
-                    ),
-                  ),
-                ],
               ),
-            ),
-          ],
-        ),
-      ),
+            ],
+          ),
+        );
+      },
     );
   }
 
-  Widget _buildGoatAvatar(
-      BuildContext context,
-      ) {
-    final imageUrl =
-    widget.goat.imageUrl?.trim();
+  // ===========================================================================
+  // SECTION HEADER — inline "Add Medicine" action (matches the
+  // Health tab pattern; no FAB, since this is embedded tab content).
+  // ===========================================================================
 
-    if (imageUrl != null &&
-        imageUrl.isNotEmpty) {
-      return ClipRRect(
-        borderRadius:
-        BorderRadius.circular(14),
-        child: Image.network(
-          imageUrl,
-          width: 62,
-          height: 62,
-          fit: BoxFit.cover,
-          errorBuilder:
-              (_, __, ___) =>
-              _defaultAvatar(context),
+  Widget _buildSectionHeader() {
+    return Row(
+      children: [
+        const Expanded(
+          child: Text(
+            'Medicine Records',
+            style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700),
+          ),
         ),
-      );
-    }
-
-    return _defaultAvatar(context);
-  }
-
-  Widget _defaultAvatar(
-      BuildContext context,
-      ) {
-    final colors =
-        Theme.of(context).colorScheme;
-
-    return Container(
-      width: 62,
-      height: 62,
-      decoration: BoxDecoration(
-        borderRadius:
-        BorderRadius.circular(14),
-        color: colors
-            .surfaceContainerHighest,
-      ),
-      child: Icon(
-        Icons.pets_outlined,
-        size: 30,
-        color: colors
-            .onSurfaceVariant,
-      ),
+        OutlinedButton.icon(
+          onPressed: _openAddMedicineScreen,
+          icon: const Icon(Icons.add, size: 15),
+          label: const Text('Add Medicine'),
+          style: OutlinedButton.styleFrom(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+            textStyle: const TextStyle(fontSize: 11.5),
+          ),
+        ),
+      ],
     );
   }
 
@@ -623,7 +501,7 @@ class _CustomerGoatMedicineScreenState
             const SizedBox(height: 18),
             FilledButton.icon(
               onPressed:
-              _showAddMedicineDialog,
+              _openAddMedicineScreen,
               icon: const Icon(
                 Icons.add,
               ),
@@ -637,426 +515,6 @@ class _CustomerGoatMedicineScreenState
     );
   }
 
-  // ===========================================================================
-  // ADD MEDICINE
-  // ===========================================================================
-
-  Future<void> _showAddMedicineDialog() async {
-    final medicineController =
-    TextEditingController();
-
-    final dosageController =
-    TextEditingController();
-
-    final frequencyController =
-    TextEditingController();
-
-    final durationController =
-    TextEditingController();
-
-    final reasonController =
-    TextEditingController();
-
-    final administeredByController =
-    TextEditingController();
-
-    final veterinarianController =
-    TextEditingController();
-
-    final noteController =
-    TextEditingController();
-
-    DateTime treatmentDate =
-    DateTime.now();
-
-    if (!mounted) {
-      _disposeControllers([
-        medicineController,
-        dosageController,
-        frequencyController,
-        durationController,
-        reasonController,
-        administeredByController,
-        veterinarianController,
-        noteController,
-      ]);
-      return;
-    }
-
-    await showDialog<void>(
-      context: context,
-      builder: (dialogContext) {
-        bool saving = false;
-
-        return StatefulBuilder(
-          builder: (
-              context,
-              setDialogState,
-              ) {
-            return AlertDialog(
-              title: const Text(
-                'Add Medicine',
-              ),
-              content: SizedBox(
-                width: 520,
-                child: SingleChildScrollView(
-                  child: Column(
-                    mainAxisSize:
-                    MainAxisSize.min,
-                    children: [
-                      _textField(
-                        controller:
-                        medicineController,
-                        label:
-                        'Medicine / treatment name',
-                        hint:
-                        'e.g. Deworming medicine',
-                        required: true,
-                        icon: Icons
-                            .medication_outlined,
-                      ),
-                      const SizedBox(
-                        height: 12,
-                      ),
-                      _dateField(
-                        context,
-                        label:
-                        'Treatment date',
-                        date:
-                        treatmentDate,
-                        onTap: () async {
-                          final picked =
-                          await showDatePicker(
-                            context:
-                            context,
-                            initialDate:
-                            treatmentDate,
-                            firstDate:
-                            DateTime(
-                              2000,
-                            ),
-                            lastDate:
-                            DateTime.now(),
-                          );
-
-                          if (picked !=
-                              null) {
-                            setDialogState(
-                                  () {
-                                treatmentDate =
-                                    picked;
-                              },
-                            );
-                          }
-                        },
-                      ),
-                      const SizedBox(
-                        height: 12,
-                      ),
-                      _textField(
-                        controller:
-                        dosageController,
-                        label: 'Dosage',
-                        hint:
-                        'e.g. 5 ml',
-                        icon: Icons
-                            .science_outlined,
-                      ),
-                      const SizedBox(
-                        height: 12,
-                      ),
-                      _textField(
-                        controller:
-                        frequencyController,
-                        label: 'Frequency',
-                        hint:
-                        'e.g. Once daily',
-                        icon: Icons
-                            .schedule_outlined,
-                      ),
-                      const SizedBox(
-                        height: 12,
-                      ),
-                      _textField(
-                        controller:
-                        durationController,
-                        label:
-                        'Duration (days)',
-                        hint:
-                        'e.g. 5',
-                        keyboardType:
-                        TextInputType.number,
-                        icon: Icons
-                            .calendar_view_day_outlined,
-                      ),
-                      const SizedBox(
-                        height: 12,
-                      ),
-                      _textField(
-                        controller:
-                        reasonController,
-                        label: 'Reason',
-                        hint:
-                        'Why was this medicine given?',
-                        icon: Icons
-                            .help_outline,
-                      ),
-                      const SizedBox(
-                        height: 12,
-                      ),
-                      _textField(
-                        controller:
-                        administeredByController,
-                        label:
-                        'Administered by',
-                        hint:
-                        'Person who gave the medicine',
-                        icon: Icons
-                            .person_outline,
-                      ),
-                      const SizedBox(
-                        height: 12,
-                      ),
-                      _textField(
-                        controller:
-                        veterinarianController,
-                        label:
-                        'Veterinarian',
-                        hint:
-                        'Optional',
-                        icon: Icons
-                            .medical_information_outlined,
-                      ),
-                      const SizedBox(
-                        height: 12,
-                      ),
-                      TextField(
-                        controller:
-                        noteController,
-                        maxLines: 3,
-                        textCapitalization:
-                        TextCapitalization
-                            .sentences,
-                        decoration:
-                        const InputDecoration(
-                          labelText:
-                          'Notes',
-                          hintText:
-                          'Additional treatment information',
-                          border:
-                          OutlineInputBorder(),
-                          prefixIcon:
-                          Icon(
-                            Icons
-                                .notes_outlined,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-              actions: [
-                TextButton(
-                  onPressed: saving
-                      ? null
-                      : () {
-                    Navigator.pop(
-                      dialogContext,
-                    );
-                  },
-                  child:
-                  const Text('Cancel'),
-                ),
-                FilledButton(
-                  onPressed: saving
-                      ? null
-                      : () async {
-                    final medicineName =
-                    medicineController
-                        .text
-                        .trim();
-
-                    if (medicineName
-                        .isEmpty) {
-                      _showError(
-                        context,
-                        'Please enter the medicine or treatment name.',
-                      );
-                      return;
-                    }
-
-                    final durationText =
-                    durationController
-                        .text
-                        .trim();
-
-                    final durationDays =
-                    durationText
-                        .isEmpty
-                        ? null
-                        : int.tryParse(
-                      durationText,
-                    );
-
-                    if (durationText
-                        .isNotEmpty &&
-                        durationDays ==
-                            null) {
-                      _showError(
-                        context,
-                        'Duration must be a valid number of days.',
-                      );
-                      return;
-                    }
-
-                    if (durationDays !=
-                        null &&
-                        durationDays <=
-                            0) {
-                      _showError(
-                        context,
-                        'Duration must be greater than zero.',
-                      );
-                      return;
-                    }
-
-                    setDialogState(
-                          () {
-                        saving = true;
-                      },
-                    );
-
-                    try {
-                      await _saveMedicineRecord(
-                        treatmentDate:
-                        treatmentDate,
-                        medicineName:
-                        medicineName,
-                        dosage:
-                        dosageController
-                            .text
-                            .trim(),
-                        frequency:
-                        frequencyController
-                            .text
-                            .trim(),
-                        durationDays:
-                        durationDays,
-                        reason:
-                        reasonController
-                            .text
-                            .trim(),
-                        administeredBy:
-                        administeredByController
-                            .text
-                            .trim(),
-                        veterinarian:
-                        veterinarianController
-                            .text
-                            .trim(),
-                        note:
-                        noteController
-                            .text
-                            .trim(),
-                      );
-
-                      if (!context
-                          .mounted) {
-                        return;
-                      }
-
-                      Navigator.pop(
-                        dialogContext,
-                      );
-
-                      _showSuccess(
-                        'Medicine record saved successfully.',
-                      );
-                    } catch (error) {
-                      setDialogState(
-                            () {
-                          saving = false;
-                        },
-                      );
-
-                      _showError(
-                        context,
-                        _friendlyError(
-                          error,
-                        ),
-                      );
-                    }
-                  },
-                  child: saving
-                      ? const SizedBox(
-                    width: 20,
-                    height: 20,
-                    child:
-                    CircularProgressIndicator(
-                      strokeWidth: 2,
-                    ),
-                  )
-                      : const Text(
-                    'Save Medicine',
-                  ),
-                ),
-              ],
-            );
-          },
-        );
-      },
-    );
-
-    _disposeControllers([
-      medicineController,
-      dosageController,
-      frequencyController,
-      durationController,
-      reasonController,
-      administeredByController,
-      veterinarianController,
-      noteController,
-    ]);
-  }
-
-  // ===========================================================================
-  // SAVE
-  // ===========================================================================
-
-  Future<void> _saveMedicineRecord({
-    required DateTime treatmentDate,
-    required String medicineName,
-    required String dosage,
-    required String frequency,
-    required int? durationDays,
-    required String reason,
-    required String administeredBy,
-    required String veterinarian,
-    required String note,
-  }) async {
-    final reference =
-    _medicineCollection.doc();
-
-    final record = MedicineRecord(
-      id: reference.id,
-      goatId: widget.goat.id,
-      treatmentDate: treatmentDate,
-      medicineName: medicineName,
-      dosage: dosage,
-      frequency: frequency,
-      durationDays: durationDays,
-      reason: reason,
-      administeredBy: administeredBy,
-      veterinarian: veterinarian,
-      note: note,
-      recordedAt: DateTime.now(),
-    );
-
-    await reference.set(
-      record.toCreateMap(),
-    );
-  }
 
   // ===========================================================================
   // DETAILS
@@ -1274,46 +732,6 @@ class _CustomerGoatMedicineScreenState
   }
 
   // ===========================================================================
-  // DATE FIELD
-  // ===========================================================================
-
-  Widget _dateField(
-      BuildContext context, {
-        required String label,
-        required DateTime date,
-        required VoidCallback onTap,
-      }) {
-    return InkWell(
-      borderRadius:
-      BorderRadius.circular(12),
-      onTap: onTap,
-      child: InputDecorator(
-        decoration:
-        const InputDecoration(
-          labelText: 'Treatment date',
-          border:
-          OutlineInputBorder(),
-        ),
-        child: Row(
-          children: [
-            const Icon(
-              Icons
-                  .calendar_today_outlined,
-              size: 20,
-            ),
-            const SizedBox(width: 10),
-            Expanded(
-              child: Text(
-                _formatDate(date),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  // ===========================================================================
   // REFRESH
   // ===========================================================================
 
@@ -1467,6 +885,18 @@ class _CustomerGoatMedicineScreenState
               ),
             ),
           ],
+        ),
+      ),
+    );
+  }
+
+  void _openAddMedicineScreen() {
+    Navigator.of(context).push(
+      MaterialPageRoute<bool>(
+        builder: (_) => AddMedicineScreen(
+          farmId: widget.farmId,
+          customerId: widget.customerId,
+          goat: widget.goat,
         ),
       ),
     );

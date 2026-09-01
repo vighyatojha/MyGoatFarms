@@ -1450,6 +1450,31 @@ class FirestoreService {
     );
   }
 
+  /// Every active (not checked out) goat across the whole farm whose
+  /// `nextHealthCheckDate` is due today or already overdue — the
+  /// farm-wide version of the Health tab's reminder banner, so a due
+  /// reminder is visible WITHOUT needing to open every goat one at a
+  /// time. Relies on `nextHealthCheckDate` being denormalized onto the
+  /// goat document (see addHealthRecord/updateHealthRecord/
+  /// deleteHealthRecord), same reasoning as `allActiveGoatsStream`
+  /// relying on the denormalized `farmId`.
+  ///
+  /// Sorted oldest-due-first so the most overdue goat surfaces at the
+  /// top of whatever list consumes this.
+  Stream<List<PalaiGoat>> dueHealthReminderGoatsStream(String farmId) {
+    final endOfToday = DateTime.now();
+    final cutoff = DateTime(endOfToday.year, endOfToday.month, endOfToday.day, 23, 59, 59);
+
+    return _db
+        .collectionGroup('goats')
+        .where('farmId', isEqualTo: farmId)
+        .where('isCheckedOut', isEqualTo: false)
+        .where('nextHealthCheckDate', isLessThanOrEqualTo: Timestamp.fromDate(cutoff))
+        .orderBy('nextHealthCheckDate')
+        .snapshots()
+        .map((snapshot) => snapshot.docs.map(PalaiGoat.fromDoc).toList());
+  }
+
   Stream<List<PalaiGoat>> goatsForCustomerStream(String farmId, String customerId) {
     return _goats(farmId, customerId)
         .orderBy('checkInDate', descending: true)
@@ -1571,13 +1596,15 @@ class FirestoreService {
         .doc(goatId)
         .collection('healthRecords')
         .add(entry.toMap());
-    // Reflect the latest weight and health status directly on the goat
-    // document too, so the goat list badge / filters (which read
-    // PalaiGoat.healthStatus, not the health-records subcollection)
+    // Reflect the latest weight, health status, and scheduled next
+    // check date directly on the goat document too, so the goat list
+    // badge/filters and the farm-wide health-reminder query (which
+    // read PalaiGoat fields, not the health-records subcollection)
     // immediately show this update.
     await _goats(farmId, customerId).doc(goatId).update({
       'currentWeight': entry.weight,
       'healthStatus': entry.healthStatus,
+      'nextHealthCheckDate': entry.nextCheckDate != null ? Timestamp.fromDate(entry.nextCheckDate!) : null,
     });
   }
 
@@ -1589,8 +1616,8 @@ class FirestoreService {
   /// `updatedAt` is stamped so the history can show it was edited.
   ///
   /// If this happens to be the MOST RECENT record for the goat, the
-  /// goat's live `currentWeight`/`healthStatus` are refreshed too, since
-  /// those mirror whichever record is latest.
+  /// goat's live `currentWeight`/`healthStatus`/`nextHealthCheckDate`
+  /// are refreshed too, since those mirror whichever record is latest.
   Future<void> updateHealthRecord(
       String farmId,
       String customerId,
@@ -1617,14 +1644,15 @@ class FirestoreService {
       await _goats(farmId, customerId).doc(goatId).update({
         'currentWeight': updated.weight,
         'healthStatus': updated.healthStatus,
+        'nextHealthCheckDate': updated.nextCheckDate != null ? Timestamp.fromDate(updated.nextCheckDate!) : null,
       });
     }
   }
 
   /// Removes a health record entirely. If the removed record was the
   /// goat's most recent one, the goat's live `currentWeight`/
-  /// `healthStatus` fall back to whatever is now the latest remaining
-  /// record (or are left untouched if none remain).
+  /// `healthStatus`/`nextHealthCheckDate` fall back to whatever is now
+  /// the latest remaining record (or are cleared if none remain).
   Future<void> deleteHealthRecord(
       String farmId,
       String customerId,
@@ -1651,6 +1679,13 @@ class FirestoreService {
       await _goats(farmId, customerId).doc(goatId).update({
         'currentWeight': latest.weight,
         'healthStatus': latest.healthStatus,
+        'nextHealthCheckDate': latest.nextCheckDate != null ? Timestamp.fromDate(latest.nextCheckDate!) : null,
+      });
+    } else {
+      // No health records left at all — clear the reminder rather
+      // than leaving a stale date pointing at a now-deleted record.
+      await _goats(farmId, customerId).doc(goatId).update({
+        'nextHealthCheckDate': null,
       });
     }
   }

@@ -11,6 +11,7 @@ import 'multi_goat_checkout_screen.dart';
 import 'generate_report_screen.dart';
 import 'health_records_screen.dart';
 import 'customer_palai/goat_profile_screen.dart';
+import 'health_reminders_screen.dart';
 
 /// Lists every goat currently boarded in Palai.
 ///
@@ -374,6 +375,8 @@ class _GoatListScreenState extends State<GoatListScreen> {
       children: [
         _summaryHeader(_goats),
 
+        if (_farmId != null) _healthRemindersBanner(_farmId!),
+
         _filterChips(),
 
         _searchBar(),
@@ -721,6 +724,62 @@ class _GoatListScreenState extends State<GoatListScreen> {
           ),
         ],
       ),
+    );
+  }
+
+  /// A live count of goats across the farm with a health check due
+  /// today or overdue, tappable to open the full list — this is what
+  /// makes "Next Check Date" an actual working reminder instead of
+  /// something only visible if you happen to open that one goat's
+  /// Health tab. Renders nothing while the count is zero, so it never
+  /// takes up space when there's nothing due.
+  Widget _healthRemindersBanner(String farmId) {
+    return StreamBuilder<List<PalaiGoat>>(
+      stream: FirestoreService.instance.dueHealthReminderGoatsStream(farmId),
+      builder: (context, snapshot) {
+        final dueGoats = snapshot.data ?? [];
+        if (dueGoats.isEmpty) return const SizedBox.shrink();
+
+        final overdueCount = dueGoats.where((g) {
+          final due = g.nextHealthCheckDate;
+          if (due == null) return false;
+          final now = DateTime.now();
+          return due.isBefore(DateTime(now.year, now.month, now.day));
+        }).length;
+
+        return Padding(
+          padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
+          child: InkWell(
+            borderRadius: BorderRadius.circular(12),
+            onTap: () => Navigator.of(context).push(
+              fastRoute(HealthRemindersScreen(farmId: farmId)),
+            ),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+              decoration: BoxDecoration(
+                color: AppColors.error.withOpacity(0.10),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: AppColors.error.withOpacity(0.35)),
+              ),
+              child: Row(
+                children: [
+                  const Icon(Icons.notifications_active_outlined, size: 18, color: AppColors.error),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      overdueCount > 0
+                          ? '${dueGoats.length} health check${dueGoats.length == 1 ? '' : 's'} due — $overdueCount overdue'
+                          : '${dueGoats.length} health check${dueGoats.length == 1 ? '' : 's'} due today',
+                      style: AppTheme.body(size: 12, color: AppColors.textDark, weight: FontWeight.w600),
+                    ),
+                  ),
+                  const Icon(Icons.chevron_right, size: 18, color: AppColors.error),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
     );
   }
 

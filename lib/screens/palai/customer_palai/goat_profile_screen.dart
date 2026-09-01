@@ -4,6 +4,10 @@ import 'package:intl/intl.dart';
 import '../../../app_theme.dart';
 import '../../../models/palai_models.dart';
 import '../../../services/firestore_service.dart';
+import 'customer_goat_hair_screen.dart';
+import 'customer_goat_hoof_screen.dart';
+import 'customer_goat_medicine_screen.dart';
+import 'customer_goat_vaccination_screen.dart';
 import 'goat_checkout_tab.dart';
 import 'goat_edit_details_screen.dart';
 import 'goat_final_report_tab.dart';
@@ -25,11 +29,15 @@ import 'goat_weight_progress_tab.dart';
 ///             ├── 1. Overview
 ///             ├── 2. Photos & Growth
 ///             ├── 3. Health
-///             ├── 4. Weight & Progress
-///             ├── 5. Monthly Report
-///             ├── 6. Payment
-///             ├── 7. Final Report
-///             └── 8. Checkout
+///             ├── 4. Vaccination
+///             ├── 5. Hoof Cutting
+///             ├── 6. Hair Trimming
+///             ├── 7. Medicine
+///             ├── 8. Weight & Progress
+///             ├── 9. Monthly Report
+///             ├── 10. Payment
+///             ├── 11. Final Report
+///             └── 12. Checkout
 ///
 /// This REPLACES the old goat action-sheet (Health & Care / Monthly
 /// Report / Final Report & Check-Out as three disconnected
@@ -38,16 +46,24 @@ import 'goat_weight_progress_tab.dart';
 /// elsewhere in the app: everything has an obvious owner, this goat.
 ///
 /// STATUS: every tab is now backed by real data — Overview, Photos &
-/// Growth, Health, Weight & Progress, Monthly Reports (with per-goat
-/// date-range report generation), Payment, Final Report, and Checkout.
+/// Growth, Health, Vaccination, Hoof Cutting, Hair Trimming, Medicine,
+/// Weight & Progress, Monthly Reports (with per-goat date-range report
+/// generation), Payment, Final Report, and Checkout.
 class GoatProfileScreen extends StatefulWidget {
   final String farmId;
   final PalaiGoat goat;
+
+  /// Which tab to open on. Defaults to Overview (0). Used when this
+  /// screen is opened from a reminder tap (e.g. a due vaccination or
+  /// hoof-cutting notification) so the owner lands directly on the
+  /// relevant tab instead of Overview.
+  final int initialTabIndex;
 
   const GoatProfileScreen({
     super.key,
     required this.farmId,
     required this.goat,
+    this.initialTabIndex = 0,
   });
 
   @override
@@ -69,6 +85,10 @@ class _GoatProfileScreenState extends State<GoatProfileScreen>
     ('Overview', Icons.dashboard_outlined),
     ('Photos', Icons.photo_library_outlined),
     ('Health', Icons.health_and_safety_outlined),
+    ('Vaccination', Icons.vaccines_outlined),
+    ('Hoof Cutting', Icons.content_cut_outlined),
+    ('Hair Trimming', Icons.brush_outlined),
+    ('Medicine', Icons.medication_outlined),
     ('Progress', Icons.trending_up),
     ('Reports', Icons.description_outlined),
     ('Payment', Icons.payments_outlined),
@@ -80,7 +100,11 @@ class _GoatProfileScreenState extends State<GoatProfileScreen>
   void initState() {
     super.initState();
     _goat = widget.goat;
-    _tabController = TabController(length: _tabs.length, vsync: this);
+    _tabController = TabController(
+      length: _tabs.length,
+      vsync: this,
+      initialIndex: widget.initialTabIndex.clamp(0, _tabs.length - 1),
+    );
     _loadCustomerName();
   }
 
@@ -187,6 +211,26 @@ class _GoatProfileScreenState extends State<GoatProfileScreen>
                   goat: goat,
                 ),
                 GoatHealthTab(
+                  farmId: widget.farmId,
+                  customerId: goat.customerId,
+                  goat: goat,
+                ),
+                CustomerGoatVaccinationScreen(
+                  farmId: widget.farmId,
+                  customerId: goat.customerId,
+                  goat: goat,
+                ),
+                CustomerGoatHoofScreen(
+                  farmId: widget.farmId,
+                  customerId: goat.customerId,
+                  goat: goat,
+                ),
+                CustomerGoatHairScreen(
+                  farmId: widget.farmId,
+                  customerId: goat.customerId,
+                  goat: goat,
+                ),
+                CustomerGoatMedicineScreen(
                   farmId: widget.farmId,
                   customerId: goat.customerId,
                   goat: goat,

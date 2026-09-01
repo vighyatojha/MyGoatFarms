@@ -3,13 +3,16 @@ import 'package:flutter/material.dart';
 
 import '../../../models/hoof_cutting_record.dart';
 import '../../../models/palai_models.dart';
+import 'add_hoof_cutting_screen.dart';
 
 class CustomerGoatHoofScreen extends StatefulWidget {
+  final String farmId;
   final String customerId;
   final PalaiGoat goat;
 
   const CustomerGoatHoofScreen({
     super.key,
+    required this.farmId,
     required this.customerId,
     required this.goat,
   });
@@ -24,9 +27,40 @@ class _CustomerGoatHoofScreenState
   final FirebaseFirestore _firestore =
       FirebaseFirestore.instance;
 
+  // Reminder interval for scheduling the next due date, pulled from
+  // this customer's settings (CustomerSettingsScreen); falls back to
+  // 30 days if the customer has no override saved yet.
+  int _reminderDays = 30;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadReminderSetting();
+  }
+
+  Future<void> _loadReminderSetting() async {
+    try {
+      final doc = await _firestore
+          .collection('farms')
+          .doc(widget.farmId)
+          .collection('palaiCustomers')
+          .doc(widget.customerId)
+          .get();
+      final settings = doc.data()?['settings'];
+      final days = settings is Map ? settings['hoofCuttingReminderDays'] : null;
+      if (mounted && days is int && days > 0) {
+        setState(() => _reminderDays = days);
+      }
+    } catch (_) {
+      // Keep the default reminder interval if settings can't be loaded.
+    }
+  }
+
   CollectionReference<Map<String, dynamic>>
   get _hoofCollection {
     return _firestore
+        .collection('farms')
+        .doc(widget.farmId)
         .collection('palaiCustomers')
         .doc(widget.customerId)
         .collection('goats')
@@ -46,209 +80,80 @@ class _CustomerGoatHoofScreenState
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('Hoof Cutting'),
-      ),
-      body: StreamBuilder<
-          QuerySnapshot<Map<String, dynamic>>>(
-        stream: _hoofStream(),
-        builder: (context, snapshot) {
-          if (snapshot.hasError) {
-            return _buildErrorState(
-              context,
-              snapshot.error,
-            );
-          }
+    return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+      stream: _hoofStream(),
+      builder: (context, snapshot) {
+        if (snapshot.hasError) {
+          return _buildErrorState(context, snapshot.error);
+        }
 
-          if (snapshot.connectionState ==
-              ConnectionState.waiting) {
-            return const Center(
-              child: CircularProgressIndicator(),
-            );
-          }
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return const Center(child: CircularProgressIndicator());
+        }
 
-          final records = snapshot.data?.docs
-              .map(
-                (doc) =>
-                HoofCuttingRecord.fromDoc(
-                  doc,
-                ),
-          )
-              .toList() ??
-              <HoofCuttingRecord>[];
+        final records = snapshot.data?.docs
+            .map((doc) => HoofCuttingRecord.fromDoc(doc))
+            .toList() ??
+            <HoofCuttingRecord>[];
 
-          return RefreshIndicator(
-            onRefresh: _refresh,
-            child: CustomScrollView(
-              physics:
-              const AlwaysScrollableScrollPhysics(),
-              slivers: [
-                SliverPadding(
-                  padding: const EdgeInsets.fromLTRB(
-                    16,
-                    16,
-                    16,
-                    100,
-                  ),
-                  sliver: SliverList(
-                    delegate: SliverChildListDelegate([
-                      _buildGoatHeader(context),
-                      const SizedBox(height: 20),
-                      _buildSummary(
-                        context,
-                        records,
-                      ),
-                      const SizedBox(height: 28),
-                      _buildHistoryHeader(
-                        context,
-                        records.length,
-                      ),
-                      const SizedBox(height: 12),
-                      if (records.isEmpty)
-                        _buildEmptyState(context)
-                      else
-                        ...records.map(
-                              (record) => Padding(
-                            padding:
-                            const EdgeInsets.only(
-                              bottom: 10,
-                            ),
-                            child:
-                            _buildHoofCard(
-                              context,
-                              record,
-                            ),
-                          ),
+        return RefreshIndicator(
+          onRefresh: _refresh,
+          child: CustomScrollView(
+            physics: const AlwaysScrollableScrollPhysics(),
+            slivers: [
+              SliverPadding(
+                padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
+                sliver: SliverList(
+                  delegate: SliverChildListDelegate([
+                    _buildSectionHeader(),
+                    const SizedBox(height: 12),
+                    _buildSummary(context, records),
+                    const SizedBox(height: 28),
+                    _buildHistoryHeader(context, records.length),
+                    const SizedBox(height: 12),
+                    if (records.isEmpty)
+                      _buildEmptyState(context)
+                    else
+                      ...records.map(
+                            (record) => Padding(
+                          padding: const EdgeInsets.only(bottom: 10),
+                          child: _buildHoofCard(context, record),
                         ),
-                    ]),
-                  ),
+                      ),
+                  ]),
                 ),
-              ],
-            ),
-          );
-        },
-      ),
-      floatingActionButton:
-      FloatingActionButton.extended(
-        onPressed:
-        _showAddHoofDialog,
-        icon: const Icon(
-          Icons.content_cut,
-        ),
-        label: const Text(
-          'Add Hoof Cutting',
-        ),
-      ),
-    );
-  }
-
-  // ===========================================================================
-  // GOAT HEADER
-  // ===========================================================================
-
-  Widget _buildGoatHeader(
-      BuildContext context,
-      ) {
-    final theme = Theme.of(context);
-    final colors = theme.colorScheme;
-
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Row(
-          children: [
-            _buildGoatAvatar(context),
-            const SizedBox(width: 14),
-            Expanded(
-              child: Column(
-                crossAxisAlignment:
-                CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    widget.goat.name.trim().isEmpty
-                        ? 'Unnamed Goat'
-                        : widget.goat.name,
-                    maxLines: 1,
-                    overflow:
-                    TextOverflow.ellipsis,
-                    style: theme
-                        .textTheme
-                        .titleLarge
-                        ?.copyWith(
-                      fontWeight:
-                      FontWeight.w800,
-                    ),
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    widget.goat.tagNumber.trim().isEmpty
-                        ? 'No tag number'
-                        : 'Tag: ${widget.goat.tagNumber}',
-                    style: theme
-                        .textTheme
-                        .bodyMedium
-                        ?.copyWith(
-                      color: colors
-                          .onSurfaceVariant,
-                    ),
-                  ),
-                ],
               ),
-            ),
-          ],
-        ),
-      ),
+            ],
+          ),
+        );
+      },
     );
   }
 
-  Widget _buildGoatAvatar(
-      BuildContext context,
-      ) {
-    final imageUrl =
-    widget.goat.imageUrl?.trim();
+  // ===========================================================================
+  // SECTION HEADER — inline "Add Hoof Cutting" action (matches the
+  // Health tab pattern; no FAB, since this is embedded tab content).
+  // ===========================================================================
 
-    if (imageUrl != null &&
-        imageUrl.isNotEmpty) {
-      return ClipRRect(
-        borderRadius:
-        BorderRadius.circular(14),
-        child: Image.network(
-          imageUrl,
-          width: 62,
-          height: 62,
-          fit: BoxFit.cover,
-          errorBuilder:
-              (_, __, ___) =>
-              _defaultAvatar(context),
+  Widget _buildSectionHeader() {
+    return Row(
+      children: [
+        const Expanded(
+          child: Text(
+            'Hoof Cutting',
+            style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700),
+          ),
         ),
-      );
-    }
-
-    return _defaultAvatar(context);
-  }
-
-  Widget _defaultAvatar(
-      BuildContext context,
-      ) {
-    final colors =
-        Theme.of(context).colorScheme;
-
-    return Container(
-      width: 62,
-      height: 62,
-      decoration: BoxDecoration(
-        borderRadius:
-        BorderRadius.circular(14),
-        color: colors
-            .surfaceContainerHighest,
-      ),
-      child: Icon(
-        Icons.pets_outlined,
-        size: 30,
-        color: colors
-            .onSurfaceVariant,
-      ),
+        OutlinedButton.icon(
+          onPressed: _openAddHoofScreen,
+          icon: const Icon(Icons.add, size: 15),
+          label: const Text('Add Hoof Cutting'),
+          style: OutlinedButton.styleFrom(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+            textStyle: const TextStyle(fontSize: 11.5),
+          ),
+        ),
+      ],
     );
   }
 
@@ -757,7 +662,7 @@ class _CustomerGoatHoofScreenState
             const SizedBox(height: 18),
             FilledButton.icon(
               onPressed:
-              _showAddHoofDialog,
+              _openAddHoofScreen,
               icon: const Icon(
                 Icons.add,
               ),
@@ -768,293 +673,6 @@ class _CustomerGoatHoofScreenState
           ],
         ),
       ),
-    );
-  }
-
-  // ===========================================================================
-  // ADD HOOF CUTTING
-  // ===========================================================================
-
-  Future<void> _showAddHoofDialog() async {
-    final performedByController =
-    TextEditingController();
-
-    final noteController =
-    TextEditingController();
-
-    DateTime cuttingDate =
-    DateTime.now();
-
-    DateTime? nextDueDate;
-
-    if (!mounted) {
-      performedByController.dispose();
-      noteController.dispose();
-      return;
-    }
-
-    await showDialog<void>(
-      context: context,
-      builder: (dialogContext) {
-        bool saving = false;
-
-        return StatefulBuilder(
-          builder: (
-              context,
-              setDialogState,
-              ) {
-            return AlertDialog(
-              title: const Text(
-                'Add Hoof Cutting',
-              ),
-              content: SizedBox(
-                width: 500,
-                child: SingleChildScrollView(
-                  child: Column(
-                    mainAxisSize:
-                    MainAxisSize.min,
-                    children: [
-                      _dateField(
-                        context,
-                        label:
-                        'Cutting date',
-                        date:
-                        cuttingDate,
-                        onTap: () async {
-                          final picked =
-                          await showDatePicker(
-                            context:
-                            context,
-                            initialDate:
-                            cuttingDate,
-                            firstDate:
-                            DateTime(
-                              2000,
-                            ),
-                            lastDate:
-                            DateTime.now(),
-                          );
-
-                          if (picked !=
-                              null) {
-                            setDialogState(
-                                  () {
-                                cuttingDate =
-                                    picked;
-                              },
-                            );
-                          }
-                        },
-                      ),
-                      const SizedBox(
-                        height: 12,
-                      ),
-                      _dateField(
-                        context,
-                        label:
-                        'Next due date',
-                        date:
-                        nextDueDate,
-                        optional: true,
-                        onTap: () async {
-                          final picked =
-                          await showDatePicker(
-                            context:
-                            context,
-                            initialDate:
-                            nextDueDate ??
-                                cuttingDate.add(
-                                  const Duration(
-                                    days: 30,
-                                  ),
-                                ),
-                            firstDate:
-                            cuttingDate,
-                            lastDate:
-                            DateTime(
-                              2100,
-                            ),
-                          );
-
-                          if (picked !=
-                              null) {
-                            setDialogState(
-                                  () {
-                                nextDueDate =
-                                    picked;
-                              },
-                            );
-                          }
-                        },
-                        onClear:
-                        nextDueDate == null
-                            ? null
-                            : () {
-                          setDialogState(
-                                () {
-                              nextDueDate =
-                              null;
-                            },
-                          );
-                        },
-                      ),
-                      const SizedBox(
-                        height: 12,
-                      ),
-                      TextField(
-                        controller:
-                        performedByController,
-                        textCapitalization:
-                        TextCapitalization
-                            .words,
-                        decoration:
-                        const InputDecoration(
-                          labelText:
-                          'Performed by',
-                          hintText:
-                          'Optional',
-                          border:
-                          OutlineInputBorder(),
-                        ),
-                      ),
-                      const SizedBox(
-                        height: 12,
-                      ),
-                      TextField(
-                        controller:
-                        noteController,
-                        maxLines: 3,
-                        textCapitalization:
-                        TextCapitalization
-                            .sentences,
-                        decoration:
-                        const InputDecoration(
-                          labelText:
-                          'Notes',
-                          hintText:
-                          'Optional',
-                          border:
-                          OutlineInputBorder(),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-              actions: [
-                TextButton(
-                  onPressed: saving
-                      ? null
-                      : () {
-                    Navigator.pop(
-                      dialogContext,
-                    );
-                  },
-                  child:
-                  const Text('Cancel'),
-                ),
-                FilledButton(
-                  onPressed: saving
-                      ? null
-                      : () async {
-                    setDialogState(
-                          () {
-                        saving = true;
-                      },
-                    );
-
-                    try {
-                      await _saveHoofRecord(
-                        cuttingDate:
-                        cuttingDate,
-                        nextDueDate:
-                        nextDueDate,
-                        performedBy:
-                        performedByController
-                            .text
-                            .trim(),
-                        note:
-                        noteController
-                            .text
-                            .trim(),
-                      );
-
-                      if (!context
-                          .mounted) {
-                        return;
-                      }
-
-                      Navigator.pop(
-                        dialogContext,
-                      );
-
-                      _showSuccess(
-                        'Hoof cutting recorded successfully.',
-                      );
-                    } catch (error) {
-                      setDialogState(
-                            () {
-                          saving = false;
-                        },
-                      );
-
-                      _showError(
-                        context,
-                        _friendlyError(
-                          error,
-                        ),
-                      );
-                    }
-                  },
-                  child: saving
-                      ? const SizedBox(
-                    width: 20,
-                    height: 20,
-                    child:
-                    CircularProgressIndicator(
-                      strokeWidth: 2,
-                    ),
-                  )
-                      : const Text(
-                    'Save Hoof Cutting',
-                  ),
-                ),
-              ],
-            );
-          },
-        );
-      },
-    );
-
-    performedByController.dispose();
-    noteController.dispose();
-  }
-
-  // ===========================================================================
-  // SAVE
-  // ===========================================================================
-
-  Future<void> _saveHoofRecord({
-    required DateTime cuttingDate,
-    required DateTime? nextDueDate,
-    required String performedBy,
-    required String note,
-  }) async {
-    final reference =
-    _hoofCollection.doc();
-
-    final record = HoofCuttingRecord(
-      id: reference.id,
-      goatId: widget.goat.id,
-      cuttingDate: cuttingDate,
-      nextDueDate: nextDueDate,
-      performedBy: performedBy,
-      note: note,
-      recordedAt: DateTime.now(),
-    );
-
-    await reference.set(
-      record.toCreateMap(),
     );
   }
 
@@ -1221,59 +839,6 @@ class _CustomerGoatHoofScreenState
   }
 
   // ===========================================================================
-  // DATE FIELD
-  // ===========================================================================
-
-  Widget _dateField(
-      BuildContext context, {
-        required String label,
-        required DateTime? date,
-        required VoidCallback onTap,
-        bool optional = false,
-        VoidCallback? onClear,
-      }) {
-    return InkWell(
-      borderRadius:
-      BorderRadius.circular(12),
-      onTap: onTap,
-      child: InputDecorator(
-        decoration:
-        InputDecoration(
-          labelText: label,
-          border:
-          const OutlineInputBorder(),
-          suffixIcon: onClear == null
-              ? null
-              : IconButton(
-            onPressed: onClear,
-            icon: const Icon(
-              Icons.clear,
-            ),
-          ),
-        ),
-        child: Row(
-          children: [
-            const Icon(
-              Icons.calendar_today_outlined,
-              size: 20,
-            ),
-            const SizedBox(width: 10),
-            Expanded(
-              child: Text(
-                date == null
-                    ? optional
-                    ? 'Not scheduled'
-                    : 'Select date'
-                    : _formatDate(date),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  // ===========================================================================
 // ERROR STATE
 // ===========================================================================
 
@@ -1408,5 +973,18 @@ class _CustomerGoatHoofScreenState
     );
 
     return '$day/$month/${date.year}';
+  }
+
+  void _openAddHoofScreen() {
+    Navigator.of(context).push(
+      MaterialPageRoute<bool>(
+        builder: (_) => AddHoofCuttingScreen(
+          farmId: widget.farmId,
+          customerId: widget.customerId,
+          goat: widget.goat,
+          reminderDays: _reminderDays,
+        ),
+      ),
+    );
   }
 }

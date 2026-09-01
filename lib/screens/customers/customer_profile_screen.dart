@@ -13,6 +13,7 @@ import '../../services/firestore_service.dart';
 import '../../widgets/fast_route.dart';
 import '../palai/add_customer_screen.dart';
 import '../palai/customer_palai/customer_goat_registration_screen.dart';
+import '../palai/customer_palai/goat_profile_screen.dart';
 import '../palai/multi_goat_checkout_screen.dart';
 
 class CustomerProfileScreen extends StatefulWidget {
@@ -1392,10 +1393,15 @@ class _CustomerProfileScreenState
       ) {
     final data = doc.data();
 
+    final isOutstanding =
+        data['type'] == 'outstandingAdded';
+
     final amount = data['amount'] ?? 0;
 
     final method =
-    (data['paymentMethod'] ?? 'Unknown').toString();
+    isOutstanding
+        ? 'Outstanding Added'
+        : (data['paymentMethod'] ?? 'Unknown').toString();
 
     final paymentNumber =
     (data['paymentNumber'] ?? '').toString();
@@ -1414,6 +1420,21 @@ class _CustomerProfileScreenState
 
     final advance =
         data['advanceAmount'] ?? 0;
+
+    // Outstanding additions increase what's owed — the opposite of a
+    // payment — so they get their own color/icon/sign instead of the
+    // green "money received" styling below, to avoid looking like a
+    // payment came in when none did.
+    final cardColor =
+    isOutstanding ? AppColors.error : AppColors.success;
+
+    final cardIcon =
+    isOutstanding
+        ? Icons.trending_up_rounded
+        : Icons.payments_outlined;
+
+    final amountText =
+    isOutstanding ? '+${_rupees(amount)}' : _rupees(amount);
 
     return Material(
       color: Colors.transparent,
@@ -1439,15 +1460,15 @@ class _CustomerProfileScreenState
                 height: 42,
 
                 decoration: BoxDecoration(
-                  color: AppColors.success.withOpacity(
+                  color: cardColor.withOpacity(
                     0.12,
                   ),
                   shape: BoxShape.circle,
                 ),
 
-                child: const Icon(
-                  Icons.payments_outlined,
-                  color: AppColors.success,
+                child: Icon(
+                  cardIcon,
+                  color: cardColor,
                   size: 20,
                 ),
               ),
@@ -1461,10 +1482,10 @@ class _CustomerProfileScreenState
 
                   children: [
                     Text(
-                      _rupees(amount),
+                      amountText,
                       style: AppTheme.heading(
                         size: 14,
-                        color: AppColors.success,
+                        color: cardColor,
                       ),
                     ),
 
@@ -1685,13 +1706,18 @@ class _CustomerProfileScreenState
     final note =
     (data['note'] ?? '').toString();
 
+    final isOutstanding =
+        data['type'] == 'outstandingAdded';
+
     final pendingBefore =
         data['pendingBefore'] ?? 0;
 
     final applied =
-        data['amountAppliedToPending'] ??
-            data['amountAppliedToBill'] ??
-            0;
+    isOutstanding
+        ? (data['pendingAdded'] ?? 0)
+        : (data['amountAppliedToPending'] ??
+        data['amountAppliedToBill'] ??
+        0);
 
     final pendingAfter =
         data['pendingAfter'] ?? 0;
@@ -1700,7 +1726,9 @@ class _CustomerProfileScreenState
         data['advanceBefore'] ?? 0;
 
     final advanceAdded =
-        data['advanceAmount'] ?? 0;
+    isOutstanding
+        ? (data['advanceUsed'] ?? 0)
+        : (data['advanceAmount'] ?? 0);
 
     final advanceAfter =
         data['advanceAfter'] ?? 0;
@@ -1754,7 +1782,9 @@ class _CustomerProfileScreenState
               const SizedBox(height: 18),
 
               Text(
-                'Payment Details',
+                isOutstanding
+                    ? 'Outstanding Details'
+                    : 'Payment Details',
                 style: AppTheme.heading(
                   size: 18,
                 ),
@@ -1763,23 +1793,28 @@ class _CustomerProfileScreenState
               const SizedBox(height: 18),
 
               _detailRow(
-                'Payment Number',
+                isOutstanding
+                    ? 'Reference Number'
+                    : 'Payment Number',
                 paymentNumber.isEmpty
                     ? '—'
                     : paymentNumber,
               ),
 
               _detailRow(
-                'Amount Received',
+                isOutstanding
+                    ? 'Amount Added'
+                    : 'Amount Received',
                 _rupees(amount),
               ),
 
-              _detailRow(
-                'Payment Method',
-                method.isEmpty
-                    ? '—'
-                    : method,
-              ),
+              if (!isOutstanding)
+                _detailRow(
+                  'Payment Method',
+                  method.isEmpty
+                      ? '—'
+                      : method,
+                ),
 
               _detailRow(
                 'Pending Before',
@@ -1787,7 +1822,9 @@ class _CustomerProfileScreenState
               ),
 
               _detailRow(
-                'Applied to Pending',
+                isOutstanding
+                    ? 'Added to Pending'
+                    : 'Applied to Pending',
                 _rupees(applied),
               ),
 
@@ -1802,7 +1839,9 @@ class _CustomerProfileScreenState
               ),
 
               _detailRow(
-                'Advance Added',
+                isOutstanding
+                    ? 'Advance Used'
+                    : 'Advance Added',
                 _rupees(advanceAdded),
               ),
 
@@ -2022,7 +2061,17 @@ class _CustomerProfileScreenState
       child: InkWell(
         borderRadius: BorderRadius.circular(16),
 
-        onTap: null,
+        onTap: () async {
+          await Navigator.of(context).push(
+            fastRoute(
+              GoatProfileScreen(
+                farmId: widget.farmId,
+                goat: goat,
+              ),
+            ),
+          );
+          if (mounted) setState(() {});
+        },
 
         child: Container(
           decoration: AppTheme.card(
@@ -3353,6 +3402,23 @@ class _AddOutstandingSheetState
           .collection('activities')
           .doc();
 
+      // ----------------------------------------------------------------
+      // PAYMENT HISTORY ENTRY REF
+      //
+      // "Add Outstanding" previously only wrote to `bills` + `activities`
+      // — it never wrote to `payments`, which is the collection the
+      // Payment History list on this screen actually reads from
+      // (see _paymentHistoryStream()). That's why an added outstanding
+      // amount updated the customer's pending balance but never showed
+      // up in Payment History below. This ref is for that missing doc.
+      // ----------------------------------------------------------------
+
+      final paymentRef = db
+          .collection('farms')
+          .doc(widget.farmId)
+          .collection('payments')
+          .doc();
+
       final now = DateTime.now();
 
       final billNumber =
@@ -3438,6 +3504,38 @@ class _AddOutstandingSheetState
             },
           );
 
+          // --------------------------------------------------------
+          // PAYMENT HISTORY ENTRY (the actual fix)
+          //
+          // Mirrors the field names a normal payment doc has so it
+          // renders in the same Payment History list, but tagged
+          // 'type': 'outstandingAdded' so _paymentCard/_showPaymentDetails
+          // can show it as money now owed — not money received —
+          // instead of misleadingly looking like a payment came in.
+          // --------------------------------------------------------
+
+          transaction.set(
+            paymentRef,
+            {
+              'customerId': widget.customer.id,
+              'customerName': widget.customer.name,
+              'type': 'outstandingAdded',
+              'amount': _amount,
+              'paymentMethod': 'Outstanding Added',
+              'paymentNumber': billNumber,
+              'note': _noteController.text.trim(),
+              'pendingBefore': oldPending,
+              'pendingAdded': remainingOutstanding,
+              'pendingAfter': newPending,
+              'advanceBefore': oldAdvance,
+              'advanceUsed': advanceUsed,
+              'advanceAmount': 0,
+              'advanceAfter': newAdvance,
+              'date': FieldValue.serverTimestamp(),
+              'createdAt': FieldValue.serverTimestamp(),
+            },
+          );
+
           transaction.set(
             activityRef,
             {
@@ -3488,6 +3586,116 @@ class _AddOutstandingSheetState
         content: Text(message),
         backgroundColor: AppColors.error,
       ),
+    );
+  }
+
+  // ================================================================
+  // OUTSTANDING SUMMARY CARD
+  //
+  // Replaces the old plain "Current Outstanding → After Addition"
+  // row with the itemized billing-summary card style used elsewhere
+  // in the app (title + status pill, item rows, divider, bold total).
+  // ================================================================
+
+  Widget _summaryCard(double current) {
+    final after = current + _amount;
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: AppColors.divider),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  'OUTSTANDING SUMMARY',
+                  style: AppTheme.heading(
+                    size: 14,
+                    color: AppColors.primaryGreen,
+                  ),
+                ),
+              ),
+              Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 9,
+                  vertical: 5,
+                ),
+                decoration: BoxDecoration(
+                  color: AppColors.error.withOpacity(0.10),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Text(
+                  'OUTSTANDING',
+                  style: TextStyle(
+                    color: AppColors.error,
+                    fontSize: 9,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          const Divider(height: 1),
+          const SizedBox(height: 12),
+          _summaryRow(
+            'Current Outstanding',
+            '₹${current.toStringAsFixed(0)}',
+          ),
+          const SizedBox(height: 8),
+          _summaryRow(
+            'Amount Being Added',
+            '₹${_amount.toStringAsFixed(0)}',
+          ),
+          const SizedBox(height: 12),
+          const Divider(height: 1),
+          const SizedBox(height: 12),
+          _summaryRow(
+            'Total Outstanding',
+            '₹${after.toStringAsFixed(0)}',
+            bold: true,
+          ),
+          const SizedBox(height: 10),
+          Text(
+            'This is ${widget.customer.name}\'s total outstanding after this addition.',
+            style: AppTheme.body(
+              size: 10,
+              color: AppColors.textGrey,
+            ).copyWith(fontStyle: FontStyle.italic),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _summaryRow(String label, String value, {bool bold = false}) {
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      children: [
+        Text(
+          label,
+          style: bold
+              ? AppTheme.heading(size: 14)
+              : AppTheme.body(size: 12, color: AppColors.textGrey),
+        ),
+        Text(
+          value,
+          style: bold
+              ? AppTheme.heading(size: 17, color: AppColors.primaryGreen)
+              : AppTheme.body(
+            size: 12,
+            color: AppColors.textDark,
+            weight: FontWeight.w700,
+          ),
+        ),
+      ],
     );
   }
 
@@ -3554,78 +3762,7 @@ class _AddOutstandingSheetState
 
             const SizedBox(height: 18),
 
-            Container(
-              padding: const EdgeInsets.all(14),
-
-              decoration: BoxDecoration(
-                color: AppColors.lightGreen,
-                borderRadius:
-                BorderRadius.circular(14),
-              ),
-
-              child: Row(
-                mainAxisAlignment:
-                MainAxisAlignment.spaceBetween,
-
-                children: [
-                  Column(
-                    crossAxisAlignment:
-                    CrossAxisAlignment.start,
-
-                    children: [
-                      Text(
-                        'Current Outstanding',
-                        style: AppTheme.body(
-                          size: 10,
-                        ),
-                      ),
-
-                      const SizedBox(height: 3),
-
-                      Text(
-                        '₹${current.toStringAsFixed(0)}',
-                        style: AppTheme.heading(
-                          size: 16,
-                          color: current > 0
-                              ? AppColors.error
-                              : AppColors.success,
-                        ),
-                      ),
-                    ],
-                  ),
-
-                  const Icon(
-                    Icons.arrow_forward_outlined,
-                    color: AppColors.textGrey,
-                    size: 20,
-                  ),
-
-                  Column(
-                    crossAxisAlignment:
-                    CrossAxisAlignment.end,
-
-                    children: [
-                      Text(
-                        'After Addition',
-                        style: AppTheme.body(
-                          size: 10,
-                        ),
-                      ),
-
-                      const SizedBox(height: 3),
-
-                      Text(
-                        '₹${(current + _amount).toStringAsFixed(0)}',
-                        style: AppTheme.heading(
-                          size: 16,
-                          color: AppColors.error,
-                        ),
-                      ),
-                    ],
-                  ),
-                ],
-              ),
-            ),
+            _summaryCard(current),
 
             const SizedBox(height: 20),
 

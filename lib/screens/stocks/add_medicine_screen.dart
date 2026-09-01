@@ -7,6 +7,12 @@ import '../../models/stock_model.dart';
 import '../../models/activity_model.dart';
 import '../../services/firestore_service.dart';
 
+// The medicine screens use a blue theme (AppColors.info) instead of the
+// app's default green, matching the medicine card color on the Stock
+// screen. There's no separate "dark blue" in AppColors, so this derives
+// one at runtime for the hero gradient/shadow.
+final Color _medicineBlueDark = Color.lerp(AppColors.info, Colors.black, 0.15)!;
+
 class AddMedicineScreen extends StatefulWidget {
   const AddMedicineScreen({super.key});
 
@@ -24,9 +30,9 @@ class _AddMedicineScreenState extends State<AddMedicineScreen> {
   bool _saving = false;
   String? _farmId;
   StockItem? _selectedMedicine;
-  String _unit = 'bottle';
+  String _unit = 'Bottle';
 
-  static const _units = ['Kg', 'Bag'];
+  static const _units = ['Unit', 'Bottle'];
 
   @override
   void initState() {
@@ -55,7 +61,7 @@ class _AddMedicineScreenState extends State<AddMedicineScreen> {
       SnackBar(
         content: Text(text),
         behavior: SnackBarBehavior.floating,
-        backgroundColor: error ? AppColors.error : AppColors.primaryGreen,
+        backgroundColor: error ? AppColors.error : AppColors.info,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
       ),
     );
@@ -221,15 +227,15 @@ class _AddMedicineScreenState extends State<AddMedicineScreen> {
     return Container(
       padding: const EdgeInsets.all(18),
       decoration: BoxDecoration(
-        gradient: const LinearGradient(
-          colors: [AppColors.primaryGreen, AppColors.darkGreen],
+        gradient: LinearGradient(
+          colors: [AppColors.info, _medicineBlueDark],
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
         ),
         borderRadius: BorderRadius.circular(22),
         boxShadow: [
           BoxShadow(
-            color: AppColors.darkGreen.withOpacity(.20),
+            color: _medicineBlueDark.withOpacity(.20),
             blurRadius: 18,
             offset: const Offset(0, 8),
           ),
@@ -285,10 +291,10 @@ class _AddMedicineScreenState extends State<AddMedicineScreen> {
                 width: 34,
                 height: 34,
                 decoration: BoxDecoration(
-                  color: AppColors.lightGreen,
+                  color: AppColors.info.withOpacity(.10),
                   borderRadius: BorderRadius.circular(10),
                 ),
-                child: Icon(icon, color: AppColors.primaryGreen, size: 18),
+                child: Icon(icon, color: AppColors.info, size: 18),
               ),
               const SizedBox(width: 10),
               Text(title, style: AppTheme.heading(size: 14)),
@@ -353,7 +359,7 @@ class _AddMedicineScreenState extends State<AddMedicineScreen> {
                   readOnly: true,
                   suffixIcon: const Icon(
                     Icons.keyboard_arrow_down_rounded,
-                    color: AppColors.primaryGreen,
+                    color: AppColors.info,
                   ),
                 ),
               ),
@@ -366,7 +372,7 @@ class _AddMedicineScreenState extends State<AddMedicineScreen> {
                 'Existing medicine selected • stock will be added to this medicine.',
                 style: AppTheme.body(
                   size: 10,
-                  color: AppColors.darkGreen,
+                  color: AppColors.info,
                   weight: FontWeight.w600,
                 ),
               ),
@@ -410,12 +416,12 @@ class _AddMedicineScreenState extends State<AddMedicineScreen> {
                         width: 42,
                         height: 42,
                         decoration: BoxDecoration(
-                          color: AppColors.lightGreen,
+                          color: AppColors.info.withOpacity(.10),
                           borderRadius: BorderRadius.circular(12),
                         ),
                         child: const Icon(
                           Icons.medication_outlined,
-                          color: AppColors.primaryGreen,
+                          color: AppColors.info,
                         ),
                       ),
                       const SizedBox(width: 12),
@@ -459,25 +465,25 @@ class _AddMedicineScreenState extends State<AddMedicineScreen> {
                       width: double.infinity,
                       padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 16),
                       decoration: BoxDecoration(
-                        color: AppColors.lightGreen,
+                        color: AppColors.info.withOpacity(.10),
                         borderRadius: BorderRadius.circular(15),
-                        border: Border.all(color: AppColors.primaryGreen.withOpacity(.25)),
+                        border: Border.all(color: AppColors.info.withOpacity(.25)),
                       ),
                       child: Row(
                         children: [
-                          const Icon(Icons.add_circle_rounded, color: AppColors.primaryGreen),
+                          const Icon(Icons.add_circle_rounded, color: AppColors.info),
                           const SizedBox(width: 10),
                           Expanded(
                             child: Text(
                               'Enter New Medicine Name',
                               style: AppTheme.body(
                                 size: 13,
-                                color: AppColors.darkGreen,
+                                color: AppColors.info,
                                 weight: FontWeight.w700,
                               ),
                             ),
                           ),
-                          const Icon(Icons.chevron_right_rounded, color: AppColors.primaryGreen),
+                          const Icon(Icons.chevron_right_rounded, color: AppColors.info),
                         ],
                       ),
                     ),
@@ -507,11 +513,11 @@ class _AddMedicineScreenState extends State<AddMedicineScreen> {
       child: Container(
         padding: const EdgeInsets.all(13),
         decoration: BoxDecoration(
-          color: selected ? AppColors.lightGreen : Colors.white,
+          color: selected ? AppColors.info.withOpacity(.10) : Colors.white,
           borderRadius: BorderRadius.circular(16),
           border: Border.all(
             color: selected
-                ? AppColors.primaryGreen
+                ? AppColors.info
                 : AppColors.divider,
           ),
         ),
@@ -521,10 +527,10 @@ class _AddMedicineScreenState extends State<AddMedicineScreen> {
               width: 42,
               height: 42,
               decoration: BoxDecoration(
-                color: AppColors.lightGreen,
+                color: AppColors.info.withOpacity(.10),
                 shape: BoxShape.circle,
               ),
-              child: const Icon(Icons.medication_rounded, color: AppColors.primaryGreen),
+              child: const Icon(Icons.medication_rounded, color: AppColors.info),
             ),
             const SizedBox(width: 12),
             Expanded(
@@ -545,21 +551,21 @@ class _AddMedicineScreenState extends State<AddMedicineScreen> {
               decoration: BoxDecoration(
                 color: item.isLowStock
                     ? AppColors.warning.withOpacity(.12)
-                    : AppColors.lightGreen,
+                    : AppColors.info.withOpacity(.10),
                 borderRadius: BorderRadius.circular(20),
               ),
               child: Text(
                 status,
                 style: AppTheme.body(
                   size: 10,
-                  color: item.isLowStock ? AppColors.warning : AppColors.darkGreen,
+                  color: item.isLowStock ? AppColors.warning : AppColors.info,
                   weight: FontWeight.w700,
                 ),
               ),
             ),
             if (selected) ...[
               const SizedBox(width: 6),
-              const Icon(Icons.check_circle_rounded, color: AppColors.primaryGreen, size: 20),
+              const Icon(Icons.check_circle_rounded, color: AppColors.info, size: 20),
             ],
           ],
         ),
@@ -593,11 +599,11 @@ class _AddMedicineScreenState extends State<AddMedicineScreen> {
             decoration: InputDecoration(
               labelText: 'Enter medicine name',
               hintText: 'e.g. Deworming Syrup, Liver Tonic, Calcium',
-              prefixIcon: const Icon(Icons.medication_outlined, color: AppColors.primaryGreen),
+              prefixIcon: const Icon(Icons.medication_outlined, color: AppColors.info),
               border: OutlineInputBorder(borderRadius: BorderRadius.circular(14)),
               focusedBorder: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(14),
-                borderSide: const BorderSide(color: AppColors.primaryGreen, width: 1.5),
+                borderSide: const BorderSide(color: AppColors.info, width: 1.5),
               ),
             ),
           ),
@@ -613,7 +619,7 @@ class _AddMedicineScreenState extends State<AddMedicineScreen> {
                 Navigator.pop(dialogContext, value);
               },
               style: ElevatedButton.styleFrom(
-                backgroundColor: AppColors.primaryGreen,
+                backgroundColor: AppColors.info,
                 foregroundColor: Colors.white,
               ),
               child: const Text('Use This Name'),
@@ -638,7 +644,7 @@ class _AddMedicineScreenState extends State<AddMedicineScreen> {
     setState(() {
       _selectedMedicine = null;
       _nameController.text = name.trim();
-      _unit = 'bottle';
+      _unit = 'Bottle';
       _thresholdController.text = '5';
     });
   }
@@ -650,13 +656,13 @@ class _AddMedicineScreenState extends State<AddMedicineScreen> {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 11),
       decoration: BoxDecoration(
-        color: AppColors.lightGreen,
+        color: AppColors.info.withOpacity(.10),
         borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: AppColors.primaryGreen.withOpacity(.16)),
+        border: Border.all(color: AppColors.info.withOpacity(.16)),
       ),
       child: Row(
         children: [
-          const Icon(Icons.inventory_2_outlined, color: AppColors.primaryGreen, size: 18),
+          const Icon(Icons.inventory_2_outlined, color: AppColors.info, size: 18),
           const SizedBox(width: 9),
           Expanded(
             child: Column(
@@ -671,14 +677,14 @@ class _AddMedicineScreenState extends State<AddMedicineScreen> {
                     'After addition  ${projected.toStringAsFixed(projected % 1 == 0 ? 0 : 1)} ${item.unit}',
                     style: AppTheme.body(
                       size: 12,
-                      color: AppColors.darkGreen,
+                      color: AppColors.info,
                       weight: FontWeight.w700,
                     ),
                   ),
               ],
             ),
           ),
-          const Icon(Icons.check_circle_rounded, color: AppColors.primaryGreen, size: 20),
+          const Icon(Icons.check_circle_rounded, color: AppColors.info, size: 20),
         ],
       ),
     );
@@ -694,7 +700,7 @@ class _AddMedicineScreenState extends State<AddMedicineScreen> {
         Container(
           padding: const EdgeInsets.all(4),
           decoration: BoxDecoration(
-            color: AppColors.lightGreen,
+            color: AppColors.info.withOpacity(.10),
             borderRadius: BorderRadius.circular(13),
           ),
           child: Row(
@@ -718,7 +724,7 @@ class _AddMedicineScreenState extends State<AddMedicineScreen> {
                       textAlign: TextAlign.center,
                       style: AppTheme.body(
                         size: 12,
-                        color: selected ? AppColors.darkGreen : AppColors.textGrey,
+                        color: selected ? AppColors.info : AppColors.textGrey,
                         weight: FontWeight.w700,
                       ),
                     ),
@@ -761,7 +767,7 @@ class _AddMedicineScreenState extends State<AddMedicineScreen> {
       decoration: InputDecoration(
         labelText: label,
         hintText: hint,
-        prefixIcon: Icon(icon, color: AppColors.primaryGreen, size: 20),
+        prefixIcon: Icon(icon, color: AppColors.info, size: 20),
         suffixText: suffix,
         suffixIcon: suffixIcon,
         labelStyle: AppTheme.body(size: 12, color: AppColors.textGrey),
@@ -779,7 +785,7 @@ class _AddMedicineScreenState extends State<AddMedicineScreen> {
         ),
         focusedBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(13),
-          borderSide: const BorderSide(color: AppColors.primaryGreen, width: 1.5),
+          borderSide: const BorderSide(color: AppColors.info, width: 1.5),
         ),
       ),
     );
@@ -825,7 +831,7 @@ class _AddMedicineScreenState extends State<AddMedicineScreen> {
               : const Icon(Icons.add_rounded),
           label: Text(_saving ? 'Saving...' : 'Add to Stock'),
           style: ElevatedButton.styleFrom(
-            backgroundColor: AppColors.primaryGreen,
+            backgroundColor: AppColors.info,
             foregroundColor: Colors.white,
             elevation: 4,
             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),

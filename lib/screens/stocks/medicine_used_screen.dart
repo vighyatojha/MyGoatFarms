@@ -7,6 +7,12 @@ import '../../models/stock_model.dart';
 import '../../models/activity_model.dart';
 import '../../services/firestore_service.dart';
 
+// Medicine screens use a blue theme (AppColors.info) instead of the app's
+// default green, matching the medicine card color on the Stock screen.
+// There's no separate "dark blue" in AppColors, so this derives one at
+// runtime for the hero gradient/shadow.
+final Color _medicineBlueDark = Color.lerp(AppColors.info, Colors.black, 0.15)!;
+
 class MedicineUsedScreen extends StatefulWidget {
   const MedicineUsedScreen({super.key});
 
@@ -42,7 +48,7 @@ class _MedicineUsedScreenState extends State<MedicineUsedScreen> {
       SnackBar(
         content: Text(text),
         behavior: SnackBarBehavior.floating,
-        backgroundColor: error ? AppColors.error : AppColors.primaryGreen,
+        backgroundColor: error ? AppColors.error : AppColors.info,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
       ),
     );
@@ -113,73 +119,73 @@ class _MedicineUsedScreenState extends State<MedicineUsedScreen> {
     final remaining = item.quantity - quantity;
 
     return await showModalBottomSheet<bool>(
-          context: context,
-          backgroundColor: Colors.transparent,
-          builder: (sheetContext) {
-            return Container(
-              padding: const EdgeInsets.fromLTRB(20, 12, 20, 22),
-              decoration: const BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.vertical(top: Radius.circular(26)),
-              ),
-              child: SafeArea(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (sheetContext) {
+        return Container(
+          padding: const EdgeInsets.fromLTRB(20, 12, 20, 22),
+          decoration: const BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.vertical(top: Radius.circular(26)),
+          ),
+          child: SafeArea(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Container(
+                  width: 42,
+                  height: 5,
+                  decoration: BoxDecoration(
+                    color: Colors.grey.shade300,
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                ),
+                const SizedBox(height: 18),
+                CircleAvatar(
+                  radius: 28,
+                  backgroundColor: AppColors.info.withOpacity(.10),
+                  child: const Icon(Icons.medication_outlined, color: AppColors.info, size: 28),
+                ),
+                const SizedBox(height: 12),
+                Text('Confirm medicine usage', style: AppTheme.heading(size: 17)),
+                const SizedBox(height: 5),
+                Text(
+                  '${quantity.toStringAsFixed(0)} ${item.unit} will be deducted from ${item.name}.',
+                  textAlign: TextAlign.center,
+                  style: AppTheme.body(size: 12),
+                ),
+                const SizedBox(height: 16),
+                _summaryRow('Current stock', '${item.quantity.toStringAsFixed(0)} ${item.unit}'),
+                _summaryRow('Used now', '${quantity.toStringAsFixed(0)} ${item.unit}'),
+                _summaryRow('Remaining', '${remaining.toStringAsFixed(0)} ${item.unit}', highlight: true),
+                const SizedBox(height: 18),
+                Row(
                   children: [
-                    Container(
-                      width: 42,
-                      height: 5,
-                      decoration: BoxDecoration(
-                        color: Colors.grey.shade300,
-                        borderRadius: BorderRadius.circular(10),
+                    Expanded(
+                      child: OutlinedButton(
+                        onPressed: () => Navigator.pop(sheetContext, false),
+                        child: const Text('Cancel'),
                       ),
                     ),
-                    const SizedBox(height: 18),
-                    const CircleAvatar(
-                      radius: 28,
-                      backgroundColor: AppColors.lightGreen,
-                      child: Icon(Icons.medication_outlined, color: AppColors.primaryGreen, size: 28),
-                    ),
-                    const SizedBox(height: 12),
-                    Text('Confirm medicine usage', style: AppTheme.heading(size: 17)),
-                    const SizedBox(height: 5),
-                    Text(
-                      '${quantity.toStringAsFixed(0)} ${item.unit} will be deducted from ${item.name}.',
-                      textAlign: TextAlign.center,
-                      style: AppTheme.body(size: 12),
-                    ),
-                    const SizedBox(height: 16),
-                    _summaryRow('Current stock', '${item.quantity.toStringAsFixed(0)} ${item.unit}'),
-                    _summaryRow('Used now', '${quantity.toStringAsFixed(0)} ${item.unit}'),
-                    _summaryRow('Remaining', '${remaining.toStringAsFixed(0)} ${item.unit}', highlight: true),
-                    const SizedBox(height: 18),
-                    Row(
-                      children: [
-                        Expanded(
-                          child: OutlinedButton(
-                            onPressed: () => Navigator.pop(sheetContext, false),
-                            child: const Text('Cancel'),
-                          ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: ElevatedButton(
+                        onPressed: () => Navigator.pop(sheetContext, true),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: AppColors.info,
+                          foregroundColor: Colors.white,
                         ),
-                        const SizedBox(width: 10),
-                        Expanded(
-                          child: ElevatedButton(
-                            onPressed: () => Navigator.pop(sheetContext, true),
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: AppColors.primaryGreen,
-                              foregroundColor: Colors.white,
-                            ),
-                            child: const Text('Confirm'),
-                          ),
-                        ),
-                      ],
+                        child: const Text('Confirm'),
+                      ),
                     ),
                   ],
                 ),
-              ),
-            );
-          },
-        ) ??
+              ],
+            ),
+          ),
+        );
+      },
+    ) ??
         false;
   }
 
@@ -193,7 +199,7 @@ class _MedicineUsedScreenState extends State<MedicineUsedScreen> {
             value,
             style: AppTheme.body(
               size: 12,
-              color: highlight ? AppColors.darkGreen : AppColors.textDark,
+              color: highlight ? AppColors.info : AppColors.textDark,
               weight: FontWeight.w700,
             ),
           ),
@@ -214,52 +220,52 @@ class _MedicineUsedScreenState extends State<MedicineUsedScreen> {
         title: Text('Medicine Used', style: AppTheme.heading(size: 18)),
       ),
       body: _farmId == null
-          ? const Center(child: CircularProgressIndicator(color: AppColors.primaryGreen))
+          ? const Center(child: CircularProgressIndicator(color: AppColors.info))
           : StreamBuilder<List<StockItem>>(
-              stream: FirestoreService.instance.stockItemsStream(_farmId!, type: StockType.medicine),
-              builder: (context, snap) {
-                if (snap.connectionState == ConnectionState.waiting && !snap.hasData) {
-                  return const Center(child: CircularProgressIndicator(color: AppColors.primaryGreen));
-                }
+        stream: FirestoreService.instance.stockItemsStream(_farmId!, type: StockType.medicine),
+        builder: (context, snap) {
+          if (snap.connectionState == ConnectionState.waiting && !snap.hasData) {
+            return const Center(child: CircularProgressIndicator(color: AppColors.info));
+          }
 
-                final items = snap.data ?? <StockItem>[];
+          final items = snap.data ?? <StockItem>[];
 
-                if (items.isEmpty) {
-                  return _emptyState();
-                }
+          if (items.isEmpty) {
+            return _emptyState();
+          }
 
-                StockItem? selected;
-                for (final item in items) {
-                  if (item.id == _selectedItem?.id) {
-                    selected = item;
-                    break;
-                  }
-                }
+          StockItem? selected;
+          for (final item in items) {
+            if (item.id == _selectedItem?.id) {
+              selected = item;
+              break;
+            }
+          }
 
-                if (selected != null && selected != _selectedItem) {
-                  WidgetsBinding.instance.addPostFrameCallback((_) {
-                    if (mounted) setState(() => _selectedItem = selected);
-                  });
-                }
+          if (selected != null && selected != _selectedItem) {
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              if (mounted) setState(() => _selectedItem = selected);
+            });
+          }
 
-                return ListView(
-                  padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
-                  children: [
-                    _hero(),
-                    const SizedBox(height: 16),
-                    _stockSelector(items, selected),
-                    const SizedBox(height: 14),
-                    if (selected != null) _availableCard(selected),
-                    const SizedBox(height: 14),
-                    _quantityField(selected),
-                    const SizedBox(height: 14),
-                    _notesField(),
-                    const SizedBox(height: 20),
-                    _saveButton(),
-                  ],
-                );
-              },
-            ),
+          return ListView(
+            padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
+            children: [
+              _hero(),
+              const SizedBox(height: 16),
+              _stockSelector(items, selected),
+              const SizedBox(height: 14),
+              if (selected != null) _availableCard(selected),
+              const SizedBox(height: 14),
+              _quantityField(selected),
+              const SizedBox(height: 14),
+              _notesField(),
+              const SizedBox(height: 20),
+              _saveButton(),
+            ],
+          );
+        },
+      ),
     );
   }
 
@@ -267,14 +273,14 @@ class _MedicineUsedScreenState extends State<MedicineUsedScreen> {
     return Container(
       padding: const EdgeInsets.all(18),
       decoration: BoxDecoration(
-        gradient: const LinearGradient(
-          colors: [AppColors.primaryGreen, AppColors.darkGreen],
+        gradient: LinearGradient(
+          colors: [AppColors.info, _medicineBlueDark],
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
         ),
         borderRadius: BorderRadius.circular(22),
         boxShadow: [
-          BoxShadow(color: AppColors.darkGreen.withOpacity(.20), blurRadius: 18, offset: const Offset(0, 8)),
+          BoxShadow(color: _medicineBlueDark.withOpacity(.20), blurRadius: 18, offset: const Offset(0, 8)),
         ],
       ),
       child: Row(
@@ -315,7 +321,7 @@ class _MedicineUsedScreenState extends State<MedicineUsedScreen> {
             isExpanded: true,
             decoration: InputDecoration(
               hintText: 'Choose medicine',
-              prefixIcon: const Icon(Icons.inventory_2_outlined, color: AppColors.primaryGreen),
+              prefixIcon: const Icon(Icons.inventory_2_outlined, color: AppColors.info),
               filled: true,
               fillColor: AppColors.paleGreen,
               border: OutlineInputBorder(borderRadius: BorderRadius.circular(13), borderSide: BorderSide.none),
@@ -331,7 +337,7 @@ class _MedicineUsedScreenState extends State<MedicineUsedScreen> {
                     ),
                     Text(
                       '${item.quantity.toStringAsFixed(0)} ${item.unit}',
-                      style: AppTheme.body(size: 11, color: low ? AppColors.error : AppColors.darkGreen, weight: FontWeight.w700),
+                      style: AppTheme.body(size: 11, color: low ? AppColors.error : AppColors.info, weight: FontWeight.w700),
                     ),
                   ],
                 ),
@@ -361,20 +367,20 @@ class _MedicineUsedScreenState extends State<MedicineUsedScreen> {
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: low ? AppColors.error.withOpacity(.07) : AppColors.lightGreen,
+        color: low ? AppColors.error.withOpacity(.07) : AppColors.info.withOpacity(.10),
         borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: low ? AppColors.error.withOpacity(.18) : AppColors.primaryGreen.withOpacity(.12)),
+        border: Border.all(color: low ? AppColors.error.withOpacity(.18) : AppColors.info.withOpacity(.12)),
       ),
       child: Column(
         children: [
           Row(
             children: [
-              const Icon(Icons.inventory_2_rounded, color: AppColors.primaryGreen, size: 21),
+              const Icon(Icons.inventory_2_rounded, color: AppColors.info, size: 21),
               const SizedBox(width: 9),
               Expanded(child: Text('Available stock', style: AppTheme.body(size: 12, weight: FontWeight.w600))),
               Text(
                 '${item.quantity.toStringAsFixed(0)} ${item.unit}',
-                style: AppTheme.heading(size: 16, color: low ? AppColors.error : AppColors.darkGreen),
+                style: AppTheme.heading(size: 16, color: low ? AppColors.error : AppColors.info),
               ),
             ],
           ),
@@ -385,7 +391,7 @@ class _MedicineUsedScreenState extends State<MedicineUsedScreen> {
               value: progress,
               minHeight: 7,
               backgroundColor: Colors.white,
-              valueColor: AlwaysStoppedAnimation<Color>(low ? AppColors.error : AppColors.primaryGreen),
+              valueColor: AlwaysStoppedAnimation<Color>(low ? AppColors.error : AppColors.info),
             ),
           ),
           if (low) ...[
@@ -415,7 +421,7 @@ class _MedicineUsedScreenState extends State<MedicineUsedScreen> {
         decoration: InputDecoration(
           hintText: 'e.g. 2',
           suffixText: item?.unit ?? 'unit',
-          prefixIcon: const Icon(Icons.numbers_rounded, color: AppColors.primaryGreen),
+          prefixIcon: const Icon(Icons.numbers_rounded, color: AppColors.info),
           filled: true,
           fillColor: Colors.white,
           border: OutlineInputBorder(borderRadius: BorderRadius.circular(13), borderSide: BorderSide(color: AppColors.divider)),
@@ -465,8 +471,8 @@ class _MedicineUsedScreenState extends State<MedicineUsedScreen> {
         Container(
           width: 34,
           height: 34,
-          decoration: BoxDecoration(color: AppColors.lightGreen, borderRadius: BorderRadius.circular(10)),
-          child: Icon(icon, color: AppColors.primaryGreen, size: 18),
+          decoration: BoxDecoration(color: AppColors.info.withOpacity(.10), borderRadius: BorderRadius.circular(10)),
+          child: Icon(icon, color: AppColors.info, size: 18),
         ),
         const SizedBox(width: 10),
         Text(title, style: AppTheme.heading(size: 14)),
@@ -484,7 +490,7 @@ class _MedicineUsedScreenState extends State<MedicineUsedScreen> {
             : const Icon(Icons.check_circle_outline_rounded),
         label: Text(_saving ? 'Saving...' : 'Record Medicine Usage'),
         style: ElevatedButton.styleFrom(
-          backgroundColor: AppColors.primaryGreen,
+          backgroundColor: AppColors.info,
           foregroundColor: Colors.white,
           elevation: 4,
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
@@ -501,10 +507,10 @@ class _MedicineUsedScreenState extends State<MedicineUsedScreen> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const CircleAvatar(
+            CircleAvatar(
               radius: 42,
-              backgroundColor: AppColors.lightGreen,
-              child: Icon(Icons.medication_outlined, color: AppColors.primaryGreen, size: 38),
+              backgroundColor: AppColors.info.withOpacity(.10),
+              child: const Icon(Icons.medication_outlined, color: AppColors.info, size: 38),
             ),
             const SizedBox(height: 16),
             Text('No medicine stock yet', style: AppTheme.heading(size: 17)),

@@ -302,6 +302,21 @@ class PalaiGoat {
   /// Total number of generated reports.
   final int reportsCount;
 
+  // --------------------------------------------------------------------------
+  // HEALTH REMINDER (denormalized)
+  // --------------------------------------------------------------------------
+
+  /// Mirrors the "Next Check Date" from this goat's MOST RECENT health
+  /// record (see HealthRecordEntry.nextCheckDate), kept in sync by
+  /// addHealthRecord/updateHealthRecord/deleteHealthRecord. Denormalized
+  /// onto the goat document — same reason currentWeight/healthStatus
+  /// are — so a farm-wide "which goats have a health check due" query
+  /// can run directly against goat documents via a collectionGroup
+  /// query, instead of opening every goat's healthRecords subcollection
+  /// one at a time. Null when no health record has a scheduled
+  /// follow-up.
+  final DateTime? nextHealthCheckDate;
+
 
 
   // ==========================================================================
@@ -363,6 +378,9 @@ class PalaiGoat {
     this.lastReportType,
     this.lastReportDate,
     this.reportsCount = 0,
+
+    // Health reminder
+    this.nextHealthCheckDate,
   }) : registrationDate =
       registrationDate ?? checkInDate;
 
@@ -563,6 +581,9 @@ class PalaiGoat {
 
       reportsCount:
       _readInt(data['reportsCount']),
+
+      nextHealthCheckDate:
+      _readDate(data['nextHealthCheckDate']),
     );
   }
 
@@ -708,6 +729,9 @@ class PalaiGoat {
 
       reportsCount:
       _readInt(data['reportsCount']),
+
+      nextHealthCheckDate:
+      _readDate(data['nextHealthCheckDate']),
     );
   }
 
@@ -782,6 +806,12 @@ class PalaiGoat {
           ? Timestamp.fromDate(lastReportDate!)
           : null,
       'reportsCount': reportsCount,
+
+      // Health reminder
+      'nextHealthCheckDate':
+      nextHealthCheckDate != null
+          ? Timestamp.fromDate(nextHealthCheckDate!)
+          : null,
 
       'createdAt':
       FieldValue.serverTimestamp(),
@@ -883,6 +913,12 @@ class PalaiGoat {
           ? Timestamp.fromDate(lastReportDate!)
           : null,
       'reportsCount': reportsCount,
+
+      // Health reminder
+      'nextHealthCheckDate':
+      nextHealthCheckDate != null
+          ? Timestamp.fromDate(nextHealthCheckDate!)
+          : null,
     };
 
     // Before image
@@ -955,6 +991,8 @@ class PalaiGoat {
     String? lastReportType,
     DateTime? lastReportDate,
     int? reportsCount,
+
+    DateTime? nextHealthCheckDate,
   }) {
     return PalaiGoat(
       id: id,
@@ -1063,6 +1101,10 @@ class PalaiGoat {
       reportsCount:
       reportsCount ??
           this.reportsCount,
+
+      nextHealthCheckDate:
+      nextHealthCheckDate ??
+          this.nextHealthCheckDate,
     );
   }
 
