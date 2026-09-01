@@ -87,6 +87,11 @@ class FarmModel {
   /// separately rather than read off this model. Used to drive both the
   /// Home-screen completion popup and the progress bar on Profile.
   int completionPercent({required int partnerCount}) {
+    // Adding a farm partner is an optional feature (see "Add Farm
+    // Partner" on the profile screen) and is intentionally NOT part of
+    // the required checklist below. Including it here used to leave the
+    // profile permanently stuck at 86% (6/7) for farms that had every
+    // required field filled in but no partner added.
     final checks = <bool>[
       farmName.trim().isNotEmpty,
       ownerName.trim().isNotEmpty,
@@ -94,7 +99,6 @@ class FarmModel {
       email.trim().isNotEmpty,
       address.trim().isNotEmpty,
       profileImage != null && profileImage!.isNotEmpty,
-      partnerCount > 0,
     ];
     final done = checks.where((c) => c).length;
     return ((done / checks.length) * 100).round();

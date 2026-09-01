@@ -15,11 +15,7 @@ import '../../services/image_service.dart';
 import '../../services/locale_provider.dart';
 import '../../services/partner_auth_service.dart';
 import '../../widgets/app_bottom_nav.dart';
-import '../../widgets/fast_route.dart';
-import '../customers/customer_management_screen.dart';
 import '../login_screen.dart';
-import '../palai/palai_screen.dart';
-import '../stocks/stock_screen.dart';
 import 'profile_partner_dashboard.dart';
 
 class ProfileScreen extends StatefulWidget {
@@ -523,42 +519,23 @@ class _ProfileScreenState extends State<ProfileScreen> {
     }
   }
 
+  // Home/Palai/Stock/Customers (indices 0-3) all live side-by-side inside
+  // MainShell's IndexedStack under ONE shared AppBottomNav. They were
+  // previously re-pushed here as brand-new, standalone screens, which is
+  // why the bottom nav disappeared after Profile -> Customer Management
+  // (and would have for Palai/Stock too): those screens have no
+  // bottomNavigationBar of their own, they rely entirely on MainShell for
+  // it. The fix is to pop back to the shell and tell it which tab to
+  // show, instead of pushing a second, nav-less copy of the screen.
+  //
+  // The unsaved-changes confirmation is handled once, centrally, by the
+  // PopScope below (it intercepts this pop the same way it intercepts the
+  // system back button), so this just requests the pop with the chosen
+  // tab index as the result.
   void _onBottomNavTap(int index) {
-    switch (index) {
-      case 4:
-        return;
+    if (index == 4) return;
 
-      case 3:
-        Navigator.of(context).pop();
-        Navigator.of(context).push(
-          fastRoute(
-            const CustomerManagementScreen(),
-          ),
-        );
-        break;
-
-      case 0:
-        Navigator.of(context).pop();
-        break;
-
-      case 1:
-        Navigator.of(context).pop();
-        Navigator.of(context).push(
-          fastRoute(
-            const PalaiScreen(),
-          ),
-        );
-        break;
-
-      case 2:
-        Navigator.of(context).pop();
-        Navigator.of(context).push(
-          fastRoute(
-            const StockScreen(),
-          ),
-        );
-        break;
-    }
+    Navigator.of(context).pop(index);
   }
 
   @override
@@ -596,7 +573,11 @@ class _ProfileScreenState extends State<ProfileScreen> {
         await _confirmLeaveIfNeeded();
 
         if (canLeave && mounted) {
-          Navigator.of(context).pop();
+          // Forward whatever result the blocked pop was carrying (e.g.
+          // the tab index from _onBottomNavTap) instead of dropping it,
+          // so confirming "leave without saving" still lands on the
+          // right tab rather than just the previous one.
+          Navigator.of(context).pop(result);
         }
       },
       child: Scaffold(
@@ -650,7 +631,14 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     ),
                     child: Column(
                       children: [
-                        _buildCompletionCard(),
+                        // Plays every time this screen appears — first
+                        // open, or returning to it after switching tabs
+                        // and coming back — not just once ever.
+                        FadeInUp(
+                          duration:
+                          const Duration(milliseconds: 260),
+                          child: _buildCompletionCard(),
+                        ),
 
                         const SizedBox(height: 16),
 
@@ -893,67 +881,115 @@ class _ProfileScreenState extends State<ProfileScreen> {
     final percent = _percent;
     final complete = percent >= 100;
 
-    return Container(
-      decoration: AppTheme.card(radius: 20),
-      padding: const EdgeInsets.all(18),
-      child: Row(
-        children: [
-          SizedBox(
-            width: 60,
-            height: 60,
-            child: Stack(
-              alignment: Alignment.center,
-              children: [
-                CircularProgressIndicator(
-                  value: percent / 100,
-                  strokeWidth: 6,
-                  backgroundColor:
-                  AppColors.lightGreen,
-                  color: complete
-                      ? AppColors.success
-                      : AppColors.primaryGreen,
-                ),
-                Text(
-                  '$percent%',
-                  style: AppTheme.heading(
-                    size: 13,
-                    color: AppColors.darkGreen,
+    // AnimatedSwitcher gives the card a proper transition every time it
+    // "appears/returns" — first build, coming back from another screen
+    // with a saved change, or flipping between "in progress" and
+    // "complete" — instead of the text/icon just snapping in place.
+    return AnimatedSwitcher(
+      duration: const Duration(milliseconds: 320),
+      switchInCurve: Curves.easeOutCubic,
+      switchOutCurve: Curves.easeInCubic,
+      transitionBuilder: (child, animation) {
+        return FadeTransition(
+          opacity: animation,
+          child: SlideTransition(
+            position: Tween<Offset>(
+              begin: const Offset(0, 0.06),
+              end: Offset.zero,
+            ).animate(animation),
+            child: child,
+          ),
+        );
+      },
+      child: Container(
+        // Keying on `complete` (rather than percent) is what drives the
+        // AnimatedSwitcher transition above — it re-plays whenever the
+        // profile flips between "in progress" and "complete", not on
+        // every tiny percent change.
+        key: ValueKey<bool>(complete),
+        decoration: AppTheme.card(radius: 20),
+        padding: const EdgeInsets.all(18),
+        child: Row(
+          children: [
+            SizedBox(
+              width: 60,
+              height: 60,
+              child: Stack(
+                alignment: Alignment.center,
+                children: [
+                  // TweenAnimationBuilder smoothly animates the ring and
+                  // the number from the old percent to the new one
+                  // whenever `percent` changes, instead of jumping
+                  // straight to the new value.
+                  TweenAnimationBuilder<double>(
+                    tween: Tween<double>(
+                      begin: 0,
+                      end: percent.toDouble(),
+                    ),
+                    duration: const Duration(milliseconds: 600),
+                    curve: Curves.easeOutCubic,
+                    builder: (context, animatedPercent, _) {
+                      return Stack(
+                        alignment: Alignment.center,
+                        children: [
+                          CircularProgressIndicator(
+                            value: animatedPercent / 100,
+                            strokeWidth: 6,
+                            backgroundColor:
+                            AppColors.lightGreen,
+                            color: complete
+                                ? AppColors.success
+                                : AppColors.primaryGreen,
+                          ),
+                          Text(
+                            '${animatedPercent.round()}%',
+                            style: AppTheme.heading(
+                              size: 13,
+                              color: AppColors.darkGreen,
+                            ),
+                          ),
+                        ],
+                      );
+                    },
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
-          ),
 
-          const SizedBox(width: 16),
+            const SizedBox(width: 16),
 
-          Expanded(
-            child: Column(
-              crossAxisAlignment:
-              CrossAxisAlignment.start,
-              children: [
-                Text(
-                  complete
-                      ? 'Profile complete 🎉'
-                      : 'Complete your profile',
-                  style: AppTheme.heading(size: 15),
-                ),
-                const SizedBox(height: 5),
-                Text(
-                  complete
-                      ? 'Everything important is configured.'
-                      : 'Complete the remaining details to finish setup.',
-                  style: AppTheme.body(size: 12),
-                ),
-              ],
+            Expanded(
+              child: Column(
+                crossAxisAlignment:
+                CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    complete
+                        ? 'Profile complete 🎉'
+                        : 'Complete your profile',
+                    style: AppTheme.heading(size: 15),
+                  ),
+                  const SizedBox(height: 5),
+                  Text(
+                    complete
+                        ? 'Everything important is configured.'
+                        : 'Complete the remaining details to finish setup.',
+                    style: AppTheme.body(size: 12),
+                  ),
+                ],
+              ),
             ),
-          ),
 
-          if (complete)
-            const Icon(
-              Icons.verified,
-              color: AppColors.success,
-            ),
-        ],
+            if (complete)
+              ZoomIn(
+                duration: const Duration(milliseconds: 350),
+                child: const Icon(
+                  Icons.verified,
+                  color: AppColors.success,
+                ),
+              ),
+          ],
+        ),
       ),
     );
   }

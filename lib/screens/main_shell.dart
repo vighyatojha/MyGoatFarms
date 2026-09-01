@@ -41,7 +41,13 @@ class _MainShellState extends State<MainShell> {
   /// switching between them never rebuilds or refetches. Profile is a real
   /// screen — it opens on top of the shell so backing out returns to
   /// whichever tab was showing.
-  void _onNavTap(int index) {
+  ///
+  /// The Profile screen has its own copy of the bottom nav (since it isn't
+  /// one of the IndexedStack tabs). If the person taps Home/Palai/Stock/
+  /// Customers while on the Profile screen, it pops back here with that
+  /// tab's index as the result so we can switch straight to it, instead of
+  /// pushing a brand-new, nav-less copy of that screen on top.
+  Future<void> _onNavTap(int index) async {
     switch (index) {
       case 0:
       case 1:
@@ -50,7 +56,13 @@ class _MainShellState extends State<MainShell> {
         if (index != _index) setState(() => _index = index);
         break;
       case 4:
-        Navigator.of(context).push(fastRoute(const ProfileScreen()));
+        final result = await Navigator.of(context).push<int>(
+          fastRoute(const ProfileScreen()),
+        );
+
+        if (result != null && result >= 0 && result <= 3 && mounted) {
+          setState(() => _index = result);
+        }
         break;
     }
   }
