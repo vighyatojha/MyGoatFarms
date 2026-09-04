@@ -916,29 +916,6 @@ class _CustomerProfileScreenState
                   ],
                 ),
               ),
-
-              Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 10,
-                  vertical: 6,
-                ),
-
-                decoration: BoxDecoration(
-                  color: AppColors.lightGreen,
-                  borderRadius: BorderRadius.circular(
-                    10,
-                  ),
-                ),
-
-                child: Text(
-                  _customer.package,
-                  style: AppTheme.body(
-                    size: 10,
-                    color: AppColors.darkGreen,
-                    weight: FontWeight.w600,
-                  ),
-                ),
-              ),
             ],
           ),
 

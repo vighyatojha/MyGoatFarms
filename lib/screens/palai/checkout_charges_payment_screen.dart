@@ -1139,18 +1139,6 @@ class _CheckoutChargesPaymentScreenState
                   style:
                   AppTheme.body(size: 11),
                 ),
-                const SizedBox(height: 3),
-                Text(
-                  _customer!.package,
-                  style:
-                  AppTheme.body(
-                    size: 10,
-                    color:
-                    AppColors.darkGreen,
-                    weight:
-                    FontWeight.w600,
-                  ),
-                ),
               ],
             ),
           ),

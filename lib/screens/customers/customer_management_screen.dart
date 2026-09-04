@@ -19,7 +19,6 @@ import 'customer_profile_screen.dart';
 /// - Total customer count
 /// - Total pending amount
 /// - Total advance amount
-/// - Customer package and price
 /// - Customer profile
 /// - Edit customer
 /// - Delete customer
@@ -94,12 +93,8 @@ class _CustomerManagementScreenState
       final mobile =
       customer.mobileNumber.toLowerCase();
 
-      final package =
-      customer.package.toLowerCase();
-
       return name.contains(_query) ||
-          mobile.contains(_query) ||
-          package.contains(_query);
+          mobile.contains(_query);
     }).toList();
   }
 
@@ -575,12 +570,10 @@ class _CustomerManagementScreenState
       ) {
     double pending = 0;
     double advance = 0;
-    double totalValue = 0;
 
     for (final customer in customers) {
       pending += customer.pendingAmount;
       advance += customer.advanceAmount;
-      totalValue += customer.price;
     }
 
     return Column(
@@ -627,18 +620,6 @@ class _CustomerManagementScreenState
                 AppColors.darkGreen,
               ),
             ),
-            const SizedBox(width: 10),
-            Expanded(
-              child: _SummaryCard(
-                icon:
-                Icons.payments_outlined,
-                title: 'Palai Value',
-                value:
-                _rupees(totalValue),
-                color:
-                AppColors.primaryGreen,
-              ),
-            ),
           ],
         ),
       ],
@@ -657,7 +638,7 @@ class _CustomerManagementScreenState
         decoration:
         InputDecoration(
           hintText:
-          'Search customer, mobile or package',
+          'Search customer or mobile',
           hintStyle:
           AppTheme.body(size: 12),
           prefixIcon:
@@ -740,7 +721,7 @@ class _CustomerManagementScreenState
             Text(
               noCustomers
                   ? 'Add your first Palai customer to start managing their goats and payments.'
-                  : 'Try searching with a different name, mobile number or package.',
+                  : 'Try searching with a different name or mobile number.',
               textAlign:
               TextAlign.center,
               style: AppTheme.body(
@@ -1113,55 +1094,6 @@ class _CustomerCard extends StatelessWidget {
 
               const SizedBox(height: 12),
 
-              Container(
-                width: double.infinity,
-                padding:
-                const EdgeInsets.all(10),
-                decoration:
-                BoxDecoration(
-                  color:
-                  AppColors.paleGreen,
-                  borderRadius:
-                  BorderRadius.circular(
-                    10,
-                  ),
-                ),
-                child: Row(
-                  children: [
-                    Expanded(
-                      child: _InfoItem(
-                        icon:
-                        Icons.home_work_outlined,
-                        label:
-                        'Package',
-                        value:
-                        customer.package,
-                      ),
-                    ),
-                    Container(
-                      width: 1,
-                      height: 30,
-                      color:
-                      AppColors.divider,
-                    ),
-                    Expanded(
-                      child: _InfoItem(
-                        icon:
-                        Icons.payments_outlined,
-                        label:
-                        'Price',
-                        value:
-                        _rupees(
-                          customer.price,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-
-              const SizedBox(height: 8),
-
               Row(
                 children: [
                   Expanded(
@@ -1208,68 +1140,6 @@ class _CustomerCard extends StatelessWidget {
 
   static String _rupees(double value) {
     return '₹${value.toStringAsFixed(0)}';
-  }
-}
-
-// ============================================================================
-// INFO ITEM
-// ============================================================================
-
-class _InfoItem extends StatelessWidget {
-  final IconData icon;
-  final String label;
-  final String value;
-
-  const _InfoItem({
-    required this.icon,
-    required this.label,
-    required this.value,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Row(
-      children: [
-        Icon(
-          icon,
-          size: 16,
-          color: AppColors.primaryGreen,
-        ),
-        const SizedBox(width: 7),
-        Expanded(
-          child: Column(
-            crossAxisAlignment:
-            CrossAxisAlignment.start,
-            children: [
-              Text(
-                label,
-                style:
-                AppTheme.body(
-                  size: 9,
-                ),
-              ),
-              const SizedBox(height: 1),
-              Text(
-                value.isEmpty
-                    ? '-'
-                    : value,
-                maxLines: 1,
-                overflow:
-                TextOverflow.ellipsis,
-                style:
-                AppTheme.body(
-                  size: 11,
-                  color:
-                  AppColors.textDark,
-                  weight:
-                  FontWeight.w600,
-                ),
-              ),
-            ],
-          ),
-        ),
-      ],
-    );
   }
 }
 

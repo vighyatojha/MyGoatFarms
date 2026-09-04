@@ -200,7 +200,6 @@ class ReportPdfService {
         _pdfRow('Name', c.name),
         _pdfRow('Mobile', c.mobileNumber),
         if (c.address.trim().isNotEmpty) _pdfRow('Address', c.address),
-        if (c.package.trim().isNotEmpty) _pdfRow('Package', c.package),
       ],
     );
   }

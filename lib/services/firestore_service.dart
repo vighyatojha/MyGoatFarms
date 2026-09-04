@@ -177,6 +177,11 @@ class FirestoreService {
     final activityRef =
     activitiesCollection.doc();
 
+    // Resolved once, before the transaction, and reused inside it so the
+    // activity written for this operation carries who did it — same
+    // actor info every other activity write gets via [logActivity].
+    final actor = await getCurrentActor();
+
     await _db.runTransaction<void>(
           (transaction) async {
         final customerSnapshot =
@@ -276,6 +281,10 @@ class FirestoreService {
 
             'timestamp':
             FieldValue.serverTimestamp(),
+
+            if (actor != null) 'actorUid': actor.uid,
+            if (actor != null) 'actorName': actor.name,
+            if (actor != null) 'actorRole': actor.role,
           },
         );
       },
@@ -353,6 +362,9 @@ class FirestoreService {
         '${now.month.toString().padLeft(2, '0')}'
         '${now.day.toString().padLeft(2, '0')}'
         '-${billRef.id.substring(0, 6).toUpperCase()}';
+
+    // Resolved once, before the transaction — see [addOutstandingAmount].
+    final actor = await getCurrentActor();
 
     return _db.runTransaction<MonthlyBillResult>(
           (transaction) async {
@@ -648,6 +660,10 @@ class FirestoreService {
 
           'timestamp':
           FieldValue.serverTimestamp(),
+
+          if (actor != null) 'actorUid': actor.uid,
+          if (actor != null) 'actorName': actor.name,
+          if (actor != null) 'actorRole': actor.role,
         });
 
         return MonthlyBillResult(
@@ -752,6 +768,9 @@ class FirestoreService {
         .where('customerId', isEqualTo: customerId)
         .get()
         .timeout(timeout);
+
+    // Resolved once, before the transaction — see [addOutstandingAmount].
+    final actor = await getCurrentActor();
 
     final openBillRefs = openBillsSnapshot.docs.where((doc) {
       final billData = doc.data();
@@ -1011,6 +1030,10 @@ class FirestoreService {
 
           'timestamp':
           FieldValue.serverTimestamp(),
+
+          if (actor != null) 'actorUid': actor.uid,
+          if (actor != null) 'actorName': actor.name,
+          if (actor != null) 'actorRole': actor.role,
         });
 
         // ============================================================
@@ -1137,6 +1160,37 @@ class FirestoreService {
     return getFarmById(partner.farmId);
   }
 
+  /// Resolves the identity of whoever is currently signed in — the farm
+  /// owner or a partner — for attaching to activity records.
+  ///
+  /// This deliberately reuses [getFarmByAuthUid] / [getPartnerByAuthUid]
+  /// instead of introducing a separate `users/{uid}` lookup: those two
+  /// already correctly answer "is this uid the owner or a partner" for
+  /// login, so activity logging stays consistent with that with no new
+  /// source of truth to keep in sync.
+  ///
+  /// Returns null if nobody is signed in or the uid isn't linked to any
+  /// farm — callers should just log the activity without actor fields
+  /// in that case rather than fail the whole operation.
+  Future<({String uid, String name, String role})?> getCurrentActor() async {
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+    if (uid == null) return null;
+
+    final ownerFarm = await getFarmByAuthUid(uid);
+    if (ownerFarm != null) {
+      final name = ownerFarm.ownerName.trim();
+      return (uid: uid, name: name.isNotEmpty ? name : 'Farm Owner', role: 'owner');
+    }
+
+    final partner = await getPartnerByAuthUid(uid);
+    if (partner != null) {
+      final name = partner.name.trim();
+      return (uid: uid, name: name.isNotEmpty ? name : 'Partner', role: 'partner');
+    }
+
+    return null;
+  }
+
   /// Convenience getter used by every module to resolve the current
   /// farm's document id before reading/writing sub-collections. Works
   /// for both farm owners and partners — see [getFarmForUser].
@@ -1237,11 +1291,24 @@ class FirestoreService {
   // Activities (shared recent-activity feed for Home / Palai / Stock)
   // ---------------------------------------------------------------------
 
+  /// Writes [activity] to `farms/{farmId}/activities`, automatically
+  /// attaching who performed it (owner or partner) via [getCurrentActor].
+  ///
+  /// Callers should keep constructing [activity] exactly as before —
+  /// they don't need to know or pass in whether the signed-in user is
+  /// the owner or a partner; that's resolved here, once, centrally.
   Future<void> logActivity(String farmId, ActivityLog activity) async {
+    final actor = await getCurrentActor();
+    final data = activity.toMap();
+    if (actor != null) {
+      data['actorUid'] = actor.uid;
+      data['actorName'] = actor.name;
+      data['actorRole'] = actor.role;
+    }
     await _farms
         .doc(farmId)
         .collection('activities')
-        .add(activity.toMap())
+        .add(data)
         .timeout(timeout);
   }
 
