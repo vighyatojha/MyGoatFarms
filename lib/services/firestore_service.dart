@@ -2017,6 +2017,12 @@ class FirestoreService {
       }).timeout(timeout);
     }
 
+    // Attach the same actor info logActivity() attaches to the farm-wide
+    // feed, so the Stock screen's own "Recent Activity" list (which reads
+    // from stockMovements, not the activities collection) can show who
+    // performed it too.
+    final actor = await getCurrentActor();
+
     await _stockMovements(farmId).add(StockMovement(
       id: '',
       stockItemId: itemId,
@@ -2026,6 +2032,9 @@ class FirestoreService {
       isAddition: true,
       date: DateTime.now(),
       notes: notes,
+      actorUid: actor?.uid,
+      actorName: actor?.name,
+      actorRole: actor?.role,
     ).toMap()).timeout(timeout);
   }
 
@@ -2050,6 +2059,12 @@ class FirestoreService {
       });
     }).timeout(timeout);
 
+    // Attach the same actor info logActivity() attaches to the farm-wide
+    // feed, so the Stock screen's own "Recent Activity" list (which reads
+    // from stockMovements, not the activities collection) can show who
+    // performed it too.
+    final actor = await getCurrentActor();
+
     await _stockMovements(farmId).add(StockMovement(
       id: '',
       stockItemId: itemId,
@@ -2059,6 +2074,9 @@ class FirestoreService {
       isAddition: false,
       date: DateTime.now(),
       notes: notes,
+      actorUid: actor?.uid,
+      actorName: actor?.name,
+      actorRole: actor?.role,
     ).toMap()).timeout(timeout);
   }
 

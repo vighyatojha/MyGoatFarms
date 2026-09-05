@@ -2637,6 +2637,24 @@ class _StockScreenState extends State<StockScreen> {
                             .textGrey,
                       ),
                     ),
+
+                    if (movement.actorName != null &&
+                        movement.actorName!.trim().isNotEmpty) ...[
+                      const SizedBox(
+                        height: 2,
+                      ),
+                      Text(
+                        movement.actorRoleLabel != null
+                            ? 'By ${movement.actorName} · ${movement.actorRoleLabel}'
+                            : 'By ${movement.actorName}',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: AppTheme.body(
+                          size: 9,
+                          color: AppColors.textGrey,
+                        ).copyWith(fontWeight: FontWeight.w600),
+                      ),
+                    ],
                   ],
                 ),
               ),

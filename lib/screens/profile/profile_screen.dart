@@ -238,6 +238,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
   }
 
   Future<void> _saveDetails() async {
+    // Defense in depth: the "Save Farm Details" button is hidden for
+    // partners (see _buildYourDetailsCard), but guard the method itself
+    // too in case it's ever reachable another way.
+    if (!_isOwner) return;
     if (_farmId == null || _savingDetails) return;
 
     final farmName = _farmNameController.text.trim();
@@ -290,6 +294,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
   }
 
   Future<void> _pickPhoto() async {
+    // Defense in depth: the photo-edit affordance is hidden for partners
+    // (see _buildHeader), but guard the method itself too in case it's
+    // ever reachable another way.
+    if (!_isOwner) return;
     if (_farmId == null || _uploadingPhoto) return;
 
     try {
@@ -333,6 +341,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
   }
 
   Future<void> _removePhoto() async {
+    // Defense in depth: the photo-edit affordance is hidden for partners
+    // (see _buildHeader), but guard the method itself too in case it's
+    // ever reachable another way.
+    if (!_isOwner) return;
     if (_farmId == null) return;
 
     final confirmed = await showDialog<bool>(
@@ -383,6 +395,11 @@ class _ProfileScreenState extends State<ProfileScreen> {
   }
 
   void _showPhotoOptions() {
+    // Defense in depth: the header's GestureDetector no longer calls this
+    // for partners (see _buildHeader), but guard it here too in case it's
+    // ever reachable another way.
+    if (!_isOwner) return;
+
     showModalBottomSheet(
       context: context,
       showDragHandle: true,
@@ -436,6 +453,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
   }
 
   Future<void> _showBillSettings() async {
+    // Defense in depth: the "Edit Bill Details" button is hidden for
+    // partners (see _buildBillDetailsCard), but guard the method itself
+    // too in case it's ever reachable another way.
+    if (!_isOwner) return;
     if (_farmId == null) return;
 
     final current =
@@ -461,6 +482,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
   }
 
   Future<void> _showAddPartnerSheet() async {
+    // Defense in depth: ProfilePartnerDashboard already only renders the
+    // "Add Partner" button when isOwner is true, but guard the method
+    // itself too in case it's ever reachable another way.
+    if (!_isOwner) return;
     if (_farmId == null) return;
 
     final added = await showModalBottomSheet<bool>(
@@ -488,6 +513,14 @@ class _ProfileScreenState extends State<ProfileScreen> {
   Future<void> _changeLanguage(
       AppLanguage language,
       ) async {
+    // preferredLanguage lives on the shared farm document (it's what lets
+    // the chosen language follow the farm profile across every device/
+    // login, owner or partner) rather than being a per-partner setting,
+    // so it's farm-level and off-limits to partners like the rest of
+    // this screen. The language-card UI hides the tappable options for
+    // partners (see _buildLanguageCard); this guard covers the method
+    // itself in case it's ever reachable another way.
+    if (!_isOwner) return;
     if (_farmId == null) return;
 
     try {
@@ -786,7 +819,11 @@ class _ProfileScreenState extends State<ProfileScreen> {
           const SizedBox(height: 8),
 
           GestureDetector(
-            onTap: _showPhotoOptions,
+            // Only the owner can change the farm photo — see _pickPhoto/
+            // _removePhoto/_showPhotoOptions. For partners this is a
+            // read-only view of the farm owner's photo, so there's no
+            // edit affordance to tap.
+            onTap: _isOwner ? _showPhotoOptions : null,
             child: Stack(
               alignment: Alignment.center,
               children: [
@@ -838,27 +875,30 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     ),
                   ),
 
-                Positioned(
-                  right: 0,
-                  bottom: 0,
-                  child: Container(
-                    width: 32,
-                    height: 32,
-                    decoration: BoxDecoration(
-                      color: AppColors.darkGreen,
-                      shape: BoxShape.circle,
-                      border: Border.all(
+                // Edit affordance — owner only (see task 2). Hidden
+                // entirely for partners rather than shown disabled.
+                if (_isOwner)
+                  Positioned(
+                    right: 0,
+                    bottom: 0,
+                    child: Container(
+                      width: 32,
+                      height: 32,
+                      decoration: BoxDecoration(
+                        color: AppColors.darkGreen,
+                        shape: BoxShape.circle,
+                        border: Border.all(
+                          color: Colors.white,
+                          width: 2,
+                        ),
+                      ),
+                      child: const Icon(
+                        Icons.camera_alt,
                         color: Colors.white,
-                        width: 2,
+                        size: 16,
                       ),
                     ),
-                    child: const Icon(
-                      Icons.camera_alt,
-                      color: Colors.white,
-                      size: 16,
-                    ),
                   ),
-                ),
               ],
             ),
           ),
@@ -899,9 +939,14 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 color: Colors.white.withOpacity(.35),
               ),
             ),
-            child: const Text(
-              'OWNER',
-              style: TextStyle(
+            // Was hardcoded to 'OWNER' regardless of who was actually
+            // signed in, so a partner viewing their own Profile screen
+            // saw the same "OWNER" badge as the farm owner — this is the
+            // visual cue a partner needs to confirm which view/role
+            // they're currently in, so it must reflect _isOwner.
+            child: Text(
+              _isOwner ? 'OWNER' : 'PARTNER',
+              style: const TextStyle(
                 color: Colors.white,
                 fontSize: 10,
                 fontWeight: FontWeight.w900,
@@ -913,7 +958,13 @@ class _ProfileScreenState extends State<ProfileScreen> {
           const SizedBox(height: 7),
 
           Text(
-            'Tap the photo to change it',
+            // The photo shown here always comes from the shared farm
+            // document (see _farm?.profileImage below), so a partner is
+            // already looking at the farm owner's own photo — only the
+            // caption changes, since partners can't tap to edit it.
+            _isOwner
+                ? 'Tap the photo to change it'
+                : "This is your farm owner's photo",
             style: AppTheme.body(
               size: 11,
               color: Colors.white.withOpacity(.75),
@@ -1049,21 +1100,41 @@ class _ProfileScreenState extends State<ProfileScreen> {
       icon: Icons.storefront_outlined,
       child: Column(
         children: [
-          _input(
-            controller: _farmNameController,
-            label: 'Farm name',
-            hint: 'Enter your farm name',
-            icon: Icons.storefront_outlined,
-          ),
+          // Farm name, owner name, and address are farm-level settings —
+          // only the owner can edit them (see task 2). Partners get the
+          // same read-only, locked-field treatment already used just
+          // below for mobile/email, instead of editable TextFields.
+          if (_isOwner) ...[
+            _input(
+              controller: _farmNameController,
+              label: 'Farm name',
+              hint: 'Enter your farm name',
+              icon: Icons.storefront_outlined,
+            ),
 
-          const SizedBox(height: 12),
+            const SizedBox(height: 12),
 
-          _input(
-            controller: _ownerNameController,
-            label: 'Owner name',
-            hint: 'Enter owner name',
-            icon: Icons.person_outline,
-          ),
+            _input(
+              controller: _ownerNameController,
+              label: 'Owner name',
+              hint: 'Enter owner name',
+              icon: Icons.person_outline,
+            ),
+          ] else ...[
+            _lockedField(
+              label: 'Farm name',
+              value: farm?.farmName ?? '',
+              icon: Icons.storefront_outlined,
+            ),
+
+            const SizedBox(height: 12),
+
+            _lockedField(
+              label: 'Owner name',
+              value: farm?.ownerName ?? '',
+              icon: Icons.person_outline,
+            ),
+          ],
 
           const SizedBox(height: 12),
 
@@ -1083,50 +1154,61 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
           const SizedBox(height: 12),
 
-          _input(
-            controller: _addressController,
-            label: 'Farm address',
-            hint: 'Enter complete farm address',
-            icon: Icons.location_on_outlined,
-            maxLines: 3,
-          ),
+          if (_isOwner)
+            _input(
+              controller: _addressController,
+              label: 'Farm address',
+              hint: 'Enter complete farm address',
+              icon: Icons.location_on_outlined,
+              maxLines: 3,
+            )
+          else
+            _lockedField(
+              label: 'Farm address',
+              value: farm?.address ?? '',
+              icon: Icons.location_on_outlined,
+            ),
 
-          const SizedBox(height: 16),
+          // Save button is a farm-data write, so it's owner-only — hidden
+          // entirely for partners rather than shown disabled.
+          if (_isOwner) ...[
+            const SizedBox(height: 16),
 
-          SizedBox(
-            width: double.infinity,
-            height: 50,
-            child: ElevatedButton(
-              onPressed:
-              _savingDetails ? null : _saveDetails,
-              style: ElevatedButton.styleFrom(
-                backgroundColor:
-                AppColors.primaryGreen,
-                foregroundColor: Colors.white,
-                shape: RoundedRectangleBorder(
-                  borderRadius:
-                  BorderRadius.circular(30),
+            SizedBox(
+              width: double.infinity,
+              height: 50,
+              child: ElevatedButton(
+                onPressed:
+                _savingDetails ? null : _saveDetails,
+                style: ElevatedButton.styleFrom(
+                  backgroundColor:
+                  AppColors.primaryGreen,
+                  foregroundColor: Colors.white,
+                  shape: RoundedRectangleBorder(
+                    borderRadius:
+                    BorderRadius.circular(30),
+                  ),
                 ),
-              ),
-              child: _savingDetails
-                  ? const SizedBox(
-                width: 21,
-                height: 21,
-                child:
-                CircularProgressIndicator(
-                  color: Colors.white,
-                  strokeWidth: 2.5,
-                ),
-              )
-                  : const Text(
-                'Save Farm Details',
-                style: TextStyle(
-                  fontWeight:
-                  FontWeight.w700,
+                child: _savingDetails
+                    ? const SizedBox(
+                  width: 21,
+                  height: 21,
+                  child:
+                  CircularProgressIndicator(
+                    color: Colors.white,
+                    strokeWidth: 2.5,
+                  ),
+                )
+                    : const Text(
+                  'Save Farm Details',
+                  style: TextStyle(
+                    fontWeight:
+                    FontWeight.w700,
+                  ),
                 ),
               ),
             ),
-          ),
+          ],
         ],
       ),
     );
@@ -1135,6 +1217,22 @@ class _ProfileScreenState extends State<ProfileScreen> {
   Widget _buildLanguageCard() {
     final current =
         context.watch<LocaleProvider>().language;
+
+    // preferredLanguage lives on the shared farm document (see
+    // _changeLanguage), so it's a farm-level setting like the rest of
+    // this screen — partners get a read-only view of the current choice
+    // instead of the tappable selector.
+    if (!_isOwner) {
+      return _sectionCard(
+        title: 'App Language',
+        icon: Icons.language_outlined,
+        child: _lockedField(
+          label: 'App language',
+          value: current.label,
+          icon: Icons.language_outlined,
+        ),
+      );
+    }
 
     return _sectionCard(
       title: 'App Language',
@@ -1300,37 +1398,42 @@ class _ProfileScreenState extends State<ProfileScreen> {
             ),
           ),
 
-          const SizedBox(height: 14),
+          // Editing bill/pricing details is a farm-level setting —
+          // owner-only (see task 2). Hidden entirely for partners rather
+          // than shown disabled.
+          if (_isOwner) ...[
+            const SizedBox(height: 14),
 
-          SizedBox(
-            width: double.infinity,
-            height: 48,
-            child: OutlinedButton.icon(
-              onPressed: _showBillSettings,
-              icon: const Icon(
-                Icons.edit_outlined,
-              ),
-              label: const Text(
-                'Edit Bill Details',
-              ),
-              style:
-              OutlinedButton.styleFrom(
-                foregroundColor:
-                AppColors.primaryGreen,
-                side: const BorderSide(
-                  color:
-                  AppColors.primaryGreen,
+            SizedBox(
+              width: double.infinity,
+              height: 48,
+              child: OutlinedButton.icon(
+                onPressed: _showBillSettings,
+                icon: const Icon(
+                  Icons.edit_outlined,
                 ),
-                shape:
-                RoundedRectangleBorder(
-                  borderRadius:
-                  BorderRadius.circular(
-                    30,
+                label: const Text(
+                  'Edit Bill Details',
+                ),
+                style:
+                OutlinedButton.styleFrom(
+                  foregroundColor:
+                  AppColors.primaryGreen,
+                  side: const BorderSide(
+                    color:
+                    AppColors.primaryGreen,
+                  ),
+                  shape:
+                  RoundedRectangleBorder(
+                    borderRadius:
+                    BorderRadius.circular(
+                      30,
+                    ),
                   ),
                 ),
               ),
             ),
-          ),
+          ],
         ],
       ),
     );
