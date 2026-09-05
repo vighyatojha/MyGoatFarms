@@ -6,6 +6,7 @@ import '../../app_theme.dart';
 import '../../models/stock_model.dart';
 import '../../models/activity_model.dart';
 import '../../services/firestore_service.dart';
+import '../../widgets/farm_not_linked_state.dart';
 
 // Medicine screens use a blue theme (AppColors.info) instead of the app's
 // default green, matching the medicine card color on the Stock screen.
@@ -22,6 +23,7 @@ class MedicineUsedScreen extends StatefulWidget {
 
 class _MedicineUsedScreenState extends State<MedicineUsedScreen> {
   String? _farmId;
+  bool _loadingFarm = true;
   StockItem? _selectedItem;
   final _quantityController = TextEditingController();
   final _notesController = TextEditingController();
@@ -30,8 +32,15 @@ class _MedicineUsedScreenState extends State<MedicineUsedScreen> {
   @override
   void initState() {
     super.initState();
+    _loadFarm();
+  }
+
+  void _loadFarm() {
     FirestoreService.instance.currentFarmId().then((id) {
-      if (mounted) setState(() => _farmId = id);
+      if (mounted) setState(() {
+        _farmId = id;
+        _loadingFarm = false;
+      });
     });
   }
 
@@ -208,6 +217,16 @@ class _MedicineUsedScreenState extends State<MedicineUsedScreen> {
     );
   }
 
+  Widget _buildNotLinkedState() {
+    return FarmNotLinkedState(
+      buttonColor: AppColors.info,
+      onRetry: () {
+        setState(() => _loadingFarm = true);
+        _loadFarm();
+      },
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -219,8 +238,10 @@ class _MedicineUsedScreenState extends State<MedicineUsedScreen> {
         titleSpacing: 4,
         title: Text('Medicine Used', style: AppTheme.heading(size: 18)),
       ),
-      body: _farmId == null
+      body: _loadingFarm
           ? const Center(child: CircularProgressIndicator(color: AppColors.info))
+          : _farmId == null
+          ? _buildNotLinkedState()
           : StreamBuilder<List<StockItem>>(
         stream: FirestoreService.instance.stockItemsStream(_farmId!, type: StockType.medicine),
         builder: (context, snap) {

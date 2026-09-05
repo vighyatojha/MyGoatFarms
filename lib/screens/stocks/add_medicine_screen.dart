@@ -29,6 +29,7 @@ class _AddMedicineScreenState extends State<AddMedicineScreen> {
 
   bool _saving = false;
   String? _farmId;
+  bool _loadingFarm = true;
   StockItem? _selectedMedicine;
   String _unit = 'Bottle';
 
@@ -41,9 +42,13 @@ class _AddMedicineScreenState extends State<AddMedicineScreen> {
   }
 
   Future<void> _loadFarm() async {
+    setState(() => _loadingFarm = true);
     final farmId = await FirestoreService.instance.currentFarmId();
     if (!mounted) return;
-    setState(() => _farmId = farmId);
+    setState(() {
+      _farmId = farmId;
+      _loadingFarm = false;
+    });
   }
 
   @override
@@ -308,13 +313,27 @@ class _AddMedicineScreenState extends State<AddMedicineScreen> {
   }
 
   Widget _medicineSelector() {
-    if (_farmId == null) {
+    if (_loadingFarm) {
       return _field(
         controller: _nameController,
         label: 'Medicine name',
         hint: 'Loading existing medicines...',
         icon: Icons.medication_outlined,
         readOnly: true,
+      );
+    }
+
+    if (_farmId == null) {
+      return _field(
+        controller: _nameController,
+        label: 'Medicine name',
+        hint: "Couldn't load your farm — tap to retry",
+        icon: Icons.medication_outlined,
+        readOnly: true,
+        suffixIcon: IconButton(
+          icon: const Icon(Icons.refresh, color: AppColors.info),
+          onPressed: _loadFarm,
+        ),
       );
     }
 

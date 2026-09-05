@@ -1114,9 +1114,19 @@ class FirestoreService {
       return FarmModel.fromDoc(query.docs.first);
     } catch (e) {
       debugPrint('FirestoreService.getFarmByAuthUid error: $e');
+      lastFarmResolutionError = 'getFarmByAuthUid: $e';
       return null;
     }
   }
+
+  /// Set whenever [getFarmByAuthUid], [getPartnerByAuthUid], or
+  /// [getFarmForUser] fails or comes back empty, so the UI's "not linked
+  /// to any farm" screen can show *why* in debug builds instead of just
+  /// "not linked" — which looks identical whether the account genuinely
+  /// isn't linked, a required Firestore index is missing, or security
+  /// rules are blocking the read. Cleared at the start of every
+  /// [getFarmForUser] call so it always reflects the most recent attempt.
+  String? lastFarmResolutionError;
 
   /// Looks up the partner record (if any) linked to [uid] across every
   /// farm's `partners` subcollection, using a `collectionGroup` query.
@@ -1133,10 +1143,17 @@ class FirestoreService {
           .limit(1)
           .get()
           .timeout(timeout);
-      if (query.docs.isEmpty) return null;
+      if (query.docs.isEmpty) {
+        lastFarmResolutionError =
+        'No partner doc found with authUid == $uid (uid genuinely not '
+            'linked, OR the read was silently denied/empty due to rules — '
+            'an empty result and a denied result can look the same here).';
+        return null;
+      }
       return PartnerModel.fromDoc(query.docs.first);
     } catch (e) {
       debugPrint('FirestoreService.getPartnerByAuthUid error: $e');
+      lastFarmResolutionError = 'getPartnerByAuthUid: $e';
       return null;
     }
   }
@@ -1151,13 +1168,28 @@ class FirestoreService {
   ///
   /// Returns null if [uid] isn't linked to any farm as either role.
   Future<FarmModel?> getFarmForUser(String uid) async {
+    lastFarmResolutionError = null;
+
     final ownerFarm = await getFarmByAuthUid(uid);
     if (ownerFarm != null) return ownerFarm;
 
     final partner = await getPartnerByAuthUid(uid);
-    if (partner == null || partner.farmId.isEmpty) return null;
+    if (partner == null) return null;
+    if (partner.farmId.isEmpty) {
+      lastFarmResolutionError =
+      'Partner doc ${partner.authUid} was found but its farmId field is '
+          'empty, so the farm document itself can\'t be loaded.';
+      return null;
+    }
 
-    return getFarmById(partner.farmId);
+    final farm = await getFarmById(partner.farmId);
+    if (farm == null) {
+      lastFarmResolutionError =
+      'Partner doc points at farmId "${partner.farmId}", but no farm '
+          'document with that id could be loaded (deleted farm, or a '
+          'rules/permission issue reading the farms collection itself).';
+    }
+    return farm;
   }
 
   /// Resolves the identity of whoever is currently signed in — the farm

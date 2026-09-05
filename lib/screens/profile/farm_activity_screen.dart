@@ -155,6 +155,17 @@ class _ActivityTile extends StatelessWidget {
                     _formatDate(activity.timestamp),
                     style: AppTheme.body(size: 11, color: AppColors.textGrey),
                   ),
+                  if (activity.actorName != null &&
+                      activity.actorName!.trim().isNotEmpty) ...[
+                    const SizedBox(height: 3),
+                    Text(
+                      activity.actorRoleLabel != null
+                          ? 'By ${activity.actorName} · ${activity.actorRoleLabel}'
+                          : 'By ${activity.actorName}',
+                      style: AppTheme.body(size: 11, color: AppColors.textGrey)
+                          .copyWith(fontWeight: FontWeight.w600),
+                    ),
+                  ],
                 ],
               ),
             ),

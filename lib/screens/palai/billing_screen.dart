@@ -5,6 +5,7 @@ import '../../models/bill_settings_model.dart';
 import '../../models/palai_models.dart';
 import '../../services/firestore_service.dart';
 import '../../services/pdf_bill_service.dart';
+import '../../widgets/farm_not_linked_state.dart';
 
 class BillingScreen extends StatefulWidget {
   const BillingScreen({super.key});
@@ -17,6 +18,7 @@ class BillingScreen extends StatefulWidget {
 class _BillingScreenState
     extends State<BillingScreen> {
   String? _farmId;
+  bool _loading = true;
 
   PalaiCustomer? _selectedCustomer;
   PalaiCustomer? _liveCustomer;
@@ -61,9 +63,17 @@ class _BillingScreenState
     final id =
     await FirestoreService.instance.currentFarmId();
 
-    if (!mounted || id == null) return;
+    if (!mounted) return;
 
-    setState(() => _farmId = id);
+    if (id == null) {
+      setState(() => _loading = false);
+      return;
+    }
+
+    setState(() {
+      _farmId = id;
+      _loading = false;
+    });
 
     final farm =
     await FirestoreService.instance.getFarmById(id);
@@ -599,7 +609,7 @@ class _BillingScreenState
 
   @override
   Widget build(BuildContext context) {
-    if (_farmId == null) {
+    if (_loading) {
       return Scaffold(
         backgroundColor:
         AppColors.paleGreen,
@@ -620,6 +630,29 @@ class _BillingScreenState
           CircularProgressIndicator(
             color:
             AppColors.primaryGreen,
+          ),
+        ),
+      );
+    }
+
+    if (_farmId == null) {
+      return Scaffold(
+        backgroundColor: AppColors.paleGreen,
+        appBar: AppBar(
+          backgroundColor: AppColors.paleGreen,
+          elevation: 0,
+          foregroundColor: AppColors.textDark,
+          title: Text(
+            'Billing & Payments',
+            style: AppTheme.heading(size: 17),
+          ),
+        ),
+        body: Center(
+          child: FarmNotLinkedState(
+            onRetry: () {
+              setState(() => _loading = true);
+              _loadFarm();
+            },
           ),
         ),
       );

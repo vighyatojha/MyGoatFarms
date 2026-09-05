@@ -82,7 +82,14 @@ class _GenerateReportScreenState extends State<GenerateReportScreen> {
   // -------------------------------------------------------------------
 
   Future<void> _loadHistory() async {
-    if (_farmId == null || _historyLoaded || _loadingHistory) return;
+    if (_historyLoaded || _loadingHistory) return;
+    if (_farmId == null) {
+      // Previously silently no-op'd, leaving the person stuck on this
+      // step with no feedback if farm resolution had failed. Give them
+      // something actionable instead of an indefinite blank state.
+      _showSnack("Couldn't load your farm. Please go back and try again.", isError: true);
+      return;
+    }
     setState(() => _loadingHistory = true);
     try {
       final descending = await FirestoreService.instance

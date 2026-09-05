@@ -15,6 +15,7 @@ import '../../services/image_service.dart';
 import '../../services/locale_provider.dart';
 import '../../services/partner_auth_service.dart';
 import '../../widgets/app_bottom_nav.dart';
+import '../../widgets/farm_not_linked_state.dart';
 import '../login_screen.dart';
 import 'profile_partner_dashboard.dart';
 
@@ -40,6 +41,13 @@ class _ProfileScreenState extends State<ProfileScreen> {
   bool _controllersInitialized = false;
   bool _loggingOut = false;
 
+  /// True when the signed-in account is the farm owner, false when it's a
+  /// partner. Defaults to true so nothing changes for the (much more
+  /// common) owner path while resolution is still in flight; only ever
+  /// flipped to false once we've confirmed the uid resolves via a partner
+  /// record rather than the farm's own `authUid`.
+  bool _isOwner = true;
+
   StreamSubscription<FarmModel?>? _farmSub;
   StreamSubscription<List<PartnerModel>>? _partnerSub;
 
@@ -60,8 +68,21 @@ class _ProfileScreenState extends State<ProfileScreen> {
         return;
       }
 
-      final farm =
-      await FirestoreService.instance.getFarmByAuthUid(uid);
+      // Resolve BOTH the owner and partner case — using the owner-only
+      // getFarmByAuthUid() here left a partner's _farmId permanently null
+      // (crashing later on the ProfilePartnerDashboard(farmId: _farmId!)
+      // below) and always rendered the owner-only sections since isOwner
+      // was never set to false.
+      var farm = await FirestoreService.instance.getFarmByAuthUid(uid);
+      var isOwner = true;
+
+      if (farm == null) {
+        final partner = await FirestoreService.instance.getPartnerByAuthUid(uid);
+        if (partner != null && partner.farmId.isNotEmpty) {
+          farm = await FirestoreService.instance.getFarmById(partner.farmId);
+          isOwner = false;
+        }
+      }
 
       if (!mounted) return;
 
@@ -70,6 +91,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
         return;
       }
 
+      _isOwner = isOwner;
       _farmId = farm.id;
 
       _farmSub = FirestoreService.instance
@@ -555,6 +577,30 @@ class _ProfileScreenState extends State<ProfileScreen> {
       );
     }
 
+    // Resolution finished but this account isn't linked to any farm as
+    // either an owner or a partner — same fallback as HomeScreen, instead
+    // of falling through and crashing on ProfilePartnerDashboard's
+    // `farmId: _farmId!` below.
+    if (_farmId == null) {
+      return Scaffold(
+        backgroundColor: AppColors.paleGreen,
+        bottomNavigationBar: AppBottomNav(
+          currentIndex: 4,
+          onTap: _onBottomNavTap,
+        ),
+        body: SafeArea(
+          child: Center(
+            child: FarmNotLinkedState(
+              onRetry: () {
+                setState(() => _loading = true);
+                _init();
+              },
+            ),
+          ),
+        ),
+      );
+    }
+
     final farm = _farm;
 
     final farmName =
@@ -597,7 +643,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
               final farm =
               await FirestoreService.instance
-                  .getFarmByAuthUid(uid);
+                  .getFarmForUser(uid);
 
               if (farm == null || !mounted) return;
 
@@ -649,6 +695,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                         ProfilePartnerDashboard(
                           farmId: _farmId!,
                           partners: _partners,
+                          isOwner: _isOwner,
                           onAddPartner: _showAddPartnerSheet,
                         ),
 
@@ -1334,7 +1381,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
     try {
       final farm =
       await FirestoreService.instance
-          .getFarmByAuthUid(uid);
+          .getFarmForUser(uid);
 
       if (!mounted || farm == null) return;
 

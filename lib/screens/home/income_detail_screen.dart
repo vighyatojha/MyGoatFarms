@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 
 import '../../app_theme.dart';
 import '../../services/firestore_service.dart';
+import '../../widgets/farm_not_linked_state.dart';
 
 class IncomeDetailScreen extends StatefulWidget {
   const IncomeDetailScreen({super.key});
@@ -15,6 +16,7 @@ class IncomeDetailScreen extends StatefulWidget {
 class _IncomeDetailScreenState
     extends State<IncomeDetailScreen> {
   String? _farmId;
+  bool _loadingFarm = true;
 
   Stream<double>? _monthlyPaymentsStream;
   Stream<double>? _outstandingStream;
@@ -37,6 +39,7 @@ class _IncomeDetailScreenState
 
       setState(() {
         _farmId = id;
+        _loadingFarm = false;
         if (id != null) {
           _monthlyPaymentsStream = FirestoreService.instance
               .monthlyPaymentsReceivedStream(id);
@@ -46,6 +49,8 @@ class _IncomeDetailScreenState
       });
     } catch (e) {
       debugPrint('Income screen farm error: $e');
+      if (!mounted) return;
+      setState(() => _loadingFarm = false);
     }
   }
 
@@ -109,6 +114,16 @@ class _IncomeDetailScreenState
     return '₹${value.toStringAsFixed(0)}';
   }
 
+  Widget _buildNotLinkedState() {
+    return FarmNotLinkedState(
+      buttonColor: AppColors.primaryGreen,
+      onRetry: () {
+        setState(() => _loadingFarm = true);
+        _loadFarm();
+      },
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -142,12 +157,14 @@ class _IncomeDetailScreenState
         ],
       ),
 
-      body: _farmId == null
+      body: _loadingFarm
           ? const Center(
         child: CircularProgressIndicator(
           color: AppColors.primaryGreen,
         ),
       )
+          : _farmId == null
+          ? _buildNotLinkedState()
           : Column(
         children: [
           _buildSummaryBoxes(),

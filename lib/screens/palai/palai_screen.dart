@@ -17,6 +17,7 @@ import 'goat_list_screen.dart';
 import 'own_farm/own_farm_palai_content.dart';
 import '../monthly_report_screen.dart';
 import '../home/notification_screen.dart';
+import '../../widgets/farm_not_linked_state.dart';
 
 /// Which kind of Palai this screen is showing.
 enum PalaiType {
@@ -49,6 +50,7 @@ class PalaiScreen extends StatefulWidget {
 
 class _PalaiScreenState extends State<PalaiScreen> {
   String? _farmId;
+  bool _loadingFarm = true;
 
   PalaiType _palaiType = PalaiType.customer;
 
@@ -60,7 +62,10 @@ class _PalaiScreenState extends State<PalaiScreen> {
   @override
   void initState() {
     super.initState();
+    _loadFarm();
+  }
 
+  void _loadFarm() {
     FirestoreService.instance.currentFarmId().then((id) {
       if (!mounted) {
         return;
@@ -68,6 +73,7 @@ class _PalaiScreenState extends State<PalaiScreen> {
 
       setState(() {
         _farmId = id;
+        _loadingFarm = false;
 
         if (id != null) {
           _customersStream =
@@ -173,17 +179,29 @@ class _PalaiScreenState extends State<PalaiScreen> {
   // BUILD
   // ===========================================================================
 
+  Widget _buildNotLinkedState() {
+    return FarmNotLinkedState(
+      buttonColor: AppColors.primaryGreen,
+      onRetry: () {
+        setState(() => _loadingFarm = true);
+        _loadFarm();
+      },
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: AppColors.paleGreen,
       body: SafeArea(
-        child: _farmId == null
+        child: _loadingFarm
             ? const Center(
           child: CircularProgressIndicator(
             color: AppColors.primaryGreen,
           ),
         )
+            : _farmId == null
+            ? _buildNotLinkedState()
             : SingleChildScrollView(
           padding: const EdgeInsets.fromLTRB(
             20,

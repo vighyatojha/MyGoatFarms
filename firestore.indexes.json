@@ -1,6 +1,16 @@
 {
   "indexes": [
     {
+      "collectionGroup": "partners",
+      "queryScope": "COLLECTION_GROUP",
+      "fields": [
+        {
+          "fieldPath": "authUid",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
       "collectionGroup": "goats",
       "queryScope": "COLLECTION_GROUP",
       "fields": [

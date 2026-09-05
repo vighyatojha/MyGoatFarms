@@ -6,6 +6,7 @@ import '../../models/palai_models.dart';
 import '../../services/firestore_service.dart';
 import '../../services/image_service.dart';
 import '../../widgets/image_source_sheet.dart';
+import '../../widgets/farm_not_linked_state.dart';
 import 'fullscreen_image_viewer.dart';
 
 /// Maintains a boarded Palai goat's checkup log — weight, health status,
@@ -23,15 +24,23 @@ class HealthRecordsScreen extends StatefulWidget {
 
 class _HealthRecordsScreenState extends State<HealthRecordsScreen> {
   String? _farmId;
+  bool _loadingFarm = true;
   PalaiGoat? _selectedGoat;
 
   @override
   void initState() {
     super.initState();
     _selectedGoat = widget.initialGoat;
+    _loadFarm();
+  }
+
+  void _loadFarm() {
     FirestoreService.instance.currentFarmId().then((id) async {
       if (!mounted || id == null) {
-        if (mounted) setState(() => _farmId = id);
+        if (mounted) setState(() {
+          _farmId = id;
+          _loadingFarm = false;
+        });
         return;
       }
       // Repair any goat docs missing `farmId` before this screen's
@@ -53,7 +62,10 @@ class _HealthRecordsScreenState extends State<HealthRecordsScreen> {
         debugPrintStack(stackTrace: stack);
         debugPrint('========================================');
       }
-      if (mounted) setState(() => _farmId = id);
+      if (mounted) setState(() {
+        _farmId = id;
+        _loadingFarm = false;
+      });
     });
   }
 
@@ -68,6 +80,16 @@ class _HealthRecordsScreenState extends State<HealthRecordsScreen> {
     }
   }
 
+  Widget _buildNotLinkedState() {
+    return FarmNotLinkedState(
+      buttonColor: AppColors.primaryGreen,
+      onRetry: () {
+        setState(() => _loadingFarm = true);
+        _loadFarm();
+      },
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -78,8 +100,10 @@ class _HealthRecordsScreenState extends State<HealthRecordsScreen> {
         foregroundColor: AppColors.textDark,
         title: Text('Health Records', style: AppTheme.heading(size: 17)),
       ),
-      body: _farmId == null
+      body: _loadingFarm
           ? const Center(child: CircularProgressIndicator(color: AppColors.primaryGreen))
+          : _farmId == null
+          ? _buildNotLinkedState()
           : Padding(
         padding: const EdgeInsets.fromLTRB(20, 20, 20, 0),
         child: Column(

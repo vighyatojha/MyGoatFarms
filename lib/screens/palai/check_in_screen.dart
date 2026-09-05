@@ -10,6 +10,7 @@ import '../../services/image_service.dart';
 import '../../widgets/fast_route.dart';
 import '../../widgets/image_source_sheet.dart';
 import '../../widgets/photo_upload_circle.dart';
+import '../../widgets/farm_not_linked_state.dart';
 import 'add_customer_screen.dart';
 
 /// Records a new goat check-in for Palai boarding: a "Before Palai" photo
@@ -40,6 +41,7 @@ class _CheckInGoatScreenState extends State<CheckInGoatScreen> {
   PalaiCustomer? _selectedCustomer;
   bool _saving = false;
   String? _farmId;
+  bool _loadingFarm = true;
 
   // "Before Palai" photo, taken/picked at check-in time.
   Uint8List? _beforeImageBytes;
@@ -53,8 +55,15 @@ class _CheckInGoatScreenState extends State<CheckInGoatScreen> {
   void initState() {
     super.initState();
     _selectedCustomer = widget.presetCustomer;
+    _loadFarm();
+  }
+
+  void _loadFarm() {
     FirestoreService.instance.currentFarmId().then((id) {
-      if (mounted) setState(() => _farmId = id);
+      if (mounted) setState(() {
+        _farmId = id;
+        _loadingFarm = false;
+      });
     });
   }
 
@@ -140,6 +149,16 @@ class _CheckInGoatScreenState extends State<CheckInGoatScreen> {
     );
   }
 
+  Widget _buildNotLinkedState() {
+    return FarmNotLinkedState(
+      buttonColor: AppColors.primaryGreen,
+      onRetry: () {
+        setState(() => _loadingFarm = true);
+        _loadFarm();
+      },
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -150,8 +169,10 @@ class _CheckInGoatScreenState extends State<CheckInGoatScreen> {
         foregroundColor: AppColors.textDark,
         title: Text('Goat Check-In', style: AppTheme.heading(size: 17)),
       ),
-      body: _farmId == null
+      body: _loadingFarm
           ? const Center(child: CircularProgressIndicator(color: AppColors.primaryGreen))
+          : _farmId == null
+          ? _buildNotLinkedState()
           : SingleChildScrollView(
         padding: const EdgeInsets.all(20),
         child: Form(

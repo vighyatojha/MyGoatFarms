@@ -29,6 +29,14 @@ class ActivityLog {
   final String module; // "home", "palai", "stock", "trading", "breeding"
   final DateTime timestamp;
 
+  /// Who performed this activity — set by [FirestoreService.getCurrentActor]
+  /// at write time. Nullable so older activity docs written before this
+  /// field existed still parse and render fine (they just show no "By ..."
+  /// line).
+  final String? actorUid;
+  final String? actorName;
+  final String? actorRole; // 'owner' or 'partner'
+
   ActivityLog({
     required this.id,
     required this.type,
@@ -36,6 +44,9 @@ class ActivityLog {
     required this.subtitle,
     required this.module,
     required this.timestamp,
+    this.actorUid,
+    this.actorName,
+    this.actorRole,
   });
 
   factory ActivityLog.fromDoc(DocumentSnapshot<Map<String, dynamic>> doc) {
@@ -50,6 +61,9 @@ class ActivityLog {
       subtitle: data['subtitle'] ?? '',
       module: data['module'] ?? 'home',
       timestamp: (data['timestamp'] as Timestamp?)?.toDate() ?? DateTime.now(),
+      actorUid: data['actorUid'] as String?,
+      actorName: data['actorName'] as String?,
+      actorRole: data['actorRole'] as String?,
     );
   }
 
@@ -60,7 +74,19 @@ class ActivityLog {
       'subtitle': subtitle,
       'module': module,
       'timestamp': Timestamp.fromDate(timestamp),
+      if (actorUid != null) 'actorUid': actorUid,
+      if (actorName != null) 'actorName': actorName,
+      if (actorRole != null) 'actorRole': actorRole,
     };
+  }
+
+  /// "OWNER" / "PARTNER" badge text for the activity feed, or null when
+  /// there's no actor on this doc (older activities, or the write
+  /// happened outside a signed-in session).
+  String? get actorRoleLabel {
+    final role = actorRole;
+    if (role == null || role.isEmpty) return null;
+    return role.toUpperCase();
   }
 
   IconData get icon {

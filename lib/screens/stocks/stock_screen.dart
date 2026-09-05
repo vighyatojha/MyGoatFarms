@@ -15,6 +15,7 @@ import 'feed_used_screen.dart';
 import 'medicine_used_screen.dart';
 
 import '../home/notification_screen.dart';
+import '../../widgets/farm_not_linked_state.dart';
 
 class StockScreen extends StatefulWidget {
   const StockScreen({super.key});
@@ -25,6 +26,7 @@ class StockScreen extends StatefulWidget {
 
 class _StockScreenState extends State<StockScreen> {
   String? _farmId;
+  bool _loadingFarm = true;
 
   final TextEditingController _searchController =
   TextEditingController();
@@ -48,9 +50,12 @@ class _StockScreenState extends State<StockScreen> {
 
       setState(() {
         _farmId = id;
+        _loadingFarm = false;
       });
     } catch (e) {
       debugPrint('Could not load farm: $e');
+      if (!mounted) return;
+      setState(() => _loadingFarm = false);
     }
   }
 
@@ -276,6 +281,16 @@ class _StockScreenState extends State<StockScreen> {
   // BUILD
   // ---------------------------------------------------------------------------
 
+  Widget _buildNotLinkedState() {
+    return FarmNotLinkedState(
+      buttonColor: AppColors.primaryGreen,
+      onRetry: () {
+        setState(() => _loadingFarm = true);
+        _loadFarm();
+      },
+    );
+  }
+
   @override
   Widget build(
       BuildContext context,
@@ -285,7 +300,7 @@ class _StockScreenState extends State<StockScreen> {
       AppColors.paleGreen,
 
       body: SafeArea(
-        child: _farmId == null
+        child: _loadingFarm
             ? const Center(
           child:
           CircularProgressIndicator(
@@ -293,6 +308,8 @@ class _StockScreenState extends State<StockScreen> {
             AppColors.primaryGreen,
           ),
         )
+            : _farmId == null
+            ? _buildNotLinkedState()
             : RefreshIndicator(
           color:
           AppColors.primaryGreen,

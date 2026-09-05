@@ -346,13 +346,7 @@ class _GoatListScreenState extends State<GoatListScreen> {
         ),
       ),
 
-      body: _farmId == null
-          ? const Center(
-        child: CircularProgressIndicator(
-          color: AppColors.primaryGreen,
-        ),
-      )
-          : _buildBody(),
+      body: _buildBody(),
     );
   }
 
@@ -538,6 +532,12 @@ class _GoatListScreenState extends State<GoatListScreen> {
 
                 if (farmId != null) {
                   _subscribeToGoats(farmId);
+                } else {
+                  setState(() {
+                    _initialLoading = true;
+                    _errorMessage = null;
+                  });
+                  _loadFarm();
                 }
               },
               icon: const Icon(

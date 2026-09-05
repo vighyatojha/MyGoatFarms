@@ -23,6 +23,7 @@ class _AddFeedStockScreenState extends State<AddFeedStockScreen> {
 
   bool _saving = false;
   String? _farmId;
+  bool _loadingFarm = true;
   StockItem? _selectedFeed;
   String _unit = 'Kg';
 
@@ -35,9 +36,13 @@ class _AddFeedStockScreenState extends State<AddFeedStockScreen> {
   }
 
   Future<void> _loadFarm() async {
+    setState(() => _loadingFarm = true);
     final farmId = await FirestoreService.instance.currentFarmId();
     if (!mounted) return;
-    setState(() => _farmId = farmId);
+    setState(() {
+      _farmId = farmId;
+      _loadingFarm = false;
+    });
   }
 
   @override
@@ -302,13 +307,27 @@ class _AddFeedStockScreenState extends State<AddFeedStockScreen> {
   }
 
   Widget _feedSelector() {
-    if (_farmId == null) {
+    if (_loadingFarm) {
       return _field(
         controller: _nameController,
         label: 'Feed name',
         hint: 'Loading existing feeds...',
         icon: Icons.eco_rounded,
         readOnly: true,
+      );
+    }
+
+    if (_farmId == null) {
+      return _field(
+        controller: _nameController,
+        label: 'Feed name',
+        hint: "Couldn't load your farm — tap to retry",
+        icon: Icons.eco_rounded,
+        readOnly: true,
+        suffixIcon: IconButton(
+          icon: const Icon(Icons.refresh, color: AppColors.primaryGreen),
+          onPressed: _loadFarm,
+        ),
       );
     }
 

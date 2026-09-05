@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../../app_theme.dart';
 import '../../models/palai_models.dart';
 import '../../services/firestore_service.dart';
+import '../../widgets/farm_not_linked_state.dart';
 
 class ReceivePaymentScreen extends StatefulWidget {
   /// When opened after picking a customer from the "Select Customer"
@@ -22,6 +23,7 @@ class ReceivePaymentScreen extends StatefulWidget {
 class _ReceivePaymentScreenState
     extends State<ReceivePaymentScreen> {
   String? _farmId;
+  bool _loadingFarm = true;
 
   PalaiCustomer? _selectedCustomer;
 
@@ -51,6 +53,7 @@ class _ReceivePaymentScreenState
 
     setState(() {
       _farmId = farmId;
+      _loadingFarm = false;
     });
   }
 
@@ -252,6 +255,16 @@ class _ReceivePaymentScreenState
     );
   }
 
+  Widget _buildNotLinkedState() {
+    return FarmNotLinkedState(
+      buttonColor: AppColors.primaryGreen,
+      onRetry: () {
+        setState(() => _loadingFarm = true);
+        _loadFarm();
+      },
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -268,12 +281,14 @@ class _ReceivePaymentScreenState
         ),
       ),
 
-      body: _farmId == null
+      body: _loadingFarm
           ? const Center(
         child: CircularProgressIndicator(
           color: AppColors.primaryGreen,
         ),
       )
+          : _farmId == null
+          ? _buildNotLinkedState()
           : StreamBuilder<List<PalaiCustomer>>(
         stream: FirestoreService.instance
             .customersStream(_farmId!),

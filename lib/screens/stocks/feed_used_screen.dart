@@ -6,6 +6,7 @@ import '../../app_theme.dart';
 import '../../models/stock_model.dart';
 import '../../models/activity_model.dart';
 import '../../services/firestore_service.dart';
+import '../../widgets/farm_not_linked_state.dart';
 
 class FeedUsedScreen extends StatefulWidget {
   const FeedUsedScreen({super.key});
@@ -16,6 +17,7 @@ class FeedUsedScreen extends StatefulWidget {
 
 class _FeedUsedScreenState extends State<FeedUsedScreen> {
   String? _farmId;
+  bool _loadingFarm = true;
   StockItem? _selectedItem;
   final _quantityController = TextEditingController();
   final _notesController = TextEditingController();
@@ -24,8 +26,15 @@ class _FeedUsedScreenState extends State<FeedUsedScreen> {
   @override
   void initState() {
     super.initState();
+    _loadFarm();
+  }
+
+  void _loadFarm() {
     FirestoreService.instance.currentFarmId().then((id) {
-      if (mounted) setState(() => _farmId = id);
+      if (mounted) setState(() {
+        _farmId = id;
+        _loadingFarm = false;
+      });
     });
   }
 
@@ -203,6 +212,16 @@ class _FeedUsedScreenState extends State<FeedUsedScreen> {
     );
   }
 
+  Widget _buildNotLinkedState() {
+    return FarmNotLinkedState(
+      buttonColor: AppColors.primaryGreen,
+      onRetry: () {
+        setState(() => _loadingFarm = true);
+        _loadFarm();
+      },
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -214,8 +233,10 @@ class _FeedUsedScreenState extends State<FeedUsedScreen> {
         titleSpacing: 4,
         title: Text('Feed Used Today', style: AppTheme.heading(size: 18)),
       ),
-      body: _farmId == null
+      body: _loadingFarm
           ? const Center(child: CircularProgressIndicator(color: AppColors.primaryGreen))
+          : _farmId == null
+          ? _buildNotLinkedState()
           : StreamBuilder<List<StockItem>>(
               stream: FirestoreService.instance.stockItemsStream(_farmId!, type: StockType.feed),
               builder: (context, snap) {

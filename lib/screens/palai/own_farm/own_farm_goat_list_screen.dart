@@ -4,6 +4,7 @@ import '../../../app_theme.dart';
 import '../../../models/own_farm_models.dart';
 import '../../../services/firestore_service.dart';
 import '../../../widgets/fast_route.dart';
+import '../../../widgets/farm_not_linked_state.dart';
 import 'add_own_farm_goat_screen.dart';
 import 'own_farm_goat_detail_screen.dart';
 
@@ -19,15 +20,33 @@ class OwnFarmGoatListScreen extends StatefulWidget {
 
 class _OwnFarmGoatListScreenState extends State<OwnFarmGoatListScreen> {
   String? _farmId;
+  bool _loadingFarm = true;
   final _searchController = TextEditingController();
   String _search = '';
 
   @override
   void initState() {
     super.initState();
+    _loadFarm();
+  }
+
+  void _loadFarm() {
     FirestoreService.instance.currentFarmId().then((id) {
-      if (mounted) setState(() => _farmId = id);
+      if (mounted) setState(() {
+        _farmId = id;
+        _loadingFarm = false;
+      });
     });
+  }
+
+  Widget _buildNotLinkedState() {
+    return FarmNotLinkedState(
+      buttonColor: AppColors.primaryGreen,
+      onRetry: () {
+        setState(() => _loadingFarm = true);
+        _loadFarm();
+      },
+    );
   }
 
   @override
@@ -52,8 +71,10 @@ class _OwnFarmGoatListScreenState extends State<OwnFarmGoatListScreen> {
           ),
         ],
       ),
-      body: _farmId == null
+      body: _loadingFarm
           ? const Center(child: CircularProgressIndicator(color: AppColors.primaryGreen))
+          : _farmId == null
+          ? _buildNotLinkedState()
           : Column(
         children: [
           Padding(

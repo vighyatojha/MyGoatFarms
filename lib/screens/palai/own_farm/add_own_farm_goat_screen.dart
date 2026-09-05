@@ -9,6 +9,7 @@ import '../../../services/firestore_service.dart';
 import '../../../services/image_service.dart';
 import '../../../widgets/image_source_sheet.dart';
 import '../../../widgets/photo_upload_circle.dart';
+import '../../../widgets/farm_not_linked_state.dart';
 
 /// Registers a new goat owned by the farm itself (Own Farm Palai), as
 /// opposed to a customer's boarded goat.
@@ -34,6 +35,7 @@ class _AddOwnFarmGoatScreenState extends State<AddOwnFarmGoatScreen> {
   DateTime _dateOfBirth = DateTime.now();
   bool _saving = false;
   String? _farmId;
+  bool _loadingFarm = true;
 
   Uint8List? _photoBytes;
   String? _photoContentType;
@@ -44,8 +46,15 @@ class _AddOwnFarmGoatScreenState extends State<AddOwnFarmGoatScreen> {
   @override
   void initState() {
     super.initState();
+    _loadFarm();
+  }
+
+  void _loadFarm() {
     FirestoreService.instance.currentFarmId().then((id) {
-      if (mounted) setState(() => _farmId = id);
+      if (mounted) setState(() {
+        _farmId = id;
+        _loadingFarm = false;
+      });
     });
   }
 
@@ -142,6 +151,16 @@ class _AddOwnFarmGoatScreenState extends State<AddOwnFarmGoatScreen> {
     }
   }
 
+  Widget _buildNotLinkedState() {
+    return FarmNotLinkedState(
+      buttonColor: AppColors.primaryGreen,
+      onRetry: () {
+        setState(() => _loadingFarm = true);
+        _loadFarm();
+      },
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -152,8 +171,10 @@ class _AddOwnFarmGoatScreenState extends State<AddOwnFarmGoatScreen> {
         foregroundColor: AppColors.textDark,
         title: Text('Register Farm Goat', style: AppTheme.heading(size: 17)),
       ),
-      body: _farmId == null
+      body: _loadingFarm
           ? const Center(child: CircularProgressIndicator(color: AppColors.primaryGreen))
+          : _farmId == null
+          ? _buildNotLinkedState()
           : SingleChildScrollView(
         padding: const EdgeInsets.all(20),
         child: Form(

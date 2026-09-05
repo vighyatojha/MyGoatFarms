@@ -160,6 +160,14 @@ class ActivityTile extends StatelessWidget {
                 children: [
                   Text(activity.title, style: AppTheme.heading(size: 13)),
                   Text(activity.subtitle, style: AppTheme.body(size: 11)),
+                  if (activity.actorName != null &&
+                      activity.actorName!.trim().isNotEmpty)
+                    Text(
+                      activity.actorRoleLabel != null
+                          ? 'By ${activity.actorName} · ${activity.actorRoleLabel}'
+                          : 'By ${activity.actorName}',
+                      style: AppTheme.body(size: 10).copyWith(fontWeight: FontWeight.w600),
+                    ),
                 ],
               ),
             ),

@@ -4,6 +4,7 @@ import 'package:intl/intl.dart';
 import '../../../app_theme.dart';
 import '../../../models/own_farm_models.dart';
 import '../../../services/firestore_service.dart';
+import '../../../widgets/farm_not_linked_state.dart';
 
 /// Complete health & performance history for one farm-owned goat:
 /// weight/growth tracking, health status, vaccination schedule & history,
@@ -19,13 +20,21 @@ class OwnFarmGoatDetailScreen extends StatefulWidget {
 
 class _OwnFarmGoatDetailScreenState extends State<OwnFarmGoatDetailScreen> {
   String? _farmId;
+  bool _loadingFarm = true;
   final _dateFmt = DateFormat('d MMM yyyy');
 
   @override
   void initState() {
     super.initState();
+    _loadFarm();
+  }
+
+  void _loadFarm() {
     FirestoreService.instance.currentFarmId().then((id) {
-      if (mounted) setState(() => _farmId = id);
+      if (mounted) setState(() {
+        _farmId = id;
+        _loadingFarm = false;
+      });
     });
   }
 
@@ -33,6 +42,16 @@ class _OwnFarmGoatDetailScreenState extends State<OwnFarmGoatDetailScreen> {
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text(message), backgroundColor: isError ? AppColors.error : AppColors.primaryGreen),
+    );
+  }
+
+  Widget _buildNotLinkedState() {
+    return FarmNotLinkedState(
+      buttonColor: AppColors.primaryGreen,
+      onRetry: () {
+        setState(() => _loadingFarm = true);
+        _loadFarm();
+      },
     );
   }
 
@@ -61,8 +80,10 @@ class _OwnFarmGoatDetailScreenState extends State<OwnFarmGoatDetailScreen> {
             ],
           ),
         ),
-        body: _farmId == null
+        body: _loadingFarm
             ? const Center(child: CircularProgressIndicator(color: AppColors.primaryGreen))
+            : _farmId == null
+            ? _buildNotLinkedState()
             : TabBarView(
                 children: [
                   _GrowthTab(farmId: _farmId!, goat: goat, dateFmt: _dateFmt, onMessage: _showSnack),

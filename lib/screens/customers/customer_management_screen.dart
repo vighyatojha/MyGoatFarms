@@ -9,6 +9,7 @@ import '../../models/palai_models.dart';
 import '../../services/firestore_service.dart';
 import '../../widgets/fast_route.dart';
 import '../palai/add_customer_screen.dart';
+import '../../widgets/farm_not_linked_state.dart';
 import 'customer_profile_screen.dart';
 
 /// Customer management screen for the MyGoatFarms application.
@@ -34,6 +35,7 @@ class CustomerManagementScreen extends StatefulWidget {
 class _CustomerManagementScreenState
     extends State<CustomerManagementScreen> {
   String? _farmId;
+  bool _loading = true;
 
   final TextEditingController _searchController =
   TextEditingController();
@@ -67,9 +69,12 @@ class _CustomerManagementScreenState
 
       setState(() {
         _farmId = id;
+        _loading = false;
       });
     } catch (e) {
       debugPrint('Customer screen farm error: $e');
+      if (!mounted) return;
+      setState(() => _loading = false);
     }
   }
 
@@ -344,17 +349,29 @@ class _CustomerManagementScreenState
     );
   }
 
+  Widget _buildNotLinkedState() {
+    return FarmNotLinkedState(
+      buttonColor: AppColors.primaryGreen,
+      onRetry: () {
+        setState(() => _loading = true);
+        _loadFarm();
+      },
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: AppColors.paleGreen,
       body: SafeArea(
-        child: _farmId == null
+        child: _loading
             ? const Center(
           child: CircularProgressIndicator(
             color: AppColors.primaryGreen,
           ),
         )
+            : _farmId == null
+            ? _buildNotLinkedState()
             : StreamBuilder<List<PalaiCustomer>>(
           stream: FirestoreService.instance
               .customersStream(_farmId!),
