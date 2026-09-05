@@ -772,7 +772,22 @@ class FirestoreService {
     // Resolved once, before the transaction — see [addOutstandingAmount].
     final actor = await getCurrentActor();
 
-    final openBillRefs = openBillsSnapshot.docs.where((doc) {
+    // ------------------------------------------------------------------
+    // FIND THE CUSTOMER'S CURRENT (LIVE) MONTHLY BILL
+    //
+    // A monthly bill's totalDue already folds every earlier bill's
+    // unpaid balance forward (see MonthlyBillingService), so the most
+    // recent open bill's remainingAmount already IS the customer's
+    // whole outstanding balance. Only that one bill should ever receive
+    // a payment.
+    //
+    // Anything else still open is stale left-over data — most likely
+    // from before bills were closed out on creation — and gets closed
+    // out below instead of paid, so it stops being double-counted
+    // anywhere (Monthly Bills, Reports, Sync with Monthly Bills).
+    // ------------------------------------------------------------------
+
+    final openBillDocs = openBillsSnapshot.docs.where((doc) {
       final billData = doc.data();
       if (billData['type']?.toString() != 'monthly') return false;
       final remaining = (billData['remainingAmount'] ?? 0).toDouble();
@@ -785,11 +800,14 @@ class FirestoreService {
         final bMonth =
             (b.data()['billingMonth'] as Timestamp?)?.toDate() ??
                 DateTime(0);
-        return aMonth.compareTo(bMonth);
+        return bMonth.compareTo(aMonth); // most recent first
       });
 
-    final billRefs =
-    openBillRefs.map((doc) => doc.reference).toList();
+    final primaryBillRef =
+    openBillDocs.isEmpty ? null : openBillDocs.first.reference;
+
+    final staleBillRefs =
+    openBillDocs.skip(1).map((doc) => doc.reference).toList();
 
     final paymentRef = paymentsCollection.doc();
     final transactionRef = transactionsCollection.doc();
@@ -808,9 +826,14 @@ class FirestoreService {
           throw StateError('Customer no longer exists.');
         }
 
-        final billSnapshots = <DocumentSnapshot<Map<String, dynamic>>>[];
-        for (final ref in billRefs) {
-          billSnapshots.add(await transaction.get(ref));
+        final primaryBillSnapshot = primaryBillRef == null
+            ? null
+            : await transaction.get(primaryBillRef);
+
+        final staleBillSnapshots =
+        <DocumentSnapshot<Map<String, dynamic>>>[];
+        for (final ref in staleBillRefs) {
+          staleBillSnapshots.add(await transaction.get(ref));
         }
 
         final data = customerSnapshot.data() ?? {};
@@ -825,63 +848,14 @@ class FirestoreService {
         (data['advanceAmount'] ?? 0).toDouble();
 
         // ============================================================
-        // ALLOCATE PAYMENT ACROSS OPEN BILLS — oldest month first —
-        // so every Monthly Bill this payment actually covers gets its
-        // own amountPaid/remainingAmount/status updated, not just the
-        // customer's overall number.
-        // ============================================================
-
-        double amountLeftForBills = paidAmount;
-        final billUpdates = <DocumentReference<Map<String, dynamic>>,
-            Map<String, dynamic>>{};
-
-        for (final snap in billSnapshots) {
-          if (amountLeftForBills <= 0) break;
-          if (!snap.exists) continue;
-
-          final billData = snap.data() ?? {};
-          final billRemaining =
-          (billData['remainingAmount'] ?? 0).toDouble();
-          if (billRemaining <= 0) continue;
-
-          final currentAmountPaid =
-          (billData['amountPaid'] ?? 0).toDouble();
-
-          final appliedToThisBill =
-          amountLeftForBills < billRemaining
-              ? amountLeftForBills
-              : billRemaining;
-
-          final newRemaining =
-          (billRemaining - appliedToThisBill)
-              .clamp(0, double.infinity)
-              .toDouble();
-
-          final newStatus =
-          newRemaining <= 0 ? 'paid' : 'partial';
-
-          billUpdates[snap.reference] = {
-            'amountPaid': currentAmountPaid + appliedToThisBill,
-            'remainingAmount': newRemaining,
-            'status': newStatus,
-            'paymentStatus': newStatus,
-            'paymentId': paymentRef.id,
-            'paymentMethod': paymentMethod.trim(),
-            'paidAt': newRemaining <= 0
-                ? FieldValue.serverTimestamp()
-                : null,
-            'updatedAt': FieldValue.serverTimestamp(),
-          };
-
-          amountLeftForBills -= appliedToThisBill;
-        }
-
-        // ============================================================
-        // CUSTOMER-LEVEL NUMBERS
+        // ONE CALCULATION, SHARED BY THE CUSTOMER AND THE BILL
         //
-        // Existing advance does not need to be changed by a standalone
-        // payment. A new payment first clears pending and then creates
-        // additional advance if it exceeds pending.
+        // This used to be worked out twice — once for the customer,
+        // once inside a separate oldest-bill-first loop — and the two
+        // could disagree the moment more than one bill was open. Now
+        // there is exactly one number for how much of this payment
+        // reduces what the customer owes; the bill update below is
+        // derived from it instead of computed separately.
         // ============================================================
 
         final amountAppliedToPending =
@@ -908,11 +882,75 @@ class FirestoreService {
             'PAY-${paymentRef.id.substring(0, 8).toUpperCase()}';
 
         // ============================================================
-        // WRITE BILL UPDATES
+        // APPLY THE SAME AMOUNT TO THE CUSTOMER'S CURRENT MONTHLY BILL
         // ============================================================
 
-        for (final entry in billUpdates.entries) {
-          transaction.update(entry.key, entry.value);
+        var billsUpdatedCount = 0;
+
+        if (primaryBillSnapshot != null && primaryBillSnapshot.exists) {
+          final billData = primaryBillSnapshot.data() ?? {};
+          final billRemaining =
+          (billData['remainingAmount'] ?? 0).toDouble();
+
+          if (billRemaining > 0) {
+            final currentAmountPaid =
+            (billData['amountPaid'] ?? 0).toDouble();
+
+            // Clamped to the bill's own remaining amount only as a
+            // safety net — under normal operation (bill closed out
+            // correctly on creation) this always equals
+            // amountAppliedToPending exactly.
+            final appliedToBill =
+            amountAppliedToPending
+                .clamp(0, billRemaining)
+                .toDouble();
+
+            final newRemaining =
+            (billRemaining - appliedToBill)
+                .clamp(0, double.infinity)
+                .toDouble();
+
+            final newStatus =
+            newRemaining <= 0 ? 'paid' : 'partial';
+
+            transaction.update(primaryBillSnapshot.reference, {
+              'amountPaid': currentAmountPaid + appliedToBill,
+              'remainingAmount': newRemaining,
+              'status': newStatus,
+              'paymentStatus': newStatus,
+              'paymentId': paymentRef.id,
+              'paymentMethod': paymentMethod.trim(),
+              'paidAt': newRemaining <= 0
+                  ? FieldValue.serverTimestamp()
+                  : null,
+              'updatedAt': FieldValue.serverTimestamp(),
+            });
+
+            billsUpdatedCount = 1;
+          }
+        }
+
+        // ============================================================
+        // CLOSE OUT ANY STALE EXTRA OPEN BILLS
+        //
+        // Their balance is already folded into the primary bill above,
+        // so they don't get a share of this payment — they just get
+        // zeroed out so nothing keeps double-counting them.
+        // ============================================================
+
+        for (final snap in staleBillSnapshots) {
+          if (!snap.exists) continue;
+          final billData = snap.data() ?? {};
+          if ((billData['remainingAmount'] ?? 0).toDouble() <= 0) continue;
+
+          transaction.update(snap.reference, {
+            'remainingAmount': 0,
+            'status': 'paid',
+            'paymentStatus': 'paid',
+            if (primaryBillRef != null)
+              'carriedForwardIntoBillId': primaryBillRef.id,
+            'updatedAt': FieldValue.serverTimestamp(),
+          });
         }
 
         // ============================================================
@@ -947,7 +985,7 @@ class FirestoreService {
           'advanceAfter':
           advanceAfter,
 
-          'billsUpdated': billUpdates.length,
+          'billsUpdated': billsUpdatedCount,
 
           'paymentMethod':
           paymentMethod.trim(),
@@ -1063,7 +1101,7 @@ class FirestoreService {
 
           paymentMethod: paymentMethod.trim(),
 
-          billsUpdated: billUpdates.length,
+          billsUpdated: billsUpdatedCount,
         );
       },
     ).timeout(timeout);

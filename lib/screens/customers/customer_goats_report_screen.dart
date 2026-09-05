@@ -741,6 +741,20 @@ class _CustomerGoatsReportScreenState
             )
           else ...[
               if (existing != null) ...[
+                // ------------------------------------------------------
+                // EXISTING BILL — the rows below come from THAT bill's
+                // own saved snapshot, taken the moment it was generated.
+                // They are labelled "as billed" rather than "Current"
+                // because they are frozen on purpose and will never
+                // change on their own — a payment or another charge
+                // recorded against the customer AFTER this bill was
+                // generated moves the customer's live pendingAmount
+                // without touching these numbers. The callout below
+                // surfaces that live balance explicitly instead of
+                // silently hiding it, so this screen and Customer
+                // Profile never look like they disagree with no
+                // explanation.
+                // ------------------------------------------------------
                 if (existing.goatBreakdown.isNotEmpty) ...[
                   for (final line in existing.goatBreakdown)
                     Padding(
@@ -751,11 +765,90 @@ class _CustomerGoatsReportScreenState
                 ],
                 _billingRow('Current Month Palai', _currency(existing.palaiCharges)),
                 const SizedBox(height: 4),
-                _billingRow('Current Outstanding', _currency(existing.previousOutstanding)),
+                _billingRow('Outstanding (at time of billing)', _currency(existing.previousOutstanding)),
                 const SizedBox(height: 4),
-                _billingRow('Current Advance', '- ${_currency(existing.advanceApplied)}'),
+                _billingRow('Advance Applied (at time of billing)', '- ${_currency(existing.advanceApplied)}'),
                 const Divider(height: 20),
-                _billingRow('Current Amount Due', _currency(existing.totalDue), bold: true),
+                _billingRow('Total Amount Due (as billed)', _currency(existing.totalDue), bold: true),
+                if (existing.amountPaid > 0) ...[
+                  const SizedBox(height: 4),
+                  _billingRow('Paid So Far', _currency(existing.amountPaid)),
+                ],
+                const SizedBox(height: 8),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Text(
+                      'Remaining On This Bill',
+                      style: AppTheme.body(size: 12, color: AppColors.textMuted),
+                    ),
+                    Row(
+                      children: [
+                        Icon(
+                          existing.remainingAmount <= 0
+                              ? Icons.check_circle
+                              : Icons.error_outline,
+                          size: 14,
+                          color: existing.remainingAmount <= 0
+                              ? AppColors.success
+                              : AppColors.warning,
+                        ),
+                        const SizedBox(width: 4),
+                        Text(
+                          existing.remainingAmount <= 0
+                              ? 'PAID'
+                              : _currency(existing.remainingAmount),
+                          style: AppTheme.heading(
+                            size: 13,
+                            color: existing.remainingAmount <= 0
+                                ? AppColors.success
+                                : AppColors.warning,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+                // ------------------------------------------------------
+                // This compares against the BILL'S OWN remainingAmount,
+                // not totalDue — a bill that's since been paid off
+                // correctly shows remainingAmount 0 above, and should
+                // NOT trigger this callout just because the original
+                // totalDue no longer matches. This only fires when the
+                // customer's live balance and this specific bill's own
+                // remaining balance genuinely disagree (a payment made
+                // outside this bill, another charge elsewhere, or
+                // leftover pre-fix data).
+                // ------------------------------------------------------
+                if ((_currentOutstanding - existing.remainingAmount).abs() > 0.5) ...[
+                  const SizedBox(height: 12),
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(10),
+                    decoration: BoxDecoration(
+                      color: AppColors.warning.withOpacity(0.12),
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: AppColors.warning.withOpacity(0.4)),
+                    ),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Icon(Icons.info_outline, size: 16, color: AppColors.warning),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            'Customer\'s overall outstanding today: ${_currency(_currentOutstanding)}, '
+                                'which doesn\'t match what\'s left on this specific bill '
+                                '(${_currency(existing.remainingAmount)}). This usually means another '
+                                'charge or payment was recorded outside this bill. Check Customer '
+                                'Profile for the full picture, or tap "Sync with Monthly Bills" there.',
+                            style: AppTheme.body(size: 10.5, color: AppColors.textDark),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
                 if (existing.palaiCharges <= 0) ...[
                   const SizedBox(height: 12),
                   Container(

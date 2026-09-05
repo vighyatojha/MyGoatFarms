@@ -899,6 +899,40 @@ class MonthlyBillingService {
     final billingMonth = _firstDayOfMonth(year, month);
     final periodEnd = _lastDayOfMonth(year, month);
 
+    // ---------------------------------------------------------------
+    // FIND ANY STILL-OPEN MONTHLY BILLS FROM EARLIER PERIODS
+    //
+    // `currentOutstanding` above is cumulative — it already represents
+    // everything the customer owed from every earlier bill. Once it's
+    // folded into this new bill's totalDue, an older bill still sitting
+    // there with remainingAmount > 0 would be counted a SECOND time:
+    // once inside this new bill, and once on its own. That double count
+    // is exactly what made "Sync with Monthly Bills", the Monthly Bills
+    // list, and Customer Profile disagree with each other.
+    //
+    // So every other open monthly bill for this customer is closed out
+    // (remainingAmount -> 0) in the SAME transaction that creates this
+    // one, leaving exactly one bill "live" per customer at a time.
+    //
+    // Firestore transactions can only re-read documents by reference,
+    // not run a query, so the open bills are found here, before the
+    // transaction starts, then re-read fresh (and closed) by reference
+    // inside it — the same pattern already used in
+    // [FirestoreService.receivePalaiPayment].
+    // ---------------------------------------------------------------
+
+    final earlierOpenBillsSnapshot = await _bills(farmId)
+        .where('customerId', isEqualTo: customerId)
+        .get()
+        .timeout(_timeout);
+
+    final earlierOpenBillRefs = earlierOpenBillsSnapshot.docs.where((doc) {
+      final data = doc.data();
+      if (data['type']?.toString() != 'monthly') return false;
+      if (doc.id == billId) return false;
+      return _doubleValue(data['remainingAmount']) > 0;
+    }).map((doc) => doc.reference).toList();
+
     return _db.runTransaction<MonthlyBill>((transaction) async {
       // ---------------------------------------------------------------
       // READS FIRST
@@ -915,6 +949,15 @@ class MonthlyBillingService {
 
       if (existingBillSnapshot.exists) {
         throw StateError('A monthly bill already exists for $periodKey.');
+      }
+
+      // Re-read every earlier open bill fresh, inside the transaction,
+      // alongside every other read (Firestore requires all reads before
+      // any writes in a transaction).
+      final earlierOpenBillSnapshots =
+      <DocumentSnapshot<Map<String, dynamic>>>[];
+      for (final ref in earlierOpenBillRefs) {
+        earlierOpenBillSnapshots.add(await transaction.get(ref));
       }
 
       final customerData = customerSnapshot.data() ?? {};
@@ -1009,6 +1052,27 @@ class MonthlyBillingService {
         'createdAt': FieldValue.serverTimestamp(),
         'updatedAt': FieldValue.serverTimestamp(),
       });
+
+      // ---------------------------------------------------------------
+      // CLOSE OUT EARLIER OPEN BILLS
+      //
+      // Their balance now lives inside this new bill's totalDue above.
+      // Leaving them at their old remainingAmount would double-count
+      // that balance the next time anything sums bills for this
+      // customer (Sync with Monthly Bills, a future report, etc.).
+      // ---------------------------------------------------------------
+
+      for (final snap in earlierOpenBillSnapshots) {
+        if (!snap.exists) continue;
+        transaction.update(snap.reference, {
+          'remainingAmount': 0,
+          'status': 'paid',
+          'paymentStatus': 'paid',
+          'carriedForwardIntoBillId': billId,
+          'carriedForwardIntoPeriod': periodKey,
+          'updatedAt': FieldValue.serverTimestamp(),
+        });
+      }
 
       // ---------------------------------------------------------------
       // UPDATE CUSTOMER OUTSTANDING
@@ -1423,6 +1487,28 @@ class MonthlyBillingService {
         if (billRemaining <= 0) {
           throw StateError(
             'This monthly bill is already paid.',
+          );
+        }
+
+        // =====================================================================
+        // CONSISTENCY GUARD
+        //
+        // A bill that is correctly the customer's current live bill has
+        // remainingAmount == the customer's pendingAmount — that IS the
+        // customer's outstanding balance. If the two disagree (e.g. data
+        // from before older bills were closed out on creation, or a
+        // payment applied straight to an old bill), fail loudly instead
+        // of silently applying this payment against a stale number and
+        // making the drift worse.
+        // =====================================================================
+
+        if ((billRemaining - currentPending).abs() > 0.5) {
+          throw StateError(
+            'This bill\'s remaining amount (₹${billRemaining.toStringAsFixed(0)}) '
+                'does not match the customer\'s outstanding balance '
+                '(₹${currentPending.toStringAsFixed(0)}). Open the customer\'s '
+                'profile and tap "Sync with Monthly Bills" first, then try the '
+                'payment again.',
           );
         }
 
@@ -1869,40 +1955,102 @@ class MonthlyBillingService {
   // ===========================================================================
 
   /// Fixes a customer whose profile balance has drifted out of sync with
-  /// their actual Monthly Bills — e.g. a general "Add Payment" was
-  /// recorded against the customer directly (before that flow reconciled
-  /// bills) and the specific bill it was meant to cover never got its
-  /// own amountPaid/remainingAmount/status updated. The customer profile
-  /// then shows "settled" while Monthly Bills still shows that bill as
-  /// unpaid or partial.
+  /// their actual Monthly Bills — specifically, more than one monthly
+  /// bill left showing an open balance at the same time (bad data from
+  /// before bills were closed out on creation, or a payment applied to
+  /// an old bill directly). Only that specific, double-counted amount is
+  /// removed from the customer's pendingAmount.
   ///
-  /// Recomputes the customer's pendingAmount as the sum of every
-  /// still-open monthly bill's remainingAmount. This only touches the
-  /// customer's outstanding number — no bill document is changed — so
-  /// run it after confirming (from Monthly Bills) which bill(s) are
-  /// actually still owed.
+  /// IMPORTANT: this does NOT recompute pendingAmount from scratch as
+  /// "whatever the latest bill says". pendingAmount can legitimately
+  /// include debt that has nothing to do with any monthly bill at all —
+  /// a manual "Add Outstanding" entry, a goat checkout charge, etc. —
+  /// and blindly overwriting it with a bill's own number would silently
+  /// erase that real debt. This only ever subtracts the exact stale
+  /// amount it finds sitting in an older, superseded bill.
   Future<double> reconcileCustomerOutstanding({
     required String farmId,
     required String customerId,
   }) async {
     final customerRef = _customers(farmId).doc(customerId);
 
+    // getMonthlyBills() already sorts newest billingMonth first.
     final bills = await getMonthlyBills(
       farmId: farmId,
       customerId: customerId,
     );
 
-    final trueOutstanding = bills.fold<double>(
+    // Every bill AFTER the most recent one that still shows an open
+    // balance is stale: its balance is already folded into the latest
+    // bill's totalDue (that's how previousOutstanding works), so it's
+    // being counted twice. The most recent bill itself is never touched
+    // here — it's the one bill whose remainingAmount is meant to be live.
+    final staleBills = bills.length > 1
+        ? bills.skip(1).where((bill) => bill.remainingAmount > 0).toList()
+        : const <MonthlyBill>[];
+
+    if (staleBills.isEmpty) {
+      // Nothing double-counted — leave pendingAmount exactly as it is
+      // (it may legitimately include non-bill charges) and just report
+      // the customer's current balance back.
+      final snapshot = await customerRef.get().timeout(_timeout);
+      return _doubleValue(snapshot.data()?['pendingAmount']);
+    }
+
+    final staleTotal = staleBills.fold<double>(
       0,
           (sum, bill) => sum + bill.remainingAmount,
     );
+    final latestBillId = bills.first.id;
+    final latestPeriodKey = bills.first.billingPeriodKey;
+    final staleBillRefs =
+    staleBills.map((bill) => _bills(farmId).doc(bill.id)).toList();
 
-    await customerRef.update({
-      'pendingAmount': trueOutstanding,
-      'updatedAt': FieldValue.serverTimestamp(),
+    return _db.runTransaction<double>((transaction) async {
+      // ---------------------------------------------------------------
+      // READS FIRST
+      // ---------------------------------------------------------------
+
+      final customerSnapshot = await transaction.get(customerRef);
+
+      final staleBillSnapshots =
+      <DocumentSnapshot<Map<String, dynamic>>>[];
+      for (final ref in staleBillRefs) {
+        staleBillSnapshots.add(await transaction.get(ref));
+      }
+
+      final currentPending =
+      _doubleValue(customerSnapshot.data()?['pendingAmount']);
+
+      // Subtract ONLY the amount that was double-counted. Whatever else
+      // is sitting in pendingAmount (a manual outstanding entry, a
+      // checkout charge, etc.) is left completely untouched.
+      final correctedPending =
+      (currentPending - staleTotal).clamp(0, double.infinity).toDouble();
+
+      // ---------------------------------------------------------------
+      // CLOSE OUT THE STALE BILLS
+      // ---------------------------------------------------------------
+
+      for (final snap in staleBillSnapshots) {
+        if (!snap.exists) continue;
+        transaction.update(snap.reference, {
+          'remainingAmount': 0,
+          'status': 'paid',
+          'paymentStatus': 'paid',
+          'carriedForwardIntoBillId': latestBillId,
+          'carriedForwardIntoPeriod': latestPeriodKey,
+          'updatedAt': FieldValue.serverTimestamp(),
+        });
+      }
+
+      transaction.update(customerRef, {
+        'pendingAmount': correctedPending,
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
+
+      return correctedPending;
     }).timeout(_timeout);
-
-    return trueOutstanding;
   }
 
   // ===========================================================================
