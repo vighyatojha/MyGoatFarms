@@ -588,7 +588,12 @@ class _ProfileScreenState extends State<ProfileScreen> {
   // system back button), so this just requests the pop with the chosen
   // tab index as the result.
   void _onBottomNavTap(int index) {
-    if (index == 4) return;
+    // We are already showing Profile, so tapping Profile again should be a
+    // no-op — mirrors MainShell._navigateToTab's "already on this screen"
+    // guard. (This used to check `index == 4`, which is Finance's shell
+    // index, not Profile's — that was blocking Finance from ever being
+    // reachable from here, and it's what let currentIndex stay wrong too.)
+    if (index == 5) return;
 
     Navigator.of(context).pop(index);
   }
@@ -599,7 +604,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
       return Scaffold(
         backgroundColor: AppColors.paleGreen,
         bottomNavigationBar: AppBottomNav(
-          currentIndex: 4,
+          currentIndex: 5,
           onTap: _onBottomNavTap,
         ),
         body: const Center(
@@ -618,7 +623,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
       return Scaffold(
         backgroundColor: AppColors.paleGreen,
         bottomNavigationBar: AppBottomNav(
-          currentIndex: 4,
+          currentIndex: 5,
           onTap: _onBottomNavTap,
         ),
         body: SafeArea(
@@ -662,7 +667,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
       child: Scaffold(
         backgroundColor: AppColors.paleGreen,
         bottomNavigationBar: AppBottomNav(
-          currentIndex: 4,
+          currentIndex: 5,
           onTap: _onBottomNavTap,
         ),
         body: SafeArea(

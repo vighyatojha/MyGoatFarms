@@ -3,6 +3,12 @@
 
     <uses-permission android:name="android.permission.CAMERA"/>
     <uses-feature android:name="android.hardware.camera" android:required="false"/>
+
+    <!-- Required at runtime on Android 13+ (API 33+) before any
+         notification — including FCM — can be shown. NotificationService
+         requests this permission via flutter_local_notifications /
+         firebase_messaging at first login. -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
     <application
         android:label="My Goat Farms"
         android:name="${applicationName}"
@@ -21,9 +27,9 @@
                  while the Flutter UI initializes. After that, this theme continues
                  to determine the Window background behind the Flutter UI. -->
             <meta-data
-              android:name="io.flutter.embedding.android.NormalTheme"
-              android:resource="@style/NormalTheme"
-              />
+                android:name="io.flutter.embedding.android.NormalTheme"
+                android:resource="@style/NormalTheme"
+                />
             <intent-filter>
                 <action android:name="android.intent.action.MAIN"/>
                 <category android:name="android.intent.category.LAUNCHER"/>
@@ -34,6 +40,24 @@
         <meta-data
             android:name="flutterEmbedding"
             android:value="2" />
+
+        <!-- Default small icon used for FCM notifications shown by the
+             OS while the app is backgrounded/terminated. Falls back to
+             the launcher icon; swap for a dedicated white/transparent
+             notification icon (res/drawable/ic_notification) if the
+             launcher icon doesn't render well in the status bar. -->
+        <meta-data
+            android:name="com.google.firebase.messaging.default_notification_icon"
+            android:resource="@mipmap/ic_launcher" />
+
+        <!-- Default channel id. Must match NotificationService's
+             AndroidNotificationChannel id so FCM notification messages
+             and locally-shown foreground notifications land in the same
+             channel instead of Android creating an unconfigured
+             "Miscellaneous" one. -->
+        <meta-data
+            android:name="com.google.firebase.messaging.default_notification_channel_id"
+            android:value="mygoatfarms_default_channel" />
     </application>
     <!-- Required to query activities that can process text, see:
          https://developer.android.com/training/package-visibility and

@@ -8,6 +8,7 @@ import 'package:provider/provider.dart';
 import 'app_theme.dart';
 import 'firebase_options.dart';
 import 'services/locale_provider.dart';
+import 'services/notification_service.dart';
 import 'screens/splash_screen.dart';
 import 'screens/login_screen.dart';
 import 'screens/register_screen.dart';
@@ -112,6 +113,13 @@ class _AppBootstrapState extends State<_AppBootstrap> {
     await Firebase.initializeApp(
       options: DefaultFirebaseOptions.currentPlatform,
     );
+
+    // Must be registered as early as possible — before any notification
+    // can arrive — so Android can hand a background/terminated-state
+    // message to this isolate. Requesting permission and saving this
+    // device's token happens later, once a farmId is known (see
+    // MainShell._initPushNotifications).
+    NotificationService.registerBackgroundHandler();
 
     debugPrint('Firebase initialization completed.');
   }

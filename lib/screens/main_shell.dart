@@ -24,18 +24,11 @@ import 'profile/profile_screen.dart';
 /// Any main screen → Home
 /// Home → Exit application
 ///
-/// Example:
-///
-/// Home → Palai → Stock → Finance
-///
-/// Phone Back → Home
-/// Phone Back → Exit
-///
 /// Profile:
 ///
 /// Any screen → Profile
-/// Phone Back → Home
-/// Phone Back → Exit
+/// Profile → Home
+/// Home → Exit
 class MainShell extends StatefulWidget {
   const MainShell({super.key});
 
@@ -52,12 +45,10 @@ class _MainShellState extends State<MainShell> {
 
   /// Previous tab.
   ///
-  /// This is kept for the existing transition logic.
+  /// Kept for the existing transition logic.
   int _previousIndex = 0;
 
   /// Whether the current screen was reached by pressing Back.
-  ///
-  /// This controls the direction of the existing tab animation.
   bool _isGoingBack = false;
 
   // --------------------------------------------------------------------------
@@ -66,39 +57,30 @@ class _MainShellState extends State<MainShell> {
 
   /// Main application screens.
   ///
-  /// Customers is intentionally kept here because it may still be used
-  /// internally by the application, even though it is not exposed through
-  /// the bottom navigation bar.
+  /// Customers remains available internally even though it is not exposed
+  /// through the bottom navigation.
+  ///
+  /// IMPORTANT:
+  ///
+  /// Profile is NOT placed in this list because Profile is opened as its
+  /// own route using _profileRoute().
   static const List<Widget> _tabs = [
-    HomeScreen(),                    // 0
-    PalaiScreen(),                   // 1
-    StockScreen(),                   // 2
-    CustomerManagementScreen(),      // 3 - internal only
-    FinanceOverviewScreen(),         // 4
+    HomeScreen(),                   // 0
+    PalaiScreen(),                  // 1
+    StockScreen(),                  // 2
+    CustomerManagementScreen(),     // 3 - internal only
+    FinanceOverviewScreen(),        // 4
   ];
 
   // --------------------------------------------------------------------------
   // TAB NAVIGATION
   // --------------------------------------------------------------------------
 
-  /// Handles bottom navigation tab selection.
-  ///
-  /// Navigation itself is completely independent of the Android Back button.
-  ///
-  /// The user can freely navigate:
-  ///
-  /// Home → Finance
-  /// Finance → Palai
-  /// Palai → Stock
-  /// Stock → Home
-  ///
-  /// etc.
   void _navigateToTab(int newIndex) {
     if (!_isValidBottomTab(newIndex)) {
       return;
     }
 
-    // Already on this screen.
     if (newIndex == _index) {
       return;
     }
@@ -107,13 +89,11 @@ class _MainShellState extends State<MainShell> {
       _previousIndex = _index;
       _index = newIndex;
 
-      // This was a direct navigation from the bottom navigation.
       _isGoingBack = false;
     });
   }
 
-  /// Returns true only for screens that are actually exposed through
-  /// the bottom navigation.
+  /// Valid bottom navigation destinations inside MainShell.
   ///
   /// 0 = Home
   /// 1 = Palai
@@ -121,23 +101,40 @@ class _MainShellState extends State<MainShell> {
   /// 4 = Finance
   /// 5 = Profile
   ///
-  /// Index 3 (Customers) is intentionally excluded.
+  /// Profile is handled separately because it is a pushed route.
   bool _isValidBottomTab(int index) {
     return index == 0 ||
         index == 1 ||
         index == 2 ||
-        index == 4;
+        index == 4 ||
+        index == 5;
   }
 
   // --------------------------------------------------------------------------
   // PROFILE
   // --------------------------------------------------------------------------
 
-  /// Opens Profile using the existing custom transition.
-  ///
-  /// Profile is intentionally pushed as a separate route because it already
-  /// has its own screen/flow.
   Future<void> _openProfile() async {
+    // ------------------------------------------------------------------------
+    // IMPORTANT FIX
+    //
+    // Set the shell's selected index to Profile BEFORE pushing ProfileScreen.
+    //
+    // Previously the shell remained on Finance (index 4), so when Profile
+    // opened, the bottom navigation still highlighted Finance.
+    // ------------------------------------------------------------------------
+
+    if (mounted) {
+      setState(() {
+        _previousIndex = _index;
+
+        // Profile is index 5 in AppBottomNav.
+        _index = 5;
+
+        _isGoingBack = false;
+      });
+    }
+
     final result = await Navigator.of(context).push<int>(
       _profileRoute(),
     );
@@ -147,18 +144,11 @@ class _MainShellState extends State<MainShell> {
     }
 
     // ------------------------------------------------------------------------
-    // Profile was closed using the Android/system Back button.
+    // Profile was closed with Android/system Back.
     //
-    // In this case there is no result, so ALWAYS return to Home.
-    //
-    // Example:
-    //
-    // Palai → Profile → Back
-    //
-    // becomes:
-    //
-    // Palai → Profile → Home
+    // Always return to Home according to the requested navigation behavior.
     // ------------------------------------------------------------------------
+
     if (result == null) {
       if (_index != 0) {
         setState(() {
@@ -172,18 +162,22 @@ class _MainShellState extends State<MainShell> {
     }
 
     // ------------------------------------------------------------------------
-    // Profile's own bottom navigation selected another destination.
-    //
-    // In that case we still respect the selected destination.
+    // Profile's bottom navigation selected another destination.
     // ------------------------------------------------------------------------
+
     if (_isValidBottomTab(result)) {
+      if (result == 5) {
+        // Already on Profile.
+        return;
+      }
+
       _navigateToTab(result);
     }
   }
 
   /// Profile screen transition.
   ///
-  /// This is kept from your existing implementation.
+  /// Existing animation intentionally preserved.
   PageRoute<int> _profileRoute() {
     return PageRouteBuilder<int>(
       transitionDuration: const Duration(milliseconds: 320),
@@ -227,29 +221,6 @@ class _MainShellState extends State<MainShell> {
   // ANDROID / SYSTEM BACK
   // --------------------------------------------------------------------------
 
-  /// Handles the Android phone Back button.
-  ///
-  /// IMPORTANT:
-  ///
-  /// There is deliberately NO navigation history here.
-  ///
-  /// The rule is:
-  ///
-  ///     Current screen != Home
-  ///                 ↓
-  ///               Home
-  ///
-  ///     Current screen == Home
-  ///                 ↓
-  ///             Exit app
-  ///
-  /// Therefore:
-  ///
-  /// Home → Palai → Stock → Finance
-  ///
-  /// Back → Home
-  ///
-  /// Back → Exit
   Future<bool> _handleBack() async {
     // ------------------------------------------------------------------------
     // ANY SCREEN OTHER THAN HOME
@@ -262,8 +233,6 @@ class _MainShellState extends State<MainShell> {
         // Always return directly to Home.
         _index = 0;
 
-        // Tell the existing animation that this navigation happened
-        // because of Back.
         _isGoingBack = true;
       });
 
@@ -272,11 +241,8 @@ class _MainShellState extends State<MainShell> {
 
     // ------------------------------------------------------------------------
     // ALREADY ON HOME
-    // ------------------------------------------------------------------------
     //
-    // There is nowhere else to navigate.
-    //
-    // The user wants the second Back press to exit the application.
+    // Second Back exits the application.
     // ------------------------------------------------------------------------
 
     return true;
@@ -286,60 +252,22 @@ class _MainShellState extends State<MainShell> {
   // SCREEN TRANSITION
   // --------------------------------------------------------------------------
 
-  /// Builds the existing animated tab transition.
-  ///
-  /// This has intentionally NOT been replaced with a simple IndexedStack
-  /// or a simple screen switch.
-  ///
-  /// The existing animation remains:
-  ///
-  /// - Fade
-  /// - Small horizontal slide
-  /// - easeOutCubic
-  /// - easeInCubic
-  ///
-  /// Direct bottom navigation:
-  ///
-  ///     New screen enters from the right
-  ///
-  /// Back navigation:
-  ///
-  ///     Home enters from the left
-  ///
-  /// The direction is purely visual. It does NOT restrict which screen
-  /// the user can navigate to.
   Widget _buildTabTransition() {
-    final currentScreen = _tabs[_index];
+    // ------------------------------------------------------------------------
+    // Profile is a separate route.
+    //
+    // While Profile is open, this widget is underneath the Profile route,
+    // so _tabs[_index] must NOT be accessed when _index == 5.
+    // ------------------------------------------------------------------------
+
+    final tabIndex = _index == 5 ? 0 : _index;
+    final currentScreen = _tabs[tabIndex];
 
     final Offset beginOffset;
 
     if (_isGoingBack) {
-      // ----------------------------------------------------------------------
-      // BACK ANIMATION
-      //
-      // Example:
-      //
-      // Finance → Back → Home
-      //
-      // Home enters gently from the left.
-      // ----------------------------------------------------------------------
-
       beginOffset = const Offset(-0.035, 0);
     } else {
-      // ----------------------------------------------------------------------
-      // NORMAL BOTTOM-NAVIGATION ANIMATION
-      //
-      // The user can click ANY destination.
-      //
-      // Example:
-      //
-      // Stock → Finance
-      // Finance → Palai
-      // Palai → Home
-      //
-      // There is no navigation restriction.
-      // ----------------------------------------------------------------------
-
       beginOffset = const Offset(0.035, 0);
     }
 
@@ -350,7 +278,6 @@ class _MainShellState extends State<MainShell> {
       switchInCurve: Curves.easeOutCubic,
       switchOutCurve: Curves.easeInCubic,
 
-      // Keep the existing layered transition behavior.
       layoutBuilder: (
           currentChild,
           previousChildren,
@@ -375,21 +302,18 @@ class _MainShellState extends State<MainShell> {
 
         return FadeTransition(
           opacity: curved,
-
           child: SlideTransition(
             position: Tween<Offset>(
               begin: beginOffset,
               end: Offset.zero,
             ).animate(curved),
-
             child: child,
           ),
         );
       },
 
-      // The key ensures the transition runs when the selected tab changes.
       child: KeyedSubtree(
-        key: ValueKey(_index),
+        key: ValueKey(tabIndex),
         child: currentScreen,
       ),
     );
@@ -402,25 +326,30 @@ class _MainShellState extends State<MainShell> {
   @override
   Widget build(BuildContext context) {
     return PopScope(
-      // We handle the phone Back button ourselves.
       canPop: false,
 
       onPopInvokedWithResult: (
           didPop,
           result,
           ) async {
-        // The system already handled the pop.
         if (didPop) {
           return;
         }
 
-        final shouldExit = await _handleBack();
-
-        // --------------------------------------------------------------------
-        // HOME + BACK
+        // --------------------------------------------------------------
+        // IMPORTANT:
         //
-        // Exit the application.
-        // --------------------------------------------------------------------
+        // If Profile is currently open, its own route should handle
+        // the Back button and return null to _openProfile().
+        //
+        // We therefore do not handle Profile Back here.
+        // --------------------------------------------------------------
+
+        if (_index == 5) {
+          return;
+        }
+
+        final shouldExit = await _handleBack();
 
         if (shouldExit && mounted) {
           await SystemNavigator.pop();
@@ -430,35 +359,24 @@ class _MainShellState extends State<MainShell> {
       child: Scaffold(
         backgroundColor: AppColors.paleGreen,
 
-        // --------------------------------------------------------------------
-        // MAIN CONTENT
-        // --------------------------------------------------------------------
-        //
-        // Existing animated transition remains here.
-        // --------------------------------------------------------------------
-
         body: _buildTabTransition(),
-
-        // --------------------------------------------------------------------
-        // BOTTOM NAVIGATION
-        // --------------------------------------------------------------------
 
         bottomNavigationBar: AppBottomNav(
           currentIndex: _index,
 
           onTap: (index) {
-            // --------------------------------------------------------------
+            // ------------------------------------------------------------
             // Profile
-            // --------------------------------------------------------------
+            // ------------------------------------------------------------
 
             if (index == 5) {
               _openProfile();
               return;
             }
 
-            // --------------------------------------------------------------
+            // ------------------------------------------------------------
             // Home / Palai / Stock / Finance
-            // --------------------------------------------------------------
+            // ------------------------------------------------------------
 
             _navigateToTab(index);
           },
