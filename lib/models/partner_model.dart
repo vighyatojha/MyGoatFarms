@@ -19,6 +19,17 @@ class PartnerPermissions {
   final bool reportsView;
   final bool profileView;
 
+  // --- Finance ---
+  final bool financeView;
+  final bool financeExpenseCreate;
+  final bool financeExpenseEdit;
+  final bool financeExpenseVoid;
+  final bool financeRevenueCreate;
+  final bool financeRevenueEdit;
+  final bool financeRevenueVoid;
+  final bool financeLedgerView;
+  final bool financeReportsView;
+
   const PartnerPermissions({
     this.palaiView = false,
     this.palaiCreate = false,
@@ -34,6 +45,15 @@ class PartnerPermissions {
     this.stockDelete = false,
     this.reportsView = false,
     this.profileView = false,
+    this.financeView = false,
+    this.financeExpenseCreate = false,
+    this.financeExpenseEdit = false,
+    this.financeExpenseVoid = false,
+    this.financeRevenueCreate = false,
+    this.financeRevenueEdit = false,
+    this.financeRevenueVoid = false,
+    this.financeLedgerView = false,
+    this.financeReportsView = false,
   });
 
   factory PartnerPermissions.fromMap(
@@ -59,6 +79,16 @@ class PartnerPermissions {
 
       reportsView: data['reportsView'] == true,
       profileView: data['profileView'] == true,
+
+      financeView: data['financeView'] == true,
+      financeExpenseCreate: data['financeExpenseCreate'] == true,
+      financeExpenseEdit: data['financeExpenseEdit'] == true,
+      financeExpenseVoid: data['financeExpenseVoid'] == true,
+      financeRevenueCreate: data['financeRevenueCreate'] == true,
+      financeRevenueEdit: data['financeRevenueEdit'] == true,
+      financeRevenueVoid: data['financeRevenueVoid'] == true,
+      financeLedgerView: data['financeLedgerView'] == true,
+      financeReportsView: data['financeReportsView'] == true,
     );
   }
 
@@ -85,6 +115,16 @@ class PartnerPermissions {
 
       'reportsView': reportsView,
       'profileView': profileView,
+
+      'financeView': financeView,
+      'financeExpenseCreate': financeExpenseCreate,
+      'financeExpenseEdit': financeExpenseEdit,
+      'financeExpenseVoid': financeExpenseVoid,
+      'financeRevenueCreate': financeRevenueCreate,
+      'financeRevenueEdit': financeRevenueEdit,
+      'financeRevenueVoid': financeRevenueVoid,
+      'financeLedgerView': financeLedgerView,
+      'financeReportsView': financeReportsView,
     };
   }
 }

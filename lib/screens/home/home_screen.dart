@@ -14,6 +14,9 @@ import '../../services/firestore_service.dart';
 import '../../widgets/fast_route.dart';
 import '../../widgets/profile_completion_dialog.dart';
 import '../../widgets/customer_selection_sheet.dart';
+import '../finance/finance_overview_screen.dart';
+import '../finance/add_edit_expense_screen.dart';
+import '../finance/customer_ledger_screen.dart';
 import 'widgets/home_widgets.dart';
 import '../palai/customer_palai/customer_goat_registration_screen.dart';
 import '../stocks/stock_screen.dart';
@@ -22,7 +25,6 @@ import '../profile/profile_screen.dart';
 import 'notification_screen.dart';
 import '../palai/goat_list_screen.dart';
 import '../palai/receive_payment_screen.dart';
-import 'income_detail_screen.dart';
 import '../../widgets/goat_count_builder.dart';
 
 /// Home / dashboard screen. Quick, at-a-glance view of the whole farm —
@@ -198,6 +200,25 @@ class _HomeScreenState extends State<HomeScreen> {
     Navigator.of(context).push(
       fastRoute(ReceivePaymentScreen(presetCustomer: customer)),
     );
+  }
+
+  // ===========================================================================
+  // QUICK ACTION: ADD EXPENSE
+  // ===========================================================================
+  //
+  // Opens the Finance module's expense form directly. On success it pops
+  // back here with `true`, which just triggers a friendly confirmation —
+  // the expense form itself already shows its own snackbar before
+  // popping, so this is only an extra nudge, not the source of truth.
+  // ===========================================================================
+
+  Future<void> _openAddExpense() async {
+    final result = await Navigator.of(context).push<bool>(
+      fastRoute(const AddEditExpenseScreen()),
+    );
+    if (result == true) {
+      _showMessage('Expense added');
+    }
   }
 
   @override
@@ -383,7 +404,7 @@ class _HomeScreenState extends State<HomeScreen> {
                       value: snap.hasData ? '₹${value.toStringAsFixed(0)}' : '—',
                       color: AppColors.warning,
                       onTap: () => Navigator.of(context)
-                          .push(fastRoute(const IncomeDetailScreen())),
+                          .push(fastRoute(const FinanceOverviewScreen())),
                     );
                   },
                 ),
@@ -403,6 +424,8 @@ class _HomeScreenState extends State<HomeScreen> {
                       label: 'Pending Payments',
                       value: snap.hasData ? '₹${value.toStringAsFixed(0)}' : '—',
                       color: AppColors.error,
+                      onTap: () => Navigator.of(context)
+                          .push(fastRoute(const CustomerLedgerScreen())),
                     );
                   },
                 ),
@@ -455,7 +478,7 @@ class _HomeScreenState extends State<HomeScreen> {
             icon: Icons.remove,
             label: 'Add\nExpense',
             color: AppColors.error,
-            onTap: () => _comingSoon('Add Expense'),
+            onTap: _openAddExpense,
           ),
           QuickAction(
             icon: Icons.grass_outlined,

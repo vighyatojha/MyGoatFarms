@@ -83,6 +83,33 @@ class PartnerAccessService {
       case 'profile.view':
         return permissions.profileView;
 
+      case 'finance.view':
+        return permissions.financeView;
+
+      case 'finance.expenseCreate':
+        return permissions.financeExpenseCreate;
+
+      case 'finance.expenseEdit':
+        return permissions.financeExpenseEdit;
+
+      case 'finance.expenseVoid':
+        return permissions.financeExpenseVoid;
+
+      case 'finance.revenueCreate':
+        return permissions.financeRevenueCreate;
+
+      case 'finance.revenueEdit':
+        return permissions.financeRevenueEdit;
+
+      case 'finance.revenueVoid':
+        return permissions.financeRevenueVoid;
+
+      case 'finance.ledgerView':
+        return permissions.financeLedgerView;
+
+      case 'finance.reportsView':
+        return permissions.financeReportsView;
+
       default:
         return false;
     }

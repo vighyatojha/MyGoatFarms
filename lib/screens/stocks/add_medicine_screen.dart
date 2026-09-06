@@ -5,7 +5,10 @@ import 'package:flutter/services.dart';
 import '../../app_theme.dart';
 import '../../models/stock_model.dart';
 import '../../models/activity_model.dart';
+import '../../models/expense_categories.dart';
+import '../../models/expense_model.dart';
 import '../../services/firestore_service.dart';
+import '../../services/finance_service.dart';
 
 // The medicine screens use a blue theme (AppColors.info) instead of the
 // app's default green, matching the medicine card color on the Stock
@@ -26,6 +29,12 @@ class _AddMedicineScreenState extends State<AddMedicineScreen> {
   final _quantityController = TextEditingController();
   final _thresholdController = TextEditingController(text: '5');
   final _notesController = TextEditingController();
+
+  // --- Purchase cost (Finance integration) ---
+  final _totalCostController = TextEditingController();
+  final _supplierController = TextEditingController();
+  bool _recordExpense = true;
+  String _paymentMethod = FinancePaymentMethods.cash;
 
   bool _saving = false;
   String? _farmId;
@@ -57,6 +66,8 @@ class _AddMedicineScreenState extends State<AddMedicineScreen> {
     _quantityController.dispose();
     _thresholdController.dispose();
     _notesController.dispose();
+    _totalCostController.dispose();
+    _supplierController.dispose();
     super.dispose();
   }
 
@@ -83,6 +94,17 @@ class _AddMedicineScreenState extends State<AddMedicineScreen> {
       return;
     }
 
+    final totalCost = _recordExpense
+        ? (double.tryParse(_totalCostController.text.trim()) ?? 0)
+        : 0.0;
+
+    if (_recordExpense && _totalCostController.text.trim().isNotEmpty) {
+      if (totalCost.isNaN || totalCost.isInfinite || totalCost < 0) {
+        _message('Enter a valid cost amount.', error: true);
+        return;
+      }
+    }
+
     setState(() => _saving = true);
 
     try {
@@ -95,7 +117,7 @@ class _AddMedicineScreenState extends State<AddMedicineScreen> {
 
       final name = _nameController.text.trim();
 
-      await FirestoreService.instance.addStock(
+      final movementId = await FirestoreService.instance.addStock(
         farmId,
         itemName: name,
         type: StockType.medicine,
@@ -103,6 +125,11 @@ class _AddMedicineScreenState extends State<AddMedicineScreen> {
         unit: _unit,
         lowStockThreshold: threshold,
         notes: _notesController.text.trim(),
+        totalCost: totalCost > 0 ? totalCost : null,
+        supplierName: _supplierController.text.trim().isEmpty
+            ? null
+            : _supplierController.text.trim(),
+        paymentMethod: totalCost > 0 ? _paymentMethod : null,
       );
 
       await FirestoreService.instance.logActivity(
@@ -118,9 +145,39 @@ class _AddMedicineScreenState extends State<AddMedicineScreen> {
         ),
       );
 
+      // Record the purchase as a Finance expense, linked back to this
+      // exact stock movement so it can never be double-counted.
+      if (totalCost > 0) {
+        await FinanceService.instance.addExpense(
+          farmId,
+          ExpenseModel(
+            id: '',
+            title: '$name (Medicine Purchase)',
+            category: ExpenseCategories.medicine,
+            amount: totalCost,
+            quantity: quantity,
+            unit: _unit,
+            supplierName: _supplierController.text.trim().isEmpty
+                ? null
+                : _supplierController.text.trim(),
+            paymentMethod: _paymentMethod,
+            note: 'Medicine stock purchase — $name',
+            date: DateTime.now(),
+            createdAt: DateTime.now(),
+            updatedAt: DateTime.now(),
+            referenceType: 'stockMovement',
+            referenceId: movementId,
+          ),
+        );
+      }
+
       if (!mounted) return;
       Navigator.of(context).pop();
-      _message('Medicine stock added successfully');
+      _message(
+        totalCost > 0
+            ? 'Medicine stock added and ₹${totalCost.toStringAsFixed(0)} recorded as an expense'
+            : 'Medicine stock added successfully',
+      );
     } on TimeoutException {
       _message('Connection is taking too long. Please try again.', error: true);
     } catch (e) {
@@ -205,6 +262,8 @@ class _AddMedicineScreenState extends State<AddMedicineScreen> {
                 ],
               ),
               const SizedBox(height: 14),
+              _purchaseCostSection(),
+              const SizedBox(height: 14),
               _section(
                 title: 'Notes',
                 icon: Icons.notes_rounded,
@@ -212,7 +271,7 @@ class _AddMedicineScreenState extends State<AddMedicineScreen> {
                   _field(
                     controller: _notesController,
                     label: 'Additional note',
-                    hint: 'Supplier, quality, storage location...',
+                    hint: 'Storage location, quality...',
                     icon: Icons.edit_note_rounded,
                     maxLines: 3,
                     optional: true,
@@ -224,6 +283,99 @@ class _AddMedicineScreenState extends State<AddMedicineScreen> {
             ],
           ),
         ),
+      ),
+    );
+  }
+
+  // ---------------------------------------------------------------------
+  // PURCHASE COST (Finance integration)
+  // ---------------------------------------------------------------------
+
+  Widget _purchaseCostSection() {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: AppTheme.card(radius: 18),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                width: 34,
+                height: 34,
+                decoration: BoxDecoration(
+                  color: AppColors.info.withOpacity(.10),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: const Icon(Icons.currency_rupee_rounded, color: AppColors.info, size: 18),
+              ),
+              const SizedBox(width: 10),
+              Expanded(child: Text('Purchase Cost', style: AppTheme.heading(size: 14))),
+              Switch(
+                value: _recordExpense,
+                activeColor: AppColors.info,
+                onChanged: (v) => setState(() => _recordExpense = v),
+              ),
+            ],
+          ),
+          Text(
+            _recordExpense
+                ? 'Recorded as a Finance expense when you add this stock.'
+                : 'Off — this stock addition will not affect your Finance totals.',
+            style: AppTheme.body(size: 11, color: AppColors.textGrey),
+          ),
+          if (_recordExpense) ...[
+            const SizedBox(height: 14),
+            _field(
+              controller: _totalCostController,
+              label: 'Total Cost',
+              hint: 'e.g. 2500',
+              icon: Icons.currency_rupee_rounded,
+              suffix: '₹',
+              keyboardType: const TextInputType.numberWithOptions(decimal: true),
+              inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'[0-9.]'))],
+              optional: true,
+            ),
+            const SizedBox(height: 14),
+            _field(
+              controller: _supplierController,
+              label: 'Supplier / Vendor',
+              hint: 'Optional',
+              icon: Icons.storefront_outlined,
+              optional: true,
+            ),
+            const SizedBox(height: 14),
+            Text('Payment Method', style: AppTheme.body(size: 11, color: AppColors.textGrey, weight: FontWeight.w600)),
+            const SizedBox(height: 8),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: FinancePaymentMethods.all.map((method) {
+                final selected = _paymentMethod == method;
+                return GestureDetector(
+                  onTap: () => setState(() => _paymentMethod = method),
+                  child: AnimatedContainer(
+                    duration: const Duration(milliseconds: 160),
+                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                    decoration: BoxDecoration(
+                      color: selected ? AppColors.info : Colors.white,
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: selected ? AppColors.info : AppColors.divider),
+                    ),
+                    child: Text(
+                      method,
+                      style: AppTheme.body(
+                        size: 12,
+                        color: selected ? Colors.white : AppColors.textDark,
+                        weight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                );
+              }).toList(),
+            ),
+          ],
+        ],
       ),
     );
   }
@@ -648,15 +800,9 @@ class _AddMedicineScreenState extends State<AddMedicineScreen> {
       },
     );
 
-    // Note: we intentionally do NOT call controller.dispose() here.
-    // showDialog's Future completes as soon as Navigator.pop() is called,
-    // but the dialog's exit transition is still playing for several more
-    // frames, and the (still-focused) TextField above is still mounted
-    // during that time. Disposing the controller immediately races with
-    // that teardown and throws:
-    //   "'_dependents.isEmpty': is not true" (framework.dart)
-    // This controller is only ever used for this single dialog, so it's
-    // safe to just let it be garbage-collected once it's dropped.
+    // Note: we intentionally do NOT call controller.dispose() here — see
+    // the identical note in add_feed_stock_screen.dart's
+    // _addNewFeedName(); the same dialog-teardown race applies here.
 
     if (!mounted || name == null || name.trim().isEmpty) return;
 

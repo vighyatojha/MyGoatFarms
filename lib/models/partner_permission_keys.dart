@@ -25,6 +25,17 @@ class PartnerPermissionKeys {
   // Profile
   static const String profileView = 'profile.view';
 
+  // Finance
+  static const String financeView = 'finance.view';
+  static const String financeExpenseCreate = 'finance.expenseCreate';
+  static const String financeExpenseEdit = 'finance.expenseEdit';
+  static const String financeExpenseVoid = 'finance.expenseVoid';
+  static const String financeRevenueCreate = 'finance.revenueCreate';
+  static const String financeRevenueEdit = 'finance.revenueEdit';
+  static const String financeRevenueVoid = 'finance.revenueVoid';
+  static const String financeLedgerView = 'finance.ledgerView';
+  static const String financeReportsView = 'finance.reportsView';
+
   static const List<String> all = [
     palaiView,
     palaiCreate,
@@ -40,6 +51,15 @@ class PartnerPermissionKeys {
     stockDelete,
     reportsView,
     profileView,
+    financeView,
+    financeExpenseCreate,
+    financeExpenseEdit,
+    financeExpenseVoid,
+    financeRevenueCreate,
+    financeRevenueEdit,
+    financeRevenueVoid,
+    financeLedgerView,
+    financeReportsView,
   ];
 
   static Map<String, bool> empty() {

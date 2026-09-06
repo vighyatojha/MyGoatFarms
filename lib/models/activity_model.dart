@@ -19,6 +19,10 @@ enum ActivityType {
   customerDeleted,
   ownFarmGoatAdded,
   ownFarmExpenseAdded,
+  // --- Finance module ---
+  expenseVoided,
+  revenueAdded,
+  revenueVoided,
 }
 
 class ActivityLog {
@@ -26,7 +30,7 @@ class ActivityLog {
   final ActivityType type;
   final String title;
   final String subtitle;
-  final String module; // "home", "palai", "stock", "trading", "breeding"
+  final String module; // "home", "palai", "stock", "trading", "breeding", "finance"
   final DateTime timestamp;
 
   /// Who performed this activity — set by [FirestoreService.getCurrentActor]
@@ -123,6 +127,12 @@ class ActivityLog {
         return Icons.pets;
       case ActivityType.ownFarmExpenseAdded:
         return Icons.remove_circle_outline;
+      case ActivityType.expenseVoided:
+        return Icons.undo_rounded;
+      case ActivityType.revenueAdded:
+        return Icons.add_circle_outline;
+      case ActivityType.revenueVoided:
+        return Icons.undo_rounded;
     }
   }
 
@@ -160,6 +170,12 @@ class ActivityLog {
         return AppColors.primaryGreen;
       case ActivityType.ownFarmExpenseAdded:
         return AppColors.error;
+      case ActivityType.expenseVoided:
+        return AppColors.textGrey;
+      case ActivityType.revenueAdded:
+        return AppColors.success;
+      case ActivityType.revenueVoided:
+        return AppColors.textGrey;
     }
   }
 }

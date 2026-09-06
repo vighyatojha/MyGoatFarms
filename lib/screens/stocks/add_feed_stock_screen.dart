@@ -5,7 +5,10 @@ import 'package:flutter/services.dart';
 import '../../app_theme.dart';
 import '../../models/stock_model.dart';
 import '../../models/activity_model.dart';
+import '../../models/expense_categories.dart';
+import '../../models/expense_model.dart';
 import '../../services/firestore_service.dart';
+import '../../services/finance_service.dart';
 
 class AddFeedStockScreen extends StatefulWidget {
   const AddFeedStockScreen({super.key});
@@ -20,6 +23,12 @@ class _AddFeedStockScreenState extends State<AddFeedStockScreen> {
   final _quantityController = TextEditingController();
   final _thresholdController = TextEditingController(text: '20');
   final _notesController = TextEditingController();
+
+  // --- Purchase cost (Finance integration) ---
+  final _totalCostController = TextEditingController();
+  final _supplierController = TextEditingController();
+  bool _recordExpense = true;
+  String _paymentMethod = FinancePaymentMethods.cash;
 
   bool _saving = false;
   String? _farmId;
@@ -51,6 +60,8 @@ class _AddFeedStockScreenState extends State<AddFeedStockScreen> {
     _quantityController.dispose();
     _thresholdController.dispose();
     _notesController.dispose();
+    _totalCostController.dispose();
+    _supplierController.dispose();
     super.dispose();
   }
 
@@ -77,6 +88,19 @@ class _AddFeedStockScreenState extends State<AddFeedStockScreen> {
       return;
     }
 
+    // Safe numeric conversion for the optional cost field — never let a
+    // negative/NaN/invalid value through to Finance.
+    final totalCost = _recordExpense
+        ? (double.tryParse(_totalCostController.text.trim()) ?? 0)
+        : 0.0;
+
+    if (_recordExpense && _totalCostController.text.trim().isNotEmpty) {
+      if (totalCost.isNaN || totalCost.isInfinite || totalCost < 0) {
+        _message('Enter a valid cost amount.', error: true);
+        return;
+      }
+    }
+
     setState(() => _saving = true);
 
     try {
@@ -89,7 +113,7 @@ class _AddFeedStockScreenState extends State<AddFeedStockScreen> {
 
       final name = _nameController.text.trim();
 
-      await FirestoreService.instance.addStock(
+      final movementId = await FirestoreService.instance.addStock(
         farmId,
         itemName: name,
         type: StockType.feed,
@@ -97,6 +121,11 @@ class _AddFeedStockScreenState extends State<AddFeedStockScreen> {
         unit: _unit,
         lowStockThreshold: threshold,
         notes: _notesController.text.trim(),
+        totalCost: totalCost > 0 ? totalCost : null,
+        supplierName: _supplierController.text.trim().isEmpty
+            ? null
+            : _supplierController.text.trim(),
+        paymentMethod: totalCost > 0 ? _paymentMethod : null,
       );
 
       await FirestoreService.instance.logActivity(
@@ -112,9 +141,41 @@ class _AddFeedStockScreenState extends State<AddFeedStockScreen> {
         ),
       );
 
+      // Record the purchase as a Finance expense, linked back to this
+      // exact stock movement (referenceType/referenceId) so re-adding
+      // stock for the same item later never gets mistaken for the same
+      // purchase and double-counted.
+      if (totalCost > 0) {
+        await FinanceService.instance.addExpense(
+          farmId,
+          ExpenseModel(
+            id: '',
+            title: '$name (Feed Purchase)',
+            category: ExpenseCategories.feed,
+            amount: totalCost,
+            quantity: quantity,
+            unit: _unit,
+            supplierName: _supplierController.text.trim().isEmpty
+                ? null
+                : _supplierController.text.trim(),
+            paymentMethod: _paymentMethod,
+            note: 'Feed stock purchase — $name',
+            date: DateTime.now(),
+            createdAt: DateTime.now(),
+            updatedAt: DateTime.now(),
+            referenceType: 'stockMovement',
+            referenceId: movementId,
+          ),
+        );
+      }
+
       if (!mounted) return;
       Navigator.of(context).pop();
-      _message('Feed stock added successfully');
+      _message(
+        totalCost > 0
+            ? 'Feed stock added and ₹${totalCost.toStringAsFixed(0)} recorded as an expense'
+            : 'Feed stock added successfully',
+      );
     } on TimeoutException {
       _message('Connection is taking too long. Please try again.', error: true);
     } catch (e) {
@@ -199,6 +260,8 @@ class _AddFeedStockScreenState extends State<AddFeedStockScreen> {
                 ],
               ),
               const SizedBox(height: 14),
+              _purchaseCostSection(),
+              const SizedBox(height: 14),
               _section(
                 title: 'Notes',
                 icon: Icons.notes_rounded,
@@ -206,7 +269,7 @@ class _AddFeedStockScreenState extends State<AddFeedStockScreen> {
                   _field(
                     controller: _notesController,
                     label: 'Additional note',
-                    hint: 'Supplier, quality, storage location...',
+                    hint: 'Storage location, quality...',
                     icon: Icons.edit_note_rounded,
                     maxLines: 3,
                     optional: true,
@@ -218,6 +281,99 @@ class _AddFeedStockScreenState extends State<AddFeedStockScreen> {
             ],
           ),
         ),
+      ),
+    );
+  }
+
+  // ---------------------------------------------------------------------
+  // PURCHASE COST (Finance integration)
+  // ---------------------------------------------------------------------
+
+  Widget _purchaseCostSection() {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: AppTheme.card(radius: 18),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                width: 34,
+                height: 34,
+                decoration: BoxDecoration(
+                  color: AppColors.lightGreen,
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: const Icon(Icons.currency_rupee_rounded, color: AppColors.primaryGreen, size: 18),
+              ),
+              const SizedBox(width: 10),
+              Expanded(child: Text('Purchase Cost', style: AppTheme.heading(size: 14))),
+              Switch(
+                value: _recordExpense,
+                activeColor: AppColors.primaryGreen,
+                onChanged: (v) => setState(() => _recordExpense = v),
+              ),
+            ],
+          ),
+          Text(
+            _recordExpense
+                ? 'Recorded as a Finance expense when you add this stock.'
+                : 'Off — this stock addition will not affect your Finance totals.',
+            style: AppTheme.body(size: 11, color: AppColors.textGrey),
+          ),
+          if (_recordExpense) ...[
+            const SizedBox(height: 14),
+            _field(
+              controller: _totalCostController,
+              label: 'Total Cost',
+              hint: 'e.g. 4500',
+              icon: Icons.currency_rupee_rounded,
+              suffix: '₹',
+              keyboardType: const TextInputType.numberWithOptions(decimal: true),
+              inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'[0-9.]'))],
+              optional: true,
+            ),
+            const SizedBox(height: 14),
+            _field(
+              controller: _supplierController,
+              label: 'Supplier / Vendor',
+              hint: 'Optional',
+              icon: Icons.storefront_outlined,
+              optional: true,
+            ),
+            const SizedBox(height: 14),
+            Text('Payment Method', style: AppTheme.body(size: 11, color: AppColors.textGrey, weight: FontWeight.w600)),
+            const SizedBox(height: 8),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: FinancePaymentMethods.all.map((method) {
+                final selected = _paymentMethod == method;
+                return GestureDetector(
+                  onTap: () => setState(() => _paymentMethod = method),
+                  child: AnimatedContainer(
+                    duration: const Duration(milliseconds: 160),
+                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                    decoration: BoxDecoration(
+                      color: selected ? AppColors.primaryGreen : Colors.white,
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: selected ? AppColors.primaryGreen : AppColors.divider),
+                    ),
+                    child: Text(
+                      method,
+                      style: AppTheme.body(
+                        size: 12,
+                        color: selected ? Colors.white : AppColors.textDark,
+                        weight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                );
+              }).toList(),
+            ),
+          ],
+        ],
       ),
     );
   }

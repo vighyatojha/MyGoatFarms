@@ -7,9 +7,11 @@ import 'home/home_screen.dart';
 import 'palai/palai_screen.dart';
 import 'stocks/stock_screen.dart';
 import 'customers/customer_management_screen.dart';
+import 'finance/finance_overview_screen.dart';
 import 'profile/profile_screen.dart';
 
-/// Persistent app shell for the four main tabs (Home, Palai, Stock, Customers).
+/// Persistent app shell for the five main tabs (Home, Palai, Stock,
+/// Customers, Finance).
 ///
 /// Previously each of these screens was its own full [Scaffold] with its
 /// own [AppBottomNav], so switching tabs meant destroying and rebuilding
@@ -35,32 +37,34 @@ class _MainShellState extends State<MainShell> {
     PalaiScreen(),
     StockScreen(),
     CustomerManagementScreen(),
+    FinanceOverviewScreen(),
   ];
 
-  /// Tabs 0–3 (Home/Palai/Stock/Customers) just flip the visible child, so
-  /// switching between them never rebuilds or refetches. Profile is a real
-  /// screen — it opens on top of the shell so backing out returns to
-  /// whichever tab was showing.
+  /// Tabs 0–4 (Home/Palai/Stock/Customers/Finance) just flip the visible
+  /// child, so switching between them never rebuilds or refetches.
+  /// Profile is a real screen — it opens on top of the shell so backing
+  /// out returns to whichever tab was showing.
   ///
   /// The Profile screen has its own copy of the bottom nav (since it isn't
   /// one of the IndexedStack tabs). If the person taps Home/Palai/Stock/
-  /// Customers while on the Profile screen, it pops back here with that
-  /// tab's index as the result so we can switch straight to it, instead of
-  /// pushing a brand-new, nav-less copy of that screen on top.
+  /// Customers/Finance while on the Profile screen, it pops back here
+  /// with that tab's index as the result so we can switch straight to it,
+  /// instead of pushing a brand-new, nav-less copy of that screen on top.
   Future<void> _onNavTap(int index) async {
     switch (index) {
       case 0:
       case 1:
       case 2:
       case 3:
+      case 4:
         if (index != _index) setState(() => _index = index);
         break;
-      case 4:
+      case 5:
         final result = await Navigator.of(context).push<int>(
           fastRoute(const ProfileScreen()),
         );
 
-        if (result != null && result >= 0 && result <= 3 && mounted) {
+        if (result != null && result >= 0 && result <= 4 && mounted) {
           setState(() => _index = result);
         }
         break;

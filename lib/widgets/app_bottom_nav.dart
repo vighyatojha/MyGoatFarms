@@ -3,12 +3,14 @@ import '../app_theme.dart';
 
 /// App-wide bottom navigation.
 ///
-/// Order: Home | Palai | Stock (center, raised, brand color) | Customers | Profile
+/// Order: Home | Palai | Stock (center, raised, brand color) | Customers | Finance | Profile
 ///
-/// Use [currentIndex] 0..4 to highlight the active tab. A single instance
+/// Use [currentIndex] 0..5 to highlight the active tab. A single instance
 /// of this widget lives in `MainShell`, which owns an `IndexedStack` of
-/// Home/Palai/Stock — [onTap] just flips which tab is visible, so switching
-/// tabs never rebuilds, refetches, or animates a page transition.
+/// Home/Palai/Stock/Customers/Finance — [onTap] just flips which tab is
+/// visible, so switching tabs never rebuilds, refetches, or animates a
+/// page transition. Profile (index 5) isn't in that IndexedStack — see
+/// MainShell for why.
 class AppBottomNav extends StatelessWidget {
   final int currentIndex;
   final ValueChanged<int> onTap;
@@ -20,6 +22,7 @@ class AppBottomNav extends StatelessWidget {
     _NavItemData(icon: Icons.home_work_outlined, activeIcon: Icons.home_work, label: 'Palai'),
     _NavItemData(icon: Icons.inventory_2, activeIcon: Icons.inventory_2, label: 'Stock'),
     _NavItemData(icon: Icons.people_outline, activeIcon: Icons.people, label: 'Customers'),
+    _NavItemData(icon: Icons.account_balance_wallet_outlined, activeIcon: Icons.account_balance_wallet, label: 'Finance'),
     _NavItemData(icon: Icons.person_outline, activeIcon: Icons.person, label: 'Profile'),
   ];
 
@@ -57,13 +60,13 @@ class AppBottomNav extends StatelessWidget {
                           Icon(
                             selected ? item.activeIcon : item.icon,
                             color: selected ? AppColors.primaryGreen : AppColors.textGrey,
-                            size: 24,
+                            size: 22,
                           ),
                           const SizedBox(height: 4),
                           Text(
                             item.label,
                             style: TextStyle(
-                              fontSize: 11,
+                              fontSize: 10,
                               color: selected ? AppColors.primaryGreen : AppColors.textGrey,
                               fontWeight: selected ? FontWeight.w600 : FontWeight.w400,
                             ),

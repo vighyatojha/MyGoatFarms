@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:animate_do/animate_do.dart';
+import 'package:mygoatfarms/screens/finance/finance_overview_screen.dart';
 
 import '../customers/customer_management_screen.dart';
-import '../home/income_detail_screen.dart';
 import '../../app_theme.dart';
 import '../../models/activity_model.dart';
 import '../../models/palai_models.dart';
@@ -11,6 +11,7 @@ import '../../widgets/fast_route.dart';
 import '../../widgets/goat_count_builder.dart';
 import '../../widgets/customer_selection_sheet.dart';
 import '../home/widgets/home_widgets.dart';
+import '../finance/customer_ledger_screen.dart';
 import 'add_customer_screen.dart';
 import 'customer_palai/customer_goat_registration_screen.dart';
 import 'goat_list_screen.dart';
@@ -542,7 +543,7 @@ class _PalaiScreenState extends State<PalaiScreen> {
                         Navigator.of(context)
                             .push(
                           fastRoute(
-                            const IncomeDetailScreen(),
+                            const FinanceOverviewScreen(),
                           ),
                         );
                       },
@@ -570,6 +571,14 @@ class _PalaiScreenState extends State<PalaiScreen> {
                           : '—',
                       color:
                       AppColors.error,
+                      onTap: () {
+                        Navigator.of(context)
+                            .push(
+                          fastRoute(
+                            const CustomerLedgerScreen(),
+                          ),
+                        );
+                      },
                     );
                   },
                 ),

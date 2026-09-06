@@ -2013,7 +2013,14 @@ class FirestoreService {
   /// Adds stock (creates the item if it doesn't exist yet, matching on name
   /// + type so a feed item and a medicine item can share the same name) and
   /// logs the movement.
-  Future<void> addStock(
+  /// Returns the new stock-movement document's id. [unitCost]/
+  /// [totalCost]/[supplierName]/[paymentMethod] are all optional and
+  /// purely for audit on the movement doc itself — they do NOT create a
+  /// Finance expense here. Whether a purchase becomes a farm expense is
+  /// the calling screen's decision (see AddFeedStockScreen /
+  /// AddMedicineScreen), which then references this returned id as
+  /// `referenceId` so the same purchase can never produce two expenses.
+  Future<String> addStock(
       String farmId, {
         required String itemName,
         required StockType type,
@@ -2021,6 +2028,10 @@ class FirestoreService {
         required String unit,
         double lowStockThreshold = 0,
         String notes = '',
+        double? unitCost,
+        double? totalCost,
+        String? supplierName,
+        String? paymentMethod,
       }) async {
     final typeStr = type == StockType.medicine ? 'medicine' : 'feed';
     final existing = await _stockItems(farmId)
@@ -2047,21 +2058,15 @@ class FirestoreService {
       final currentQty = (existing.docs.first.data()['quantity'] ?? 0).toDouble();
       await _stockItems(farmId).doc(itemId).update({
         'quantity': currentQty + quantity,
-        // Keep the latest threshold/unit if the person changes them next
-        // time they add stock for this item.
         'lowStockThreshold': lowStockThreshold,
         'unit': unit,
         'lastUpdated': FieldValue.serverTimestamp(),
       }).timeout(timeout);
     }
 
-    // Attach the same actor info logActivity() attaches to the farm-wide
-    // feed, so the Stock screen's own "Recent Activity" list (which reads
-    // from stockMovements, not the activities collection) can show who
-    // performed it too.
     final actor = await getCurrentActor();
 
-    await _stockMovements(farmId).add(StockMovement(
+    final movementData = StockMovement(
       id: '',
       stockItemId: itemId,
       itemName: itemName,
@@ -2073,8 +2078,30 @@ class FirestoreService {
       actorUid: actor?.uid,
       actorName: actor?.name,
       actorRole: actor?.role,
-    ).toMap()).timeout(timeout);
-  }
+    ).toMap();
+
+    // Cost fields are purely additive — StockMovement.fromDoc() ignores
+    // keys it doesn't know about, so older movement docs without these
+    // fields keep parsing exactly as before.
+    if (totalCost != null && totalCost > 0) {
+      movementData['totalCost'] = totalCost;
+    }
+    if (unitCost != null && unitCost > 0) {
+      movementData['unitCost'] = unitCost;
+    }
+    if (supplierName != null && supplierName.trim().isNotEmpty) {
+      movementData['supplierName'] = supplierName.trim();
+    }
+    if (paymentMethod != null && paymentMethod.trim().isNotEmpty) {
+      movementData['paymentMethod'] = paymentMethod.trim();
+    }
+
+    final movementRef = await _stockMovements(farmId)
+        .add(movementData)
+        .timeout(timeout);
+
+    return movementRef.id;
+  } 
 
   /// Deducts stock used (e.g. "Feed Used Today" / "Medicine Used") and logs
   /// the movement. Runs as a transaction so concurrent usage entries can't
