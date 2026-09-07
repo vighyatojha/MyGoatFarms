@@ -182,6 +182,12 @@ class HealthReminderScheduler {
           priority: Priority.high,
         ),
       ),
+      // Required by flutter_local_notifications 18.0.1's top-level
+      // zonedSchedule() facade even for an Android-only call — it's an
+      // iOS-specific setting (interpreted wall-clock vs. absolute time
+      // across timezone/DST changes) that this app never uses on
+      // Android, but the parameter is still mandatory at this version.
+      uiLocalNotificationDateInterpretation: UILocalNotificationDateInterpretation.absoluteTime,
       // Inexact timing avoids needing Android 12+'s SCHEDULE_EXACT_ALARM
       // permission — fine for a "due today" reminder that doesn't need
       // to fire at the exact minute.
