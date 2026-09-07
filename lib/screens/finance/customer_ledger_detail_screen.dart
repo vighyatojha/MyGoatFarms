@@ -6,6 +6,7 @@ import '../../models/palai_models.dart';
 import '../../services/finance_service.dart';
 import '../../services/firestore_service.dart';
 import '../../widgets/finance/ledger_entry_tile.dart';
+import '../palai/receive_payment_screen.dart';
 
 /// Shows a customer's full financial history.
 ///
@@ -14,6 +15,13 @@ import '../../widgets/finance/ledger_entry_tile.dart';
 /// — it is never recomputed by summing historical bills/payments here.
 /// The ledger list below is history only, rendered from each bill/
 /// payment doc's own stored snapshot fields.
+///
+/// The sticky "Add Credit" / "Add Debit" bar lets the farm record a
+/// payment or a manual outstanding charge right from this screen,
+/// reusing the exact same FirestoreService calls the rest of the app
+/// already uses for those actions (ReceivePaymentScreen /
+/// addOutstandingAmount) so nothing about how balances are calculated
+/// changes — this screen just gives it a second entry point.
 class CustomerLedgerDetailScreen extends StatefulWidget {
   final PalaiCustomer customer;
 
@@ -24,12 +32,15 @@ class CustomerLedgerDetailScreen extends StatefulWidget {
 }
 
 class _CustomerLedgerDetailScreenState extends State<CustomerLedgerDetailScreen> {
+  late PalaiCustomer _customer;
+  String? _farmId;
   bool _loading = true;
   List<CustomerLedgerEntry> _entries = [];
 
   @override
   void initState() {
     super.initState();
+    _customer = widget.customer;
     _load();
   }
 
@@ -38,9 +49,17 @@ class _CustomerLedgerDetailScreenState extends State<CustomerLedgerDetailScreen>
     try {
       final farmId = await FirestoreService.instance.currentFarmId();
       if (farmId == null) return;
+      _farmId = farmId;
+
+      // Re-fetch the customer too — not just the ledger — so the balance
+      // cards reflect any Add Credit / Add Debit made from this screen
+      // instead of staying frozen at whatever was passed in originally.
+      final refreshedCustomer = await FirestoreService.instance.getCustomer(farmId, widget.customer.id);
       final entries = await FinanceService.instance.getCustomerLedger(farmId, widget.customer.id);
+
       if (!mounted) return;
       setState(() {
+        if (refreshedCustomer != null) _customer = refreshedCustomer;
         _entries = entries;
         _loading = false;
       });
@@ -56,9 +75,38 @@ class _CustomerLedgerDetailScreenState extends State<CustomerLedgerDetailScreen>
     }
   }
 
+  Future<void> _openAddCredit() async {
+    final result = await Navigator.of(context).push<bool>(
+      MaterialPageRoute(
+        builder: (_) => ReceivePaymentScreen(presetCustomer: _customer),
+      ),
+    );
+
+    if (result == true) await _load();
+  }
+
+  Future<void> _openAddDebit() async {
+    final farmId = _farmId;
+    if (farmId == null) return;
+
+    final saved = await showModalBottomSheet<bool>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (sheetContext) {
+        return Padding(
+          padding: EdgeInsets.only(bottom: MediaQuery.of(sheetContext).viewInsets.bottom),
+          child: _AddOutstandingSheet(farmId: farmId, customer: _customer),
+        );
+      },
+    );
+
+    if (saved == true) await _load();
+  }
+
   @override
   Widget build(BuildContext context) {
-    final customer = widget.customer;
+    final customer = _customer;
 
     return Scaffold(
       backgroundColor: AppColors.paleGreen,
@@ -69,6 +117,7 @@ class _CustomerLedgerDetailScreenState extends State<CustomerLedgerDetailScreen>
         titleSpacing: 4,
         title: Text(customer.name, style: AppTheme.heading(size: 18)),
       ),
+      bottomNavigationBar: _bottomActionBar(),
       body: SafeArea(
         child: RefreshIndicator(
           color: AppColors.primaryGreen,
@@ -102,44 +151,44 @@ class _CustomerLedgerDetailScreenState extends State<CustomerLedgerDetailScreen>
               const SizedBox(height: 10),
               _loading
                   ? Container(
-                      height: 150,
-                      alignment: Alignment.center,
-                      decoration: AppTheme.card(radius: 17),
-                      child: const CircularProgressIndicator(color: AppColors.primaryGreen, strokeWidth: 2),
-                    )
+                height: 150,
+                alignment: Alignment.center,
+                decoration: AppTheme.card(radius: 17),
+                child: const CircularProgressIndicator(color: AppColors.primaryGreen, strokeWidth: 2),
+              )
                   : _entries.isEmpty
-                      ? Container(
-                          width: double.infinity,
-                          padding: const EdgeInsets.all(22),
-                          decoration: AppTheme.card(radius: 17),
-                          child: Column(
-                            children: [
-                              const Icon(Icons.receipt_long_outlined, color: AppColors.textGrey, size: 30),
-                              const SizedBox(height: 9),
-                              Text(
-                                'No ledger history yet',
-                                style: AppTheme.body(size: 12, color: AppColors.textGrey, weight: FontWeight.w600),
-                              ),
-                            ],
-                          ),
-                        )
-                      : Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 12),
-                          decoration: BoxDecoration(
-                            color: Colors.white,
-                            borderRadius: BorderRadius.circular(18),
-                            border: Border.all(color: AppColors.divider.withOpacity(0.7)),
-                          ),
-                          child: Column(
-                            children: [
-                              for (int i = 0; i < _entries.length; i++)
-                                LedgerEntryTile(
-                                  entry: _entries[i],
-                                  showDivider: i != _entries.length - 1,
-                                ),
-                            ],
-                          ),
-                        ),
+                  ? Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(22),
+                decoration: AppTheme.card(radius: 17),
+                child: Column(
+                  children: [
+                    const Icon(Icons.receipt_long_outlined, color: AppColors.textGrey, size: 30),
+                    const SizedBox(height: 9),
+                    Text(
+                      'No ledger history yet',
+                      style: AppTheme.body(size: 12, color: AppColors.textGrey, weight: FontWeight.w600),
+                    ),
+                  ],
+                ),
+              )
+                  : Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(18),
+                  border: Border.all(color: AppColors.divider.withOpacity(0.7)),
+                ),
+                child: Column(
+                  children: [
+                    for (int i = 0; i < _entries.length; i++)
+                      LedgerEntryTile(
+                        entry: _entries[i],
+                        showDivider: i != _entries.length - 1,
+                      ),
+                  ],
+                ),
+              ),
             ],
           ),
         ),
@@ -163,6 +212,181 @@ class _CustomerLedgerDetailScreenState extends State<CustomerLedgerDetailScreen>
           Text('₹${value.toStringAsFixed(0)}', style: AppTheme.heading(size: 17)),
           const SizedBox(height: 2),
           Text(label, style: AppTheme.body(size: 11)),
+        ],
+      ),
+    );
+  }
+
+  Widget _bottomActionBar() {
+    return SafeArea(
+      minimum: const EdgeInsets.fromLTRB(16, 8, 16, 14),
+      child: Row(
+        children: [
+          Expanded(
+            child: SizedBox(
+              height: 52,
+              child: ElevatedButton.icon(
+                onPressed: _openAddCredit,
+                icon: const Icon(Icons.add_rounded),
+                label: const Text('Add Credit'),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppColors.success,
+                  foregroundColor: Colors.white,
+                  elevation: 3,
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                  textStyle: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14),
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: SizedBox(
+              height: 52,
+              child: ElevatedButton.icon(
+                onPressed: _farmId == null ? null : _openAddDebit,
+                icon: const Icon(Icons.remove_rounded),
+                label: const Text('Add Debit'),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppColors.error,
+                  foregroundColor: Colors.white,
+                  elevation: 3,
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                  textStyle: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// "Add Debit" sheet — records a manual outstanding charge against the
+/// customer via [FirestoreService.addOutstandingAmount], the same call
+/// already used elsewhere in the app for this exact action.
+class _AddOutstandingSheet extends StatefulWidget {
+  final String farmId;
+  final PalaiCustomer customer;
+
+  const _AddOutstandingSheet({required this.farmId, required this.customer});
+
+  @override
+  State<_AddOutstandingSheet> createState() => _AddOutstandingSheetState();
+}
+
+class _AddOutstandingSheetState extends State<_AddOutstandingSheet> {
+  final _amountController = TextEditingController();
+  final _noteController = TextEditingController();
+  bool _saving = false;
+
+  @override
+  void dispose() {
+    _amountController.dispose();
+    _noteController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _save() async {
+    final amount = double.tryParse(_amountController.text.trim()) ?? 0;
+    if (amount <= 0) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Enter an amount greater than ₹0.'), backgroundColor: AppColors.error),
+      );
+      return;
+    }
+
+    setState(() => _saving = true);
+    try {
+      await FirestoreService.instance.addOutstandingAmount(
+        farmId: widget.farmId,
+        customerId: widget.customer.id,
+        amount: amount,
+        note: _noteController.text.trim(),
+      );
+      if (!mounted) return;
+      Navigator.of(context).pop(true);
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _saving = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(FirestoreService.instance.describeError(e)), backgroundColor: AppColors.error),
+      );
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.fromLTRB(20, 18, 20, 24),
+      decoration: const BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.vertical(top: Radius.circular(22)),
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Center(
+            child: Container(
+              width: 40,
+              height: 4,
+              margin: const EdgeInsets.only(bottom: 16),
+              decoration: BoxDecoration(color: AppColors.divider, borderRadius: BorderRadius.circular(4)),
+            ),
+          ),
+          Text('Add Debit', style: AppTheme.heading(size: 17)),
+          const SizedBox(height: 4),
+          Text(
+            'Add a manual outstanding charge for ${widget.customer.name}. This increases what they owe you.',
+            style: AppTheme.body(size: 12),
+          ),
+          const SizedBox(height: 16),
+          TextField(
+            controller: _amountController,
+            keyboardType: const TextInputType.numberWithOptions(decimal: true),
+            style: AppTheme.body(size: 14, color: AppColors.textDark),
+            decoration: InputDecoration(
+              labelText: 'Amount (₹)',
+              prefixIcon: const Icon(Icons.currency_rupee_rounded, color: AppColors.error),
+              filled: true,
+              fillColor: AppColors.paleGreen,
+              border: OutlineInputBorder(borderRadius: BorderRadius.circular(13), borderSide: BorderSide.none),
+            ),
+          ),
+          const SizedBox(height: 12),
+          TextField(
+            controller: _noteController,
+            maxLines: 2,
+            style: AppTheme.body(size: 13, color: AppColors.textDark),
+            decoration: InputDecoration(
+              hintText: 'Optional note',
+              filled: true,
+              fillColor: AppColors.paleGreen,
+              border: OutlineInputBorder(borderRadius: BorderRadius.circular(13), borderSide: BorderSide.none),
+            ),
+          ),
+          const SizedBox(height: 20),
+          SizedBox(
+            width: double.infinity,
+            height: 50,
+            child: ElevatedButton(
+              onPressed: _saving ? null : _save,
+              style: ElevatedButton.styleFrom(
+                backgroundColor: AppColors.error,
+                foregroundColor: Colors.white,
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+              ),
+              child: _saving
+                  ? const SizedBox(
+                width: 20,
+                height: 20,
+                child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+              )
+                  : const Text('Save'),
+            ),
+          ),
         ],
       ),
     );

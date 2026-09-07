@@ -81,5 +81,12 @@ class FinancePaymentMethods {
   static const String cheque = 'Cheque';
   static const String other = 'Other';
 
+  /// Not a real cash payment — used only when stock is purchased on
+  /// credit from a supplier (see AddFeedStockScreen / AddMedicineScreen's
+  /// "Buy on Credit" toggle). Deliberately excluded from [all] so it
+  /// never appears in payment pickers for money actually received/paid
+  /// in cash (Receive Payment, manual expenses, etc.).
+  static const String credit = 'Credit';
+
   static const List<String> all = [cash, upi, bankTransfer, cheque, other];
 }

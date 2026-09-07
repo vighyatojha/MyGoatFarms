@@ -4,6 +4,7 @@ import '../models/activity_model.dart';
 import '../models/customer_ledger_entry_model.dart';
 import '../models/expense_model.dart';
 import '../models/finance_summary_model.dart';
+import '../models/supplier_ledger_entry_model.dart';
 import 'firestore_service.dart';
 
 /// Handles the new farm-wide Finance module: expenses, manual revenue,
@@ -68,6 +69,9 @@ class FinanceService {
   CollectionReference<Map<String, dynamic>> _activities(String farmId) =>
       _farms().doc(farmId).collection('activities');
 
+  CollectionReference<Map<String, dynamic>> _supplierLedger(String farmId) =>
+      _farms().doc(farmId).collection('supplierLedger');
+
   // ---------------------------------------------------------------------
   // EXPENSES
   // ---------------------------------------------------------------------
@@ -99,13 +103,13 @@ class FinanceService {
       expenseRef,
       expense
           .toCreateMap(
-            createdBy: actor?.uid ?? '',
-            createdByName: actor?.name ?? 'Unknown',
-            createdByRole: actor?.role ?? '',
-          )
-          // The mirrored transaction id is stored on the expense so a
-          // later edit/void can find and update it without a query.
-          ..addAll({'transactionId': transactionRef.id}),
+        createdBy: actor?.uid ?? '',
+        createdByName: actor?.name ?? 'Unknown',
+        createdByRole: actor?.role ?? '',
+      )
+      // The mirrored transaction id is stored on the expense so a
+      // later edit/void can find and update it without a query.
+        ..addAll({'transactionId': transactionRef.id}),
     );
 
     batch.set(transactionRef, {
@@ -125,7 +129,7 @@ class FinanceService {
       'type': ActivityType.expenseAdded.name,
       'title': 'Expense Added',
       'subtitle':
-          '${expense.category} · ₹${expense.amount.toStringAsFixed(0)}'
+      '${expense.category} · ₹${expense.amount.toStringAsFixed(0)}'
           '${expense.supplierName != null && expense.supplierName!.trim().isNotEmpty ? ' · ${expense.supplierName}' : ''}',
       'module': 'finance',
       'timestamp': FieldValue.serverTimestamp(),
@@ -141,10 +145,10 @@ class FinanceService {
   /// updated to match so aggregation stays correct — this does not
   /// create a second transaction.
   Future<void> updateExpense(
-    String farmId,
-    String expenseId,
-    ExpenseModel updated,
-  ) async {
+      String farmId,
+      String expenseId,
+      ExpenseModel updated,
+      ) async {
     if (updated.amount <= 0) {
       throw ArgumentError('Expense amount must be greater than zero.');
     }
@@ -176,7 +180,7 @@ class FinanceService {
       'type': ActivityType.expenseAdded.name,
       'title': 'Expense Updated',
       'subtitle':
-          '${updated.title} · ₹${updated.amount.toStringAsFixed(0)}',
+      '${updated.title} · ₹${updated.amount.toStringAsFixed(0)}',
       'module': 'finance',
       'timestamp': FieldValue.serverTimestamp(),
       if (actor != null) 'actorUid': actor.uid,
@@ -191,10 +195,10 @@ class FinanceService {
   /// §29/§38, financial records stay auditable. A voided expense and
   /// its mirrored transaction are both excluded from every calculation.
   Future<void> voidExpense(
-    String farmId,
-    ExpenseModel expense, {
-    String? transactionId,
-  }) async {
+      String farmId,
+      ExpenseModel expense, {
+        String? transactionId,
+      }) async {
     final expenseRef = _expenses(farmId).doc(expense.id);
     final snap = await expenseRef.get().timeout(_timeout);
     final resolvedTransactionId =
@@ -235,12 +239,12 @@ class FinanceService {
   /// this ever needs to scale up, add a composite index on
   /// (status, date) and move that filter server-side.
   Stream<List<ExpenseModel>> expensesStream(
-    String farmId, {
-    DateTime? start,
-    DateTime? end,
-    String? category,
-    bool includeVoided = false,
-  }) {
+      String farmId, {
+        DateTime? start,
+        DateTime? end,
+        String? category,
+        bool includeVoided = false,
+      }) {
     Query<Map<String, dynamic>> q = _expenses(
       farmId,
     ).orderBy('date', descending: true);
@@ -276,13 +280,13 @@ class FinanceService {
   // ---------------------------------------------------------------------
 
   Future<void> addManualRevenue(
-    String farmId, {
-    required String category,
-    required double amount,
-    required String paymentMethod,
-    required DateTime date,
-    String description = '',
-  }) async {
+      String farmId, {
+        required String category,
+        required double amount,
+        required String paymentMethod,
+        required DateTime date,
+        String description = '',
+      }) async {
     if (amount <= 0) {
       throw ArgumentError('Revenue amount must be greater than zero.');
     }
@@ -328,14 +332,14 @@ class FinanceService {
   }
 
   Future<void> updateManualRevenue(
-    String farmId,
-    String transactionId, {
-    required String category,
-    required double amount,
-    required String paymentMethod,
-    required DateTime date,
-    String description = '',
-  }) async {
+      String farmId,
+      String transactionId, {
+        required String category,
+        required double amount,
+        required String paymentMethod,
+        required DateTime date,
+        String description = '',
+      }) async {
     if (amount <= 0) {
       throw ArgumentError('Revenue amount must be greater than zero.');
     }
@@ -367,10 +371,10 @@ class FinanceService {
   /// this only accepts a transaction whose `referenceType` is already
   /// `manualRevenue`, and the UI must never offer void on anything else.
   Future<void> voidManualRevenue(
-    String farmId,
-    String transactionId,
-    Map<String, dynamic> transactionData,
-  ) async {
+      String farmId,
+      String transactionId,
+      Map<String, dynamic> transactionData,
+      ) async {
     if (transactionData['referenceType'] != 'manualRevenue') {
       throw StateError(
         'Only manually added revenue can be voided here.',
@@ -386,7 +390,7 @@ class FinanceService {
       'type': ActivityType.revenueVoided.name,
       'title': 'Revenue Voided',
       'subtitle':
-          '${transactionData['category'] ?? ''} · ₹${((transactionData['amount'] ?? 0) as num).toStringAsFixed(0)}',
+      '${transactionData['category'] ?? ''} · ₹${((transactionData['amount'] ?? 0) as num).toStringAsFixed(0)}',
       'module': 'finance',
       'timestamp': FieldValue.serverTimestamp(),
       if (actor != null) 'actorUid': actor.uid,
@@ -400,11 +404,11 @@ class FinanceService {
   /// createMonthlyBill / receivePalaiPayment / MonthlyBillingService show
   /// up automatically alongside manual revenue, with zero duplication.
   Stream<List<FinanceTransactionRow>> revenueStream(
-    String farmId, {
-    DateTime? start,
-    DateTime? end,
-    String? category,
-  }) {
+      String farmId, {
+        DateTime? start,
+        DateTime? end,
+        String? category,
+      }) {
     Query<Map<String, dynamic>> q = _transactions(
       farmId,
     ).orderBy('date', descending: true);
@@ -422,20 +426,20 @@ class FinanceService {
           .where((d) => d.data()['status'] != 'voided')
           .map(
             (d) => FinanceTransactionRow(
-              id: d.id,
-              isIncome: true,
-              category: (d.data()['category'] ?? '').toString(),
-              title: (d.data()['customerName'] ?? d.data()['category'] ?? '')
-                  .toString(),
-              amount: (d.data()['amount'] ?? 0).toDouble(),
-              date: (d.data()['date'] as Timestamp?)?.toDate() ??
-                  DateTime.now(),
-              customerName: d.data()['customerName'] as String?,
-              paymentMethod: (d.data()['paymentMethod'] ?? '').toString(),
-              note: d.data()['note'] as String?,
-              sourceCollection: 'transactions',
-            ),
-          )
+          id: d.id,
+          isIncome: true,
+          category: (d.data()['category'] ?? '').toString(),
+          title: (d.data()['customerName'] ?? d.data()['category'] ?? '')
+              .toString(),
+          amount: (d.data()['amount'] ?? 0).toDouble(),
+          date: (d.data()['date'] as Timestamp?)?.toDate() ??
+              DateTime.now(),
+          customerName: d.data()['customerName'] as String?,
+          paymentMethod: (d.data()['paymentMethod'] ?? '').toString(),
+          note: d.data()['note'] as String?,
+          sourceCollection: 'transactions',
+        ),
+      )
           .toList();
 
       if (category != null && category.isNotEmpty) {
@@ -455,10 +459,10 @@ class FinanceService {
   /// on pull-to-refresh and after returning from add/edit screens,
   /// exactly like [StockScreen] already does for its own data.
   Future<FinanceSummary> getFinanceSummary(
-    String farmId, {
-    required DateTime start,
-    required DateTime end,
-  }) async {
+      String farmId, {
+        required DateTime start,
+        required DateTime end,
+      }) async {
     final startTs = Timestamp.fromDate(start);
     final endTs = Timestamp.fromDate(end);
 
@@ -523,9 +527,9 @@ class FinanceService {
   /// the last [limit] income rows and expense rows into one
   /// newest-first list.
   Future<List<FinanceTransactionRow>> getRecentTransactions(
-    String farmId, {
-    int limit = 10,
-  }) async {
+      String farmId, {
+        int limit = 10,
+      }) async {
     final incomeSnap = await _transactions(farmId)
         .orderBy('date', descending: true)
         .limit(limit)
@@ -591,9 +595,9 @@ class FinanceService {
   // ---------------------------------------------------------------------
 
   Future<List<CustomerLedgerEntry>> getCustomerLedger(
-    String farmId,
-    String customerId,
-  ) async {
+      String farmId,
+      String customerId,
+      ) async {
     final results = await Future.wait([
       _bills(farmId).where('customerId', isEqualTo: customerId).get().timeout(_timeout),
       _monthlyBills(farmId).where('customerId', isEqualTo: customerId).get().timeout(_timeout),
@@ -610,6 +614,28 @@ class FinanceService {
       ...paymentsSnap.docs.map(CustomerLedgerEntry.fromPaymentDoc),
     ];
 
+    entries.sort((a, b) => b.date.compareTo(a.date));
+    return entries;
+  }
+
+  // ---------------------------------------------------------------------
+  // SUPPLIER LEDGER
+  // ---------------------------------------------------------------------
+
+  /// Full history for a single supplier — every credit purchase and
+  /// payment recorded against them, newest first. Mirrors
+  /// [getCustomerLedger], but reads a single `supplierLedger` collection
+  /// since suppliers don't have separate bills/monthlyBills documents.
+  Future<List<SupplierLedgerEntry>> getSupplierLedger(
+      String farmId,
+      String supplierId,
+      ) async {
+    final snap = await _supplierLedger(farmId)
+        .where('supplierId', isEqualTo: supplierId)
+        .get()
+        .timeout(_timeout);
+
+    final entries = snap.docs.map(SupplierLedgerEntry.fromDoc).toList();
     entries.sort((a, b) => b.date.compareTo(a.date));
     return entries;
   }

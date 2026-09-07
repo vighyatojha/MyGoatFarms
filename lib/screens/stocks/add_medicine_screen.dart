@@ -7,6 +7,7 @@ import '../../models/stock_model.dart';
 import '../../models/activity_model.dart';
 import '../../models/expense_categories.dart';
 import '../../models/expense_model.dart';
+import '../../models/supplier_model.dart';
 import '../../services/firestore_service.dart';
 import '../../services/finance_service.dart';
 
@@ -35,6 +36,10 @@ class _AddMedicineScreenState extends State<AddMedicineScreen> {
   final _supplierController = TextEditingController();
   bool _recordExpense = true;
   String _paymentMethod = FinancePaymentMethods.cash;
+
+  // --- Buy on Credit (Supplier Ledger integration) ---
+  bool _isCredit = false;
+  SupplierModel? _selectedSupplier;
 
   bool _saving = false;
   String? _farmId;
@@ -105,6 +110,17 @@ class _AddMedicineScreenState extends State<AddMedicineScreen> {
       }
     }
 
+    if (_isCredit) {
+      if (totalCost <= 0) {
+        _message('Enter the total cost to buy this stock on credit.', error: true);
+        return;
+      }
+      if (_selectedSupplier == null) {
+        _message('Select which supplier this credit purchase is from.', error: true);
+        return;
+      }
+    }
+
     setState(() => _saving = true);
 
     try {
@@ -126,10 +142,10 @@ class _AddMedicineScreenState extends State<AddMedicineScreen> {
         lowStockThreshold: threshold,
         notes: _notesController.text.trim(),
         totalCost: totalCost > 0 ? totalCost : null,
-        supplierName: _supplierController.text.trim().isEmpty
-            ? null
-            : _supplierController.text.trim(),
-        paymentMethod: totalCost > 0 ? _paymentMethod : null,
+        supplierName: _isCredit
+            ? _selectedSupplier!.name
+            : (_supplierController.text.trim().isEmpty ? null : _supplierController.text.trim()),
+        paymentMethod: totalCost > 0 ? (_isCredit ? FinancePaymentMethods.credit : _paymentMethod) : null,
       );
 
       await FirestoreService.instance.logActivity(
@@ -157,10 +173,10 @@ class _AddMedicineScreenState extends State<AddMedicineScreen> {
             amount: totalCost,
             quantity: quantity,
             unit: _unit,
-            supplierName: _supplierController.text.trim().isEmpty
-                ? null
-                : _supplierController.text.trim(),
-            paymentMethod: _paymentMethod,
+            supplierName: _isCredit
+                ? _selectedSupplier!.name
+                : (_supplierController.text.trim().isEmpty ? null : _supplierController.text.trim()),
+            paymentMethod: _isCredit ? FinancePaymentMethods.credit : _paymentMethod,
             note: 'Medicine stock purchase — $name',
             date: DateTime.now(),
             createdAt: DateTime.now(),
@@ -169,12 +185,25 @@ class _AddMedicineScreenState extends State<AddMedicineScreen> {
             referenceId: movementId,
           ),
         );
+
+        if (_isCredit) {
+          await FirestoreService.instance.recordSupplierCreditPurchase(
+            farmId: farmId,
+            supplierId: _selectedSupplier!.id,
+            amount: totalCost,
+            itemName: name,
+            note: 'Medicine stock purchase — $name',
+            stockMovementId: movementId,
+          );
+        }
       }
 
       if (!mounted) return;
       Navigator.of(context).pop();
       _message(
-        totalCost > 0
+        _isCredit
+            ? 'Medicine stock added — ₹${totalCost.toStringAsFixed(0)} added to ${_selectedSupplier!.name}\'s credit'
+            : totalCost > 0
             ? 'Medicine stock added and ₹${totalCost.toStringAsFixed(0)} recorded as an expense'
             : 'Medicine stock added successfully',
       );
@@ -337,47 +366,223 @@ class _AddMedicineScreenState extends State<AddMedicineScreen> {
               optional: true,
             ),
             const SizedBox(height: 14),
-            _field(
-              controller: _supplierController,
-              label: 'Supplier / Vendor',
-              hint: 'Optional',
-              icon: Icons.storefront_outlined,
-              optional: true,
-            ),
-            const SizedBox(height: 14),
-            Text('Payment Method', style: AppTheme.body(size: 11, color: AppColors.textGrey, weight: FontWeight.w600)),
-            const SizedBox(height: 8),
-            Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              children: FinancePaymentMethods.all.map((method) {
-                final selected = _paymentMethod == method;
-                return GestureDetector(
-                  onTap: () => setState(() => _paymentMethod = method),
-                  child: AnimatedContainer(
-                    duration: const Duration(milliseconds: 160),
-                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-                    decoration: BoxDecoration(
-                      color: selected ? AppColors.info : Colors.white,
-                      borderRadius: BorderRadius.circular(12),
-                      border: Border.all(color: selected ? AppColors.info : AppColors.divider),
-                    ),
-                    child: Text(
-                      method,
-                      style: AppTheme.body(
-                        size: 12,
-                        color: selected ? Colors.white : AppColors.textDark,
-                        weight: FontWeight.w600,
+            _buyOnCreditToggle(),
+            if (_isCredit) ...[
+              const SizedBox(height: 14),
+              _creditSupplierPicker(),
+            ] else ...[
+              const SizedBox(height: 14),
+              _field(
+                controller: _supplierController,
+                label: 'Supplier / Vendor',
+                hint: 'Optional',
+                icon: Icons.storefront_outlined,
+                optional: true,
+              ),
+              const SizedBox(height: 14),
+              Text('Payment Method', style: AppTheme.body(size: 11, color: AppColors.textGrey, weight: FontWeight.w600)),
+              const SizedBox(height: 8),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: FinancePaymentMethods.all.map((method) {
+                  final selected = _paymentMethod == method;
+                  return GestureDetector(
+                    onTap: () => setState(() => _paymentMethod = method),
+                    child: AnimatedContainer(
+                      duration: const Duration(milliseconds: 160),
+                      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                      decoration: BoxDecoration(
+                        color: selected ? AppColors.info : Colors.white,
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: selected ? AppColors.info : AppColors.divider),
+                      ),
+                      child: Text(
+                        method,
+                        style: AppTheme.body(
+                          size: 12,
+                          color: selected ? Colors.white : AppColors.textDark,
+                          weight: FontWeight.w600,
+                        ),
                       ),
                     ),
-                  ),
-                );
-              }).toList(),
-            ),
+                  );
+                }).toList(),
+              ),
+            ],
           ],
         ],
       ),
     );
+  }
+
+  /// "Buy on Credit" switch — only offered once we know the farm, since
+  /// picking a supplier needs [FirestoreService.suppliersStream].
+  Widget _buyOnCreditToggle() {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+      decoration: BoxDecoration(
+        color: AppColors.info.withOpacity(.08),
+        borderRadius: BorderRadius.circular(13),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('Buy on Credit', style: AppTheme.body(size: 12, color: AppColors.textDark, weight: FontWeight.w700)),
+                Text(
+                  'Not paid yet — added to the supplier\'s ledger instead.',
+                  style: AppTheme.body(size: 10, color: AppColors.textGrey),
+                ),
+              ],
+            ),
+          ),
+          Switch(
+            value: _isCredit,
+            activeColor: AppColors.error,
+            onChanged: _farmId == null
+                ? null
+                : (v) => setState(() {
+              _isCredit = v;
+              if (!v) _selectedSupplier = null;
+            }),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Lets the user pick which supplier this credit purchase is from, or
+  /// quickly add a new one.
+  Widget _creditSupplierPicker() {
+    final farmId = _farmId;
+    if (farmId == null) return const SizedBox.shrink();
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text('Supplier', style: AppTheme.body(size: 11, color: AppColors.textGrey, weight: FontWeight.w600)),
+        const SizedBox(height: 8),
+        StreamBuilder<List<SupplierModel>>(
+          stream: FirestoreService.instance.suppliersStream(farmId),
+          builder: (context, snapshot) {
+            final suppliers = snapshot.data ?? [];
+            return Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                ...suppliers.map((supplier) {
+                  final selected = _selectedSupplier?.id == supplier.id;
+                  return GestureDetector(
+                    onTap: () => setState(() => _selectedSupplier = supplier),
+                    child: AnimatedContainer(
+                      duration: const Duration(milliseconds: 160),
+                      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                      decoration: BoxDecoration(
+                        color: selected ? AppColors.error : Colors.white,
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: selected ? AppColors.error : AppColors.divider),
+                      ),
+                      child: Text(
+                        supplier.name,
+                        style: AppTheme.body(
+                          size: 12,
+                          color: selected ? Colors.white : AppColors.textDark,
+                          weight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                  );
+                }),
+                GestureDetector(
+                  onTap: () => _promptNewSupplier(farmId),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: AppColors.info),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const Icon(Icons.add_rounded, size: 15, color: AppColors.info),
+                        const SizedBox(width: 4),
+                        Text(
+                          'New Supplier',
+                          style: AppTheme.body(size: 12, color: AppColors.info, weight: FontWeight.w700),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+            );
+          },
+        ),
+        if (_selectedSupplier == null) ...[
+          const SizedBox(height: 6),
+          Text(
+            'Pick who this credit purchase is from.',
+            style: AppTheme.body(size: 10, color: AppColors.error),
+          ),
+        ],
+      ],
+    );
+  }
+
+  /// Quick-add dialog for a new supplier. Controller is intentionally
+  /// left un-disposed — see the identical note further down this file
+  /// on the medicine-name dialog, to avoid racing the dialog's exit
+  /// transition.
+  Future<void> _promptNewSupplier(String farmId) async {
+    final controller = TextEditingController();
+
+    final name = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) {
+        return AlertDialog(
+          title: const Text('New Supplier'),
+          content: TextField(
+            controller: controller,
+            autofocus: true,
+            decoration: const InputDecoration(hintText: 'Supplier / vendor name'),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('Cancel'),
+            ),
+            ElevatedButton(
+              onPressed: () {
+                final value = controller.text.trim();
+                if (value.isEmpty) return;
+                Navigator.pop(dialogContext, value);
+              },
+              style: ElevatedButton.styleFrom(
+                backgroundColor: AppColors.info,
+                foregroundColor: Colors.white,
+              ),
+              child: const Text('Add'),
+            ),
+          ],
+        );
+      },
+    );
+
+    if (!mounted || name == null || name.trim().isEmpty) return;
+
+    try {
+      final id = await FirestoreService.instance.addSupplier(farmId, name: name.trim());
+      if (!mounted) return;
+      setState(() {
+        _selectedSupplier = SupplierModel(id: id, name: name.trim());
+      });
+    } catch (e) {
+      _message(FirestoreService.instance.describeError(e), error: true);
+    }
   }
 
   Widget _hero() {

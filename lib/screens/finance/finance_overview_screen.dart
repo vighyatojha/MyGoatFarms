@@ -14,6 +14,7 @@ import 'add_edit_revenue_screen.dart';
 import 'customer_ledger_screen.dart';
 import 'expense_list_screen.dart';
 import 'revenue_list_screen.dart';
+import 'supplier_ledger_screen.dart';
 
 enum _RangePreset { thisMonth, lastMonth, thisWeek, today }
 
@@ -125,33 +126,33 @@ class _FinanceOverviewScreenState extends State<FinanceOverviewScreen> {
         child: _loadingFarm
             ? const Center(child: CircularProgressIndicator(color: AppColors.primaryGreen))
             : _farmId == null
-                ? FarmNotLinkedState(
-                    buttonColor: AppColors.primaryGreen,
-                    onRetry: () {
-                      setState(() => _loadingFarm = true);
-                      _loadFarm();
-                    },
-                  )
-                : RefreshIndicator(
-                    color: AppColors.primaryGreen,
-                    onRefresh: _refresh,
-                    child: ListView(
-                      padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
-                      children: [
-                        _rangeSelector(),
-                        const SizedBox(height: 14),
-                        _loadingSummary ? _summarySkeleton() : _summaryCards(),
-                        const SizedBox(height: 14),
-                        _quickLinks(),
-                        const SizedBox(height: 10),
-                        _viewAllLinks(),
-                        const SizedBox(height: 18),
-                        Text('Recent Transactions', style: AppTheme.heading(size: 15)),
-                        const SizedBox(height: 10),
-                        _recentTransactions(),
-                      ],
-                    ),
-                  ),
+            ? FarmNotLinkedState(
+          buttonColor: AppColors.primaryGreen,
+          onRetry: () {
+            setState(() => _loadingFarm = true);
+            _loadFarm();
+          },
+        )
+            : RefreshIndicator(
+          color: AppColors.primaryGreen,
+          onRefresh: _refresh,
+          child: ListView(
+            padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
+            children: [
+              _rangeSelector(),
+              const SizedBox(height: 14),
+              _loadingSummary ? _summarySkeleton() : _summaryCards(),
+              const SizedBox(height: 14),
+              _quickLinks(),
+              const SizedBox(height: 10),
+              _viewAllLinks(),
+              const SizedBox(height: 18),
+              Text('Recent Transactions', style: AppTheme.heading(size: 15)),
+              const SizedBox(height: 10),
+              _recentTransactions(),
+            ],
+          ),
+        ),
       ),
     );
   }
@@ -349,6 +350,14 @@ class _FinanceOverviewScreenState extends State<FinanceOverviewScreen> {
             label: 'Ledger',
             icon: Icons.people_alt_outlined,
             onTap: () => Navigator.of(context).push(fastRoute(const CustomerLedgerScreen())),
+          ),
+        ),
+        const SizedBox(width: 8),
+        Expanded(
+          child: _navChip(
+            label: 'Suppliers',
+            icon: Icons.local_shipping_outlined,
+            onTap: () => Navigator.of(context).push(fastRoute(const SupplierLedgerScreen())),
           ),
         ),
       ],

@@ -14,6 +14,7 @@ import '../models/activity_model.dart';
 import '../models/partner_model.dart';
 import '../models/own_farm_models.dart';
 import '../models/notification_model.dart';
+import '../models/supplier_model.dart';
 
 class MonthlyBillResult {
   final String billId;
@@ -2158,6 +2159,189 @@ class FirestoreService {
         .limit(limit)
         .snapshots()
         .map((s) => s.docs.map(StockMovement.fromDoc).toList());
+  }
+
+  // ---------------------------------------------------------------------
+  // Suppliers — vendor ledger for stock bought on credit.
+  //
+  // This mirrors the customer side (palaiCustomers + bills/payments):
+  // a `suppliers` doc holds the live pendingAmount/advanceAmount balance,
+  // and every credit purchase or payment made to that supplier is logged
+  // as its own `supplierLedger` doc with a pendingBefore/pendingAfter
+  // snapshot — same pattern as [addOutstandingAmount] and
+  // [receivePalaiPayment], just without any bill machinery, since
+  // suppliers don't have bills.
+  // ---------------------------------------------------------------------
+
+  CollectionReference<Map<String, dynamic>> _suppliers(String farmId) =>
+      _farms.doc(farmId).collection('suppliers');
+
+  CollectionReference<Map<String, dynamic>> _supplierLedger(String farmId) =>
+      _farms.doc(farmId).collection('supplierLedger');
+
+  Stream<List<SupplierModel>> suppliersStream(String farmId) {
+    return _suppliers(farmId)
+        .orderBy('name')
+        .snapshots()
+        .map((s) => s.docs.map(SupplierModel.fromDoc).toList());
+  }
+
+  Future<SupplierModel?> getSupplier(String farmId, String supplierId) async {
+    final doc = await _suppliers(farmId).doc(supplierId).get().timeout(timeout);
+    if (!doc.exists) return null;
+    return SupplierModel.fromDoc(doc);
+  }
+
+  /// Adds a new supplier. Returns the new supplier document's id.
+  Future<String> addSupplier(
+      String farmId, {
+        required String name,
+        String mobileNumber = '',
+        String address = '',
+      }) async {
+    if (name.trim().isEmpty) {
+      throw ArgumentError('Supplier name is required.');
+    }
+
+    final ref = await _suppliers(farmId).add({
+      'name': name.trim(),
+      'mobileNumber': mobileNumber.trim(),
+      'address': address.trim(),
+      'pendingAmount': 0,
+      'advanceAmount': 0,
+      'createdAt': FieldValue.serverTimestamp(),
+      'updatedAt': FieldValue.serverTimestamp(),
+    }).timeout(timeout);
+
+    return ref.id;
+  }
+
+  Future<void> deleteSupplier(String farmId, String supplierId) {
+    return _suppliers(farmId).doc(supplierId).delete().timeout(timeout);
+  }
+
+  /// Records stock (or any purchase) bought on credit from a supplier:
+  /// increases what the farm owes them ([pendingAmount]) and writes a
+  /// ledger entry. Any existing supplier advance is used up first, same
+  /// ordering as the amount-owed side of [recordSupplierPayment].
+  ///
+  /// [stockMovementId] links this entry back to the exact stock
+  /// movement it came from (see AddFeedStockScreen / AddMedicineScreen's
+  /// "Buy on Credit" option), purely for audit — it is never required.
+  Future<void> recordSupplierCreditPurchase({
+    required String farmId,
+    required String supplierId,
+    required double amount,
+    String itemName = '',
+    String note = '',
+    String? stockMovementId,
+  }) async {
+    if (amount <= 0) {
+      throw ArgumentError('Credit amount must be greater than zero.');
+    }
+
+    final supplierRef = _suppliers(farmId).doc(supplierId);
+    final ledgerRef = _supplierLedger(farmId).doc();
+
+    await _db.runTransaction<void>((transaction) async {
+      final snapshot = await transaction.get(supplierRef);
+
+      if (!snapshot.exists) {
+        throw StateError('Supplier no longer exists.');
+      }
+
+      final data = snapshot.data() ?? {};
+
+      final pendingBefore = (data['pendingAmount'] ?? 0).toDouble();
+      final advanceBefore = (data['advanceAmount'] ?? 0).toDouble();
+
+      // Any existing advance with this supplier is used up first, so the
+      // farm doesn't end up owing money it had already pre-paid.
+      final advanceUsed = amount.clamp(0, advanceBefore).toDouble();
+      final advanceAfter = advanceBefore - advanceUsed;
+      final pendingAfter = pendingBefore + (amount - advanceUsed);
+
+      transaction.update(supplierRef, {
+        'pendingAmount': pendingAfter,
+        'advanceAmount': advanceAfter,
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
+
+      transaction.set(ledgerRef, {
+        'supplierId': supplierId,
+        'type': 'creditPurchase',
+        'amount': amount,
+        'itemName': itemName.trim(),
+        'note': note.trim(),
+        if (stockMovementId != null) 'stockMovementId': stockMovementId,
+        'pendingBefore': pendingBefore,
+        'pendingAfter': pendingAfter,
+        'advanceBefore': advanceBefore,
+        'advanceAfter': advanceAfter,
+        'date': FieldValue.serverTimestamp(),
+        'createdAt': FieldValue.serverTimestamp(),
+      });
+    }).timeout(timeout);
+  }
+
+  /// Records a payment made TO a supplier, reducing what the farm owes
+  /// them ([pendingAmount]). Any amount paid beyond what's currently
+  /// owed becomes a supplier advance, same ordering as
+  /// [receivePalaiPayment] on the customer side.
+  Future<void> recordSupplierPayment({
+    required String farmId,
+    required String supplierId,
+    required double amount,
+    required String paymentMethod,
+    String note = '',
+  }) async {
+    if (amount <= 0) {
+      throw ArgumentError('Payment amount must be greater than zero.');
+    }
+    if (paymentMethod.trim().isEmpty) {
+      throw ArgumentError('Please select a payment method.');
+    }
+
+    final supplierRef = _suppliers(farmId).doc(supplierId);
+    final ledgerRef = _supplierLedger(farmId).doc();
+
+    await _db.runTransaction<void>((transaction) async {
+      final snapshot = await transaction.get(supplierRef);
+
+      if (!snapshot.exists) {
+        throw StateError('Supplier no longer exists.');
+      }
+
+      final data = snapshot.data() ?? {};
+
+      final pendingBefore = (data['pendingAmount'] ?? 0).toDouble();
+      final advanceBefore = (data['advanceAmount'] ?? 0).toDouble();
+
+      final appliedToPending = amount.clamp(0, pendingBefore).toDouble();
+      final pendingAfter = pendingBefore - appliedToPending;
+      final advanceAdded = amount - appliedToPending;
+      final advanceAfter = advanceBefore + advanceAdded;
+
+      transaction.update(supplierRef, {
+        'pendingAmount': pendingAfter,
+        'advanceAmount': advanceAfter,
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
+
+      transaction.set(ledgerRef, {
+        'supplierId': supplierId,
+        'type': 'payment',
+        'amount': amount,
+        'paymentMethod': paymentMethod.trim(),
+        'note': note.trim(),
+        'pendingBefore': pendingBefore,
+        'pendingAfter': pendingAfter,
+        'advanceBefore': advanceBefore,
+        'advanceAfter': advanceAfter,
+        'date': FieldValue.serverTimestamp(),
+        'createdAt': FieldValue.serverTimestamp(),
+      });
+    }).timeout(timeout);
   }
 
   // ---------------------------------------------------------------------
