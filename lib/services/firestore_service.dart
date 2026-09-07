@@ -13,6 +13,7 @@ import '../models/stock_model.dart';
 import '../models/activity_model.dart';
 import '../models/partner_model.dart';
 import '../models/own_farm_models.dart';
+import '../models/notification_model.dart';
 
 class MonthlyBillResult {
   final String billId;
@@ -2101,7 +2102,7 @@ class FirestoreService {
         .timeout(timeout);
 
     return movementRef.id;
-  } 
+  }
 
   /// Deducts stock used (e.g. "Feed Used Today" / "Medicine Used") and logs
   /// the movement. Runs as a transaction so concurrent usage entries can't
@@ -2467,8 +2468,12 @@ class FirestoreService {
 
   // -- Health, vaccination, hoof cutting, hair trimming --------------------
 
-  Future<void> addHealthEvent(String farmId, String goatId, HealthEvent event) async {
-    await _healthEvents(farmId, goatId).add(event.toMap()).timeout(timeout);
+  /// Returns the new event's document id so the caller can schedule
+  /// local reminder notifications tied to it (see
+  /// HealthReminderScheduler.scheduleForEvent).
+  Future<String> addHealthEvent(String farmId, String goatId, HealthEvent event) async {
+    final ref = await _healthEvents(farmId, goatId).add(event.toMap()).timeout(timeout);
+    return ref.id;
   }
 
   Stream<List<HealthEvent>> healthEventsStream(String farmId, String goatId) {
@@ -2544,5 +2549,85 @@ class FirestoreService {
         .where('date', isGreaterThanOrEqualTo: Timestamp.fromDate(monthStart))
         .snapshots()
         .map((s) => s.docs.fold<double>(0, (total, d) => total + ((d.data()['amount'] ?? 0) as num).toDouble()));
+  }
+
+  // ---------------------------------------------------------------------
+  // Notifications — farms/{farmId}/notifications
+  //
+  // The in-app notification history shown by NotificationScreen. Written
+  // directly by client-side actions (event-based — payment received,
+  // check-in/out, low stock) and by HealthReminderScheduler's due-check
+  // (health reminders), matching the "event-based" half of the
+  // notification architecture from the design doc. There is no backend
+  // in this Flutter-only app, so scheduled OS-level pushes (see
+  // HealthReminderScheduler) are what actually deliver an alert while
+  // the app is closed; this collection is what the in-app screen reads.
+  // ---------------------------------------------------------------------
+
+  CollectionReference<Map<String, dynamic>> _notifications(String farmId) =>
+      _farms.doc(farmId).collection('notifications');
+
+  /// Creates (or, if [docId] is given, upserts) a notification record.
+  ///
+  /// Pass a deterministic [docId] for anything that could otherwise be
+  /// written more than once for the same real-world event — e.g. a
+  /// health due-reminder recomputed every time the app opens — so the
+  /// write is idempotent instead of spamming duplicate entries.
+  Future<void> addNotification({
+    required String farmId,
+    required String type,
+    required String category,
+    required String title,
+    required String message,
+    String priority = 'normal',
+    Map<String, String>? reference,
+    String? docId,
+  }) async {
+    final data = {
+      'type': type,
+      'category': category,
+      'title': title,
+      'message': message,
+      'priority': priority,
+      'reference': reference ?? {},
+      'isRead': false,
+      'createdAt': FieldValue.serverTimestamp(),
+    };
+
+    final ref = docId != null ? _notifications(farmId).doc(docId) : _notifications(farmId).doc();
+
+    if (docId != null) {
+      // Upsert: keep the original createdAt/isRead if this notification
+      // already exists (e.g. a due-reminder recomputed on a later app
+      // open shouldn't reset to unread or move to the top every time).
+      await ref.set(data, SetOptions(mergeFields: ['type', 'category', 'title', 'message', 'priority', 'reference'])).timeout(timeout);
+      final snap = await ref.get().timeout(timeout);
+      if (snap.data()?['createdAt'] == null) {
+        await ref.set({'createdAt': FieldValue.serverTimestamp(), 'isRead': false}, SetOptions(merge: true)).timeout(timeout);
+      }
+    } else {
+      await ref.set(data).timeout(timeout);
+    }
+  }
+
+  Stream<List<AppNotificationRecord>> notificationsStream(String farmId, {int limit = 50}) {
+    return _notifications(farmId)
+        .orderBy('createdAt', descending: true)
+        .limit(limit)
+        .snapshots()
+        .map((s) => s.docs.map(AppNotificationRecord.fromDoc).toList());
+  }
+
+  Future<void> markNotificationRead(String farmId, String notificationId) {
+    return _notifications(farmId).doc(notificationId).update({'isRead': true}).timeout(timeout);
+  }
+
+  Future<void> markAllNotificationsRead(String farmId) async {
+    final snap = await _notifications(farmId).where('isRead', isEqualTo: false).get().timeout(timeout);
+    final batch = _db.batch();
+    for (final doc in snap.docs) {
+      batch.update(doc.reference, {'isRead': true});
+    }
+    await batch.commit().timeout(timeout);
   }
 }

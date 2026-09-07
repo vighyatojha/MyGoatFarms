@@ -4,6 +4,7 @@ import 'package:intl/intl.dart';
 import '../../../app_theme.dart';
 import '../../../models/own_farm_models.dart';
 import '../../../services/firestore_service.dart';
+import '../../../services/health_reminder_scheduler.dart';
 import '../../../widgets/farm_not_linked_state.dart';
 
 /// Complete health & performance history for one farm-owned goat:
@@ -85,13 +86,13 @@ class _OwnFarmGoatDetailScreenState extends State<OwnFarmGoatDetailScreen> {
             : _farmId == null
             ? _buildNotLinkedState()
             : TabBarView(
-                children: [
-                  _GrowthTab(farmId: _farmId!, goat: goat, dateFmt: _dateFmt, onMessage: _showSnack),
-                  _HealthTab(farmId: _farmId!, goat: goat, dateFmt: _dateFmt, onMessage: _showSnack),
-                  _BreedingTab(farmId: _farmId!, goat: goat, dateFmt: _dateFmt, onMessage: _showSnack),
-                  _ExpensesTab(farmId: _farmId!, goat: goat, dateFmt: _dateFmt, onMessage: _showSnack),
-                ],
-              ),
+          children: [
+            _GrowthTab(farmId: _farmId!, goat: goat, dateFmt: _dateFmt, onMessage: _showSnack),
+            _HealthTab(farmId: _farmId!, goat: goat, dateFmt: _dateFmt, onMessage: _showSnack),
+            _BreedingTab(farmId: _farmId!, goat: goat, dateFmt: _dateFmt, onMessage: _showSnack),
+            _ExpensesTab(farmId: _farmId!, goat: goat, dateFmt: _dateFmt, onMessage: _showSnack),
+          ],
+        ),
       ),
     );
   }
@@ -188,19 +189,19 @@ class _GrowthTab extends StatelessWidget {
               const SizedBox(height: 10),
               if (records.isEmpty) Text('No weight entries logged yet.', style: AppTheme.body(size: 12)),
               ...records.map((r) => Container(
-                    margin: const EdgeInsets.only(bottom: 8),
-                    padding: const EdgeInsets.all(12),
-                    decoration: AppTheme.card(radius: 12),
-                    child: Row(
-                      children: [
-                        const Icon(Icons.monitor_weight_outlined, size: 18, color: AppColors.primaryGreen),
-                        const SizedBox(width: 10),
-                        Text('${r.weight.toStringAsFixed(1)} kg', style: AppTheme.heading(size: 13)),
-                        const Spacer(),
-                        Text(dateFmt.format(r.recordedAt), style: AppTheme.body(size: 11)),
-                      ],
-                    ),
-                  )),
+                margin: const EdgeInsets.only(bottom: 8),
+                padding: const EdgeInsets.all(12),
+                decoration: AppTheme.card(radius: 12),
+                child: Row(
+                  children: [
+                    const Icon(Icons.monitor_weight_outlined, size: 18, color: AppColors.primaryGreen),
+                    const SizedBox(width: 10),
+                    Text('${r.weight.toStringAsFixed(1)} kg', style: AppTheme.heading(size: 13)),
+                    const Spacer(),
+                    Text(dateFmt.format(r.recordedAt), style: AppTheme.body(size: 11)),
+                  ],
+                ),
+              )),
             ],
           );
         },
@@ -279,17 +280,28 @@ class _HealthTab extends StatelessWidget {
 
     if (saved != true) return;
     try {
-      await FirestoreService.instance.addHealthEvent(
+      final newEvent = HealthEvent(
+        id: '',
+        type: type,
+        description: descController.text.trim(),
+        date: date,
+        nextDueDate: reminderDays != null ? date.add(Duration(days: reminderDays!)) : null,
+      );
+
+      final eventId = await FirestoreService.instance.addHealthEvent(
         farmId,
         goat.id,
-        HealthEvent(
-          id: '',
-          type: type,
-          description: descController.text.trim(),
-          date: date,
-          nextDueDate: reminderDays != null ? date.add(Duration(days: reminderDays!)) : null,
-        ),
+        newEvent,
       );
+
+      await HealthReminderScheduler.instance.scheduleForEvent(
+        farmId: farmId,
+        goatId: goat.id,
+        goatCode: goat.goatCode,
+        eventId: eventId,
+        event: newEvent,
+      );
+
       onMessage('Health record added');
     } catch (e) {
       onMessage(FirestoreService.instance.describeError(e), isError: true);
@@ -329,30 +341,30 @@ class _HealthTab extends StatelessWidget {
               const SizedBox(height: 10),
               if (events.isEmpty) Text('No health records yet.', style: AppTheme.body(size: 12)),
               ...events.map((e) => Container(
-                    margin: const EdgeInsets.only(bottom: 8),
-                    padding: const EdgeInsets.all(12),
-                    decoration: AppTheme.card(radius: 12),
-                    child: Row(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Icon(_iconFor(e.type), size: 18, color: AppColors.breedingPurple),
-                        const SizedBox(width: 10),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(e.label, style: AppTheme.heading(size: 13)),
-                              if (e.description.isNotEmpty) Text(e.description, style: AppTheme.body(size: 11)),
-                              Text('On ${dateFmt.format(e.date)}', style: AppTheme.body(size: 11)),
-                              if (e.nextDueDate != null)
-                                Text('Next due: ${dateFmt.format(e.nextDueDate!)}',
-                                    style: AppTheme.body(size: 11, color: AppColors.warning, weight: FontWeight.w600)),
-                            ],
-                          ),
-                        ),
-                      ],
+                margin: const EdgeInsets.only(bottom: 8),
+                padding: const EdgeInsets.all(12),
+                decoration: AppTheme.card(radius: 12),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Icon(_iconFor(e.type), size: 18, color: AppColors.breedingPurple),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(e.label, style: AppTheme.heading(size: 13)),
+                          if (e.description.isNotEmpty) Text(e.description, style: AppTheme.body(size: 11)),
+                          Text('On ${dateFmt.format(e.date)}', style: AppTheme.body(size: 11)),
+                          if (e.nextDueDate != null)
+                            Text('Next due: ${dateFmt.format(e.nextDueDate!)}',
+                                style: AppTheme.body(size: 11, color: AppColors.warning, weight: FontWeight.w600)),
+                        ],
+                      ),
                     ),
-                  )),
+                  ],
+                ),
+              )),
             ],
           );
         },
@@ -456,21 +468,21 @@ class _BreedingTab extends StatelessWidget {
             padding: const EdgeInsets.fromLTRB(20, 16, 20, 90),
             children: records
                 .map((r) => Container(
-                      margin: const EdgeInsets.only(bottom: 10),
-                      padding: const EdgeInsets.all(14),
-                      decoration: AppTheme.card(radius: 14),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text('Partner: ${r.partnerCode.isEmpty ? 'Unknown' : r.partnerCode}', style: AppTheme.heading(size: 13)),
-                          const SizedBox(height: 4),
-                          Text('Mated: ${dateFmt.format(r.matingDate)}', style: AppTheme.body(size: 11)),
-                          if (r.expectedKiddingDate != null)
-                            Text('Expected kidding: ${dateFmt.format(r.expectedKiddingDate!)}', style: AppTheme.body(size: 11)),
-                          if (r.kidsCount > 0) Text('Kids: ${r.kidsCount}', style: AppTheme.body(size: 11)),
-                        ],
-                      ),
-                    ))
+              margin: const EdgeInsets.only(bottom: 10),
+              padding: const EdgeInsets.all(14),
+              decoration: AppTheme.card(radius: 14),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('Partner: ${r.partnerCode.isEmpty ? 'Unknown' : r.partnerCode}', style: AppTheme.heading(size: 13)),
+                  const SizedBox(height: 4),
+                  Text('Mated: ${dateFmt.format(r.matingDate)}', style: AppTheme.body(size: 11)),
+                  if (r.expectedKiddingDate != null)
+                    Text('Expected kidding: ${dateFmt.format(r.expectedKiddingDate!)}', style: AppTheme.body(size: 11)),
+                  if (r.kidsCount > 0) Text('Kids: ${r.kidsCount}', style: AppTheme.body(size: 11)),
+                ],
+              ),
+            ))
                 .toList(),
           );
         },
@@ -583,24 +595,24 @@ class _ExpensesTab extends StatelessWidget {
               const SizedBox(height: 16),
               if (expenses.isEmpty) Text('No expenses logged yet.', style: AppTheme.body(size: 12)),
               ...expenses.map((e) => Container(
-                    margin: const EdgeInsets.only(bottom: 8),
-                    padding: const EdgeInsets.all(12),
-                    decoration: AppTheme.card(radius: 12),
-                    child: Row(
-                      children: [
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(e.category, style: AppTheme.heading(size: 13)),
-                              Text(dateFmt.format(e.date), style: AppTheme.body(size: 11)),
-                            ],
-                          ),
-                        ),
-                        Text('₹${e.amount.toStringAsFixed(0)}', style: AppTheme.heading(size: 13, color: AppColors.error)),
-                      ],
+                margin: const EdgeInsets.only(bottom: 8),
+                padding: const EdgeInsets.all(12),
+                decoration: AppTheme.card(radius: 12),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(e.category, style: AppTheme.heading(size: 13)),
+                          Text(dateFmt.format(e.date), style: AppTheme.body(size: 11)),
+                        ],
+                      ),
                     ),
-                  )),
+                    Text('₹${e.amount.toStringAsFixed(0)}', style: AppTheme.heading(size: 13, color: AppColors.error)),
+                  ],
+                ),
+              )),
             ],
           );
         },

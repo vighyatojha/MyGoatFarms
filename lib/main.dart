@@ -121,6 +121,10 @@ class _AppBootstrapState extends State<_AppBootstrap> {
     // MainShell._initPushNotifications).
     NotificationService.registerBackgroundHandler();
 
+    // Needed before any HealthReminderScheduler.zonedSchedule() call —
+    // safe/cheap to always run, not conditional on Firebase succeeding.
+    NotificationService.initializeTimeZoneData();
+
     debugPrint('Firebase initialization completed.');
   }
 

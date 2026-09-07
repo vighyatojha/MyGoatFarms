@@ -1,8 +1,13 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../app_theme.dart';
 import '../widgets/app_bottom_nav.dart';
+import '../services/firestore_service.dart';
+import '../services/notification_service.dart';
+import '../services/health_reminder_scheduler.dart';
 import 'home/home_screen.dart';
 import 'palai/palai_screen.dart';
 import 'stocks/stock_screen.dart';
@@ -50,6 +55,33 @@ class _MainShellState extends State<MainShell> {
 
   /// Whether the current screen was reached by pressing Back.
   bool _isGoingBack = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _initPushNotifications();
+  }
+
+  /// Requests notification permission and saves this device's FCM token
+  /// under the current farm, so the backend notification engine (see
+  /// NotificationService docs) knows where to deliver pushes.
+  ///
+  /// Runs every time MainShell is reached (app start, or right after
+  /// login) rather than only once at registration — this is what keeps
+  /// a rotated/expired token fresh and re-enables a device that was
+  /// disabled on a previous logout.
+  Future<void> _initPushNotifications() async {
+    final farmId = await FirestoreService.instance.currentFarmId();
+    if (farmId == null || !mounted) return;
+    await NotificationService.instance.initForFarm(farmId);
+
+    // Re-arm any health due-date reminders lost to a device reboot, and
+    // backfill Firestore's notification history for anything already
+    // due/overdue so NotificationScreen has it even if a scheduled
+    // on-device alarm was missed. Neither needs to block startup.
+    unawaited(HealthReminderScheduler.instance.rescheduleAllForFarm(farmId));
+    unawaited(HealthReminderScheduler.instance.runDueCheck(farmId));
+  }
 
   // --------------------------------------------------------------------------
   // MAIN TABS
