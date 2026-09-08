@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
@@ -5,6 +7,8 @@ import 'package:intl/intl.dart';
 import '../../../app_theme.dart';
 import '../../../models/medicine_record.dart';
 import '../../../models/palai_models.dart';
+import '../../../services/firestore_service.dart';
+import '../../../services/health_reminder_scheduler.dart';
 
 /// Full-page "Add Medicine" screen, pushed from the Medicine tab on
 /// GoatProfileScreen (see AddVaccinationScreen for why this is a
@@ -86,6 +90,35 @@ class _AddMedicineScreenState extends State<AddMedicineScreen> {
         recordedAt: DateTime.now(),
       );
       await reference.set(record.toCreateMap());
+
+      unawaited(FirestoreService.instance.addNotification(
+        farmId: widget.farmId,
+        docId: 'health_${widget.goat.id}_medicine_${reference.id}_logged',
+        type: 'medicine_logged',
+        category: 'health',
+        priority: 'normal',
+        title: 'Medicine recorded',
+        message: '${widget.goat.goatCode}: ${record.medicineName} logged.',
+        reference: {'customerId': widget.customerId, 'goatId': widget.goat.id, 'recordId': reference.id},
+      ));
+
+      // MedicineRecord has no next-due-date field of its own (unlike
+      // vaccination/hoof-cutting/hair-trimming) — treatmentDate +
+      // durationDays is used as a "course ending" reminder instead, when
+      // a duration was entered.
+      final durationDays = record.durationDays;
+      unawaited(HealthReminderScheduler.instance.scheduleCustomerHealthReminder(
+        farmId: widget.farmId,
+        customerId: widget.customerId,
+        goatId: widget.goat.id,
+        goatCode: widget.goat.goatCode,
+        recordType: 'medicine',
+        recordId: reference.id,
+        label: 'Medicine course',
+        dueDate: durationDays == null
+            ? null
+            : record.treatmentDate.add(Duration(days: durationDays)),
+      ));
 
       if (!mounted) return;
       Navigator.of(context).pop(true);

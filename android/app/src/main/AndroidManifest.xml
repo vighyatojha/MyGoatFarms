@@ -9,10 +9,30 @@
          requests this permission via flutter_local_notifications /
          firebase_messaging at first login. -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
+
+    <!-- Lets zonedSchedule()'d health reminders survive a phone reboot.
+         flutter_local_notifications persists its own pending schedules
+         and re-registers them via this receiver when it sees
+         BOOT_COMPLETED — no custom native code needed on our side.
+         (HealthReminderScheduler.rescheduleAllForFarm() is a second,
+         belt-and-suspenders safety net: it also fully recomputes and
+         re-schedules everything from Firestore on every app open, so a
+         reminder still survives even if this receiver is ever delayed
+         or skipped by battery optimization on a given device.) -->
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED"/>
     <application
         android:label="My Goat Farms"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
+        <receiver android:exported="false"
+            android:name="com.dexterous.flutterlocalnotifications.ScheduledNotificationBootReceiver">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED"/>
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED"/>
+                <action android:name="android.intent.action.QUICKBOOT_POWERON"/>
+                <action android:name="com.htc.intent.action.QUICKBOOT_POWERON"/>
+            </intent-filter>
+        </receiver>
         <activity
             android:name=".MainActivity"
             android:exported="true"

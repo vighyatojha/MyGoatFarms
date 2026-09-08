@@ -1,426 +1,522 @@
-import 'dart:async';
-
 import 'package:flutter/material.dart';
-import 'package:firebase_auth/firebase_auth.dart';
-import 'package:cloud_firestore/cloud_firestore.dart' show FirebaseException;
-import 'package:animate_do/animate_do.dart';
 
-import '../app_theme.dart';
-import '../services/firestore_service.dart';
+import '../models/monthly_report_model.dart';
+import '../services/monthly_report_service.dart';
 
-class RegisterScreen extends StatefulWidget {
-  const RegisterScreen({super.key});
+class MonthlyReportScreen extends StatefulWidget {
+  /// The farm whose goats should be included in the report.
+  final String farmId;
+
+  const MonthlyReportScreen({
+    super.key,
+    required this.farmId,
+  });
 
   @override
-  State<RegisterScreen> createState() => _RegisterScreenState();
+  State<MonthlyReportScreen> createState() =>
+      _MonthlyReportScreenState();
 }
 
-class _RegisterScreenState extends State<RegisterScreen> {
-  final _formKey = GlobalKey<FormState>();
-  final _farmNameController = TextEditingController();
-  final _ownerNameController = TextEditingController();
-  final _mobileController = TextEditingController();
-  final _emailController = TextEditingController();
-  final _passwordController = TextEditingController();
-  final _confirmPasswordController = TextEditingController();
+class _MonthlyReportScreenState
+    extends State<MonthlyReportScreen> {
+  final MonthlyReportService _reportService =
+      MonthlyReportService.instance;
 
-  bool _obscurePassword = true;
-  bool _obscureConfirm = true;
-  bool _isLoading = false;
-  double _passwordStrength = 0;
+  late DateTime _selectedMonth;
+
+  MonthlyReport? _report;
+
+  bool _loading = false;
+  String? _error;
 
   @override
   void initState() {
     super.initState();
-    _passwordController.addListener(_updateStrength);
+
+    final now = DateTime.now();
+
+    _selectedMonth = DateTime(
+      now.year,
+      now.month,
+    );
+
+    _loadReport();
   }
 
-  @override
-  void dispose() {
-    _farmNameController.dispose();
-    _ownerNameController.dispose();
-    _mobileController.dispose();
-    _emailController.dispose();
-    _passwordController.removeListener(_updateStrength);
-    _passwordController.dispose();
-    _confirmPasswordController.dispose();
-    super.dispose();
-  }
+  // ---------------------------------------------------------------------------
+  // LOAD REPORT
+  // ---------------------------------------------------------------------------
 
-  void _updateStrength() {
-    setState(() => _passwordStrength = _calculateStrength(_passwordController.text));
-  }
+  Future<void> _loadReport() async {
+    if (!mounted) return;
 
-  double _calculateStrength(String password) {
-    double score = 0;
-    if (password.length >= 6) score += 0.25;
-    if (password.length >= 10) score += 0.15;
-    if (RegExp(r'[A-Z]').hasMatch(password)) score += 0.2;
-    if (RegExp(r'[0-9]').hasMatch(password)) score += 0.2;
-    if (RegExp(r'[!@#\$&*~%^()_\-+=]').hasMatch(password)) score += 0.2;
-    return score.clamp(0, 1);
-  }
-
-  String _strengthLabel() {
-    if (_passwordController.text.isEmpty) return '';
-    if (_passwordStrength < 0.4) return 'Weak password';
-    if (_passwordStrength < 0.75) return 'Medium strength';
-    return 'Strong password';
-  }
-
-  Color _strengthColor() {
-    if (_passwordStrength < 0.4) return AppColors.error;
-    if (_passwordStrength < 0.75) return AppColors.warning;
-    return AppColors.success;
-  }
-
-  Future<void> _register() async {
-    if (!_formKey.currentState!.validate()) return;
-    setState(() => _isLoading = true);
-
-    final firestore = FirestoreService.instance;
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
 
     try {
-      // Make sure this mobile number isn't already linked to another farm.
-      final mobileTaken = await firestore.isMobileNumberTaken(_mobileController.text.trim());
-      if (mobileTaken) {
-        _showSnack('This mobile number is already registered');
-        setState(() => _isLoading = false);
-        return;
-      }
-
-      final credential = await FirebaseAuth.instance
-          .createUserWithEmailAndPassword(
-        email: _emailController.text.trim(),
-        password: _passwordController.text,
-      )
-          .timeout(FirestoreService.timeout);
-
-      try {
-        await firestore.createFarm(
-          authUid: credential.user!.uid,
-          farmName: _farmNameController.text.trim(),
-          ownerName: _ownerNameController.text.trim(),
-          mobileNumber: _mobileController.text.trim(),
-          email: _emailController.text.trim(),
-        );
-
-        await credential.user!.updateDisplayName(_ownerNameController.text.trim());
-      } catch (e) {
-        // The Auth account was already created at this point. Don't leave
-        // the person stuck — let them in, and just warn that their farm
-        // profile still needs to be saved (e.g. Firestore was unreachable).
-        _showSnack('Account created, but saving farm details failed: ${firestore.describeError(e)}');
-      }
+      final report =
+      await _reportService.generateMonthlyReport(
+        farmId: widget.farmId,
+        month: _selectedMonth,
+      );
 
       if (!mounted) return;
-      Navigator.of(context).pushNamedAndRemoveUntil('/home', (route) => false);
-    } on TimeoutException {
-      _showSnack('This is taking too long. Check your connection and Firestore setup, then try again.');
-    } on FirebaseAuthException catch (e) {
-      _showSnack(_mapAuthError(e.code));
-    } on FirebaseException catch (e) {
-      _showSnack(firestore.describeError(e));
-    } catch (_) {
-      _showSnack('Registration failed. Please try again');
-    } finally {
-      if (mounted) setState(() => _isLoading = false);
+
+      setState(() {
+        _report = report;
+        _loading = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+
+      setState(() {
+        _loading = false;
+        _error = e.toString();
+      });
     }
   }
 
-  String _mapAuthError(String code) {
-    switch (code) {
-      case 'email-already-in-use':
-        return 'This email is already registered';
-      case 'invalid-email':
-        return 'Invalid email address';
-      case 'weak-password':
-        return 'Password is too weak';
-      default:
-        return 'Registration failed. Please try again';
-    }
-  }
+  // ---------------------------------------------------------------------------
+  // SELECT MONTH
+  // ---------------------------------------------------------------------------
 
-  void _showSnack(String message) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(message), backgroundColor: AppColors.darkGreen),
+  Future<void> _selectMonth() async {
+    final selected = await showDatePicker(
+      context: context,
+      initialDate: _selectedMonth,
+      firstDate: DateTime(2020),
+      lastDate: DateTime.now(),
+      helpText: 'Select report month',
+      initialEntryMode:
+      DatePickerEntryMode.calendarOnly,
     );
+
+    if (selected == null) {
+      return;
+    }
+
+    final month = DateTime(
+      selected.year,
+      selected.month,
+    );
+
+    setState(() {
+      _selectedMonth = month;
+      _report = null;
+    });
+
+    await _loadReport();
   }
+
+  // ---------------------------------------------------------------------------
+  // DATE FORMATTING
+  // ---------------------------------------------------------------------------
+
+  String _monthName(DateTime date) {
+    const months = [
+      'January',
+      'February',
+      'March',
+      'April',
+      'May',
+      'June',
+      'July',
+      'August',
+      'September',
+      'October',
+      'November',
+      'December',
+    ];
+
+    return months[date.month - 1];
+  }
+
+  String _formatMonth(DateTime date) {
+    return '${_monthName(date)} ${date.year}';
+  }
+
+  // ---------------------------------------------------------------------------
+  // BUILD
+  // ---------------------------------------------------------------------------
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      resizeToAvoidBottomInset: true,
-      body: SingleChildScrollView(
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
+      appBar: AppBar(
+        title: const Text('Monthly Report'),
+        centerTitle: false,
+      ),
+      body: RefreshIndicator(
+        onRefresh: _loadReport,
+        child: _buildBody(),
+      ),
+    );
+  }
+
+  Widget _buildBody() {
+    if (_loading && _report == null) {
+      return ListView(
+        physics: AlwaysScrollableScrollPhysics(),
+        children: [
+          SizedBox(height: 300),
+          Center(
+            child: CircularProgressIndicator(),
+          ),
+        ],
+      );
+    }
+
+    if (_error != null && _report == null) {
+      return ListView(
+        physics:
+        const AlwaysScrollableScrollPhysics(),
+        padding: const EdgeInsets.all(20),
+        children: [
+          const SizedBox(height: 80),
+          const Icon(
+            Icons.error_outline,
+            size: 56,
+          ),
+          const SizedBox(height: 16),
+          const Text(
+            'Unable to generate report',
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              fontSize: 20,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            _error!,
+            textAlign: TextAlign.center,
+          ),
+          const SizedBox(height: 24),
+          Center(
+            child: FilledButton.icon(
+              onPressed: _loadReport,
+              icon: const Icon(Icons.refresh),
+              label: const Text('Try Again'),
+            ),
+          ),
+        ],
+      );
+    }
+
+    if (_report == null) {
+      return ListView(
+        physics:
+        const AlwaysScrollableScrollPhysics(),
+        padding: const EdgeInsets.all(20),
+        children: [
+          const SizedBox(height: 80),
+          const Icon(
+            Icons.description_outlined,
+            size: 64,
+          ),
+          const SizedBox(height: 16),
+          const Text(
+            'No report available',
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              fontSize: 20,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+        ],
+      );
+    }
+
+    return ListView(
+      physics:
+      const AlwaysScrollableScrollPhysics(),
+      padding: const EdgeInsets.fromLTRB(
+        16,
+        16,
+        16,
+        32,
+      ),
+      children: [
+        _buildMonthSelector(),
+        const SizedBox(height: 16),
+        _buildReportHeader(),
+        const SizedBox(height: 16),
+        _buildGoatSection(),
+      ],
+    );
+  }
+
+  // ---------------------------------------------------------------------------
+  // MONTH SELECTOR
+  // ---------------------------------------------------------------------------
+
+  Widget _buildMonthSelector() {
+    return InkWell(
+      onTap: _selectMonth,
+      borderRadius: BorderRadius.circular(16),
+      child: Container(
+        padding: const EdgeInsets.all(18),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(
+            color: Theme.of(context)
+                .colorScheme
+                .outlineVariant,
+          ),
+        ),
+        child: Row(
           children: [
-            FadeInDown(
-              duration: const Duration(milliseconds: 250),
-              child: Container(
-                padding: const EdgeInsets.only(top: 46, bottom: 26, left: 24, right: 24),
-                decoration: const BoxDecoration(
-                  gradient: LinearGradient(
-                    begin: Alignment.topCenter,
-                    end: Alignment.bottomCenter,
-                    colors: AppColors.headerGradient,
-                  ),
-                  borderRadius: BorderRadius.only(
-                    bottomLeft: Radius.circular(36),
-                    bottomRight: Radius.circular(36),
-                  ),
-                ),
-                child: Column(
-                  children: [
-                    Row(
-                      children: [
-                        IconButton(
-                          onPressed: () => Navigator.pop(context),
-                          icon: const Icon(Icons.arrow_back, color: Colors.white),
-                        ),
-                      ],
-                    ),
-                    Container(
-                      width: 60,
-                      height: 60,
-                      decoration: const BoxDecoration(color: Colors.white, shape: BoxShape.circle),
-                      child: const Icon(Icons.pets, color: AppColors.primaryGreen, size: 30),
-                    ),
-                    const SizedBox(height: 12),
-                    Text('Create your farm account', style: AppTheme.heading(size: 20, color: Colors.white)),
-                  ],
-                ),
+            Container(
+              width: 48,
+              height: 48,
+              decoration: BoxDecoration(
+                color: Theme.of(context)
+                    .colorScheme
+                    .primaryContainer,
+                borderRadius:
+                BorderRadius.circular(12),
+              ),
+              child: Icon(
+                Icons.calendar_month,
+                color: Theme.of(context)
+                    .colorScheme
+                    .onPrimaryContainer,
               ),
             ),
-            Padding(
-              padding: const EdgeInsets.all(24),
-              child: Form(
-                key: _formKey,
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    Text('Farm Details', style: AppTheme.heading(size: 15, color: AppColors.darkGreen)),
-                    const SizedBox(height: 12),
-                    FadeInUp(
-                      delay: const Duration(milliseconds: 40),
-                      duration: const Duration(milliseconds: 220),
-                      child: TextFormField(
-                        controller: _farmNameController,
-                        decoration: const InputDecoration(
-                          hintText: 'Farm Name',
-                          prefixIcon: Icon(Icons.storefront_outlined, color: AppColors.primaryGreen),
-                        ),
-                        validator: (v) => (v == null || v.trim().isEmpty) ? 'Enter your farm name' : null,
-                      ),
+            const SizedBox(width: 14),
+            Expanded(
+              child: Column(
+                crossAxisAlignment:
+                CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Report Period',
+                    style: Theme.of(context)
+                        .textTheme
+                        .labelMedium,
+                  ),
+                  const SizedBox(height: 3),
+                  Text(
+                    _formatMonth(_selectedMonth),
+                    style: Theme.of(context)
+                        .textTheme
+                        .titleMedium
+                        ?.copyWith(
+                      fontWeight:
+                      FontWeight.w700,
                     ),
-                    const SizedBox(height: 14),
-                    FadeInUp(
-                      delay: const Duration(milliseconds: 60),
-                      duration: const Duration(milliseconds: 220),
-                      child: TextFormField(
-                        controller: _ownerNameController,
-                        decoration: const InputDecoration(
-                          hintText: 'Owner Name',
-                          prefixIcon: Icon(Icons.person_outline, color: AppColors.primaryGreen),
-                        ),
-                        validator: (v) => (v == null || v.trim().isEmpty) ? 'Enter owner name' : null,
-                      ),
-                    ),
-                    const SizedBox(height: 14),
-                    FadeInUp(
-                      delay: const Duration(milliseconds: 80),
-                      duration: const Duration(milliseconds: 220),
-                      child: TextFormField(
-                        controller: _mobileController,
-                        keyboardType: TextInputType.phone,
-                        maxLength: 10,
-                        decoration: const InputDecoration(
-                          hintText: 'Mobile Number',
-                          prefixIcon: Icon(Icons.phone_outlined, color: AppColors.primaryGreen),
-                          counterText: '',
-                        ),
-                        validator: (v) {
-                          if (v == null || v.trim().isEmpty) return 'Enter mobile number';
-                          if (!RegExp(r'^[0-9]{10}$').hasMatch(v.trim())) return 'Enter a valid 10-digit number';
-                          return null;
-                        },
-                      ),
-                    ),
-                    const SizedBox(height: 14),
-                    FadeInUp(
-                      delay: const Duration(milliseconds: 100),
-                      duration: const Duration(milliseconds: 220),
-                      child: TextFormField(
-                        controller: _emailController,
-                        keyboardType: TextInputType.emailAddress,
-                        decoration: const InputDecoration(
-                          hintText: 'Email',
-                          prefixIcon: Icon(Icons.email_outlined, color: AppColors.primaryGreen),
-                        ),
-                        validator: (v) {
-                          if (v == null || v.trim().isEmpty) return 'Enter email address';
-                          final emailRegex = RegExp(r'^[\w\.\-]+@[\w\-]+\.[\w\-\.]+$');
-                          if (!emailRegex.hasMatch(v.trim())) return 'Enter a valid email';
-                          return null;
-                        },
-                      ),
-                    ),
-                    const SizedBox(height: 22),
-                    Text('Security', style: AppTheme.heading(size: 15, color: AppColors.darkGreen)),
-                    const SizedBox(height: 12),
-                    FadeInUp(
-                      delay: const Duration(milliseconds: 120),
-                      duration: const Duration(milliseconds: 220),
-                      child: TextFormField(
-                        controller: _passwordController,
-                        obscureText: _obscurePassword,
-                        decoration: InputDecoration(
-                          hintText: 'Create Password',
-                          prefixIcon: const Icon(Icons.lock_outline, color: AppColors.primaryGreen),
-                          suffixIcon: IconButton(
-                            icon: Icon(
-                              _obscurePassword ? Icons.visibility_off_outlined : Icons.visibility_outlined,
-                              color: AppColors.textGrey,
-                            ),
-                            onPressed: () => setState(() => _obscurePassword = !_obscurePassword),
-                          ),
-                        ),
-                        validator: (v) {
-                          if (v == null || v.isEmpty) return 'Create a password';
-                          if (v.length < 6) return 'Minimum 6 characters required';
-                          return null;
-                        },
-                      ),
-                    ),
-                    if (_passwordController.text.isNotEmpty) ...[
-                      const SizedBox(height: 10),
-                      _PasswordStrengthBar(
-                        strength: _passwordStrength,
-                        label: _strengthLabel(),
-                        color: _strengthColor(),
-                      ),
-                    ],
-                    const SizedBox(height: 14),
-                    FadeInUp(
-                      delay: const Duration(milliseconds: 140),
-                      duration: const Duration(milliseconds: 220),
-                      child: TextFormField(
-                        controller: _confirmPasswordController,
-                        obscureText: _obscureConfirm,
-                        decoration: InputDecoration(
-                          hintText: 'Confirm Password',
-                          prefixIcon: const Icon(Icons.lock_outline, color: AppColors.primaryGreen),
-                          suffixIcon: IconButton(
-                            icon: Icon(
-                              _obscureConfirm ? Icons.visibility_off_outlined : Icons.visibility_outlined,
-                              color: AppColors.textGrey,
-                            ),
-                            onPressed: () => setState(() => _obscureConfirm = !_obscureConfirm),
-                          ),
-                        ),
-                        validator: (v) {
-                          if (v == null || v.isEmpty) return 'Confirm your password';
-                          if (v != _passwordController.text) return 'Passwords do not match';
-                          return null;
-                        },
-                      ),
-                    ),
-                    const SizedBox(height: 26),
-                    FadeInUp(
-                      delay: const Duration(milliseconds: 160),
-                      duration: const Duration(milliseconds: 220),
-                      child: SizedBox(
-                        height: 54,
-                        child: ElevatedButton(
-                          onPressed: _isLoading ? null : _register,
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: AppColors.primaryGreen,
-                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(30)),
-                          ),
-                          child: _isLoading
-                              ? const SizedBox(
-                            width: 24,
-                            height: 24,
-                            child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2.5),
-                          )
-                              : Text('Register Farm', style: AppTheme.heading(size: 16, color: Colors.white)),
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 20),
-                    FadeInUp(
-                      delay: const Duration(milliseconds: 180),
-                      duration: const Duration(milliseconds: 220),
-                      child: Row(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Text('Already have an account? ', style: AppTheme.body(size: 13)),
-                          GestureDetector(
-                            onTap: () => Navigator.pop(context),
-                            child: Text(
-                              'Login',
-                              style: AppTheme.body(size: 13, color: AppColors.darkGreen, weight: FontWeight.w700),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
+                  ),
+                ],
               ),
+            ),
+            const Icon(
+              Icons.keyboard_arrow_down,
             ),
           ],
         ),
       ),
     );
   }
-}
 
-/// Animated password strength indicator bar shown while typing a password.
-class _PasswordStrengthBar extends StatelessWidget {
-  final double strength;
-  final String label;
-  final Color color;
+  // ---------------------------------------------------------------------------
+  // REPORT HEADER
+  // ---------------------------------------------------------------------------
 
-  const _PasswordStrengthBar({
-    required this.strength,
-    required this.label,
-    required this.color,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        LayoutBuilder(
-          builder: (context, constraints) {
-            return ClipRRect(
-              borderRadius: BorderRadius.circular(10),
-              child: Container(
-                height: 8,
-                width: constraints.maxWidth,
-                color: const Color(0xFFE0E0E0),
-                child: Align(
-                  alignment: Alignment.centerLeft,
-                  child: AnimatedContainer(
-                    duration: const Duration(milliseconds: 200),
-                    curve: Curves.easeOut,
-                    height: 8,
-                    width: constraints.maxWidth * strength,
-                    color: color,
-                  ),
-                ),
+  Widget _buildReportHeader() {
+    return Card(
+      elevation: 0,
+      child: Padding(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          crossAxisAlignment:
+          CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Monthly Farm Report',
+              style: Theme.of(context)
+                  .textTheme
+                  .headlineSmall
+                  ?.copyWith(
+                fontWeight:
+                FontWeight.w800,
               ),
-            );
-          },
+            ),
+            const SizedBox(height: 6),
+            Text(
+              _formatMonth(_selectedMonth),
+              style: Theme.of(context)
+                  .textTheme
+                  .bodyMedium,
+            ),
+            if (_loading) ...[
+              const SizedBox(height: 16),
+              const LinearProgressIndicator(),
+            ],
+          ],
         ),
-        const SizedBox(height: 6),
-        Text(
-          label,
-          style: TextStyle(fontFamily: 'Baloo2', fontSize: 12, fontWeight: FontWeight.w600, color: color),
+      ),
+    );
+  }
+
+  // ---------------------------------------------------------------------------
+  // GOAT-WISE REPORT
+  // ---------------------------------------------------------------------------
+
+  Widget _buildGoatSection() {
+    final report = _report!;
+
+    return Column(
+      crossAxisAlignment:
+      CrossAxisAlignment.start,
+      children: [
+        const Padding(
+          padding: EdgeInsets.only(
+            left: 4,
+            bottom: 10,
+          ),
+          child: Text(
+            'Goat-wise Report',
+            style: TextStyle(
+              fontSize: 18,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
         ),
+
+        if (report.goats.isEmpty)
+          Card(
+            elevation: 0,
+            child: Padding(
+              padding: const EdgeInsets.all(24),
+              child: Column(
+                children: [
+                  const Icon(
+                    Icons.pets_outlined,
+                    size: 48,
+                  ),
+                  const SizedBox(height: 12),
+                  const Text(
+                    'No goat activity found',
+                    style: TextStyle(
+                      fontWeight:
+                      FontWeight.w700,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    'There are no goats available for ${_formatMonth(_selectedMonth)}.',
+                    textAlign:
+                    TextAlign.center,
+                  ),
+                ],
+              ),
+            ),
+          )
+        else
+          ...report.goats.map(
+                (goat) => _buildGoatCard(goat),
+          ),
       ],
+    );
+  }
+
+  // ---------------------------------------------------------------------------
+  // ONE GOAT
+  // ---------------------------------------------------------------------------
+
+  Widget _buildGoatCard(
+      MonthlyReportGoat goat,
+      ) {
+    return Card(
+      elevation: 0,
+      margin: const EdgeInsets.only(
+        bottom: 12,
+      ),
+      child: ExpansionTile(
+        leading: const CircleAvatar(
+          child: Icon(Icons.pets),
+        ),
+        title: Text(
+          goat.goatName.isEmpty
+              ? 'Unnamed Goat'
+              : goat.goatName,
+          style: const TextStyle(
+            fontWeight: FontWeight.w700,
+          ),
+        ),
+        subtitle: Text(
+          goat.tagNumber.isEmpty
+              ? 'No tag number'
+              : 'Tag: ${goat.tagNumber}',
+        ),
+        childrenPadding:
+        const EdgeInsets.fromLTRB(
+          16,
+          0,
+          16,
+          16,
+        ),
+        children: [
+          _detailRow(
+            'Weight Records',
+            goat.weightRecordsCount,
+          ),
+          _detailRow(
+            'Health Records',
+            goat.healthRecordsCount,
+          ),
+          _detailRow(
+            'Vaccinations',
+            goat.vaccinationCount,
+          ),
+          _detailRow(
+            'Medicines',
+            goat.medicineCount,
+          ),
+          _detailRow(
+            'Hoof Cutting',
+            goat.hoofCuttingCount,
+          ),
+          _detailRow(
+            'Hair Trimming',
+            goat.hairTrimmingCount,
+          ),
+          _detailRow(
+            'Monthly Photos',
+            goat.monthlyPhotoCount,
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ---------------------------------------------------------------------------
+  // DETAIL ROW
+  // ---------------------------------------------------------------------------
+
+  Widget _detailRow(
+      String label,
+      int value,
+      ) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(
+        vertical: 6,
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: Text(label),
+          ),
+          Text(
+            value.toString(),
+            style: const TextStyle(
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+        ],
+      ),
     );
   }
 }

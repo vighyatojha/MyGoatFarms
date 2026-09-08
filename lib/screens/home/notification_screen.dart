@@ -6,6 +6,7 @@ import '../../app_theme.dart';
 import '../../models/notification_model.dart';
 import '../../services/firestore_service.dart';
 import '../../widgets/farm_not_linked_state.dart';
+import '../palai/customer_palai/goat_profile_screen.dart';
 import '../palai/own_farm/own_farm_goat_detail_screen.dart';
 
 /// Notification center — reads from `farms/{farmId}/notifications`.
@@ -80,18 +81,49 @@ class _NotificationScreenState extends State<NotificationScreen> {
       FirestoreService.instance.markNotificationRead(farmId, n.id);
     }
 
-    // Health notifications carry a goatId — deep-link to that goat's
-    // detail screen (own-farm health tab) same as tapping it from the
-    // goat list.
+    // Health notifications carry a goatId — deep-link to that goat.
+    // Customer-Palai health records (vaccination/hoof-cutting/hair-
+    // trimming/medicine) additionally carry a customerId, and land on
+    // GoatProfileScreen at the tab matching what the notification was
+    // about; Own-Farm health events go to OwnFarmGoatDetailScreen as
+    // before.
     final goatId = n.reference['goatId'];
+    final customerId = n.reference['customerId'];
     if (n.category == 'health' && goatId != null && mounted) {
-      final goat = await FirestoreService.instance.getOwnFarmGoat(farmId, goatId);
-      if (goat != null && mounted) {
-        Navigator.of(context).push(
-          MaterialPageRoute(builder: (_) => OwnFarmGoatDetailScreen(goat: goat)),
-        );
+      if (customerId != null) {
+        final goat = await FirestoreService.instance.getPalaiGoat(farmId, customerId, goatId);
+        if (goat != null && mounted) {
+          Navigator.of(context).push(
+            MaterialPageRoute(
+              builder: (_) => GoatProfileScreen(
+                farmId: farmId,
+                goat: goat,
+                initialTabIndex: _customerPalaiTabIndexFor(n.type),
+              ),
+            ),
+          );
+        }
+      } else {
+        final goat = await FirestoreService.instance.getOwnFarmGoat(farmId, goatId);
+        if (goat != null && mounted) {
+          Navigator.of(context).push(
+            MaterialPageRoute(builder: (_) => OwnFarmGoatDetailScreen(goat: goat)),
+          );
+        }
       }
     }
+  }
+
+  /// GoatProfileScreen's tab order is: 0 Overview, 1 Photos & Growth,
+  /// 2 Health, 3 Vaccination, 4 Hoof Cutting, 5 Hair Trimming,
+  /// 6 Medicine, ... — map a notification `type` (e.g.
+  /// 'vaccination_due', 'hoofCutting_logged') to the matching tab.
+  int _customerPalaiTabIndexFor(String type) {
+    if (type.startsWith('vaccination')) return 3;
+    if (type.startsWith('hoofCutting')) return 4;
+    if (type.startsWith('hairTrimming')) return 5;
+    if (type.startsWith('medicine')) return 6;
+    return 2; // General health record — Health tab.
   }
 
   @override

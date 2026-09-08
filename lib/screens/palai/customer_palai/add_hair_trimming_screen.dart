@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
@@ -5,6 +7,8 @@ import 'package:intl/intl.dart';
 import '../../../app_theme.dart';
 import '../../../models/hair_trimming_record.dart';
 import '../../../models/palai_models.dart';
+import '../../../services/firestore_service.dart';
+import '../../../services/health_reminder_scheduler.dart';
 
 /// Full-page "Add Hair Trimming" screen, pushed from the Hair Trimming
 /// tab on GoatProfileScreen (see AddVaccinationScreen for why this is
@@ -68,6 +72,39 @@ class _AddHairTrimmingScreenState extends State<AddHairTrimmingScreen> {
     if (picked != null) onPicked(picked);
   }
 
+  /// Date + time picker — used for "Next due date" so the due moment can
+  /// be set to a few minutes from now, which is the only practical way
+  /// to manually test the "due today" notification without waiting
+  /// until midnight.
+  Future<void> _pickDateTime({
+    required DateTime initial,
+    required DateTime first,
+    required DateTime last,
+    required ValueChanged<DateTime> onPicked,
+  }) async {
+    final pickedDate = await showDatePicker(
+      context: context,
+      initialDate: initial,
+      firstDate: first,
+      lastDate: last,
+    );
+    if (pickedDate == null || !mounted) return;
+
+    final pickedTime = await showTimePicker(
+      context: context,
+      initialTime: TimeOfDay.fromDateTime(initial),
+    );
+    if (pickedTime == null) return;
+
+    onPicked(DateTime(
+      pickedDate.year,
+      pickedDate.month,
+      pickedDate.day,
+      pickedTime.hour,
+      pickedTime.minute,
+    ));
+  }
+
   Future<void> _save() async {
     setState(() => _saving = true);
     try {
@@ -82,6 +119,28 @@ class _AddHairTrimmingScreenState extends State<AddHairTrimmingScreen> {
         recordedAt: DateTime.now(),
       );
       await reference.set(record.toCreateMap());
+
+      unawaited(FirestoreService.instance.addNotification(
+        farmId: widget.farmId,
+        docId: 'health_${widget.goat.id}_hairTrimming_${reference.id}_logged',
+        type: 'hairTrimming_logged',
+        category: 'health',
+        priority: 'normal',
+        title: 'Hair trimming recorded',
+        message: '${widget.goat.goatCode}: hair trimming logged.',
+        reference: {'customerId': widget.customerId, 'goatId': widget.goat.id, 'recordId': reference.id},
+      ));
+
+      unawaited(HealthReminderScheduler.instance.scheduleCustomerHealthReminder(
+        farmId: widget.farmId,
+        customerId: widget.customerId,
+        goatId: widget.goat.id,
+        goatCode: widget.goat.goatCode,
+        recordType: 'hairTrimming',
+        recordId: reference.id,
+        label: 'Hair trimming',
+        dueDate: record.nextDueDate,
+      ));
 
       if (!mounted) return;
       Navigator.of(context).pop(true);
@@ -116,7 +175,8 @@ class _AddHairTrimmingScreenState extends State<AddHairTrimmingScreen> {
             label: 'Next due date',
             date: _nextDueDate,
             optional: true,
-            onTap: () => _pickDate(
+            showTime: true,
+            onTap: () => _pickDateTime(
               initial: _nextDueDate ?? _trimmingDate.add(Duration(days: widget.reminderDays)),
               first: _trimmingDate,
               last: DateTime(2100),
@@ -175,6 +235,7 @@ class _DateTile extends StatelessWidget {
   final String label;
   final DateTime? date;
   final bool optional;
+  final bool showTime;
   final VoidCallback onTap;
   final VoidCallback? onClear;
 
@@ -182,6 +243,7 @@ class _DateTile extends StatelessWidget {
     required this.label,
     required this.date,
     this.optional = false,
+    this.showTime = false,
     required this.onTap,
     this.onClear,
   });
@@ -199,7 +261,9 @@ class _DateTile extends StatelessWidget {
               : const Icon(Icons.calendar_today_outlined, size: 18),
         ),
         child: Text(
-          date != null ? DateFormat('d MMM yyyy').format(date!) : 'Not set',
+          date != null
+              ? DateFormat(showTime ? 'd MMM yyyy, h:mm a' : 'd MMM yyyy').format(date!)
+              : 'Not set',
           style: TextStyle(color: date != null ? null : AppColors.textMuted),
         ),
       ),

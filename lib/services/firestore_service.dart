@@ -16,6 +16,29 @@ import '../models/own_farm_models.dart';
 import '../models/notification_model.dart';
 import '../models/supplier_model.dart';
 
+/// One upcoming/due health reminder for a Customer-Palai goat —
+/// vaccination, hoof cutting, or hair trimming. See
+/// [FirestoreService.upcomingCustomerHealthReminders].
+class CustomerHealthReminder {
+  final PalaiGoat goat;
+
+  /// 'vaccination' | 'hoofCutting' | 'hairTrimming'
+  final String recordType;
+  final String recordId;
+
+  /// Display label, e.g. 'Vaccination', 'Hoof cutting'.
+  final String label;
+  final DateTime dueDate;
+
+  CustomerHealthReminder({
+    required this.goat,
+    required this.recordType,
+    required this.recordId,
+    required this.label,
+    required this.dueDate,
+  });
+}
+
 class MonthlyBillResult {
   final String billId;
   final String billNumber;
@@ -1621,6 +1644,15 @@ class FirestoreService {
         .map((snapshot) => snapshot.docs.map(PalaiGoat.fromDoc).toList());
   }
 
+  /// Fetches one Customer-Palai goat directly — used to deep-link from a
+  /// health notification tap (see NotificationScreen) straight to
+  /// GoatProfileScreen without needing a live stream.
+  Future<PalaiGoat?> getPalaiGoat(String farmId, String customerId, String goatId) async {
+    final doc = await _goats(farmId, customerId).doc(goatId).get().timeout(timeout);
+    if (!doc.exists) return null;
+    return PalaiGoat.fromDoc(doc);
+  }
+
   Stream<List<PalaiGoat>> goatsForCustomerStream(String farmId, String customerId) {
     return _goats(farmId, customerId)
         .orderBy('checkInDate', descending: true)
@@ -2703,6 +2735,86 @@ class FirestoreService {
       }
     }
     results.sort((a, b) => a.value.nextDueDate!.compareTo(b.value.nextDueDate!));
+    return results;
+  }
+
+  /// Every Customer-Palai goat, across every customer on this farm, with
+  /// a vaccination / hoof-cutting / hair-trimming `nextDueDate` due
+  /// within [withinDays] days (default 45) or already overdue.
+  ///
+  /// This is the Customer-Palai counterpart to [upcomingHealthReminders]
+  /// (which only covers Own-Farm goats' [HealthEvent]s) — Customer Palai
+  /// stores vaccination/hoof-cutting/hair-trimming as three separate
+  /// per-type subcollections (see VaccinationRecord / HoofCuttingRecord /
+  /// HairTrimmingRecord) rather than the unified HealthEvent model, so it
+  /// needs its own query. Used by HealthReminderScheduler to schedule
+  /// on-device reminders and populate the notification feed the same way
+  /// it does for Own Farm.
+  Future<List<CustomerHealthReminder>> upcomingCustomerHealthReminders(
+      String farmId, {
+        int withinDays = 45,
+      }) async {
+    // Denormalized `farmId` on every Palai goat doc (see
+    // dueHealthReminderGoatsStream) lets this run as one collectionGroup
+    // query across all customers instead of looping customer-by-customer.
+    final goatsSnap = await _db
+        .collectionGroup('goats')
+        .where('farmId', isEqualTo: farmId)
+        .where('isCheckedOut', isEqualTo: false)
+        .get()
+        .timeout(timeout);
+
+    final cutoff = DateTime.now().add(Duration(days: withinDays));
+    final results = <CustomerHealthReminder>[];
+
+    const recordTypes = [
+      (
+        collection: 'vaccinationRecords',
+        dateField: 'vaccinationDate',
+        type: 'vaccination',
+        label: 'Vaccination',
+      ),
+      (
+        collection: 'hoofCuttingRecords',
+        dateField: 'cuttingDate',
+        type: 'hoofCutting',
+        label: 'Hoof cutting',
+      ),
+      (
+        collection: 'hairTrimmingRecords',
+        dateField: 'trimmingDate',
+        type: 'hairTrimming',
+        label: 'Hair trimming',
+      ),
+    ];
+
+    for (final goatDoc in goatsSnap.docs) {
+      final goat = PalaiGoat.fromDoc(goatDoc);
+      for (final rt in recordTypes) {
+        final recordsSnap = await goatDoc.reference
+            .collection(rt.collection)
+            .orderBy(rt.dateField, descending: true)
+            .limit(5)
+            .get()
+            .timeout(timeout);
+        for (final doc in recordsSnap.docs) {
+          final dueTs = doc.data()['nextDueDate'];
+          if (dueTs is! Timestamp) continue;
+          final dueDate = dueTs.toDate();
+          if (dueDate.isBefore(cutoff)) {
+            results.add(CustomerHealthReminder(
+              goat: goat,
+              recordType: rt.type,
+              recordId: doc.id,
+              label: rt.label,
+              dueDate: dueDate,
+            ));
+          }
+        }
+      }
+    }
+
+    results.sort((a, b) => a.dueDate.compareTo(b.dueDate));
     return results;
   }
 
