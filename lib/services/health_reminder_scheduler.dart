@@ -1,5 +1,4 @@
 import 'package:flutter/foundation.dart';
-import 'package:flutter/services.dart' show PlatformException;
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:timezone/timezone.dart' as tz;
 
@@ -291,25 +290,29 @@ class HealthReminderScheduler {
     if (!dueDate.isAfter(now)) {
       await _showNow(
         id: _notificationId(key, _ReminderStage.dueToday),
-        title: '$label due today',
-        body: '$goatCode is due for $labelLower today.',
+        title: "Time for $goatCode's $label",
+        body: '$goatCode is due for $labelLower now.',
         payload: payload,
       );
     } else {
       await _scheduleIfFuture(
         id: _notificationId(key, _ReminderStage.dueToday),
         when: dueDate,
-        title: '$label due today',
-        body: '$goatCode is due for $labelLower today.',
+        title: "Time for $goatCode's $label",
+        body: '$goatCode is due for $labelLower now.',
         payload: payload,
       );
     }
 
     // Mirror into the Firestore notification feed immediately if this
-    // record is already due today or overdue, so NotificationScreen
-    // reflects it right away instead of waiting for the next app-open
-    // due-check.
-    if (!dueDate.isAfter(DateTime(now.year, now.month, now.day))) {
+    // record is already due (including "due earlier today") or overdue,
+    // so NotificationScreen reflects it right away instead of waiting
+    // for the next app-open due-check. Compared against `now`, not
+    // midnight-of-today — due dates can carry a specific time (e.g.
+    // "due at 9:42 AM"), and comparing against midnight was the actual
+    // bug that delayed this mirror until the day after the due moment
+    // had already passed.
+    if (!dueDate.isAfter(now)) {
       final reference = <String, String>{'goatId': goatId, 'recordId': recordId};
       if (customerId != null) reference['customerId'] = customerId;
       await _writeDueOrOverdueNotification(
@@ -345,10 +348,10 @@ class HealthReminderScheduler {
       type: '${notificationType}_${isOverdue ? 'overdue' : 'due'}',
       category: 'health',
       priority: isOverdue ? 'critical' : 'important',
-      title: isOverdue ? '$label overdue' : '$label due today',
+      title: isOverdue ? '$label overdue' : "Time for $goatCode's $label",
       message: isOverdue
           ? '$goatCode is overdue for $labelLower.'
-          : '$goatCode is due for $labelLower today.',
+          : '$goatCode is due for $labelLower now.',
       reference: reference,
     );
   }
@@ -373,6 +376,18 @@ class HealthReminderScheduler {
     );
     final scheduledTime = tz.TZDateTime.from(when, tz.local);
 
+    // IMPORTANT: flutter_local_notifications does NOT throw a catchable
+    // Dart exception when exact scheduling is requested without the
+    // exact-alarm permission granted — it logs a native error and
+    // silently drops the schedule instead. A try/catch around
+    // zonedSchedule() cannot detect that. Checking the live permission
+    // status first and picking the matching mode is the only reliable
+    // way to make sure the reminder actually gets scheduled either way.
+    final exactAllowed = await NotificationService.instance.canScheduleExactAlarms();
+    final mode = exactAllowed
+        ? AndroidScheduleMode.exactAllowWhileIdle
+        : AndroidScheduleMode.inexactAllowWhileIdle;
+
     try {
       await _plugin.zonedSchedule(
         id,
@@ -386,28 +401,27 @@ class HealthReminderScheduler {
         // across timezone/DST changes) that this app never uses on
         // Android, but the parameter is still mandatory at this version.
         uiLocalNotificationDateInterpretation: UILocalNotificationDateInterpretation.absoluteTime,
-        // Exact timing — a vaccination/hoof-cutting reminder needs to
-        // fire at (or very near) the actual due time, not whenever
-        // Android's Doze batching feels like waking the device up.
-        // Requires SCHEDULE_EXACT_ALARM (declared in the manifest) and
-        // the user having granted it — NotificationService requests
-        // that on init. Falls back to inexact below if it's ever denied,
-        // so scheduling never silently fails outright.
-        androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
+        androidScheduleMode: mode,
         payload: payload,
       );
-    } on PlatformException catch (e) {
-      debugPrint('HealthReminderScheduler: exact schedule denied, falling back to inexact: $e');
-      await _plugin.zonedSchedule(
-        id,
-        title,
-        body,
-        scheduledTime,
-        details,
-        uiLocalNotificationDateInterpretation: UILocalNotificationDateInterpretation.absoluteTime,
-        androidScheduleMode: AndroidScheduleMode.inexactAllowWhileIdle,
-        payload: payload,
-      );
+    } catch (e) {
+      // Belt-and-suspenders only — the permission check above is what
+      // actually prevents the silent-drop case. If scheduling still
+      // throws for some other reason, fall back to inexact rather than
+      // losing the reminder entirely.
+      debugPrint('HealthReminderScheduler: zonedSchedule failed ($mode), retrying inexact: $e');
+      if (mode == AndroidScheduleMode.exactAllowWhileIdle) {
+        await _plugin.zonedSchedule(
+          id,
+          title,
+          body,
+          scheduledTime,
+          details,
+          uiLocalNotificationDateInterpretation: UILocalNotificationDateInterpretation.absoluteTime,
+          androidScheduleMode: AndroidScheduleMode.inexactAllowWhileIdle,
+          payload: payload,
+        );
+      }
     }
   }
 

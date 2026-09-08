@@ -41,7 +41,7 @@ class MainShell extends StatefulWidget {
   State<MainShell> createState() => _MainShellState();
 }
 
-class _MainShellState extends State<MainShell> {
+class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
   // --------------------------------------------------------------------------
   // CURRENT TAB
   // --------------------------------------------------------------------------
@@ -59,7 +59,33 @@ class _MainShellState extends State<MainShell> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _initPushNotifications();
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    // Catches up the in-app Notifications feed for anything that became
+    // due while the app was backgrounded or fully closed — the OS-level
+    // alarm still fires its own heads-up notification independently of
+    // this, but NotificationScreen only reflects it once this runs,
+    // since a killed app can't write to Firestore the instant the alarm
+    // itself goes off.
+    if (state == AppLifecycleState.resumed) {
+      _runDueCheckOnly();
+    }
+  }
+
+  Future<void> _runDueCheckOnly() async {
+    final farmId = await FirestoreService.instance.currentFarmId();
+    if (farmId == null || !mounted) return;
+    unawaited(HealthReminderScheduler.instance.runDueCheck(farmId));
   }
 
   /// Requests notification permission and saves this device's FCM token

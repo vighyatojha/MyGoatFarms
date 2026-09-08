@@ -1,8 +1,12 @@
+import 'dart:async';
+
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 
 import '../../../models/hoof_cutting_record.dart';
 import '../../../models/palai_models.dart';
+import '../../../services/firestore_service.dart';
+import '../../../services/health_reminder_scheduler.dart';
 import 'add_hoof_cutting_screen.dart';
 
 class CustomerGoatHoofScreen extends StatefulWidget {
@@ -785,12 +789,64 @@ class _CustomerGoatHoofScreenState
                       ),
                     ),
                   ),
+                if (record.hasNextDueDate)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 10),
+                    child: SizedBox(
+                      width: double.infinity,
+                      child: OutlinedButton.icon(
+                        onPressed: () => _markAsDone(record, context),
+                        icon: const Icon(Icons.check_circle_outline),
+                        label: const Text('Done'),
+                      ),
+                    ),
+                  ),
               ],
             ),
           ),
         );
       },
     );
+  }
+
+  /// Clears this record's reminder — call once the hoof has been done
+  /// and there's nothing further to remind about. Cancels the
+  /// on-device scheduled notifications for it and clears any
+  /// "due"/"overdue" entry already sitting in the Notifications feed.
+  Future<void> _markAsDone(
+      HoofCuttingRecord record,
+      BuildContext sheetContext,
+      ) async {
+    try {
+      await _hoofCollection.doc(record.id).update({'nextDueDate': null});
+
+      unawaited(HealthReminderScheduler.instance.cancelForCustomerRecord(
+        customerId: widget.customerId,
+        goatId: widget.goat.id,
+        recordType: 'hoofCutting',
+        recordId: record.id,
+      ));
+
+      for (final suffix in ['due', 'overdue']) {
+        unawaited(FirestoreService.instance
+            .markNotificationRead(
+          widget.farmId,
+          'health_${widget.goat.id}_hoofCutting_${record.id}_$suffix',
+        )
+            .catchError((_) {}));
+      }
+
+      if (!mounted) return;
+      Navigator.of(sheetContext).pop();
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Marked as done — reminder cleared.')),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not mark as done: $e')),
+      );
+    }
   }
 
   Widget _detailRow(

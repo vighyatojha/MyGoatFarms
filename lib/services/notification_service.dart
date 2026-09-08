@@ -211,6 +211,27 @@ class NotificationService {
     }
   }
 
+  /// Live check of whether this device currently allows exact-alarm
+  /// scheduling. HealthReminderScheduler MUST check this before every
+  /// zonedSchedule() call and choose its AndroidScheduleMode accordingly
+  /// — flutter_local_notifications does NOT throw a catchable error when
+  /// exact mode is requested without the permission; it silently logs a
+  /// native error and drops the schedule instead. Checking first and
+  /// picking the right mode up front is the only reliable way to avoid
+  /// that silent failure.
+  Future<bool> canScheduleExactAlarms() async {
+    if (!Platform.isAndroid) return false;
+    try {
+      final androidPlugin = _localNotifications
+          .resolvePlatformSpecificImplementation<
+          AndroidFlutterLocalNotificationsPlugin>();
+      return await androidPlugin?.canScheduleExactNotifications() ?? false;
+    } catch (e) {
+      debugPrint('NotificationService: canScheduleExactAlarms check failed: $e');
+      return false;
+    }
+  }
+
   /// Shows an immediate, real OS-level notification (heads-up banner +
   /// tray entry) — for "it just happened" events like a vaccination
   /// being logged. This is what was missing before: those events were
