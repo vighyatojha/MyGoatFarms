@@ -1,4 +1,5 @@
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart' show PlatformException;
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:timezone/timezone.dart' as tz;
 
@@ -361,32 +362,53 @@ class HealthReminderScheduler {
   }) async {
     if (when.isBefore(DateTime.now())) return; // Already passed — skip.
 
-    await _plugin.zonedSchedule(
-      id,
-      title,
-      body,
-      tz.TZDateTime.from(when, tz.local),
-      NotificationDetails(
-        android: AndroidNotificationDetails(
-          NotificationService.channelId,
-          NotificationService.channelName,
-          channelDescription: NotificationService.channelDescription,
-          importance: Importance.high,
-          priority: Priority.high,
-        ),
+    final details = NotificationDetails(
+      android: AndroidNotificationDetails(
+        NotificationService.channelId,
+        NotificationService.channelName,
+        channelDescription: NotificationService.channelDescription,
+        importance: Importance.high,
+        priority: Priority.high,
       ),
-      // Required by flutter_local_notifications 18.0.1's top-level
-      // zonedSchedule() facade even for an Android-only call — it's an
-      // iOS-specific setting (interpreted wall-clock vs. absolute time
-      // across timezone/DST changes) that this app never uses on
-      // Android, but the parameter is still mandatory at this version.
-      uiLocalNotificationDateInterpretation: UILocalNotificationDateInterpretation.absoluteTime,
-      // Inexact timing avoids needing Android 12+'s SCHEDULE_EXACT_ALARM
-      // permission — fine for a "due today" reminder that doesn't need
-      // to fire at the exact minute.
-      androidScheduleMode: AndroidScheduleMode.inexactAllowWhileIdle,
-      payload: payload,
     );
+    final scheduledTime = tz.TZDateTime.from(when, tz.local);
+
+    try {
+      await _plugin.zonedSchedule(
+        id,
+        title,
+        body,
+        scheduledTime,
+        details,
+        // Required by flutter_local_notifications 18.0.1's top-level
+        // zonedSchedule() facade even for an Android-only call — it's an
+        // iOS-specific setting (interpreted wall-clock vs. absolute time
+        // across timezone/DST changes) that this app never uses on
+        // Android, but the parameter is still mandatory at this version.
+        uiLocalNotificationDateInterpretation: UILocalNotificationDateInterpretation.absoluteTime,
+        // Exact timing — a vaccination/hoof-cutting reminder needs to
+        // fire at (or very near) the actual due time, not whenever
+        // Android's Doze batching feels like waking the device up.
+        // Requires SCHEDULE_EXACT_ALARM (declared in the manifest) and
+        // the user having granted it — NotificationService requests
+        // that on init. Falls back to inexact below if it's ever denied,
+        // so scheduling never silently fails outright.
+        androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
+        payload: payload,
+      );
+    } on PlatformException catch (e) {
+      debugPrint('HealthReminderScheduler: exact schedule denied, falling back to inexact: $e');
+      await _plugin.zonedSchedule(
+        id,
+        title,
+        body,
+        scheduledTime,
+        details,
+        uiLocalNotificationDateInterpretation: UILocalNotificationDateInterpretation.absoluteTime,
+        androidScheduleMode: AndroidScheduleMode.inexactAllowWhileIdle,
+        payload: payload,
+      );
+    }
   }
 
   /// Fires a local notification immediately — used for the "due today"

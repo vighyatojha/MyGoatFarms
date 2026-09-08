@@ -9,6 +9,7 @@ import '../../../models/palai_models.dart';
 import '../../../models/vaccination_record.dart';
 import '../../../services/firestore_service.dart';
 import '../../../services/health_reminder_scheduler.dart';
+import '../../../services/notification_service.dart';
 
 /// Full-page "Add Vaccination" screen, pushed from the Vaccination tab
 /// on GoatProfileScreen. Deliberately a pushed screen rather than a
@@ -154,6 +155,15 @@ class _AddVaccinationScreenState extends State<AddVaccinationScreen> {
         title: 'Vaccination recorded',
         message: '${widget.goat.goatCode}: ${record.vaccineName} vaccination logged.',
         reference: {'customerId': widget.customerId, 'goatId': widget.goat.id, 'recordId': reference.id},
+      ));
+
+      // Real OS-level heads-up notification for the same "it happened"
+      // event — addNotification above only writes the in-app feed.
+      unawaited(NotificationService.instance.showNow(
+        id: reference.id.hashCode & 0x0FFFFFFF,
+        title: 'Vaccination recorded',
+        body: '${widget.goat.goatCode}: ${record.vaccineName} vaccination logged.',
+        data: {'customerId': widget.customerId, 'goatId': widget.goat.id, 'recordId': reference.id},
       ));
 
       // Due-date reminder engine (7 days before / 1 day before / due

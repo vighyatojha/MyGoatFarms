@@ -112,6 +112,7 @@ class NotificationService {
     }
 
     await _requestPermissionAndSaveToken();
+    await _requestExactAlarmPermission();
 
     // Keep Firestore's copy of the token current if FCM rotates it
     // (e.g. after an app reinstall or token expiry).
@@ -187,6 +188,56 @@ class NotificationService {
     if (token != null) {
       await _saveToken(token);
     }
+  }
+
+  /// Asks the OS for permission to schedule EXACT alarms (Android 12+).
+  ///
+  /// Without this, HealthReminderScheduler's due-date reminders fall back
+  /// to inexact scheduling, which the OS can delay arbitrarily. On
+  /// Android 13+ this opens the system "Alarms & reminders" settings
+  /// screen for the user to flip on manually — there's no in-app dialog
+  /// for it, that's an OS restriction, not a bug here.
+  Future<void> _requestExactAlarmPermission() async {
+    try {
+      final androidPlugin = _localNotifications
+          .resolvePlatformSpecificImplementation<
+          AndroidFlutterLocalNotificationsPlugin>();
+      final granted = await androidPlugin?.canScheduleExactNotifications();
+      if (granted == false) {
+        await androidPlugin?.requestExactAlarmsPermission();
+      }
+    } catch (e) {
+      debugPrint('NotificationService: exact alarm permission check failed: $e');
+    }
+  }
+
+  /// Shows an immediate, real OS-level notification (heads-up banner +
+  /// tray entry) — for "it just happened" events like a vaccination
+  /// being logged. This is what was missing before: those events were
+  /// only ever written to the in-app Firestore notification feed, so
+  /// nothing appeared unless the user opened the Notifications screen.
+  /// Call this from screens right alongside FirestoreService.addNotification.
+  Future<void> showNow({
+    required int id,
+    required String title,
+    required String body,
+    Map<String, String>? data,
+  }) async {
+    await _localNotifications.show(
+      id,
+      title,
+      body,
+      const NotificationDetails(
+        android: AndroidNotificationDetails(
+          channelId,
+          channelName,
+          channelDescription: channelDescription,
+          importance: Importance.high,
+          priority: Priority.high,
+        ),
+      ),
+      payload: data != null ? encodePayload(data) : null,
+    );
   }
 
   // -------------------------------------------------------------------

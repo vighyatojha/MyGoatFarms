@@ -9,6 +9,7 @@ import '../../../models/medicine_record.dart';
 import '../../../models/palai_models.dart';
 import '../../../services/firestore_service.dart';
 import '../../../services/health_reminder_scheduler.dart';
+import '../../../services/notification_service.dart';
 
 /// Full-page "Add Medicine" screen, pushed from the Medicine tab on
 /// GoatProfileScreen (see AddVaccinationScreen for why this is a
@@ -100,6 +101,13 @@ class _AddMedicineScreenState extends State<AddMedicineScreen> {
         title: 'Medicine recorded',
         message: '${widget.goat.goatCode}: ${record.medicineName} logged.',
         reference: {'customerId': widget.customerId, 'goatId': widget.goat.id, 'recordId': reference.id},
+      ));
+
+      unawaited(NotificationService.instance.showNow(
+        id: reference.id.hashCode & 0x0FFFFFFF,
+        title: 'Medicine recorded',
+        body: '${widget.goat.goatCode}: ${record.medicineName} logged.',
+        data: {'customerId': widget.customerId, 'goatId': widget.goat.id, 'recordId': reference.id},
       ));
 
       // MedicineRecord has no next-due-date field of its own (unlike

@@ -9,6 +9,7 @@ import '../../../models/hoof_cutting_record.dart';
 import '../../../models/palai_models.dart';
 import '../../../services/firestore_service.dart';
 import '../../../services/health_reminder_scheduler.dart';
+import '../../../services/notification_service.dart';
 
 /// Full-page "Add Hoof Cutting" screen, pushed from the Hoof Cutting
 /// tab on GoatProfileScreen (see AddVaccinationScreen for why this is
@@ -129,6 +130,13 @@ class _AddHoofCuttingScreenState extends State<AddHoofCuttingScreen> {
         title: 'Hoof cutting recorded',
         message: '${widget.goat.goatCode}: hoof cutting logged.',
         reference: {'customerId': widget.customerId, 'goatId': widget.goat.id, 'recordId': reference.id},
+      ));
+
+      unawaited(NotificationService.instance.showNow(
+        id: reference.id.hashCode & 0x0FFFFFFF,
+        title: 'Hoof cutting recorded',
+        body: '${widget.goat.goatCode}: hoof cutting logged.',
+        data: {'customerId': widget.customerId, 'goatId': widget.goat.id, 'recordId': reference.id},
       ));
 
       unawaited(HealthReminderScheduler.instance.scheduleCustomerHealthReminder(

@@ -9,6 +9,7 @@ import '../../../models/hair_trimming_record.dart';
 import '../../../models/palai_models.dart';
 import '../../../services/firestore_service.dart';
 import '../../../services/health_reminder_scheduler.dart';
+import '../../../services/notification_service.dart';
 
 /// Full-page "Add Hair Trimming" screen, pushed from the Hair Trimming
 /// tab on GoatProfileScreen (see AddVaccinationScreen for why this is
@@ -129,6 +130,13 @@ class _AddHairTrimmingScreenState extends State<AddHairTrimmingScreen> {
         title: 'Hair trimming recorded',
         message: '${widget.goat.goatCode}: hair trimming logged.',
         reference: {'customerId': widget.customerId, 'goatId': widget.goat.id, 'recordId': reference.id},
+      ));
+
+      unawaited(NotificationService.instance.showNow(
+        id: reference.id.hashCode & 0x0FFFFFFF,
+        title: 'Hair trimming recorded',
+        body: '${widget.goat.goatCode}: hair trimming logged.',
+        data: {'customerId': widget.customerId, 'goatId': widget.goat.id, 'recordId': reference.id},
       ));
 
       unawaited(HealthReminderScheduler.instance.scheduleCustomerHealthReminder(

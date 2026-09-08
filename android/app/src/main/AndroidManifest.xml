@@ -20,6 +20,16 @@
          reminder still survives even if this receiver is ever delayed
          or skipped by battery optimization on a given device.) -->
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED"/>
+
+    <!-- Required on Android 12+ (API 31+) to schedule EXACT alarms
+         (AndroidScheduleMode.exactAllowWhileIdle). Without this, health
+         reminders can only use inexact scheduling, which Android is free
+         to delay by minutes to hours - the root cause of due-date
+         reminders not firing at the scheduled time. On API 31-32 this is
+         granted automatically at install; on API 33+ the user must also
+         grant it via Settings, which NotificationService now requests. -->
+    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM"/>
+    <uses-permission android:name="android.permission.USE_EXACT_ALARM"/>
     <application
         android:label="My Goat Farms"
         android:name="${applicationName}"
