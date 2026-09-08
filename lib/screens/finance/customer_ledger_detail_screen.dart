@@ -2,7 +2,9 @@ import 'package:flutter/material.dart';
 
 import '../../app_theme.dart';
 import '../../models/customer_ledger_entry_model.dart';
+import '../../models/farm_model.dart';
 import '../../models/palai_models.dart';
+import '../../services/customer_ledger_pdf_service.dart';
 import '../../services/finance_service.dart';
 import '../../services/firestore_service.dart';
 import '../../widgets/finance/ledger_entry_tile.dart';
@@ -34,7 +36,9 @@ class CustomerLedgerDetailScreen extends StatefulWidget {
 class _CustomerLedgerDetailScreenState extends State<CustomerLedgerDetailScreen> {
   late PalaiCustomer _customer;
   String? _farmId;
+  FarmModel? _farm;
   bool _loading = true;
+  bool _sharing = false;
   List<CustomerLedgerEntry> _entries = [];
 
   @override
@@ -54,13 +58,22 @@ class _CustomerLedgerDetailScreenState extends State<CustomerLedgerDetailScreen>
       // Re-fetch the customer too — not just the ledger — so the balance
       // cards reflect any Add Credit / Add Debit made from this screen
       // instead of staying frozen at whatever was passed in originally.
-      final refreshedCustomer = await FirestoreService.instance.getCustomer(farmId, widget.customer.id);
-      final entries = await FinanceService.instance.getCustomerLedger(farmId, widget.customer.id);
+      // The farm profile is fetched alongside it purely so the shared
+      // ledger PDF can carry the farm's name/logo/contact details.
+      final results = await Future.wait([
+        FirestoreService.instance.getCustomer(farmId, widget.customer.id),
+        FinanceService.instance.getCustomerLedger(farmId, widget.customer.id),
+        FirestoreService.instance.getFarmById(farmId),
+      ]);
+      final refreshedCustomer = results[0] as PalaiCustomer?;
+      final entries = results[1] as List<CustomerLedgerEntry>;
+      final farm = results[2] as FarmModel?;
 
       if (!mounted) return;
       setState(() {
         if (refreshedCustomer != null) _customer = refreshedCustomer;
         _entries = entries;
+        _farm = farm;
         _loading = false;
       });
     } catch (e) {
@@ -104,6 +117,33 @@ class _CustomerLedgerDetailScreenState extends State<CustomerLedgerDetailScreen>
     if (saved == true) await _load();
   }
 
+  /// Generates the customer's ledger as a PDF and opens the system share
+  /// sheet — the "share as PDF" entry point requested for this screen.
+  /// Works even with zero history (an empty statement is still valid),
+  /// and is disabled while a share is already in progress so a fast
+  /// double-tap can't kick off two PDF generations at once.
+  Future<void> _shareLedger() async {
+    if (_sharing) return;
+    setState(() => _sharing = true);
+    try {
+      await CustomerLedgerPdfService.instance.share(
+        customer: _customer,
+        entries: _entries,
+        farm: _farm,
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(FirestoreService.instance.describeError(e)),
+          backgroundColor: AppColors.error,
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => _sharing = false);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final customer = _customer;
@@ -116,6 +156,19 @@ class _CustomerLedgerDetailScreenState extends State<CustomerLedgerDetailScreen>
         foregroundColor: AppColors.textDark,
         titleSpacing: 4,
         title: Text(customer.name, style: AppTheme.heading(size: 18)),
+        actions: [
+          IconButton(
+            tooltip: 'Share ledger as PDF',
+            onPressed: (_loading || _sharing) ? null : _shareLedger,
+            icon: _sharing
+                ? const SizedBox(
+                    width: 20,
+                    height: 20,
+                    child: CircularProgressIndicator(strokeWidth: 2, color: AppColors.primaryGreen),
+                  )
+                : const Icon(Icons.share_outlined),
+          ),
+        ],
       ),
       bottomNavigationBar: _bottomActionBar(),
       body: SafeArea(

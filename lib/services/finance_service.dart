@@ -2,6 +2,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 
 import '../models/activity_model.dart';
 import '../models/customer_ledger_entry_model.dart';
+import '../models/expense_categories.dart';
 import '../models/expense_model.dart';
 import '../models/finance_summary_model.dart';
 import '../models/supplier_ledger_entry_model.dart';
@@ -71,6 +72,24 @@ class FinanceService {
 
   CollectionReference<Map<String, dynamic>> _supplierLedger(String farmId) =>
       _farms().doc(farmId).collection('supplierLedger');
+
+  /// True for any `transactions` doc that represents money coming IN.
+  ///
+  /// Every current writer sets `isIncome: true` — except
+  /// [MonthlyBillingService.receiveMonthlyBillPayment], which (until
+  /// fixed) only ever set a legacy `type: 'income'` field on the mirrored
+  /// transaction. That meant a customer's Monthly Bill payment updated
+  /// their balance and showed correctly in the Customer Ledger (which
+  /// reads `payments`/`bills`/`monthlyBills` directly), but silently
+  /// never counted as Revenue anywhere in the Finance module — Finance
+  /// Overview's totals, its Cash/Online tracker, Recent Transactions, and
+  /// the Revenue list all read `transactions` and checked `isIncome`
+  /// alone. The write now sets both fields going forward; this read-side
+  /// check also accepts the legacy `type: 'income'` shape so payments
+  /// already sitting in Firestore from before that fix show up too,
+  /// without needing a data migration.
+  bool _isIncomeTransaction(Map<String, dynamic> data) =>
+      data['isIncome'] == true || data['type'] == 'income';
 
   // ---------------------------------------------------------------------
   // EXPENSES
@@ -422,7 +441,7 @@ class FinanceService {
 
     return q.snapshots().map((snap) {
       var rows = snap.docs
-          .where((d) => d.data()['isIncome'] == true)
+          .where((d) => _isIncomeTransaction(d.data()))
           .where((d) => d.data()['status'] != 'voided')
           .map(
             (d) => FinanceTransactionRow(
@@ -479,16 +498,25 @@ class FinanceService {
         .timeout(_timeout);
 
     double revenue = 0;
+    double cashReceived = 0;
+    double onlineReceived = 0;
     final revenueByCategory = <String, double>{};
 
     for (final doc in transactionsSnap.docs) {
       final data = doc.data();
-      if (data['isIncome'] != true) continue;
+      if (!_isIncomeTransaction(data)) continue;
       if (data['status'] == 'voided') continue;
       final amount = (data['amount'] ?? 0).toDouble();
       revenue += amount;
       final category = (data['category'] ?? 'Other').toString();
       revenueByCategory[category] = (revenueByCategory[category] ?? 0) + amount;
+
+      final paymentMethod = (data['paymentMethod'] ?? '').toString();
+      if (FinancePaymentMethods.isCash(paymentMethod)) {
+        cashReceived += amount;
+      } else if (FinancePaymentMethods.isOnline(paymentMethod)) {
+        onlineReceived += amount;
+      }
     }
 
     double expenses = 0;
@@ -520,6 +548,8 @@ class FinanceService {
       totalAdvance: totalAdvance,
       revenueByCategory: revenueByCategory,
       expenseByCategory: expenseByCategory,
+      cashReceived: cashReceived,
+      onlineReceived: onlineReceived,
     );
   }
 
@@ -546,7 +576,7 @@ class FinanceService {
 
     for (final doc in incomeSnap.docs) {
       final data = doc.data();
-      if (data['isIncome'] != true) continue;
+      if (!_isIncomeTransaction(data)) continue;
       if (data['status'] == 'voided') continue;
       rows.add(
         FinanceTransactionRow(

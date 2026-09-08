@@ -8,43 +8,19 @@ class ExpenseCategories {
 
   static const String feed = 'Feed';
   static const String medicine = 'Medicine';
-  static const String vaccination = 'Vaccination';
-  static const String veterinary = 'Veterinary';
-  static const String supplements = 'Supplements';
-  static const String livestockPurchase = 'Livestock Purchase';
-  static const String transport = 'Transport';
-  static const String labour = 'Labour';
-  static const String electricity = 'Electricity';
-  static const String water = 'Water';
-  static const String rent = 'Rent';
-  static const String farmMaintenance = 'Farm Maintenance';
-  static const String equipment = 'Equipment';
-  static const String equipmentRepair = 'Equipment Repair';
-  static const String cleaning = 'Cleaning';
-  static const String packaging = 'Packaging';
-  static const String stockPurchase = 'Stock Purchase';
-  static const String officeExpense = 'Office Expense';
+  static const String healthcare = 'Healthcare';
+  static const String farmExpenses = 'Farm Expenses';
+  static const String officeExpenses = 'Office Expenses';
+  static const String hoofCuttingSelf = 'Hoof Cutting (Self)';
   static const String other = 'Other';
 
   static const List<String> all = [
     feed,
     medicine,
-    vaccination,
-    veterinary,
-    supplements,
-    livestockPurchase,
-    transport,
-    labour,
-    electricity,
-    water,
-    rent,
-    farmMaintenance,
-    equipment,
-    equipmentRepair,
-    cleaning,
-    packaging,
-    stockPurchase,
-    officeExpense,
+    healthcare,
+    farmExpenses,
+    officeExpenses,
+    hoofCuttingSelf,
     other,
   ];
 }
@@ -89,4 +65,13 @@ class FinancePaymentMethods {
   static const String credit = 'Credit';
 
   static const List<String> all = [cash, upi, bankTransfer, cheque, other];
+
+  /// Buckets any payment method into the simple Cash / Online split used
+  /// by the Finance Overview's payment-mode tracker. Every method other
+  /// than exact "Cash" (UPI, Bank Transfer, Cheque, Other, ...) is
+  /// treated as an online payment.
+  static bool isCash(String method) => method.trim().toLowerCase() == 'cash';
+
+  static bool isOnline(String method) =>
+      method.trim().isNotEmpty && !isCash(method);
 }

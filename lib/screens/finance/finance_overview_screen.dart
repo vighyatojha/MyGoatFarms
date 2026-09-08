@@ -16,7 +16,7 @@ import 'expense_list_screen.dart';
 import 'revenue_list_screen.dart';
 import 'supplier_ledger_screen.dart';
 
-enum _RangePreset { thisMonth, lastMonth, thisWeek, today }
+enum _RangePreset { all, today, thisWeek, thisMonth, lastMonth, thisYear }
 
 class FinanceOverviewScreen extends StatefulWidget {
   const FinanceOverviewScreen({super.key});
@@ -30,7 +30,7 @@ class _FinanceOverviewScreenState extends State<FinanceOverviewScreen> {
   bool _loadingFarm = true;
   bool _loadingSummary = true;
 
-  _RangePreset _preset = _RangePreset.thisMonth;
+  _RangePreset _preset = _RangePreset.all;
   FinanceSummary _summary = FinanceSummary.empty;
   List<FinanceTransactionRow> _recent = [];
 
@@ -53,6 +53,13 @@ class _FinanceOverviewScreenState extends State<FinanceOverviewScreen> {
   ({DateTime start, DateTime end}) _rangeFor(_RangePreset preset) {
     final now = DateTime.now();
     switch (preset) {
+      case _RangePreset.all:
+        // Wide enough to include every record ever entered (and a
+        // little future headroom for backdated/forward entries), while
+        // still reusing the exact same "date >= start && date < end"
+        // Firestore query the other presets use — no separate
+        // "unbounded" code path needed.
+        return (start: DateTime(2000, 1, 1), end: DateTime(now.year + 1, 1, 1));
       case _RangePreset.today:
         final start = DateTime(now.year, now.month, now.day);
         return (start: start, end: start.add(const Duration(days: 1)));
@@ -67,6 +74,10 @@ class _FinanceOverviewScreenState extends State<FinanceOverviewScreen> {
       case _RangePreset.lastMonth:
         final start = DateTime(now.year, now.month - 1, 1);
         final end = DateTime(now.year, now.month, 1);
+        return (start: start, end: end);
+      case _RangePreset.thisYear:
+        final start = DateTime(now.year, 1, 1);
+        final end = DateTime(now.year + 1, 1, 1);
         return (start: start, end: end);
     }
   }
@@ -115,23 +126,23 @@ class _FinanceOverviewScreenState extends State<FinanceOverviewScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: AppColors.paleGreen,
-      appBar: AppBar(
-        backgroundColor: AppColors.paleGreen,
-        elevation: 0,
-        foregroundColor: AppColors.textDark,
-        titleSpacing: 4,
-        title: Text('Finance', style: AppTheme.heading(size: 18)),
-      ),
       body: SafeArea(
         child: _loadingFarm
             ? const Center(child: CircularProgressIndicator(color: AppColors.primaryGreen))
             : _farmId == null
-            ? FarmNotLinkedState(
-          buttonColor: AppColors.primaryGreen,
-          onRetry: () {
-            setState(() => _loadingFarm = true);
-            _loadFarm();
-          },
+            ? Column(
+          children: [
+            _header(),
+            Expanded(
+              child: FarmNotLinkedState(
+                buttonColor: AppColors.primaryGreen,
+                onRetry: () {
+                  setState(() => _loadingFarm = true);
+                  _loadFarm();
+                },
+              ),
+            ),
+          ],
         )
             : RefreshIndicator(
           color: AppColors.primaryGreen,
@@ -139,9 +150,13 @@ class _FinanceOverviewScreenState extends State<FinanceOverviewScreen> {
           child: ListView(
             padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
             children: [
+              _header(),
+              const SizedBox(height: 16),
               _rangeSelector(),
               const SizedBox(height: 14),
               _loadingSummary ? _summarySkeleton() : _summaryCards(),
+              const SizedBox(height: 14),
+              _loadingSummary ? const SizedBox.shrink() : _paymentModeTracker(),
               const SizedBox(height: 14),
               _quickLinks(),
               const SizedBox(height: 10),
@@ -157,12 +172,58 @@ class _FinanceOverviewScreenState extends State<FinanceOverviewScreen> {
     );
   }
 
+  /// Branded header — matches the logo-avatar + heading/body-font style
+  /// used by the Home screen's own header, instead of a bare AppBar
+  /// title with no farm branding at all.
+  Widget _header() {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(4, 4, 4, 0),
+      child: Row(
+        children: [
+          if (Navigator.of(context).canPop())
+            IconButton(
+              padding: EdgeInsets.zero,
+              constraints: const BoxConstraints(),
+              onPressed: () => Navigator.of(context).pop(),
+              icon: const Icon(Icons.arrow_back_ios_new_rounded, size: 18, color: AppColors.textDark),
+            ),
+          if (Navigator.of(context).canPop()) const SizedBox(width: 10),
+          Container(
+            width: 42,
+            height: 42,
+            decoration: const BoxDecoration(color: AppColors.lightGreen, shape: BoxShape.circle),
+            child: ClipOval(
+              child: Image.asset(
+                'assets/images/logo.png',
+                fit: BoxFit.cover,
+                errorBuilder: (_, __, ___) =>
+                    const Icon(Icons.savings_rounded, color: AppColors.primaryGreen, size: 22),
+              ),
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('Finance', style: AppTheme.heading(size: 18)),
+                Text('Overview & reports', style: AppTheme.body(size: 12)),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _rangeSelector() {
     final labels = {
+      _RangePreset.all: 'All',
       _RangePreset.today: 'Today',
       _RangePreset.thisWeek: 'This Week',
       _RangePreset.thisMonth: 'This Month',
       _RangePreset.lastMonth: 'Last Month',
+      _RangePreset.thisYear: 'Year',
     };
 
     return SizedBox(
@@ -270,6 +331,91 @@ class _FinanceOverviewScreenState extends State<FinanceOverviewScreen> {
               ),
             ),
           ],
+        ),
+      ],
+    );
+  }
+
+  /// Cash vs Online tracker for money received in the selected range —
+  /// pulled straight from each payment's own `paymentMethod` (see
+  /// FinanceSummary.cashReceived / onlineReceived), so it always matches
+  /// the "Payment Method" chosen on Receive Payment / manual revenue.
+  Widget _paymentModeTracker() {
+    final cash = _summary.cashReceived;
+    final online = _summary.onlineReceived;
+    final total = cash + online;
+    final cashShare = total > 0 ? cash / total : 0.0;
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(16),
+      decoration: AppTheme.card(radius: 18),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.payments_outlined, color: AppColors.darkGreen, size: 18),
+              const SizedBox(width: 8),
+              Text('Payments Received', style: AppTheme.heading(size: 14)),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              Expanded(
+                child: _paymentModeStat(
+                  'Cash',
+                  cash,
+                  AppColors.warning,
+                  Icons.account_balance_wallet_outlined,
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: _paymentModeStat(
+                  'Online',
+                  online,
+                  AppColors.info,
+                  Icons.qr_code_scanner_rounded,
+                ),
+              ),
+            ],
+          ),
+          if (total > 0) ...[
+            const SizedBox(height: 12),
+            ClipRRect(
+              borderRadius: BorderRadius.circular(6),
+              child: LinearProgressIndicator(
+                value: cashShare,
+                minHeight: 8,
+                backgroundColor: AppColors.info.withOpacity(0.25),
+                valueColor: const AlwaysStoppedAnimation(AppColors.warning),
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _paymentModeStat(String label, double value, Color color, IconData icon) {
+    return Row(
+      children: [
+        Container(
+          padding: const EdgeInsets.all(7),
+          decoration: BoxDecoration(color: color.withOpacity(0.12), shape: BoxShape.circle),
+          child: Icon(icon, color: color, size: 16),
+        ),
+        const SizedBox(width: 8),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('₹${value.toStringAsFixed(0)}', style: AppTheme.heading(size: 14)),
+              Text(label, style: AppTheme.body(size: 10)),
+            ],
+          ),
         ),
       ],
     );

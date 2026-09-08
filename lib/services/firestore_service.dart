@@ -1421,6 +1421,13 @@ class FirestoreService {
     });
   }
 
+  /// True for any `transactions` doc that represents money coming IN.
+  /// Accepts both the current `isIncome: true` shape and the legacy
+  /// `type: 'income'` shape written by monthly-bill payments before that
+  /// was fixed — see the matching helper/comment in FinanceService.
+  bool _isIncomeTransaction(Map<String, dynamic> data) =>
+      data['isIncome'] == true || data['type'] == 'income';
+
   /// Streams today's net income (sum of income - expense for today).
   Stream<double> todaysIncomeStream(String farmId) {
     final start = DateTime.now();
@@ -1435,7 +1442,7 @@ class FirestoreService {
       for (final doc in snap.docs) {
         final data = doc.data();
         final amount = (data['amount'] ?? 0).toDouble();
-        total += (data['isIncome'] == true) ? amount : -amount;
+        total += _isIncomeTransaction(data) ? amount : -amount;
       }
       return total;
     });
@@ -1470,7 +1477,7 @@ class FirestoreService {
       double total = 0;
       for (final doc in snap.docs) {
         final data = doc.data();
-        if (data['isIncome'] == true) {
+        if (_isIncomeTransaction(data)) {
           total += (data['amount'] ?? 0).toDouble();
         }
       }

@@ -11,6 +11,14 @@ class FinanceSummary {
   final Map<String, double> revenueByCategory;
   final Map<String, double> expenseByCategory;
 
+  /// Payment-mode tracker (spec: Finance Overview must show whether
+  /// money coming in was received in Cash or Online). Computed straight
+  /// off each `transactions` doc's own `paymentMethod` field — "Cash"
+  /// buckets to [cashReceived], every other non-empty method (UPI, Bank
+  /// Transfer, Cheque, Other, ...) buckets to [onlineReceived].
+  final double cashReceived;
+  final double onlineReceived;
+
   const FinanceSummary({
     required this.revenue,
     required this.expenses,
@@ -18,6 +26,8 @@ class FinanceSummary {
     required this.totalAdvance,
     this.revenueByCategory = const {},
     this.expenseByCategory = const {},
+    this.cashReceived = 0,
+    this.onlineReceived = 0,
   });
 
   double get netCashFlow => revenue - expenses;

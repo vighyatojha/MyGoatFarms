@@ -1692,6 +1692,27 @@ class MonthlyBillingService {
             'type':
             'income',
 
+            // ------------------------------------------------------------
+            // Finance module compatibility.
+            //
+            // FinanceService.getFinanceSummary / getRecentTransactions
+            // (and therefore Finance Overview's Revenue total, its
+            // Cash/Online payment tracker, and its Recent Transactions
+            // list) filter strictly on `isIncome == true` — the same
+            // flag every other income-producing write in the app sets
+            // (see FirestoreService.receivePalaiPayment and
+            // FinanceService.addManualRevenue). This transaction record
+            // only ever set the legacy `type: 'income'` field, so a
+            // Monthly Bill payment updated the customer/bill/payment
+            // docs correctly (which is why it always showed up in the
+            // Customer Ledger, which reads those directly) but was
+            // silently invisible to every `isIncome`-based Finance
+            // query. Setting both keeps old readers of `type` working
+            // while fixing the ones that need `isIncome`.
+            // ------------------------------------------------------------
+            'isIncome':
+            true,
+
             'category':
             'Palai Monthly Bill Payment',
 

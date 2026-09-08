@@ -14,7 +14,6 @@ import 'add_medicine_screen.dart';
 import 'feed_used_screen.dart';
 import 'medicine_used_screen.dart';
 
-import '../home/notification_screen.dart';
 import '../../widgets/farm_not_linked_state.dart';
 
 class StockScreen extends StatefulWidget {
@@ -527,121 +526,45 @@ class _StockScreenState extends State<StockScreen> {
   // HEADER
   // ---------------------------------------------------------------------------
 
+  /// Flat, logo-avatar-style header — same concept as Finance Overview's
+  /// header (icon avatar + heading/subtitle in the app's own fonts,
+  /// sitting directly on the page background instead of a gradient
+  /// banner), but with the Stock section's own icon in the avatar
+  /// instead of the farm logo, and no notifications bell here — that
+  /// action already lives on Home.
   Widget _buildHeader() {
-    return Container(
-      width: double.infinity,
-      padding:
-      const EdgeInsets.fromLTRB(
-        18,
-        17,
-        12,
-        17,
-      ),
-      decoration:
-      const BoxDecoration(
-        gradient: LinearGradient(
-          colors:
-          AppColors.headerGradient,
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
+    return Row(
+      children: [
+        if (Navigator.of(context).canPop())
+          IconButton(
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints(),
+            onPressed: () => Navigator.of(context).pop(),
+            icon: const Icon(Icons.arrow_back_ios_new_rounded, size: 18, color: AppColors.textDark),
+          ),
+        if (Navigator.of(context).canPop()) const SizedBox(width: 10),
+        Container(
+          width: 42,
+          height: 42,
+          decoration: const BoxDecoration(color: AppColors.lightGreen, shape: BoxShape.circle),
+          child: const Icon(Icons.inventory_2_rounded, color: AppColors.primaryGreen, size: 22),
         ),
-        borderRadius:
-        BorderRadius.all(
-          Radius.circular(22),
+        const SizedBox(width: 12),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('Stock', style: AppTheme.heading(size: 18)),
+              Text('Feed, medicine & inventory', style: AppTheme.body(size: 12)),
+            ],
+          ),
         ),
-      ),
-      child: Row(
-        children: [
-          Container(
-            width: 46,
-            height: 46,
-            decoration:
-            BoxDecoration(
-              color:
-              Colors.white
-                  .withOpacity(
-                0.16,
-              ),
-              shape: BoxShape.circle,
-            ),
-            child: const Icon(
-              Icons.inventory_2_rounded,
-              color: Colors.white,
-              size: 24,
-            ),
-          ),
-
-          const SizedBox(
-            width: 12,
-          ),
-
-          Expanded(
-            child: Column(
-              crossAxisAlignment:
-              CrossAxisAlignment
-                  .start,
-              children: [
-                Text(
-                  'Stock',
-                  style:
-                  AppTheme.heading(
-                    size: 22,
-                    color:
-                    Colors.white,
-                  ),
-                ),
-                const SizedBox(
-                  height: 2,
-                ),
-                Text(
-                  'Feed, medicine & inventory',
-                  style:
-                  AppTheme.body(
-                    size: 10,
-                    color: Colors.white
-                        .withOpacity(
-                      0.88,
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
-
-          _headerButton(
-            icon:
-            _searchOpen
-                ? Icons.close_rounded
-                : Icons.search_rounded,
-            tooltip:
-            _searchOpen
-                ? 'Close search'
-                : 'Search',
-            onTap:
-            _toggleSearch,
-          ),
-
-          const SizedBox(
-            width: 5,
-          ),
-
-          _headerButton(
-            icon:
-            Icons.notifications_none_rounded,
-            tooltip:
-            'Notifications',
-            badge: 3,
-            onTap: () {
-              Navigator.of(context)
-                  .push(
-                fastRoute(
-                  const NotificationScreen(),
-                ),
-              );
-            },
-          ),
-        ],
-      ),
+        _headerButton(
+          icon: _searchOpen ? Icons.close_rounded : Icons.search_rounded,
+          tooltip: _searchOpen ? 'Close search' : 'Search',
+          onTap: _toggleSearch,
+        ),
+      ],
     );
   }
 
@@ -649,83 +572,25 @@ class _StockScreenState extends State<StockScreen> {
     required IconData icon,
     required String tooltip,
     required VoidCallback onTap,
-    int? badge,
   }) {
     return Tooltip(
       message: tooltip,
-      child: Stack(
-        clipBehavior:
-        Clip.none,
-        children: [
-          Material(
-            color: Colors.white
-                .withOpacity(
-              0.14,
-            ),
-            shape:
-            const CircleBorder(),
-            child: InkWell(
-              customBorder:
-              const CircleBorder(),
-              onTap: onTap,
-              child: SizedBox(
-                width: 43,
-                height: 43,
-                child: Icon(
-                  icon,
-                  color:
-                  Colors.white,
-                  size: 22,
-                ),
-              ),
+      child: Material(
+        color: AppColors.lightGreen,
+        shape: const CircleBorder(),
+        child: InkWell(
+          customBorder: const CircleBorder(),
+          onTap: onTap,
+          child: SizedBox(
+            width: 40,
+            height: 40,
+            child: Icon(
+              icon,
+              color: AppColors.primaryGreen,
+              size: 20,
             ),
           ),
-
-          if (badge != null)
-            Positioned(
-              top: -3,
-              right: -2,
-              child: Container(
-                constraints:
-                const BoxConstraints(
-                  minWidth: 18,
-                  minHeight: 18,
-                ),
-                padding:
-                const EdgeInsets
-                    .symmetric(
-                  horizontal: 4,
-                ),
-                decoration:
-                BoxDecoration(
-                  color:
-                  AppColors.error,
-                  shape:
-                  BoxShape.circle,
-                  border:
-                  Border.all(
-                    color:
-                    AppColors
-                        .primaryGreen,
-                    width: 1.5,
-                  ),
-                ),
-                child: Text(
-                  '$badge',
-                  textAlign:
-                  TextAlign.center,
-                  style:
-                  const TextStyle(
-                    color:
-                    Colors.white,
-                    fontSize: 9,
-                    fontWeight:
-                    FontWeight.w800,
-                  ),
-                ),
-              ),
-            ),
-        ],
+        ),
       ),
     );
   }
