@@ -273,6 +273,14 @@ class HealthReminderScheduler {
     );
 
     await _scheduleIfFuture(
+      id: _notificationId(key, _ReminderStage.twoDaysBefore),
+      when: dueDate.subtract(const Duration(days: 2)),
+      title: '$label in 2 days',
+      body: '$goatCode is due for $labelLower in 2 days.',
+      payload: payload,
+    );
+
+    await _scheduleIfFuture(
       id: _notificationId(key, _ReminderStage.oneDayBefore),
       when: dueDate.subtract(const Duration(days: 1)),
       title: '$label tomorrow',
@@ -462,4 +470,4 @@ class HealthReminderScheduler {
   }
 }
 
-enum _ReminderStage { sevenDaysBefore, oneDayBefore, dueToday }
+enum _ReminderStage { sevenDaysBefore, twoDaysBefore, oneDayBefore, dueToday }

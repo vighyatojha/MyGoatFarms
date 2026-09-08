@@ -5,6 +5,7 @@ import '../../../app_theme.dart';
 import '../../../models/palai_models.dart';
 import '../../../services/firestore_service.dart';
 import '../../../services/image_service.dart';
+import 'goat_profile_screen.dart';
 
 /// The fully-reconstructed Health section — one of the tabs inside the
 /// new Goat Profile screen.
@@ -38,11 +39,17 @@ class GoatHealthTab extends StatefulWidget {
 
 class _GoatHealthTabState extends State<GoatHealthTab> {
   late Stream<List<HealthRecordEntry>> _stream;
+  late Future<List<HealthRecordSummary>> _remindersFuture;
 
   @override
   void initState() {
     super.initState();
     _stream = FirestoreService.instance.healthRecordsStream(
+      widget.farmId,
+      widget.customerId,
+      widget.goat.id,
+    );
+    _remindersFuture = FirestoreService.instance.goatHealthRecordSummaries(
       widget.farmId,
       widget.customerId,
       widget.goat.id,
@@ -143,6 +150,7 @@ class _GoatHealthTabState extends State<GoatHealthTab> {
           padding: const EdgeInsets.fromLTRB(14, 12, 14, 90),
           children: [
             _buildReminderBanner(latest),
+            _buildHealthRecordReminders(),
             _buildCurrentHealthCard(latest),
             const SizedBox(height: 14),
             _sectionLabel('Health History', '${records.length} record${records.length == 1 ? '' : 's'}'),
@@ -154,6 +162,82 @@ class _GoatHealthTabState extends State<GoatHealthTab> {
           ],
         );
       },
+    );
+  }
+
+  /// Vaccination / hoof-cutting / hair-trimming reminders for THIS goat
+  /// — pending (due today/overdue) and upcoming ones. These are tracked
+  /// on their own tabs (Vaccination / Hoof Cutting / Hair Trimming) and
+  /// in the farm-wide Notifications screen and Health Records screen,
+  /// but weren't visible from the general Health tab itself; this
+  /// surfaces them here too so they're not easy to miss.
+  Widget _buildHealthRecordReminders() {
+    return FutureBuilder<List<HealthRecordSummary>>(
+      future: _remindersFuture,
+      builder: (context, snapshot) {
+        final all = snapshot.data ?? [];
+        final due = all.where((r) => r.status != HealthRecordStatus.complete).toList()
+          ..sort((a, b) => a.dueDate!.compareTo(b.dueDate!));
+        if (due.isEmpty) return const SizedBox.shrink();
+
+        return Padding(
+          padding: const EdgeInsets.only(bottom: 10),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              for (final r in due) _reminderTile(r),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _reminderTile(HealthRecordSummary r) {
+    final isPending = r.status == HealthRecordStatus.pending;
+    final now = DateTime.now();
+    final isOverdue = isPending &&
+        r.dueDate!.isBefore(DateTime(now.year, now.month, now.day));
+    final color = isPending ? AppColors.error : AppColors.warning;
+    final statusText = isOverdue
+        ? 'Overdue'
+        : isPending
+        ? 'Due today'
+        : 'Due ${DateFormat('d MMM').format(r.dueDate!)}';
+
+    return InkWell(
+      borderRadius: BorderRadius.circular(10),
+      onTap: () => Navigator.of(context).push(
+        MaterialPageRoute(
+          builder: (_) => GoatProfileScreen(
+            farmId: widget.farmId,
+            goat: widget.goat,
+            initialTabIndex: r.recordType == 'vaccination'
+                ? 3
+                : r.recordType == 'hoofCutting'
+                ? 4
+                : 5,
+          ),
+        ),
+      ),
+      child: Container(
+        margin: const EdgeInsets.only(bottom: 8),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        decoration: BoxDecoration(
+          color: color.withOpacity(0.10),
+          borderRadius: BorderRadius.circular(10),
+        ),
+        child: Row(
+          children: [
+            Icon(Icons.notifications_active_outlined, size: 16, color: color),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text('${r.label} — $statusText', style: AppTheme.body(size: 12, color: color)),
+            ),
+            Icon(Icons.chevron_right, size: 16, color: color),
+          ],
+        ),
+      ),
     );
   }
 

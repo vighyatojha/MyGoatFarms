@@ -23,6 +23,7 @@ import '../stocks/stock_screen.dart';
 import '../stocks/add_feed_stock_screen.dart';
 import '../profile/profile_screen.dart';
 import 'notification_screen.dart';
+import 'health_records_screen.dart';
 import '../palai/goat_list_screen.dart';
 import '../palai/receive_payment_screen.dart';
 import '../../widgets/goat_count_builder.dart';
@@ -459,34 +460,46 @@ class _HomeScreenState extends State<HomeScreen> {
     return FadeInUp(
       delay: const Duration(milliseconds: 88),
       duration: const Duration(milliseconds: 220),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children: [
-          QuickAction(
-            icon: Icons.add,
-            label: 'Add Goat',
-            color: AppColors.primaryGreen,
-            onTap: _openAddGoat,
-          ),
-          QuickAction(
-            icon: Icons.payments_outlined,
-            label: 'Receive\nPayment',
-            color: AppColors.success,
-            onTap: _openReceivePayment,
-          ),
-          QuickAction(
-            icon: Icons.remove,
-            label: 'Add\nExpense',
-            color: AppColors.error,
-            onTap: _openAddExpense,
-          ),
-          QuickAction(
-            icon: Icons.grass_outlined,
-            label: 'Add Feed\nStock',
-            color: AppColors.info,
-            onTap: () => Navigator.of(context).push(fastRoute(const AddFeedStockScreen())),
-          ),
-        ],
+      child: SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        child: Row(
+          children: [
+            QuickAction(
+              icon: Icons.add,
+              label: 'Add Goat',
+              color: AppColors.primaryGreen,
+              onTap: _openAddGoat,
+            ),
+            const SizedBox(width: 18),
+            QuickAction(
+              icon: Icons.payments_outlined,
+              label: 'Receive\nPayment',
+              color: AppColors.success,
+              onTap: _openReceivePayment,
+            ),
+            const SizedBox(width: 18),
+            QuickAction(
+              icon: Icons.remove,
+              label: 'Add\nExpense',
+              color: AppColors.error,
+              onTap: _openAddExpense,
+            ),
+            const SizedBox(width: 18),
+            QuickAction(
+              icon: Icons.grass_outlined,
+              label: 'Add Feed\nStock',
+              color: AppColors.info,
+              onTap: () => Navigator.of(context).push(fastRoute(const AddFeedStockScreen())),
+            ),
+            const SizedBox(width: 18),
+            QuickAction(
+              icon: Icons.health_and_safety_outlined,
+              label: 'Health\nRecords',
+              color: AppColors.warning,
+              onTap: () => Navigator.of(context).push(fastRoute(const HealthRecordsScreen())),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -537,7 +550,34 @@ class _HomeScreenState extends State<HomeScreen> {
         ),
         IconButton(
           onPressed: () => Navigator.of(context).push(fastRoute(const NotificationScreen())),
-          icon: const Icon(Icons.notifications_none, color: AppColors.textDark),
+          icon: _farmId == null
+              ? const Icon(Icons.notifications_none, color: AppColors.textDark)
+              : StreamBuilder<bool>(
+            stream: FirestoreService.instance.hasUnreadNotificationsStream(_farmId!),
+            builder: (context, snap) {
+              final hasUnread = snap.data ?? false;
+              return Stack(
+                clipBehavior: Clip.none,
+                children: [
+                  const Icon(Icons.notifications_none, color: AppColors.textDark),
+                  if (hasUnread)
+                    Positioned(
+                      top: -1,
+                      right: -1,
+                      child: Container(
+                        width: 9,
+                        height: 9,
+                        decoration: BoxDecoration(
+                          color: AppColors.error,
+                          shape: BoxShape.circle,
+                          border: Border.all(color: AppColors.paleGreen, width: 1.4),
+                        ),
+                      ),
+                    ),
+                ],
+              );
+            },
+          ),
         ),
         GestureDetector(
           onTap: () => Navigator.of(context).push(fastRoute(const ProfileScreen())).then((_) {

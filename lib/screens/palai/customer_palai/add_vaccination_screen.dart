@@ -10,6 +10,7 @@ import '../../../models/vaccination_record.dart';
 import '../../../services/firestore_service.dart';
 import '../../../services/health_reminder_scheduler.dart';
 import '../../../services/notification_service.dart';
+import '../../../widgets/reminder_cadence_selector.dart';
 
 /// Full-page "Add Vaccination" screen, pushed from the Vaccination tab
 /// on GoatProfileScreen. Deliberately a pushed screen rather than a
@@ -48,8 +49,21 @@ class _AddVaccinationScreenState extends State<AddVaccinationScreen> {
   final _noteController = TextEditingController();
 
   DateTime _vaccinationDate = DateTime.now();
-  DateTime? _nextDueDate;
+
+  /// Reminder cadence in days — 30 / 45 / 90, or null for "no reminder".
+  /// Replaces the old manual next-due-date/time picker: the actual due
+  /// date is derived from [_vaccinationDate] + this many days.
+  int? _reminderDays = 30;
   bool _saving = false;
+
+  @override
+  void initState() {
+    super.initState();
+    // Snap the customer's configured default reminder cadence onto one
+    // of the three supported options; anything else (a custom value
+    // from before this became a fixed 30/45/90 choice) falls back to 30.
+    _reminderDays = const [30, 45, 90].contains(widget.reminderDays) ? widget.reminderDays : 30;
+  }
 
   @override
   void dispose() {
@@ -88,43 +102,13 @@ class _AddVaccinationScreenState extends State<AddVaccinationScreen> {
     if (picked != null) onPicked(picked);
   }
 
-  /// Date + time picker — used for "Next due date" so the due moment can
-  /// be set to a few minutes from now, which is the only practical way
-  /// to manually test the "due today" notification without waiting
-  /// until midnight.
-  Future<void> _pickDateTime({
-    required DateTime initial,
-    required DateTime first,
-    required DateTime last,
-    required ValueChanged<DateTime> onPicked,
-  }) async {
-    final pickedDate = await showDatePicker(
-      context: context,
-      initialDate: initial,
-      firstDate: first,
-      lastDate: last,
-    );
-    if (pickedDate == null || !mounted) return;
-
-    final pickedTime = await showTimePicker(
-      context: context,
-      initialTime: TimeOfDay.fromDateTime(initial),
-    );
-    if (pickedTime == null) return;
-
-    onPicked(DateTime(
-      pickedDate.year,
-      pickedDate.month,
-      pickedDate.day,
-      pickedTime.hour,
-      pickedTime.minute,
-    ));
-  }
-
   Future<void> _save() async {
     if (!(_formKey.currentState?.validate() ?? false)) return;
 
     setState(() => _saving = true);
+
+    final nextDueDate =
+    _reminderDays != null ? _vaccinationDate.add(Duration(days: _reminderDays!)) : null;
 
     try {
       final reference = _vaccinationCollection.doc();
@@ -134,14 +118,22 @@ class _AddVaccinationScreenState extends State<AddVaccinationScreen> {
         vaccineName: _vaccineController.text.trim(),
         disease: _diseaseController.text.trim(),
         vaccinationDate: _vaccinationDate,
-        nextDueDate: _nextDueDate,
+        nextDueDate: nextDueDate,
         batchNumber: _batchController.text.trim(),
         dosage: _dosageController.text.trim(),
         veterinarian: _veterinarianController.text.trim(),
         note: _noteController.text.trim(),
         recordedAt: DateTime.now(),
       );
-      await reference.set(record.toCreateMap());
+      await reference.set({
+        ...record.toCreateMap(),
+        // Denormalized so the farm-wide Health Records screen can run a
+        // single collectionGroup('vaccinationRecords') query filtered by
+        // farmId, instead of looping every customer's every goat one at
+        // a time — same pattern as PalaiGoat.farmId (see
+        // FirestoreService.checkInGoat).
+        'farmId': widget.farmId,
+      });
 
       // Instant "it happened" notification — fires regardless of
       // whether a next-due date was set, so every vaccination logged
@@ -176,7 +168,7 @@ class _AddVaccinationScreenState extends State<AddVaccinationScreen> {
         recordType: 'vaccination',
         recordId: reference.id,
         label: 'Vaccination',
-        dueDate: record.nextDueDate,
+        dueDate: nextDueDate,
       ));
 
       if (!mounted) return;
@@ -232,18 +224,9 @@ class _AddVaccinationScreenState extends State<AddVaccinationScreen> {
               ),
             ),
             const SizedBox(height: 14),
-            _DateTile(
-              label: 'Next due date',
-              date: _nextDueDate,
-              optional: true,
-              showTime: true,
-              onTap: () => _pickDateTime(
-                initial: _nextDueDate ?? _vaccinationDate.add(Duration(days: widget.reminderDays)),
-                first: _vaccinationDate,
-                last: DateTime(2100),
-                onPicked: (d) => setState(() => _nextDueDate = d),
-              ),
-              onClear: _nextDueDate == null ? null : () => setState(() => _nextDueDate = null),
+            ReminderCadenceSelector(
+              value: _reminderDays,
+              onChanged: (days) => setState(() => _reminderDays = days),
             ),
             const SizedBox(height: 14),
             TextFormField(

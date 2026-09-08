@@ -6,10 +6,17 @@ class AppBottomNav extends StatelessWidget {
   final int currentIndex;
   final ValueChanged<int> onTap;
 
+  /// Shows a small red dot on the Home icon — driven by whether the
+  /// farm has any unread notifications (see
+  /// FirestoreService.hasUnreadNotificationsStream). Clears itself the
+  /// moment nothing is unread anymore.
+  final bool showHomeBadge;
+
   const AppBottomNav({
     super.key,
     required this.currentIndex,
     required this.onTap,
+    this.showHomeBadge = false,
   });
 
   static const List<_NavItemData> _items = [
@@ -75,7 +82,7 @@ class AppBottomNav extends StatelessWidget {
                 child: Row(
                   children: [
                     Expanded(
-                      child: _buildNavItem(_items[0]),
+                      child: _buildNavItem(_items[0], showBadge: showHomeBadge),
                     ),
                     Expanded(
                       child: _buildNavItem(_items[1]),
@@ -117,7 +124,7 @@ class AppBottomNav extends StatelessWidget {
     );
   }
 
-  Widget _buildNavItem(_NavItemData item) {
+  Widget _buildNavItem(_NavItemData item, {bool showBadge = false}) {
     final selected = currentIndex == item.shellIndex;
 
     return Material(
@@ -159,14 +166,33 @@ class AppBottomNav extends StatelessWidget {
                 key: ValueKey(selected),
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  Icon(
-                    selected
-                        ? item.activeIcon
-                        : item.icon,
-                    size: selected ? 21 : 20,
-                    color: selected
-                        ? AppColors.primaryGreen
-                        : AppColors.textGrey,
+                  Stack(
+                    clipBehavior: Clip.none,
+                    children: [
+                      Icon(
+                        selected
+                            ? item.activeIcon
+                            : item.icon,
+                        size: selected ? 21 : 20,
+                        color: selected
+                            ? AppColors.primaryGreen
+                            : AppColors.textGrey,
+                      ),
+                      if (showBadge)
+                        Positioned(
+                          top: -2,
+                          right: -3,
+                          child: Container(
+                            width: 8,
+                            height: 8,
+                            decoration: BoxDecoration(
+                              color: AppColors.error,
+                              shape: BoxShape.circle,
+                              border: Border.all(color: Colors.white, width: 1.2),
+                            ),
+                          ),
+                        ),
+                    ],
                   ),
                   const SizedBox(height: 2),
                   Text(

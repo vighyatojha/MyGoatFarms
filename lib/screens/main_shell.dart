@@ -56,6 +56,12 @@ class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
   /// Whether the current screen was reached by pressing Back.
   bool _isGoingBack = false;
 
+  /// Set once currentFarmId() resolves — used only to drive the unread
+  /// badge on the Home tab (see AppBottomNav.showHomeBadge). Everything
+  /// else in this shell resolves farmId locally where it's needed, so
+  /// this field exists purely for that one stream.
+  String? _farmId;
+
   @override
   void initState() {
     super.initState();
@@ -99,6 +105,7 @@ class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
   Future<void> _initPushNotifications() async {
     final farmId = await FirestoreService.instance.currentFarmId();
     if (farmId == null || !mounted) return;
+    setState(() => _farmId = farmId);
     await NotificationService.instance.initForFarm(farmId);
 
     // Re-arm any health due-date reminders lost to a device reboot, and
@@ -419,24 +426,42 @@ class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
 
         body: _buildTabTransition(),
 
-        bottomNavigationBar: AppBottomNav(
+        bottomNavigationBar: _farmId == null
+            ? AppBottomNav(
           currentIndex: _index,
 
           onTap: (index) {
-            // ------------------------------------------------------------
-            // Profile
-            // ------------------------------------------------------------
-
             if (index == 5) {
               _openProfile();
               return;
             }
-
-            // ------------------------------------------------------------
-            // Home / Palai / Stock / Finance
-            // ------------------------------------------------------------
-
             _navigateToTab(index);
+          },
+        )
+            : StreamBuilder<bool>(
+          stream: FirestoreService.instance.hasUnreadNotificationsStream(_farmId!),
+          builder: (context, snap) {
+            return AppBottomNav(
+              currentIndex: _index,
+              showHomeBadge: snap.data ?? false,
+
+              onTap: (index) {
+                // ------------------------------------------------------------
+                // Profile
+                // ------------------------------------------------------------
+
+                if (index == 5) {
+                  _openProfile();
+                  return;
+                }
+
+                // ------------------------------------------------------------
+                // Home / Palai / Stock / Finance
+                // ------------------------------------------------------------
+
+                _navigateToTab(index);
+              },
+            );
           },
         ),
       ),

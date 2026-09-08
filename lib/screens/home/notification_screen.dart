@@ -170,6 +170,72 @@ class _NotificationScreenState extends State<NotificationScreen> {
     }
   }
 
+  Future<void> _showActionsSheet(AppNotificationRecord n) async {
+    final action = await showModalBottomSheet<String>(
+      context: context,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
+      ),
+      builder: (sheetContext) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const SizedBox(height: 8),
+            Container(
+              width: 36,
+              height: 4,
+              decoration: BoxDecoration(
+                color: AppColors.textGrey.withOpacity(0.3),
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+            const SizedBox(height: 12),
+            ListTile(
+              leading: Icon(
+                n.isRead ? Icons.mark_email_unread_outlined : Icons.mark_email_read_outlined,
+                color: AppColors.textDark,
+              ),
+              title: Text(
+                n.isRead ? 'Mark as unread' : 'Mark as read',
+                style: AppTheme.body(size: 14),
+              ),
+              onTap: () => Navigator.of(sheetContext).pop('toggleRead'),
+            ),
+            // Delete is server-enforced to owners only (see
+            // FirestoreService.deleteNotification) — only offering it
+            // to owners here is just the matching UX, not the actual
+            // security boundary.
+            if (_isOwner)
+              ListTile(
+                leading: const Icon(Icons.delete_outline, color: AppColors.error),
+                title: Text('Delete', style: AppTheme.body(size: 14, color: AppColors.error)),
+                onTap: () => Navigator.of(sheetContext).pop('delete'),
+              ),
+            const SizedBox(height: 8),
+          ],
+        ),
+      ),
+    );
+
+    if (!mounted || action == null) return;
+
+    if (action == 'toggleRead') {
+      final farmId = _farmId;
+      if (farmId == null) return;
+      if (n.isRead) {
+        await FirestoreService.instance.markNotificationUnread(farmId, n.id);
+      } else {
+        await FirestoreService.instance.markNotificationRead(farmId, n.id);
+      }
+    } else if (action == 'delete') {
+      final confirmed = await _confirmDelete();
+      if (confirmed) {
+        await _deleteNotification(n);
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -219,6 +285,7 @@ class _NotificationScreenState extends State<NotificationScreen> {
                 child: InkWell(
                   borderRadius: BorderRadius.circular(14),
                   onTap: () => _onTap(n),
+                  onLongPress: () => _showActionsSheet(n),
                   child: Container(
                     margin: const EdgeInsets.only(bottom: 10),
                     padding: const EdgeInsets.all(14),

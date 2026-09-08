@@ -40,6 +40,37 @@ class CustomerHealthReminder {
   });
 }
 
+/// Which bucket a [HealthRecordSummary] falls into, for the Health
+/// Records screen's Complete / Pending / Upcoming tabs.
+enum HealthRecordStatus { complete, pending, upcoming }
+
+/// One vaccination / hoof-cutting / hair-trimming record, farm-wide,
+/// classified for the Health Records screen. Unlike
+/// [CustomerHealthReminder] (which only covers records that are already
+/// due or due soon), this covers every record regardless of due date —
+/// including ones with no reminder set at all ([HealthRecordStatus.complete]).
+class HealthRecordSummary {
+  final PalaiGoat goat;
+
+  /// 'vaccination' | 'hoofCutting' | 'hairTrimming'
+  final String recordType;
+  final String recordId;
+  final String label;
+  final DateTime recordDate;
+  final DateTime? dueDate;
+  final HealthRecordStatus status;
+
+  HealthRecordSummary({
+    required this.goat,
+    required this.recordType,
+    required this.recordId,
+    required this.label,
+    required this.recordDate,
+    required this.dueDate,
+    required this.status,
+  });
+}
+
 class MonthlyBillResult {
   final String billId;
   final String billNumber;
@@ -2819,6 +2850,184 @@ class FirestoreService {
     return results;
   }
 
+  /// Every vaccination / hoof-cutting / hair-trimming record farm-wide,
+  /// across every customer's active goats, classified into Complete /
+  /// Pending / Upcoming — powers the Health Records quick-access screen.
+  ///
+  ///   * Complete — no reminder was set for this record at all
+  ///     (`nextDueDate == null`), whether because none was chosen or
+  ///     because it was cleared via the "Done" button on the record's
+  ///     detail sheet.
+  ///   * Pending — has a `nextDueDate` that is today or already overdue.
+  ///   * Upcoming — has a `nextDueDate` still in the future.
+  ///
+  /// A one-time fetch (not a stream) — this is a "browse and pull to
+  /// refresh" screen, not a live dashboard number, and a stream across a
+  /// collectionGroup query plus a per-goat subcollection read for each
+  /// of three record types isn't practical to keep live. [perTypeLimit]
+  /// caps how many of each goat's most recent records (per record type)
+  /// are considered, so a goat with years of history doesn't blow up the
+  /// read count.
+  Future<List<HealthRecordSummary>> allCustomerHealthRecordSummaries(
+      String farmId, {
+        int perTypeLimit = 30,
+      }) async {
+    final goatsSnap = await _db
+        .collectionGroup('goats')
+        .where('farmId', isEqualTo: farmId)
+        .where('isCheckedOut', isEqualTo: false)
+        .get()
+        .timeout(timeout);
+
+    final now = DateTime.now();
+    final results = <HealthRecordSummary>[];
+
+    const recordTypes = [
+      (
+        collection: 'vaccinationRecords',
+        dateField: 'vaccinationDate',
+        type: 'vaccination',
+        label: 'Vaccination',
+      ),
+      (
+        collection: 'hoofCuttingRecords',
+        dateField: 'cuttingDate',
+        type: 'hoofCutting',
+        label: 'Hoof cutting',
+      ),
+      (
+        collection: 'hairTrimmingRecords',
+        dateField: 'trimmingDate',
+        type: 'hairTrimming',
+        label: 'Hair trimming',
+      ),
+    ];
+
+    for (final goatDoc in goatsSnap.docs) {
+      final goat = PalaiGoat.fromDoc(goatDoc);
+      for (final rt in recordTypes) {
+        final recordsSnap = await goatDoc.reference
+            .collection(rt.collection)
+            .orderBy(rt.dateField, descending: true)
+            .limit(perTypeLimit)
+            .get()
+            .timeout(timeout);
+
+        for (final doc in recordsSnap.docs) {
+          final data = doc.data();
+          final recordDateTs = data[rt.dateField];
+          if (recordDateTs is! Timestamp) continue;
+          final recordDate = recordDateTs.toDate();
+
+          final dueTs = data['nextDueDate'];
+          final dueDate = dueTs is Timestamp ? dueTs.toDate() : null;
+
+          final HealthRecordStatus status;
+          if (dueDate == null) {
+            status = HealthRecordStatus.complete;
+          } else if (!dueDate.isAfter(now)) {
+            status = HealthRecordStatus.pending;
+          } else {
+            status = HealthRecordStatus.upcoming;
+          }
+
+          results.add(HealthRecordSummary(
+            goat: goat,
+            recordType: rt.type,
+            recordId: doc.id,
+            label: rt.label,
+            recordDate: recordDate,
+            dueDate: dueDate,
+            status: status,
+          ));
+        }
+      }
+    }
+
+    return results;
+  }
+
+  /// Same classification as [allCustomerHealthRecordSummaries], scoped
+  /// to a single goat — used by GoatHealthTab to surface this goat's own
+  /// pending/upcoming vaccination / hoof-cutting / hair-trimming
+  /// reminders alongside its general health-checkup history, instead of
+  /// those only being visible buried in their own separate tabs or the
+  /// farm-wide Notifications screen.
+  Future<List<HealthRecordSummary>> goatHealthRecordSummaries(
+      String farmId,
+      String customerId,
+      String goatId, {
+        int perTypeLimit = 10,
+      }) async {
+    final goat = await getPalaiGoat(farmId, customerId, goatId);
+    if (goat == null) return [];
+
+    final now = DateTime.now();
+    final results = <HealthRecordSummary>[];
+    final goatRef = _goats(farmId, customerId).doc(goatId);
+
+    const recordTypes = [
+      (
+        collection: 'vaccinationRecords',
+        dateField: 'vaccinationDate',
+        type: 'vaccination',
+        label: 'Vaccination',
+      ),
+      (
+        collection: 'hoofCuttingRecords',
+        dateField: 'cuttingDate',
+        type: 'hoofCutting',
+        label: 'Hoof cutting',
+      ),
+      (
+        collection: 'hairTrimmingRecords',
+        dateField: 'trimmingDate',
+        type: 'hairTrimming',
+        label: 'Hair trimming',
+      ),
+    ];
+
+    for (final rt in recordTypes) {
+      final recordsSnap = await goatRef
+          .collection(rt.collection)
+          .orderBy(rt.dateField, descending: true)
+          .limit(perTypeLimit)
+          .get()
+          .timeout(timeout);
+
+      for (final doc in recordsSnap.docs) {
+        final data = doc.data();
+        final recordDateTs = data[rt.dateField];
+        if (recordDateTs is! Timestamp) continue;
+        final recordDate = recordDateTs.toDate();
+
+        final dueTs = data['nextDueDate'];
+        final dueDate = dueTs is Timestamp ? dueTs.toDate() : null;
+
+        final HealthRecordStatus status;
+        if (dueDate == null) {
+          status = HealthRecordStatus.complete;
+        } else if (!dueDate.isAfter(now)) {
+          status = HealthRecordStatus.pending;
+        } else {
+          status = HealthRecordStatus.upcoming;
+        }
+
+        results.add(HealthRecordSummary(
+          goat: goat,
+          recordType: rt.type,
+          recordId: doc.id,
+          label: rt.label,
+          recordDate: recordDate,
+          dueDate: dueDate,
+          status: status,
+        ));
+      }
+    }
+
+    return results;
+  }
+
   // -- Breeding --------------------------------------------------------
 
   Future<void> addBreedingRecord(String farmId, String goatId, BreedingRecord record) async {
@@ -2922,8 +3131,27 @@ class FirestoreService {
         .map((s) => s.docs.map(AppNotificationRecord.fromDoc).toList());
   }
 
+  /// True whenever this farm has at least one unread notification —
+  /// drives the small red dot on the Home tab's bottom-nav icon and on
+  /// the notification bell in the Home app bar. Deliberately a plain
+  /// existence check rather than a count query, since the badge is a
+  /// dot, not a number.
+  Stream<bool> hasUnreadNotificationsStream(String farmId) {
+    return _notifications(farmId)
+        .where('isRead', isEqualTo: false)
+        .limit(1)
+        .snapshots()
+        .map((s) => s.docs.isNotEmpty);
+  }
+
   Future<void> markNotificationRead(String farmId, String notificationId) {
     return _notifications(farmId).doc(notificationId).update({'isRead': true}).timeout(timeout);
+  }
+
+  /// Reverses [markNotificationRead] — used by the long-press action
+  /// sheet's "Mark as unread" option.
+  Future<void> markNotificationUnread(String farmId, String notificationId) {
+    return _notifications(farmId).doc(notificationId).update({'isRead': false}).timeout(timeout);
   }
 
   Future<void> markAllNotificationsRead(String farmId) async {

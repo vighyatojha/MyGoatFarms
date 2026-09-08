@@ -10,6 +10,7 @@ import '../../../models/palai_models.dart';
 import '../../../services/firestore_service.dart';
 import '../../../services/health_reminder_scheduler.dart';
 import '../../../services/notification_service.dart';
+import '../../../widgets/reminder_cadence_selector.dart';
 
 /// Full-page "Add Hair Trimming" screen, pushed from the Hair Trimming
 /// tab on GoatProfileScreen (see AddVaccinationScreen for why this is
@@ -37,8 +38,16 @@ class _AddHairTrimmingScreenState extends State<AddHairTrimmingScreen> {
   final _noteController = TextEditingController();
 
   DateTime _trimmingDate = DateTime.now();
-  DateTime? _nextDueDate;
+
+  /// Reminder cadence in days — 30 / 45 / 90, or null for "no reminder".
+  int? _reminderDays = 30;
   bool _saving = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _reminderDays = const [30, 45, 90].contains(widget.reminderDays) ? widget.reminderDays : 30;
+  }
 
   @override
   void dispose() {
@@ -73,53 +82,27 @@ class _AddHairTrimmingScreenState extends State<AddHairTrimmingScreen> {
     if (picked != null) onPicked(picked);
   }
 
-  /// Date + time picker — used for "Next due date" so the due moment can
-  /// be set to a few minutes from now, which is the only practical way
-  /// to manually test the "due today" notification without waiting
-  /// until midnight.
-  Future<void> _pickDateTime({
-    required DateTime initial,
-    required DateTime first,
-    required DateTime last,
-    required ValueChanged<DateTime> onPicked,
-  }) async {
-    final pickedDate = await showDatePicker(
-      context: context,
-      initialDate: initial,
-      firstDate: first,
-      lastDate: last,
-    );
-    if (pickedDate == null || !mounted) return;
-
-    final pickedTime = await showTimePicker(
-      context: context,
-      initialTime: TimeOfDay.fromDateTime(initial),
-    );
-    if (pickedTime == null) return;
-
-    onPicked(DateTime(
-      pickedDate.year,
-      pickedDate.month,
-      pickedDate.day,
-      pickedTime.hour,
-      pickedTime.minute,
-    ));
-  }
-
   Future<void> _save() async {
     setState(() => _saving = true);
+
+    final nextDueDate =
+    _reminderDays != null ? _trimmingDate.add(Duration(days: _reminderDays!)) : null;
+
     try {
       final reference = _hairCollection.doc();
       final record = HairTrimmingRecord(
         id: reference.id,
         goatId: widget.goat.id,
         trimmingDate: _trimmingDate,
-        nextDueDate: _nextDueDate,
+        nextDueDate: nextDueDate,
         performedBy: _performedByController.text.trim(),
         note: _noteController.text.trim(),
         recordedAt: DateTime.now(),
       );
-      await reference.set(record.toCreateMap());
+      await reference.set({
+        ...record.toCreateMap(),
+        'farmId': widget.farmId,
+      });
 
       unawaited(FirestoreService.instance.addNotification(
         farmId: widget.farmId,
@@ -147,7 +130,7 @@ class _AddHairTrimmingScreenState extends State<AddHairTrimmingScreen> {
         recordType: 'hairTrimming',
         recordId: reference.id,
         label: 'Hair trimming',
-        dueDate: record.nextDueDate,
+        dueDate: nextDueDate,
       ));
 
       if (!mounted) return;
@@ -179,18 +162,9 @@ class _AddHairTrimmingScreenState extends State<AddHairTrimmingScreen> {
             ),
           ),
           const SizedBox(height: 14),
-          _DateTile(
-            label: 'Next due date',
-            date: _nextDueDate,
-            optional: true,
-            showTime: true,
-            onTap: () => _pickDateTime(
-              initial: _nextDueDate ?? _trimmingDate.add(Duration(days: widget.reminderDays)),
-              first: _trimmingDate,
-              last: DateTime(2100),
-              onPicked: (d) => setState(() => _nextDueDate = d),
-            ),
-            onClear: _nextDueDate == null ? null : () => setState(() => _nextDueDate = null),
+          ReminderCadenceSelector(
+            value: _reminderDays,
+            onChanged: (days) => setState(() => _reminderDays = days),
           ),
           const SizedBox(height: 14),
           TextFormField(
