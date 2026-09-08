@@ -12,18 +12,10 @@ import '../../../services/health_reminder_scheduler.dart';
 import '../../../services/notification_service.dart';
 import '../../../widgets/reminder_cadence_selector.dart';
 
-/// Full-page "Add Vaccination" screen, pushed from the Vaccination tab
-/// on GoatProfileScreen. Deliberately a pushed screen rather than a
-/// dialog/popup — a popup form nested inside a TabBarView page is what
-/// was causing the '_dependents.isEmpty' crash when saving, and a real
-/// screen is a much better mobile UX for a form this long anyway.
 class AddVaccinationScreen extends StatefulWidget {
   final String farmId;
   final String customerId;
   final PalaiGoat goat;
-
-  /// Default number of days to suggest for "Next due date", pulled
-  /// from this customer's settings by the parent tab.
   final int reminderDays;
 
   const AddVaccinationScreen({
@@ -50,19 +42,64 @@ class _AddVaccinationScreenState extends State<AddVaccinationScreen> {
 
   DateTime _vaccinationDate = DateTime.now();
 
-  /// Reminder cadence in days — 30 / 45 / 90, or null for "no reminder".
-  /// Replaces the old manual next-due-date/time picker: the actual due
-  /// date is derived from [_vaccinationDate] + this many days.
   int? _reminderDays = 30;
   bool _saving = false;
+  bool _loadingReminderSetting = true;
 
   @override
   void initState() {
     super.initState();
-    // Snap the customer's configured default reminder cadence onto one
-    // of the three supported options; anything else (a custom value
-    // from before this became a fixed 30/45/90 choice) falls back to 30.
-    _reminderDays = const [30, 45, 90].contains(widget.reminderDays) ? widget.reminderDays : 30;
+    _reminderDays = _normalizeReminderDays(widget.reminderDays);
+    _loadCustomerReminderSetting();
+  }
+
+  int _normalizeReminderDays(int? value) {
+    if (value != null && value > 0) {
+      return value;
+    }
+    return 30;
+  }
+
+  Future<void> _loadCustomerReminderSetting() async {
+    try {
+      final document = await FirebaseFirestore.instance
+          .collection('palaiCustomers')
+          .doc(widget.customerId)
+          .get();
+
+      final data = document.data();
+
+      if (data != null) {
+        final rawSettings = data['settings'];
+
+        if (rawSettings is Map) {
+          final rawDays = rawSettings['vaccinationReminderDays'];
+
+          int? days;
+
+          if (rawDays is num) {
+            days = rawDays.toInt();
+          } else {
+            days = int.tryParse(rawDays?.toString() ?? '');
+          }
+
+          if (days != null && days > 0) {
+            if (mounted) {
+              setState(() {
+                _reminderDays = days;
+              });
+            }
+          }
+        }
+      }
+    } catch (_) {
+    } finally {
+      if (mounted) {
+        setState(() {
+          _loadingReminderSetting = false;
+        });
+      }
+    }
   }
 
   @override
@@ -99,19 +136,30 @@ class _AddVaccinationScreenState extends State<AddVaccinationScreen> {
       firstDate: first,
       lastDate: last,
     );
-    if (picked != null) onPicked(picked);
+
+    if (picked != null) {
+      onPicked(picked);
+    }
   }
 
   Future<void> _save() async {
-    if (!(_formKey.currentState?.validate() ?? false)) return;
+    if (!(_formKey.currentState?.validate() ?? false)) {
+      return;
+    }
 
-    setState(() => _saving = true);
+    setState(() {
+      _saving = true;
+    });
 
-    final nextDueDate =
-    _reminderDays != null ? _vaccinationDate.add(Duration(days: _reminderDays!)) : null;
+    final nextDueDate = _reminderDays != null
+        ? _vaccinationDate.add(
+      Duration(days: _reminderDays!),
+    )
+        : null;
 
     try {
       final reference = _vaccinationCollection.doc();
+
       final record = VaccinationRecord(
         id: reference.id,
         goatId: widget.goat.id,
@@ -125,59 +173,78 @@ class _AddVaccinationScreenState extends State<AddVaccinationScreen> {
         note: _noteController.text.trim(),
         recordedAt: DateTime.now(),
       );
+
       await reference.set({
         ...record.toCreateMap(),
-        // Denormalized so the farm-wide Health Records screen can run a
-        // single collectionGroup('vaccinationRecords') query filtered by
-        // farmId, instead of looping every customer's every goat one at
-        // a time — same pattern as PalaiGoat.farmId (see
-        // FirestoreService.checkInGoat).
         'farmId': widget.farmId,
       });
 
-      // Instant "it happened" notification — fires regardless of
-      // whether a next-due date was set, so every vaccination logged
-      // shows up in the notification feed right away.
-      unawaited(FirestoreService.instance.addNotification(
-        farmId: widget.farmId,
-        docId: 'health_${widget.goat.id}_vaccination_${reference.id}_logged',
-        type: 'vaccination_logged',
-        category: 'health',
-        priority: 'normal',
-        title: 'Vaccination recorded',
-        message: '${widget.goat.goatCode}: ${record.vaccineName} vaccination logged.',
-        reference: {'customerId': widget.customerId, 'goatId': widget.goat.id, 'recordId': reference.id},
-      ));
+      unawaited(
+        FirestoreService.instance.addNotification(
+          farmId: widget.farmId,
+          docId:
+          'health_${widget.goat.id}_vaccination_${reference.id}_logged',
+          type: 'vaccination_logged',
+          category: 'health',
+          priority: 'normal',
+          title: 'Vaccination recorded',
+          message:
+          '${widget.goat.goatCode}: ${record.vaccineName} vaccination logged.',
+          reference: {
+            'customerId': widget.customerId,
+            'goatId': widget.goat.id,
+            'recordId': reference.id,
+          },
+        ),
+      );
 
-      // Real OS-level heads-up notification for the same "it happened"
-      // event — addNotification above only writes the in-app feed.
-      unawaited(NotificationService.instance.showNow(
-        id: reference.id.hashCode & 0x0FFFFFFF,
-        title: 'Vaccination recorded',
-        body: '${widget.goat.goatCode}: ${record.vaccineName} vaccination logged.',
-        data: {'customerId': widget.customerId, 'goatId': widget.goat.id, 'recordId': reference.id},
-      ));
+      unawaited(
+        NotificationService.instance.showNow(
+          id: reference.id.hashCode & 0x0FFFFFFF,
+          title: 'Vaccination recorded',
+          body:
+          '${widget.goat.goatCode}: ${record.vaccineName} vaccination logged.',
+          data: {
+            'customerId': widget.customerId,
+            'goatId': widget.goat.id,
+            'recordId': reference.id,
+          },
+        ),
+      );
 
-      // Due-date reminder engine (7 days before / 1 day before / due
-      // today) for the next-due date, if one was set.
-      unawaited(HealthReminderScheduler.instance.scheduleCustomerHealthReminder(
-        farmId: widget.farmId,
-        customerId: widget.customerId,
-        goatId: widget.goat.id,
-        goatCode: widget.goat.goatCode,
-        recordType: 'vaccination',
-        recordId: reference.id,
-        label: 'Vaccination',
-        dueDate: nextDueDate,
-      ));
+      unawaited(
+        HealthReminderScheduler.instance.scheduleCustomerHealthReminder(
+          farmId: widget.farmId,
+          customerId: widget.customerId,
+          goatId: widget.goat.id,
+          goatCode: widget.goat.goatCode,
+          recordType: 'vaccination',
+          recordId: reference.id,
+          label: 'Vaccination',
+          dueDate: nextDueDate,
+        ),
+      );
 
-      if (!mounted) return;
+      if (!mounted) {
+        return;
+      }
+
       Navigator.of(context).pop(true);
     } catch (error) {
-      if (!mounted) return;
-      setState(() => _saving = false);
+      if (!mounted) {
+        return;
+      }
+
+      setState(() {
+        _saving = false;
+      });
+
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Could not save vaccination: $error')),
+        SnackBar(
+          content: Text(
+            'Could not save vaccination: $error',
+          ),
+        ),
       );
     }
   }
@@ -185,12 +252,24 @@ class _AddVaccinationScreenState extends State<AddVaccinationScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Add Vaccination')),
+      appBar: AppBar(
+        title: const Text('Add Vaccination'),
+      ),
       body: Form(
         key: _formKey,
         child: ListView(
-          padding: const EdgeInsets.fromLTRB(16, 16, 16, 100),
+          padding: const EdgeInsets.fromLTRB(
+            16,
+            16,
+            16,
+            100,
+          ),
           children: [
+            if (_loadingReminderSetting)
+              const Padding(
+                padding: EdgeInsets.only(bottom: 12),
+                child: LinearProgressIndicator(),
+              ),
             TextFormField(
               controller: _vaccineController,
               autofocus: true,
@@ -200,7 +279,13 @@ class _AddVaccinationScreenState extends State<AddVaccinationScreen> {
                 hintText: 'Example: PPR Vaccine',
                 border: OutlineInputBorder(),
               ),
-              validator: (v) => (v == null || v.trim().isEmpty) ? 'Enter the vaccine name' : null,
+              validator: (v) {
+                if (v == null || v.trim().isEmpty) {
+                  return 'Enter the vaccine name';
+                }
+
+                return null;
+              },
             ),
             const SizedBox(height: 14),
             TextFormField(
@@ -220,13 +305,21 @@ class _AddVaccinationScreenState extends State<AddVaccinationScreen> {
                 initial: _vaccinationDate,
                 first: DateTime(2000),
                 last: DateTime.now(),
-                onPicked: (d) => setState(() => _vaccinationDate = d),
+                onPicked: (d) {
+                  setState(() {
+                    _vaccinationDate = d;
+                  });
+                },
               ),
             ),
             const SizedBox(height: 14),
             ReminderCadenceSelector(
               value: _reminderDays,
-              onChanged: (days) => setState(() => _reminderDays = days),
+              onChanged: (days) {
+                setState(() {
+                  _reminderDays = days;
+                });
+              },
             ),
             const SizedBox(height: 14),
             TextFormField(
@@ -278,12 +371,17 @@ class _AddVaccinationScreenState extends State<AddVaccinationScreen> {
             height: 48,
             child: FilledButton(
               onPressed: _saving ? null : _save,
-              style: FilledButton.styleFrom(backgroundColor: AppColors.primaryGreen),
+              style: FilledButton.styleFrom(
+                backgroundColor: AppColors.primaryGreen,
+              ),
               child: _saving
                   ? const SizedBox(
                 width: 20,
                 height: 20,
-                child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  color: Colors.white,
+                ),
               )
                   : const Text('Save Vaccination'),
             ),
@@ -320,14 +418,31 @@ class _DateTile extends StatelessWidget {
           labelText: optional ? '$label (optional)' : label,
           border: const OutlineInputBorder(),
           suffixIcon: onClear != null
-              ? IconButton(icon: const Icon(Icons.clear, size: 18), onPressed: onClear)
-              : const Icon(Icons.calendar_today_outlined, size: 18),
+              ? IconButton(
+            icon: const Icon(
+              Icons.clear,
+              size: 18,
+            ),
+            onPressed: onClear,
+          )
+              : const Icon(
+            Icons.calendar_today_outlined,
+            size: 18,
+          ),
         ),
         child: Text(
           date != null
-              ? DateFormat(showTime ? 'd MMM yyyy, h:mm a' : 'd MMM yyyy').format(date!)
+              ? DateFormat(
+            showTime
+                ? 'd MMM yyyy, h:mm a'
+                : 'd MMM yyyy',
+          ).format(date!)
               : 'Not set',
-          style: TextStyle(color: date != null ? null : AppColors.textMuted),
+          style: TextStyle(
+            color: date != null
+                ? null
+                : AppColors.textMuted,
+          ),
         ),
       ),
     );

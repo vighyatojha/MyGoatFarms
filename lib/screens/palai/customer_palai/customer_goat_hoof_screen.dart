@@ -6,7 +6,6 @@ import 'package:flutter/material.dart';
 import '../../../models/hoof_cutting_record.dart';
 import '../../../models/palai_models.dart';
 import '../../../services/firestore_service.dart';
-import '../../../services/health_reminder_scheduler.dart';
 import 'add_hoof_cutting_screen.dart';
 
 class CustomerGoatHoofScreen extends StatefulWidget {
@@ -31,9 +30,6 @@ class _CustomerGoatHoofScreenState
   final FirebaseFirestore _firestore =
       FirebaseFirestore.instance;
 
-  // Reminder interval for scheduling the next due date, pulled from
-  // this customer's settings (CustomerSettingsScreen); falls back to
-  // 30 days if the customer has no override saved yet.
   int _reminderDays = 30;
 
   @override
@@ -45,19 +41,32 @@ class _CustomerGoatHoofScreenState
   Future<void> _loadReminderSetting() async {
     try {
       final doc = await _firestore
-          .collection('farms')
-          .doc(widget.farmId)
           .collection('palaiCustomers')
           .doc(widget.customerId)
           .get();
+
       final settings = doc.data()?['settings'];
-      final days = settings is Map ? settings['hoofCuttingReminderDays'] : null;
-      if (mounted && days is int && days > 0) {
-        setState(() => _reminderDays = days);
+
+      final rawDays = settings is Map
+          ? settings['hoofCuttingReminderDays']
+          : null;
+
+      int? days;
+
+      if (rawDays is num) {
+        days = rawDays.toInt();
+      } else {
+        days = int.tryParse(
+          rawDays?.toString() ?? '',
+        );
       }
-    } catch (_) {
-      // Keep the default reminder interval if settings can't be loaded.
-    }
+
+      if (mounted && days != null && days > 0) {
+        setState(() {
+          _reminderDays = days!;
+        });
+      }
+    } catch (_) {}
   }
 
   CollectionReference<Map<String, dynamic>>
@@ -72,8 +81,7 @@ class _CustomerGoatHoofScreenState
         .collection('hoofCuttingRecords');
   }
 
-  Stream<QuerySnapshot<Map<String, dynamic>>>
-  _hoofStream() {
+  Stream<QuerySnapshot<Map<String, dynamic>>> _hoofStream() {
     return _hoofCollection
         .orderBy(
       'cuttingDate',
@@ -88,43 +96,70 @@ class _CustomerGoatHoofScreenState
       stream: _hoofStream(),
       builder: (context, snapshot) {
         if (snapshot.hasError) {
-          return _buildErrorState(context, snapshot.error);
+          return _buildErrorState(
+            context,
+            snapshot.error,
+          );
         }
 
-        if (snapshot.connectionState == ConnectionState.waiting) {
-          return const Center(child: CircularProgressIndicator());
+        if (snapshot.connectionState ==
+            ConnectionState.waiting) {
+          return const Center(
+            child: CircularProgressIndicator(),
+          );
         }
 
         final records = snapshot.data?.docs
-            .map((doc) => HoofCuttingRecord.fromDoc(doc))
+            .map(
+              (doc) => HoofCuttingRecord.fromDoc(doc),
+        )
             .toList() ??
             <HoofCuttingRecord>[];
 
         return RefreshIndicator(
           onRefresh: _refresh,
           child: CustomScrollView(
-            physics: const AlwaysScrollableScrollPhysics(),
+            physics:
+            const AlwaysScrollableScrollPhysics(),
             slivers: [
               SliverPadding(
-                padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
+                padding: const EdgeInsets.fromLTRB(
+                  16,
+                  16,
+                  16,
+                  24,
+                ),
                 sliver: SliverList(
-                  delegate: SliverChildListDelegate([
-                    _buildSectionHeader(),
-                    const SizedBox(height: 12),
-                    _buildSummary(context, records),
-                    const SizedBox(height: 28),
-                    _buildHistoryHeader(context, records.length),
-                    const SizedBox(height: 12),
-                    if (records.isEmpty)
-                      _buildEmptyState(context)
-                    else
-                      ...records.map(
-                            (record) => Padding(
-                          padding: const EdgeInsets.only(bottom: 10),
-                          child: _buildHoofCard(context, record),
-                        ),
+                  delegate: SliverChildListDelegate(
+                    [
+                      _buildSectionHeader(),
+                      const SizedBox(height: 12),
+                      _buildSummary(
+                        context,
+                        records,
                       ),
-                  ]),
+                      const SizedBox(height: 28),
+                      _buildHistoryHeader(
+                        context,
+                        records.length,
+                      ),
+                      const SizedBox(height: 12),
+                      if (records.isEmpty)
+                        _buildEmptyState(context)
+                      else
+                        ...records.map(
+                              (record) => Padding(
+                            padding: const EdgeInsets.only(
+                              bottom: 10,
+                            ),
+                            child: _buildHoofCard(
+                              context,
+                              record,
+                            ),
+                          ),
+                        ),
+                    ],
+                  ),
                 ),
               ),
             ],
@@ -134,36 +169,40 @@ class _CustomerGoatHoofScreenState
     );
   }
 
-  // ===========================================================================
-  // SECTION HEADER — inline "Add Hoof Cutting" action (matches the
-  // Health tab pattern; no FAB, since this is embedded tab content).
-  // ===========================================================================
-
   Widget _buildSectionHeader() {
     return Row(
       children: [
         const Expanded(
           child: Text(
             'Hoof Cutting',
-            style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700),
+            style: TextStyle(
+              fontSize: 15,
+              fontWeight: FontWeight.w700,
+            ),
           ),
         ),
         OutlinedButton.icon(
           onPressed: _openAddHoofScreen,
-          icon: const Icon(Icons.add, size: 15),
-          label: const Text('Add Hoof Cutting'),
+          icon: const Icon(
+            Icons.add,
+            size: 15,
+          ),
+          label: const Text(
+            'Add Hoof Cutting',
+          ),
           style: OutlinedButton.styleFrom(
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-            textStyle: const TextStyle(fontSize: 11.5),
+            padding: const EdgeInsets.symmetric(
+              horizontal: 10,
+              vertical: 6,
+            ),
+            textStyle: const TextStyle(
+              fontSize: 11.5,
+            ),
           ),
         ),
       ],
     );
   }
-
-  // ===========================================================================
-  // SUMMARY
-  // ===========================================================================
 
   Widget _buildSummary(
       BuildContext context,
@@ -177,15 +216,13 @@ class _CustomerGoatHoofScreenState
 
       final scheduled = records
           .where(
-            (record) =>
-        record.nextDueDate != null,
+            (record) => record.nextDueDate != null,
       )
           .toList();
 
       if (scheduled.isNotEmpty) {
         scheduled.sort(
-              (a, b) => a.nextDueDate!
-              .compareTo(
+              (a, b) => a.nextDueDate!.compareTo(
             b.nextDueDate!,
           ),
         );
@@ -195,8 +232,7 @@ class _CustomerGoatHoofScreenState
     }
 
     return Column(
-      crossAxisAlignment:
-      CrossAxisAlignment.start,
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(
           'Hoof Cutting Summary',
@@ -204,8 +240,7 @@ class _CustomerGoatHoofScreenState
               .textTheme
               .titleLarge
               ?.copyWith(
-            fontWeight:
-            FontWeight.w800,
+            fontWeight: FontWeight.w800,
           ),
         ),
         const SizedBox(height: 12),
@@ -214,8 +249,7 @@ class _CustomerGoatHoofScreenState
             Expanded(
               child: _summaryCard(
                 context,
-                icon:
-                Icons.content_cut,
+                icon: Icons.content_cut,
                 title: 'Last cutting',
                 value: latest == null
                     ? '—'
@@ -228,8 +262,7 @@ class _CustomerGoatHoofScreenState
             Expanded(
               child: _summaryCard(
                 context,
-                icon:
-                Icons.event_available_outlined,
+                icon: Icons.event_available_outlined,
                 title: 'Next due',
                 value: next == null
                     ? 'Not scheduled'
@@ -248,8 +281,7 @@ class _CustomerGoatHoofScreenState
         const SizedBox(height: 10),
         _summaryCard(
           context,
-          icon:
-          Icons.format_list_numbered_outlined,
+          icon: Icons.format_list_numbered_outlined,
           title: 'Total cuttings',
           value: records.length.toString(),
           fullWidth: true,
@@ -278,13 +310,11 @@ class _CustomerGoatHoofScreenState
               height: 42,
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
-                color:
-                colors.primaryContainer,
+                color: colors.primaryContainer,
               ),
               child: Icon(
                 icon,
-                color:
-                colors.onPrimaryContainer,
+                color: colors.onPrimaryContainer,
                 size: 21,
               ),
             ),
@@ -300,22 +330,20 @@ class _CustomerGoatHoofScreenState
                         .textTheme
                         .bodySmall
                         ?.copyWith(
-                      color: colors
-                          .onSurfaceVariant,
+                      color:
+                      colors.onSurfaceVariant,
                     ),
                   ),
                   const SizedBox(height: 3),
                   Text(
                     value,
                     maxLines: fullWidth ? 2 : 1,
-                    overflow:
-                    TextOverflow.ellipsis,
+                    overflow: TextOverflow.ellipsis,
                     style: theme
                         .textTheme
                         .titleMedium
                         ?.copyWith(
-                      fontWeight:
-                      FontWeight.w800,
+                      fontWeight: FontWeight.w800,
                     ),
                   ),
                 ],
@@ -342,16 +370,13 @@ class _CustomerGoatHoofScreenState
             children: [
               Icon(
                 Icons.info_outline,
-                color:
-                colors.onSurfaceVariant,
+                color: colors.onSurfaceVariant,
               ),
               const SizedBox(width: 10),
               Expanded(
                 child: Text(
                   'No upcoming hoof-cutting date is scheduled.',
-                  style: theme
-                      .textTheme
-                      .bodyMedium,
+                  style: theme.textTheme.bodyMedium,
                 ),
               ),
             ],
@@ -365,16 +390,14 @@ class _CustomerGoatHoofScreenState
 
     if (next.isOverdue) {
       statusColor = colors.error;
-      statusIcon =
-          Icons.warning_amber_rounded;
+      statusIcon = Icons.warning_amber_rounded;
     } else if (next.isDueToday) {
       statusColor = colors.tertiary;
       statusIcon =
           Icons.notifications_active_outlined;
     } else {
       statusColor = colors.primary;
-      statusIcon =
-          Icons.check_circle_outline;
+      statusIcon = Icons.check_circle_outline;
     }
 
     return Card(
@@ -408,8 +431,8 @@ class _CustomerGoatHoofScreenState
                         .textTheme
                         .bodySmall
                         ?.copyWith(
-                      color: colors
-                          .onSurfaceVariant,
+                      color:
+                      colors.onSurfaceVariant,
                     ),
                   ),
                   const SizedBox(height: 3),
@@ -420,8 +443,7 @@ class _CustomerGoatHoofScreenState
                         .titleMedium
                         ?.copyWith(
                       color: statusColor,
-                      fontWeight:
-                      FontWeight.w800,
+                      fontWeight: FontWeight.w800,
                     ),
                   ),
                 ],
@@ -433,17 +455,12 @@ class _CustomerGoatHoofScreenState
     );
   }
 
-  // ===========================================================================
-  // HISTORY
-  // ===========================================================================
-
   Widget _buildHistoryHeader(
       BuildContext context,
       int count,
       ) {
     return Column(
-      crossAxisAlignment:
-      CrossAxisAlignment.start,
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(
           'Hoof Cutting History',
@@ -451,8 +468,7 @@ class _CustomerGoatHoofScreenState
               .textTheme
               .titleLarge
               ?.copyWith(
-            fontWeight:
-            FontWeight.w800,
+            fontWeight: FontWeight.w800,
           ),
         ),
         const SizedBox(height: 4),
@@ -485,27 +501,22 @@ class _CustomerGoatHoofScreenState
 
     if (record.isOverdue) {
       statusColor = colors.error;
-      statusIcon =
-          Icons.warning_amber_rounded;
+      statusIcon = Icons.warning_amber_rounded;
     } else if (record.isDueToday) {
       statusColor = colors.tertiary;
       statusIcon =
           Icons.notifications_active_outlined;
     } else {
       statusColor = colors.primary;
-      statusIcon =
-          Icons.event_available_outlined;
+      statusIcon = Icons.event_available_outlined;
     }
 
     return Card(
-      clipBehavior:
-      Clip.antiAlias,
+      clipBehavior: Clip.antiAlias,
       child: InkWell(
-        onTap: () =>
-            _showRecordDetails(record),
+        onTap: () => _showRecordDetails(record),
         child: Padding(
-          padding:
-          const EdgeInsets.all(15),
+          padding: const EdgeInsets.all(15),
           child: Row(
             crossAxisAlignment:
             CrossAxisAlignment.start,
@@ -515,13 +526,11 @@ class _CustomerGoatHoofScreenState
                 height: 48,
                 decoration: BoxDecoration(
                   shape: BoxShape.circle,
-                  color:
-                  colors.primaryContainer,
+                  color: colors.primaryContainer,
                 ),
                 child: Icon(
                   Icons.content_cut,
-                  color:
-                  colors.onPrimaryContainer,
+                  color: colors.onPrimaryContainer,
                 ),
               ),
               const SizedBox(width: 13),
@@ -569,22 +578,16 @@ class _CustomerGoatHoofScreenState
                       const SizedBox(height: 8),
                       Container(
                         padding:
-                        const EdgeInsets
-                            .symmetric(
+                        const EdgeInsets.symmetric(
                           horizontal: 9,
                           vertical: 5,
                         ),
-                        decoration:
-                        BoxDecoration(
-                          color: statusColor
-                              .withValues(
+                        decoration: BoxDecoration(
+                          color: statusColor.withValues(
                             alpha: 0.12,
                           ),
                           borderRadius:
-                          BorderRadius
-                              .circular(
-                            8,
-                          ),
+                          BorderRadius.circular(8),
                         ),
                         child: Row(
                           mainAxisSize:
@@ -593,23 +596,18 @@ class _CustomerGoatHoofScreenState
                             Icon(
                               statusIcon,
                               size: 15,
-                              color:
-                              statusColor,
+                              color: statusColor,
                             ),
-                            const SizedBox(
-                              width: 5,
-                            ),
+                            const SizedBox(width: 5),
                             Text(
                               record.dueStatus,
                               style: theme
                                   .textTheme
                                   .labelMedium
                                   ?.copyWith(
-                                color:
-                                statusColor,
+                                color: statusColor,
                                 fontWeight:
-                                FontWeight
-                                    .w700,
+                                FontWeight.w700,
                               ),
                             ),
                           ],
@@ -635,8 +633,7 @@ class _CustomerGoatHoofScreenState
       ) {
     return Card(
       child: Padding(
-        padding:
-        const EdgeInsets.all(24),
+        padding: const EdgeInsets.all(24),
         child: Column(
           children: [
             Icon(
@@ -648,28 +645,31 @@ class _CustomerGoatHoofScreenState
             ),
             const SizedBox(height: 14),
             Text(
-              'No hoof-cutting records yet',
+              'No hoof-cutting records',
               style: Theme.of(context)
                   .textTheme
                   .titleMedium
                   ?.copyWith(
-                fontWeight:
-                FontWeight.w700,
+                fontWeight: FontWeight.w700,
               ),
             ),
             const SizedBox(height: 6),
             Text(
-              'Record the first hoof cutting to start this goat\'s hoof-care history.',
-              textAlign:
-              TextAlign.center,
-            ),
-            const SizedBox(height: 18),
-            FilledButton.icon(
-              onPressed:
-              _openAddHoofScreen,
-              icon: const Icon(
-                Icons.add,
+              'Add the first hoof-cutting record for this goat.',
+              textAlign: TextAlign.center,
+              style: Theme.of(context)
+                  .textTheme
+                  .bodyMedium
+                  ?.copyWith(
+                color: Theme.of(context)
+                    .colorScheme
+                    .onSurfaceVariant,
               ),
+            ),
+            const SizedBox(height: 16),
+            FilledButton.icon(
+              onPressed: _openAddHoofScreen,
+              icon: const Icon(Icons.add),
               label: const Text(
                 'Add Hoof Cutting',
               ),
@@ -680,108 +680,93 @@ class _CustomerGoatHoofScreenState
     );
   }
 
-  // ===========================================================================
-  // DETAILS
-  // ===========================================================================
+  Future<void> _refresh() async {
+    await Future<void>.delayed(
+      const Duration(milliseconds: 300),
+    );
 
-  void _showRecordDetails(
+    if (mounted) {
+      await _loadReminderSetting();
+    }
+  }
+
+  Future<void> _showRecordDetails(
       HoofCuttingRecord record,
-      ) {
-    showModalBottomSheet<void>(
+      ) async {
+    final theme = Theme.of(context);
+    final colors = theme.colorScheme;
+
+    await showModalBottomSheet<void>(
       context: context,
       showDragHandle: true,
+      isScrollControlled: true,
       builder: (context) {
         return SafeArea(
-          child: SingleChildScrollView(
-            padding:
-            const EdgeInsets.fromLTRB(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(
               20,
               4,
               20,
-              28,
+              24,
             ),
             child: Column(
+              mainAxisSize: MainAxisSize.min,
               crossAxisAlignment:
               CrossAxisAlignment.start,
               children: [
                 Text(
-                  'Hoof Cutting',
-                  style: Theme.of(context)
+                  'Hoof Cutting Details',
+                  style: theme
                       .textTheme
                       .titleLarge
                       ?.copyWith(
-                    fontWeight:
-                    FontWeight.w800,
+                    fontWeight: FontWeight.w800,
                   ),
                 ),
-                const SizedBox(
-                  height: 18,
-                ),
+                const SizedBox(height: 18),
                 _detailRow(
                   context,
                   'Cutting date',
-                  record
-                      .formattedCuttingDate,
+                  record.formattedCuttingDate,
                 ),
                 _detailRow(
                   context,
                   'Next due',
-                  record
-                      .formattedNextDueDate,
+                  record.formattedNextDueDate,
                 ),
-                _detailRow(
-                  context,
-                  'Performed by',
-                  record.performedBy.isEmpty
-                      ? '—'
-                      : record.performedBy,
-                ),
-                _detailRow(
-                  context,
-                  'Notes',
-                  record.note.isEmpty
-                      ? '—'
-                      : record.note,
-                ),
+                if (record.performedBy
+                    .trim()
+                    .isNotEmpty)
+                  _detailRow(
+                    context,
+                    'Performed by',
+                    record.performedBy,
+                  ),
+                if (record.note.trim().isNotEmpty)
+                  _detailRow(
+                    context,
+                    'Notes',
+                    record.note,
+                  ),
                 if (record.hasNextDueDate)
                   Padding(
-                    padding:
-                    const EdgeInsets.only(
+                    padding: const EdgeInsets.only(
                       top: 8,
                     ),
                     child: Container(
-                      width:
-                      double.infinity,
-                      padding:
-                      const EdgeInsets.all(
-                        12,
-                      ),
-                      decoration:
-                      BoxDecoration(
+                      width: double.infinity,
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color:
+                        colors.surfaceContainerHighest,
                         borderRadius:
-                        BorderRadius
-                            .circular(
-                          12,
-                        ),
-                        color: record.isOverdue
-                            ? Theme.of(
-                          context,
-                        )
-                            .colorScheme
-                            .errorContainer
-                            : Theme.of(
-                          context,
-                        )
-                            .colorScheme
-                            .primaryContainer,
+                        BorderRadius.circular(12),
                       ),
                       child: Text(
                         record.dueStatus,
-                        style: Theme.of(
-                          context,
-                        )
+                        style: theme
                             .textTheme
-                            .bodyMedium
+                            .titleSmall
                             ?.copyWith(
                           fontWeight:
                           FontWeight.w700,
@@ -789,18 +774,19 @@ class _CustomerGoatHoofScreenState
                       ),
                     ),
                   ),
-                if (record.hasNextDueDate)
-                  Padding(
-                    padding: const EdgeInsets.only(top: 10),
-                    child: SizedBox(
-                      width: double.infinity,
-                      child: OutlinedButton.icon(
-                        onPressed: () => _markAsDone(record, context),
-                        icon: const Icon(Icons.check_circle_outline),
-                        label: const Text('Done'),
-                      ),
+                const SizedBox(height: 16),
+                SizedBox(
+                  width: double.infinity,
+                  child: FilledButton(
+                    onPressed: () {
+                      Navigator.pop(context);
+                      _markAsDone(record);
+                    },
+                    child: const Text(
+                      'Mark as Completed',
                     ),
                   ),
+                ),
               ],
             ),
           ),
@@ -809,84 +795,43 @@ class _CustomerGoatHoofScreenState
     );
   }
 
-  /// Clears this record's reminder — call once the hoof has been done
-  /// and there's nothing further to remind about. Cancels the
-  /// on-device scheduled notifications for it and clears any
-  /// "due"/"overdue" entry already sitting in the Notifications feed.
-  Future<void> _markAsDone(
-      HoofCuttingRecord record,
-      BuildContext sheetContext,
-      ) async {
-    try {
-      await _hoofCollection.doc(record.id).update({'nextDueDate': null});
-
-      unawaited(HealthReminderScheduler.instance.cancelForCustomerRecord(
-        customerId: widget.customerId,
-        goatId: widget.goat.id,
-        recordType: 'hoofCutting',
-        recordId: record.id,
-      ));
-
-      for (final suffix in ['due', 'overdue']) {
-        unawaited(FirestoreService.instance
-            .markNotificationRead(
-          widget.farmId,
-          'health_${widget.goat.id}_hoofCutting_${record.id}_$suffix',
-        )
-            .catchError((_) {}));
-      }
-
-      if (!mounted) return;
-      Navigator.of(sheetContext).pop();
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Marked as done — reminder cleared.')),
-      );
-    } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Could not mark as done: $e')),
-      );
-    }
-  }
-
   Widget _detailRow(
       BuildContext context,
       String label,
       String value,
       ) {
+    if (value.trim().isEmpty ||
+        value.trim() == '—') {
+      return const SizedBox.shrink();
+    }
+
+    final theme = Theme.of(context);
+
     return Padding(
-      padding:
-      const EdgeInsets.only(
-        bottom: 12,
+      padding: const EdgeInsets.only(
+        bottom: 10,
       ),
       child: Row(
         crossAxisAlignment:
         CrossAxisAlignment.start,
         children: [
           SizedBox(
-            width: 135,
+            width: 105,
             child: Text(
               label,
-              style: Theme.of(context)
+              style: theme
                   .textTheme
-                  .bodyMedium
+                  .bodySmall
                   ?.copyWith(
-                color: Theme.of(context)
-                    .colorScheme
-                    .onSurfaceVariant,
+                fontWeight: FontWeight.w600,
               ),
             ),
           ),
+          const SizedBox(width: 12),
           Expanded(
             child: Text(
               value,
-              style: Theme.of(context)
-                  .textTheme
-                  .bodyMedium
-                  ?.copyWith(
-                fontWeight:
-                FontWeight.w600,
-              ),
+              style: theme.textTheme.bodyMedium,
             ),
           ),
         ],
@@ -894,9 +839,49 @@ class _CustomerGoatHoofScreenState
     );
   }
 
-  // ===========================================================================
-// ERROR STATE
-// ===========================================================================
+  Future<void> _markAsDone(
+      HoofCuttingRecord record,
+      ) async {
+    try {
+      await _firestore
+          .collection('farms')
+          .doc(widget.farmId)
+          .collection('palaiCustomers')
+          .doc(widget.customerId)
+          .collection('goats')
+          .doc(widget.goat.id)
+          .collection('hoofCuttingRecords')
+          .doc(record.id)
+          .update({
+        'status': 'completed',
+        'completedAt': FieldValue.serverTimestamp(),
+      });
+
+      if (!mounted) {
+        return;
+      }
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Hoof cutting marked as completed.',
+          ),
+        ),
+      );
+    } catch (e) {
+      if (!mounted) {
+        return;
+      }
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'Unable to update record: $e',
+          ),
+        ),
+      );
+    }
+  }
 
   Widget _buildErrorState(
       BuildContext context,
@@ -913,32 +898,42 @@ class _CustomerGoatHoofScreenState
           children: [
             Icon(
               Icons.error_outline,
-              size: 52,
+              size: 48,
               color: colors.error,
             ),
             const SizedBox(height: 14),
             Text(
               'Unable to load hoof-cutting records',
               textAlign: TextAlign.center,
-              style: theme.textTheme.titleMedium?.copyWith(
-                fontWeight: FontWeight.w800,
+              style: theme
+                  .textTheme
+                  .titleMedium
+                  ?.copyWith(
+                fontWeight: FontWeight.w700,
               ),
             ),
             const SizedBox(height: 8),
             Text(
-              _friendlyError(error),
+              _friendlyErrorMessage(error),
               textAlign: TextAlign.center,
-              style: theme.textTheme.bodyMedium?.copyWith(
+              style: theme
+                  .textTheme
+                  .bodyMedium
+                  ?.copyWith(
                 color: colors.onSurfaceVariant,
               ),
             ),
-            const SizedBox(height: 18),
+            const SizedBox(height: 16),
             FilledButton.icon(
               onPressed: () {
                 setState(() {});
               },
-              icon: const Icon(Icons.refresh),
-              label: const Text('Try Again'),
+              icon: const Icon(
+                Icons.refresh,
+              ),
+              label: const Text(
+                'Try Again',
+              ),
             ),
           ],
         ),
@@ -946,58 +941,13 @@ class _CustomerGoatHoofScreenState
     );
   }
 
-  // ===========================================================================
-  // REFRESH
-  // ===========================================================================
-
-  Future<void> _refresh() async {
-    await Future<void>.delayed(
-      const Duration(
-        milliseconds: 300,
-      ),
-    );
-  }
-
-  // ===========================================================================
-  // HELPERS
-  // ===========================================================================
-
-  void _showSuccess(
-      String message,
-      ) {
-    if (!mounted) {
-      return;
-    }
-
-    ScaffoldMessenger.of(context)
-      ..hideCurrentSnackBar()
-      ..showSnackBar(
-        SnackBar(
-          content: Text(message),
-        ),
-      );
-  }
-
-  void _showError(
-      BuildContext context,
-      String message,
-      ) {
-    ScaffoldMessenger.of(context)
-      ..hideCurrentSnackBar()
-      ..showSnackBar(
-        SnackBar(
-          content: Text(message),
-        ),
-      );
-  }
-
-  String _friendlyError(
+  String _friendlyErrorMessage(
       Object? error,
       ) {
     if (error is FirebaseException) {
       switch (error.code) {
         case 'permission-denied':
-          return 'You do not have permission to access hoof-cutting records.';
+          return 'You do not have permission to view these records.';
 
         case 'failed-precondition':
           return 'Firestore needs an index for this query.';
@@ -1016,17 +966,13 @@ class _CustomerGoatHoofScreenState
   String _formatDate(
       DateTime date,
       ) {
-    final day =
-    date.day.toString().padLeft(
-      2,
-      '0',
-    );
+    final day = date.day
+        .toString()
+        .padLeft(2, '0');
 
-    final month =
-    date.month.toString().padLeft(
-      2,
-      '0',
-    );
+    final month = date.month
+        .toString()
+        .padLeft(2, '0');
 
     return '$day/$month/${date.year}';
   }

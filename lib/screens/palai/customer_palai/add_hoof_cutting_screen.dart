@@ -12,9 +12,6 @@ import '../../../services/health_reminder_scheduler.dart';
 import '../../../services/notification_service.dart';
 import '../../../widgets/reminder_cadence_selector.dart';
 
-/// Full-page "Add Hoof Cutting" screen, pushed from the Hoof Cutting
-/// tab on GoatProfileScreen (see AddVaccinationScreen for why this is
-/// a pushed screen and not a dialog).
 class AddHoofCuttingScreen extends StatefulWidget {
   final String farmId;
   final String customerId;
@@ -39,14 +36,67 @@ class _AddHoofCuttingScreenState extends State<AddHoofCuttingScreen> {
 
   DateTime _cuttingDate = DateTime.now();
 
-  /// Reminder cadence in days — 30 / 45 / 90, or null for "no reminder".
   int? _reminderDays = 30;
   bool _saving = false;
+  bool _loadingReminderSetting = true;
 
   @override
   void initState() {
     super.initState();
-    _reminderDays = const [30, 45, 90].contains(widget.reminderDays) ? widget.reminderDays : 30;
+
+    _reminderDays = _normalizeReminderDays(widget.reminderDays);
+
+    _loadCustomerReminderSetting();
+  }
+
+  int _normalizeReminderDays(int? value) {
+    if (value != null && value > 0) {
+      return value;
+    }
+
+    return 30;
+  }
+
+  Future<void> _loadCustomerReminderSetting() async {
+    try {
+      final document = await FirebaseFirestore.instance
+          .collection('palaiCustomers')
+          .doc(widget.customerId)
+          .get();
+
+      final data = document.data();
+
+      if (data != null) {
+        final rawSettings = data['settings'];
+
+        if (rawSettings is Map) {
+          final rawDays = rawSettings['hoofCuttingReminderDays'];
+
+          int? days;
+
+          if (rawDays is num) {
+            days = rawDays.toInt();
+          } else {
+            days = int.tryParse(rawDays?.toString() ?? '');
+          }
+
+          if (days != null && days > 0) {
+            if (mounted) {
+              setState(() {
+                _reminderDays = days;
+              });
+            }
+          }
+        }
+      }
+    } catch (_) {
+    } finally {
+      if (mounted) {
+        setState(() {
+          _loadingReminderSetting = false;
+        });
+      }
+    }
   }
 
   @override
@@ -79,17 +129,26 @@ class _AddHoofCuttingScreenState extends State<AddHoofCuttingScreen> {
       firstDate: first,
       lastDate: last,
     );
-    if (picked != null) onPicked(picked);
+
+    if (picked != null) {
+      onPicked(picked);
+    }
   }
 
   Future<void> _save() async {
-    setState(() => _saving = true);
+    setState(() {
+      _saving = true;
+    });
 
-    final nextDueDate =
-    _reminderDays != null ? _cuttingDate.add(Duration(days: _reminderDays!)) : null;
+    final nextDueDate = _reminderDays != null
+        ? _cuttingDate.add(
+      Duration(days: _reminderDays!),
+    )
+        : null;
 
     try {
       final reference = _hoofCollection.doc();
+
       final record = HoofCuttingRecord(
         id: reference.id,
         goatId: widget.goat.id,
@@ -99,47 +158,76 @@ class _AddHoofCuttingScreenState extends State<AddHoofCuttingScreen> {
         note: _noteController.text.trim(),
         recordedAt: DateTime.now(),
       );
+
       await reference.set({
         ...record.toCreateMap(),
         'farmId': widget.farmId,
       });
 
-      unawaited(FirestoreService.instance.addNotification(
-        farmId: widget.farmId,
-        docId: 'health_${widget.goat.id}_hoofCutting_${reference.id}_logged',
-        type: 'hoofCutting_logged',
-        category: 'health',
-        priority: 'normal',
-        title: 'Hoof cutting recorded',
-        message: '${widget.goat.goatCode}: hoof cutting logged.',
-        reference: {'customerId': widget.customerId, 'goatId': widget.goat.id, 'recordId': reference.id},
-      ));
+      unawaited(
+        FirestoreService.instance.addNotification(
+          farmId: widget.farmId,
+          docId:
+          'health_${widget.goat.id}_hoofCutting_${reference.id}_logged',
+          type: 'hoofCutting_logged',
+          category: 'health',
+          priority: 'normal',
+          title: 'Hoof cutting recorded',
+          message: '${widget.goat.goatCode}: hoof cutting logged.',
+          reference: {
+            'customerId': widget.customerId,
+            'goatId': widget.goat.id,
+            'recordId': reference.id,
+          },
+        ),
+      );
 
-      unawaited(NotificationService.instance.showNow(
-        id: reference.id.hashCode & 0x0FFFFFFF,
-        title: 'Hoof cutting recorded',
-        body: '${widget.goat.goatCode}: hoof cutting logged.',
-        data: {'customerId': widget.customerId, 'goatId': widget.goat.id, 'recordId': reference.id},
-      ));
+      unawaited(
+        NotificationService.instance.showNow(
+          id: reference.id.hashCode & 0x0FFFFFFF,
+          title: 'Hoof cutting recorded',
+          body: '${widget.goat.goatCode}: hoof cutting logged.',
+          data: {
+            'customerId': widget.customerId,
+            'goatId': widget.goat.id,
+            'recordId': reference.id,
+          },
+        ),
+      );
 
-      unawaited(HealthReminderScheduler.instance.scheduleCustomerHealthReminder(
-        farmId: widget.farmId,
-        customerId: widget.customerId,
-        goatId: widget.goat.id,
-        goatCode: widget.goat.goatCode,
-        recordType: 'hoofCutting',
-        recordId: reference.id,
-        label: 'Hoof cutting',
-        dueDate: nextDueDate,
-      ));
+      unawaited(
+        HealthReminderScheduler.instance.scheduleCustomerHealthReminder(
+          farmId: widget.farmId,
+          customerId: widget.customerId,
+          goatId: widget.goat.id,
+          goatCode: widget.goat.goatCode,
+          recordType: 'hoofCutting',
+          recordId: reference.id,
+          label: 'Hoof cutting',
+          dueDate: nextDueDate,
+        ),
+      );
 
-      if (!mounted) return;
+      if (!mounted) {
+        return;
+      }
+
       Navigator.of(context).pop(true);
     } catch (error) {
-      if (!mounted) return;
-      setState(() => _saving = false);
+      if (!mounted) {
+        return;
+      }
+
+      setState(() {
+        _saving = false;
+      });
+
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Could not save hoof cutting: $error')),
+        SnackBar(
+          content: Text(
+            'Could not save hoof cutting: $error',
+          ),
+        ),
       );
     }
   }
@@ -147,10 +235,22 @@ class _AddHoofCuttingScreenState extends State<AddHoofCuttingScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Add Hoof Cutting')),
+      appBar: AppBar(
+        title: const Text('Add Hoof Cutting'),
+      ),
       body: ListView(
-        padding: const EdgeInsets.fromLTRB(16, 16, 16, 100),
+        padding: const EdgeInsets.fromLTRB(
+          16,
+          16,
+          16,
+          100,
+        ),
         children: [
+          if (_loadingReminderSetting)
+            const Padding(
+              padding: EdgeInsets.only(bottom: 12),
+              child: LinearProgressIndicator(),
+            ),
           _DateTile(
             label: 'Cutting date',
             date: _cuttingDate,
@@ -158,13 +258,21 @@ class _AddHoofCuttingScreenState extends State<AddHoofCuttingScreen> {
               initial: _cuttingDate,
               first: DateTime(2000),
               last: DateTime.now(),
-              onPicked: (d) => setState(() => _cuttingDate = d),
+              onPicked: (d) {
+                setState(() {
+                  _cuttingDate = d;
+                });
+              },
             ),
           ),
           const SizedBox(height: 14),
           ReminderCadenceSelector(
             value: _reminderDays,
-            onChanged: (days) => setState(() => _reminderDays = days),
+            onChanged: (days) {
+              setState(() {
+                _reminderDays = days;
+              });
+            },
           ),
           const SizedBox(height: 14),
           TextFormField(
@@ -197,12 +305,17 @@ class _AddHoofCuttingScreenState extends State<AddHoofCuttingScreen> {
             height: 48,
             child: FilledButton(
               onPressed: _saving ? null : _save,
-              style: FilledButton.styleFrom(backgroundColor: AppColors.primaryGreen),
+              style: FilledButton.styleFrom(
+                backgroundColor: AppColors.primaryGreen,
+              ),
               child: _saving
                   ? const SizedBox(
                 width: 20,
                 height: 20,
-                child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  color: Colors.white,
+                ),
               )
                   : const Text('Save Hoof Cutting'),
             ),
@@ -239,14 +352,31 @@ class _DateTile extends StatelessWidget {
           labelText: optional ? '$label (optional)' : label,
           border: const OutlineInputBorder(),
           suffixIcon: onClear != null
-              ? IconButton(icon: const Icon(Icons.clear, size: 18), onPressed: onClear)
-              : const Icon(Icons.calendar_today_outlined, size: 18),
+              ? IconButton(
+            icon: const Icon(
+              Icons.clear,
+              size: 18,
+            ),
+            onPressed: onClear,
+          )
+              : const Icon(
+            Icons.calendar_today_outlined,
+            size: 18,
+          ),
         ),
         child: Text(
           date != null
-              ? DateFormat(showTime ? 'd MMM yyyy, h:mm a' : 'd MMM yyyy').format(date!)
+              ? DateFormat(
+            showTime
+                ? 'd MMM yyyy, h:mm a'
+                : 'd MMM yyyy',
+          ).format(date!)
               : 'Not set',
-          style: TextStyle(color: date != null ? null : AppColors.textMuted),
+          style: TextStyle(
+            color: date != null
+                ? null
+                : AppColors.textMuted,
+          ),
         ),
       ),
     );

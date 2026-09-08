@@ -45,19 +45,29 @@ class _CustomerGoatVaccinationScreenState
   Future<void> _loadReminderSetting() async {
     try {
       final doc = await _firestore
-          .collection('farms')
-          .doc(widget.farmId)
           .collection('palaiCustomers')
           .doc(widget.customerId)
           .get();
+
       final settings = doc.data()?['settings'];
-      final days = settings is Map ? settings['vaccinationReminderDays'] : null;
-      if (mounted && days is int && days > 0) {
-        setState(() => _reminderDays = days);
+      final rawDays = settings is Map
+          ? settings['vaccinationReminderDays']
+          : null;
+
+      int? days;
+
+      if (rawDays is num) {
+        days = rawDays.toInt();
+      } else {
+        days = int.tryParse(rawDays?.toString() ?? '');
       }
-    } catch (_) {
-      // Keep the default reminder interval if settings can't be loaded.
-    }
+
+      if (mounted && days != null && days > 0) {
+        setState(() {
+          _reminderDays = days!;
+        });
+      }
+    } catch (_) {}
   }
 
   CollectionReference<Map<String, dynamic>>
