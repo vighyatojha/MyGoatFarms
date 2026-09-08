@@ -44,6 +44,29 @@ class CustomerHealthReminder {
 /// Records screen's Complete / Pending / Upcoming tabs.
 enum HealthRecordStatus { complete, pending, upcoming }
 
+/// A reminder due within this many days (inclusive), or already overdue,
+/// counts as [HealthRecordStatus.pending] rather than
+/// [HealthRecordStatus.upcoming] — i.e. "coming up soon enough to act
+/// on now". Reminders further out than this stay in Upcoming until they
+/// enter this window.
+const int kHealthRecordPendingWindowDays = 3;
+
+/// Classifies a record's due date into Complete / Pending / Upcoming,
+/// shared by [FirestoreService.allCustomerHealthRecordSummaries] and
+/// [FirestoreService.goatHealthRecordSummaries] so the two stay
+/// consistent.
+///
+///   * Complete — no reminder set at all (`dueDate == null`).
+///   * Pending  — due today, overdue, or due within the next
+///     [kHealthRecordPendingWindowDays] days.
+///   * Upcoming — due further out than that.
+HealthRecordStatus _classifyHealthRecordStatus(DateTime? dueDate, DateTime now) {
+  if (dueDate == null) return HealthRecordStatus.complete;
+  final pendingCutoff = now.add(const Duration(days: kHealthRecordPendingWindowDays));
+  if (!dueDate.isAfter(pendingCutoff)) return HealthRecordStatus.pending;
+  return HealthRecordStatus.upcoming;
+}
+
 /// One vaccination / hoof-cutting / hair-trimming record, farm-wide,
 /// classified for the Health Records screen. Unlike
 /// [CustomerHealthReminder] (which only covers records that are already
@@ -69,6 +92,105 @@ class HealthRecordSummary {
     required this.dueDate,
     required this.status,
   });
+}
+
+/// Config for one of the four per-goat health record subcollections —
+/// where to read it from, which field holds the event date, and which
+/// field (if any) holds the "remind me again on" due date. Shared by
+/// [FirestoreService.allCustomerHealthRecordSummaries] and
+/// [FirestoreService.goatHealthRecordSummaries] so both read the exact
+/// same field names instead of two hand-kept copies drifting apart.
+typedef HealthRecordTypeConfig = ({
+String collection,
+String dateField,
+String dueField,
+String type,
+String label,
+});
+
+/// The general health-checkup log — weight/appetite/symptoms etc.,
+/// reminder stored as `nextCheckDate`.
+const HealthRecordTypeConfig kHealthCheckupRecordType = (
+collection: 'healthRecords',
+dateField: 'recordedAt',
+dueField: 'nextCheckDate',
+type: 'health',
+label: 'Health checkup',
+);
+
+/// Vaccination / hoof-cutting / hair-trimming all store their reminder
+/// as `nextDueDate`.
+const List<HealthRecordTypeConfig> kGoatCareRecordTypes = [
+  (
+  collection: 'vaccinationRecords',
+  dateField: 'vaccinationDate',
+  dueField: 'nextDueDate',
+  type: 'vaccination',
+  label: 'Vaccination',
+  ),
+  (
+  collection: 'hoofCuttingRecords',
+  dateField: 'cuttingDate',
+  dueField: 'nextDueDate',
+  type: 'hoofCutting',
+  label: 'Hoof cutting',
+  ),
+  (
+  collection: 'hairTrimmingRecords',
+  dateField: 'trimmingDate',
+  dueField: 'nextDueDate',
+  type: 'hairTrimming',
+  label: 'Hair trimming',
+  ),
+];
+
+/// All four record types — health checkup + the three care types —
+/// used by the farm-wide Health Records screen.
+final List<HealthRecordTypeConfig> kAllHealthRecordTypes = [
+  kHealthCheckupRecordType,
+  ...kGoatCareRecordTypes,
+];
+
+/// Reads one health-record subcollection for one goat and turns each
+/// doc into a [HealthRecordSummary], skipping any doc whose event date
+/// field isn't a valid [Timestamp] (defensively — shouldn't happen for
+/// records written by this app, but keeps a single bad doc from
+/// crashing the whole farm-wide fetch).
+Future<List<HealthRecordSummary>> _fetchHealthRecordSummaries({
+  required DocumentReference<Map<String, dynamic>> goatRef,
+  required PalaiGoat goat,
+  required HealthRecordTypeConfig rt,
+  required int limit,
+  required Duration timeout,
+  required DateTime now,
+}) async {
+  final recordsSnap = await goatRef
+      .collection(rt.collection)
+      .orderBy(rt.dateField, descending: true)
+      .limit(limit)
+      .get()
+      .timeout(timeout);
+
+  final out = <HealthRecordSummary>[];
+  for (final doc in recordsSnap.docs) {
+    final data = doc.data();
+    final recordDateTs = data[rt.dateField];
+    if (recordDateTs is! Timestamp) continue;
+
+    final dueTs = data[rt.dueField];
+    final dueDate = dueTs is Timestamp ? dueTs.toDate() : null;
+
+    out.add(HealthRecordSummary(
+      goat: goat,
+      recordType: rt.type,
+      recordId: doc.id,
+      label: rt.label,
+      recordDate: recordDateTs.toDate(),
+      dueDate: dueDate,
+      status: _classifyHealthRecordStatus(dueDate, now),
+    ));
+  }
+  return out;
 }
 
 class MonthlyBillResult {
@@ -2801,22 +2923,22 @@ class FirestoreService {
 
     const recordTypes = [
       (
-        collection: 'vaccinationRecords',
-        dateField: 'vaccinationDate',
-        type: 'vaccination',
-        label: 'Vaccination',
+      collection: 'vaccinationRecords',
+      dateField: 'vaccinationDate',
+      type: 'vaccination',
+      label: 'Vaccination',
       ),
       (
-        collection: 'hoofCuttingRecords',
-        dateField: 'cuttingDate',
-        type: 'hoofCutting',
-        label: 'Hoof cutting',
+      collection: 'hoofCuttingRecords',
+      dateField: 'cuttingDate',
+      type: 'hoofCutting',
+      label: 'Hoof cutting',
       ),
       (
-        collection: 'hairTrimmingRecords',
-        dateField: 'trimmingDate',
-        type: 'hairTrimming',
-        label: 'Hair trimming',
+      collection: 'hairTrimmingRecords',
+      dateField: 'trimmingDate',
+      type: 'hairTrimming',
+      label: 'Hair trimming',
       ),
     ];
 
@@ -2850,21 +2972,28 @@ class FirestoreService {
     return results;
   }
 
-  /// Every vaccination / hoof-cutting / hair-trimming record farm-wide,
-  /// across every customer's active goats, classified into Complete /
-  /// Pending / Upcoming — powers the Health Records quick-access screen.
+  /// Every health checkup / vaccination / hoof-cutting / hair-trimming
+  /// record farm-wide, across every customer's active goats, classified
+  /// into Complete / Pending / Upcoming — powers the Health Records
+  /// quick-access screen. See [_classifyHealthRecordStatus] for exactly
+  /// how a record's due date maps to a bucket:
   ///
-  ///   * Complete — no reminder was set for this record at all
-  ///     (`nextDueDate == null`), whether because none was chosen or
-  ///     because it was cleared via the "Done" button on the record's
-  ///     detail sheet.
-  ///   * Pending — has a `nextDueDate` that is today or already overdue.
-  ///   * Upcoming — has a `nextDueDate` still in the future.
+  ///   * Complete — no reminder was set for this record at all,
+  ///     whether because none was chosen or because it was cleared via
+  ///     the "Done" button on the record's detail sheet.
+  ///   * Pending — due today, overdue, or due within the next
+  ///     [kHealthRecordPendingWindowDays] days — i.e. needs attention soon.
+  ///   * Upcoming — scheduled further out than that.
+  ///
+  /// Covers all four record types kept per goat: general health
+  /// checkups (`healthRecords`, reminder field `nextCheckDate`) plus
+  /// vaccination / hoof-cutting / hair-trimming (all three keyed off
+  /// `nextDueDate`).
   ///
   /// A one-time fetch (not a stream) — this is a "browse and pull to
   /// refresh" screen, not a live dashboard number, and a stream across a
   /// collectionGroup query plus a per-goat subcollection read for each
-  /// of three record types isn't practical to keep live. [perTypeLimit]
+  /// of four record types isn't practical to keep live. [perTypeLimit]
   /// caps how many of each goat's most recent records (per record type)
   /// are considered, so a goat with years of history doesn't blow up the
   /// read count.
@@ -2880,71 +3009,28 @@ class FirestoreService {
         .timeout(timeout);
 
     final now = DateTime.now();
-    final results = <HealthRecordSummary>[];
 
-    const recordTypes = [
-      (
-        collection: 'vaccinationRecords',
-        dateField: 'vaccinationDate',
-        type: 'vaccination',
-        label: 'Vaccination',
-      ),
-      (
-        collection: 'hoofCuttingRecords',
-        dateField: 'cuttingDate',
-        type: 'hoofCutting',
-        label: 'Hoof cutting',
-      ),
-      (
-        collection: 'hairTrimmingRecords',
-        dateField: 'trimmingDate',
-        type: 'hairTrimming',
-        label: 'Hair trimming',
-      ),
-    ];
-
+    // Every (goat × record type) subcollection read is independent, so
+    // they're all fired off together and awaited once — instead of one
+    // request at a time — which keeps a farm with many goats from
+    // taking (goat count × 4) sequential round trips to load.
+    final reads = <Future<List<HealthRecordSummary>>>[];
     for (final goatDoc in goatsSnap.docs) {
       final goat = PalaiGoat.fromDoc(goatDoc);
-      for (final rt in recordTypes) {
-        final recordsSnap = await goatDoc.reference
-            .collection(rt.collection)
-            .orderBy(rt.dateField, descending: true)
-            .limit(perTypeLimit)
-            .get()
-            .timeout(timeout);
-
-        for (final doc in recordsSnap.docs) {
-          final data = doc.data();
-          final recordDateTs = data[rt.dateField];
-          if (recordDateTs is! Timestamp) continue;
-          final recordDate = recordDateTs.toDate();
-
-          final dueTs = data['nextDueDate'];
-          final dueDate = dueTs is Timestamp ? dueTs.toDate() : null;
-
-          final HealthRecordStatus status;
-          if (dueDate == null) {
-            status = HealthRecordStatus.complete;
-          } else if (!dueDate.isAfter(now)) {
-            status = HealthRecordStatus.pending;
-          } else {
-            status = HealthRecordStatus.upcoming;
-          }
-
-          results.add(HealthRecordSummary(
-            goat: goat,
-            recordType: rt.type,
-            recordId: doc.id,
-            label: rt.label,
-            recordDate: recordDate,
-            dueDate: dueDate,
-            status: status,
-          ));
-        }
+      for (final rt in kAllHealthRecordTypes) {
+        reads.add(_fetchHealthRecordSummaries(
+          goatRef: goatDoc.reference,
+          goat: goat,
+          rt: rt,
+          limit: perTypeLimit,
+          timeout: timeout,
+          now: now,
+        ));
       }
     }
 
-    return results;
+    final perTypeResults = await Future.wait(reads);
+    return perTypeResults.expand((r) => r).toList();
   }
 
   /// Same classification as [allCustomerHealthRecordSummaries], scoped
@@ -2963,69 +3049,23 @@ class FirestoreService {
     if (goat == null) return [];
 
     final now = DateTime.now();
-    final results = <HealthRecordSummary>[];
     final goatRef = _goats(farmId, customerId).doc(goatId);
 
-    const recordTypes = [
-      (
-        collection: 'vaccinationRecords',
-        dateField: 'vaccinationDate',
-        type: 'vaccination',
-        label: 'Vaccination',
-      ),
-      (
-        collection: 'hoofCuttingRecords',
-        dateField: 'cuttingDate',
-        type: 'hoofCutting',
-        label: 'Hoof cutting',
-      ),
-      (
-        collection: 'hairTrimmingRecords',
-        dateField: 'trimmingDate',
-        type: 'hairTrimming',
-        label: 'Hair trimming',
-      ),
-    ];
+    // This goat's own general health-checkup log is already shown by
+    // GoatHealthTab via its dedicated stream, so intentionally only the
+    // three "care" record types are covered here — otherwise its own
+    // checkups would show up twice on the same tab.
+    final reads = kGoatCareRecordTypes.map((rt) => _fetchHealthRecordSummaries(
+      goatRef: goatRef,
+      goat: goat,
+      rt: rt,
+      limit: perTypeLimit,
+      timeout: timeout,
+      now: now,
+    ));
 
-    for (final rt in recordTypes) {
-      final recordsSnap = await goatRef
-          .collection(rt.collection)
-          .orderBy(rt.dateField, descending: true)
-          .limit(perTypeLimit)
-          .get()
-          .timeout(timeout);
-
-      for (final doc in recordsSnap.docs) {
-        final data = doc.data();
-        final recordDateTs = data[rt.dateField];
-        if (recordDateTs is! Timestamp) continue;
-        final recordDate = recordDateTs.toDate();
-
-        final dueTs = data['nextDueDate'];
-        final dueDate = dueTs is Timestamp ? dueTs.toDate() : null;
-
-        final HealthRecordStatus status;
-        if (dueDate == null) {
-          status = HealthRecordStatus.complete;
-        } else if (!dueDate.isAfter(now)) {
-          status = HealthRecordStatus.pending;
-        } else {
-          status = HealthRecordStatus.upcoming;
-        }
-
-        results.add(HealthRecordSummary(
-          goat: goat,
-          recordType: rt.type,
-          recordId: doc.id,
-          label: rt.label,
-          recordDate: recordDate,
-          dueDate: dueDate,
-          status: status,
-        ));
-      }
-    }
-
-    return results;
+    final perTypeResults = await Future.wait(reads);
+    return perTypeResults.expand((r) => r).toList();
   }
 
   // -- Breeding --------------------------------------------------------

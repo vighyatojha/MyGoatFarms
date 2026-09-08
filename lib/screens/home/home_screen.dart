@@ -143,6 +143,23 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
+  /// Time-of-day greeting, based on the device's local time/timezone
+  /// (`DateTime.now()` is always local, never UTC) — so a farmer in a
+  /// different timezone always sees a greeting that matches their own
+  /// clock, not the server's.
+  ///
+  ///   05:00–11:59  → Good Morning
+  ///   12:00–16:59  → Good Afternoon
+  ///   17:00–20:59  → Good Evening
+  ///   21:00–04:59  → Good Night
+  String _greeting() {
+    final hour = DateTime.now().hour;
+    if (hour >= 5 && hour < 12) return 'Good Morning';
+    if (hour >= 12 && hour < 17) return 'Good Afternoon';
+    if (hour >= 17 && hour < 21) return 'Good Evening';
+    return 'Good Night';
+  }
+
   // ===========================================================================
   // QUICK ACTION: ADD GOAT
   // ===========================================================================
@@ -229,14 +246,14 @@ class _HomeScreenState extends State<HomeScreen> {
         : FirebaseAuth.instance.currentUser?.displayName ?? 'Farmer';
     final farmName = _farm?.farmName.isNotEmpty == true ? _farm!.farmName : 'My Goat Farms';
 
-    // Still resolving the farm/partner lookup — show a real spinner
-    // instead of the empty placeholder boxes.
+    // Still resolving the farm/partner lookup — show the same skeleton
+    // shape the loaded dashboard will have, instead of a bare spinner on
+    // an empty screen (and instead of a second, different loading style
+    // than the one used further down for the stat grid/activities).
     if (_loadingFarm) {
       return const Scaffold(
         backgroundColor: AppColors.paleGreen,
-        body: Center(
-          child: CircularProgressIndicator(color: AppColors.primaryGreen),
-        ),
+        body: SafeArea(child: _HomeSkeleton()),
       );
     }
 
@@ -301,9 +318,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   duration: const Duration(milliseconds: 225),
                   child: _buildHeader(farmName, ownerName),
                 ),
-                const SizedBox(height: 20),
-                Text('Alhamdulillah for everything', style: AppTheme.body(size: 13, weight: FontWeight.w500)),
-                const SizedBox(height: 14),
+                const SizedBox(height: 18),
                 _buildSearchBar(),
                 const SizedBox(height: 16),
                 if (_farmId != null) _buildStatGrid(_farmId!) else _buildStatGridLoading(),
@@ -335,20 +350,33 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
+  /// Search bar styled to match the rest of the app's card language
+  /// (white card, soft shadow, icon-in-a-tinted-circle) — same visual
+  /// vocabulary the Finance Overview screen uses for its stat tiles and
+  /// nav chips, instead of a plain bordered text field. No trailing
+  /// filter icon — search here is a single free-text field, not a
+  /// filtered query, so a "tune" icon that did nothing was misleading.
   Widget _buildSearchBar() {
     return Container(
-      decoration: AppTheme.card(radius: 14),
-      padding: const EdgeInsets.symmetric(horizontal: 14),
+      decoration: AppTheme.card(radius: 16),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
       child: Row(
         children: [
-          Icon(Icons.search, color: AppColors.textGrey, size: 20),
-          const SizedBox(width: 8),
+          Container(
+            padding: const EdgeInsets.all(8),
+            decoration: BoxDecoration(
+              color: AppColors.primaryGreen.withOpacity(0.12),
+              shape: BoxShape.circle,
+            ),
+            child: const Icon(Icons.search_rounded, color: AppColors.primaryGreen, size: 18),
+          ),
+          const SizedBox(width: 10),
           Expanded(
             child: TextField(
               controller: _searchController,
               decoration: InputDecoration(
                 hintText: 'Search Goat ID, Customer, Batch, Invoice...',
-                hintStyle: AppTheme.body(size: 12),
+                hintStyle: AppTheme.body(size: 12.5),
                 border: InputBorder.none,
                 isDense: true,
                 contentPadding: const EdgeInsets.symmetric(vertical: 14),
@@ -356,18 +384,32 @@ class _HomeScreenState extends State<HomeScreen> {
               style: AppTheme.body(size: 13, color: AppColors.textDark),
             ),
           ),
-          Icon(Icons.tune, color: AppColors.primaryGreen, size: 20),
         ],
       ),
     );
   }
 
+  /// Shimmer skeleton cards for the stat grid, shown while `_farmId` is
+  /// still resolving — same shape as the loaded grid so nothing jumps
+  /// around once real data arrives, and no separate circular spinner.
   Widget _buildStatGridLoading() {
-    return Row(
-      children: const [
-        Expanded(child: SizedBox(height: 90)),
-        SizedBox(width: 12),
-        Expanded(child: SizedBox(height: 90)),
+    return const Column(
+      children: [
+        Row(
+          children: [
+            Expanded(child: _SkeletonBox(height: 90, radius: 18)),
+            SizedBox(width: 12),
+            Expanded(child: _SkeletonBox(height: 90, radius: 18)),
+          ],
+        ),
+        SizedBox(height: 12),
+        Row(
+          children: [
+            Expanded(child: _SkeletonBox(height: 90, radius: 18)),
+            SizedBox(width: 12),
+            Expanded(child: _SkeletonBox(height: 90, radius: 18)),
+          ],
+        ),
       ],
     );
   }
@@ -512,9 +554,17 @@ class _HomeScreenState extends State<HomeScreen> {
         stream: FirestoreService.instance.activitiesStream(farmId, limit: 5),
         builder: (context, snap) {
           if (!snap.hasData) {
-            return const Padding(
-              padding: EdgeInsets.symmetric(vertical: 20),
-              child: Center(child: CircularProgressIndicator(color: AppColors.primaryGreen)),
+            // Skeleton tiles matching ActivityTile's shape, instead of
+            // a circular spinner — consistent with every other loading
+            // state on this screen.
+            return const Column(
+              children: [
+                _SkeletonBox(height: 62, radius: 14),
+                SizedBox(height: 10),
+                _SkeletonBox(height: 62, radius: 14),
+                SizedBox(height: 10),
+                _SkeletonBox(height: 62, radius: 14),
+              ],
             );
           }
           final activities = snap.data!;
@@ -529,14 +579,29 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
+  /// Header: profile picture (opens Profile, same as before) leads on
+  /// the left where the generic paw-print logo used to sit — every
+  /// farm already has its own branding via `_buildQuickActions`/the
+  /// stat cards, so a decorative paw icon here didn't add anything a
+  /// person's own photo doesn't already give them faster recognition
+  /// of "this is MY account". Farm name + a time-of-day greeting sit
+  /// next to it, and the notification bell anchors the far right edge.
   Widget _buildHeader(String farmName, String ownerName) {
     return Row(
       children: [
-        Container(
-          width: 46,
-          height: 46,
-          decoration: const BoxDecoration(color: AppColors.lightGreen, shape: BoxShape.circle),
-          child: const Icon(Icons.pets, color: AppColors.primaryGreen),
+        GestureDetector(
+          onTap: () => Navigator.of(context).push(fastRoute(const ProfileScreen())).then((_) {
+            _popupPending = true;
+            _maybeShowCompletionPopup();
+          }),
+          child: CircleAvatar(
+            radius: 23,
+            backgroundColor: AppColors.lightGreen,
+            backgroundImage: _farm?.profileImage != null ? MemoryImage(_farm!.profileImage!) : null,
+            child: _farm?.profileImage == null
+                ? const Icon(Icons.person, color: AppColors.primaryGreen)
+                : null,
+          ),
         ),
         const SizedBox(width: 12),
         Expanded(
@@ -544,10 +609,11 @@ class _HomeScreenState extends State<HomeScreen> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(farmName, style: AppTheme.heading(size: 16), overflow: TextOverflow.ellipsis),
-              Text('Good Morning, $ownerName 👋', style: AppTheme.body(size: 12), overflow: TextOverflow.ellipsis),
+              Text('${_greeting()}, $ownerName 👋', style: AppTheme.body(size: 12), overflow: TextOverflow.ellipsis),
             ],
           ),
         ),
+        const SizedBox(width: 8),
         IconButton(
           onPressed: () => Navigator.of(context).push(fastRoute(const NotificationScreen())),
           icon: _farmId == null
@@ -579,20 +645,162 @@ class _HomeScreenState extends State<HomeScreen> {
             },
           ),
         ),
-        GestureDetector(
-          onTap: () => Navigator.of(context).push(fastRoute(const ProfileScreen())).then((_) {
-            _popupPending = true;
-            _maybeShowCompletionPopup();
-          }),
-          child: CircleAvatar(
-            backgroundColor: AppColors.lightGreen,
-            backgroundImage: _farm?.profileImage != null ? MemoryImage(_farm!.profileImage!) : null,
-            child: _farm?.profileImage == null
-                ? const Icon(Icons.person, color: AppColors.primaryGreen)
-                : null,
-          ),
-        ),
       ],
+    );
+  }
+}
+
+/// Full-dashboard skeleton shown while the farm/partner lookup resolves
+/// — mirrors the loaded screen's layout (header / search bar / stat
+/// grid / quick actions / activities) so there's no visual "jump" once
+/// real content swaps in, and no separate circular-spinner loading
+/// style competing with the shimmer skeletons used elsewhere on this
+/// screen.
+class _HomeSkeleton extends StatelessWidget {
+  const _HomeSkeleton();
+
+  @override
+  Widget build(BuildContext context) {
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(20, 12, 20, 24),
+      physics: const NeverScrollableScrollPhysics(),
+      children: const [
+        Row(
+          children: [
+            _SkeletonBox(height: 46, width: 46, radius: 23),
+            SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  _SkeletonBox(height: 14, width: 120, radius: 6),
+                  SizedBox(height: 6),
+                  _SkeletonBox(height: 11, width: 160, radius: 6),
+                ],
+              ),
+            ),
+            SizedBox(width: 8),
+            _SkeletonBox(height: 28, width: 28, radius: 14),
+          ],
+        ),
+        SizedBox(height: 18),
+        _SkeletonBox(height: 52, radius: 16),
+        SizedBox(height: 16),
+        Row(
+          children: [
+            Expanded(child: _SkeletonBox(height: 90, radius: 18)),
+            SizedBox(width: 12),
+            Expanded(child: _SkeletonBox(height: 90, radius: 18)),
+          ],
+        ),
+        SizedBox(height: 12),
+        Row(
+          children: [
+            Expanded(child: _SkeletonBox(height: 90, radius: 18)),
+            SizedBox(width: 12),
+            Expanded(child: _SkeletonBox(height: 90, radius: 18)),
+          ],
+        ),
+        SizedBox(height: 24),
+        _SkeletonBox(height: 16, width: 110, radius: 6),
+        SizedBox(height: 12),
+        Row(
+          children: [
+            _SkeletonBox(height: 50, width: 50, radius: 25),
+            SizedBox(width: 18),
+            _SkeletonBox(height: 50, width: 50, radius: 25),
+            SizedBox(width: 18),
+            _SkeletonBox(height: 50, width: 50, radius: 25),
+            SizedBox(width: 18),
+            _SkeletonBox(height: 50, width: 50, radius: 25),
+          ],
+        ),
+        SizedBox(height: 24),
+        _SkeletonBox(height: 16, width: 140, radius: 6),
+        SizedBox(height: 12),
+        _SkeletonBox(height: 62, radius: 14),
+        SizedBox(height: 10),
+        _SkeletonBox(height: 62, radius: 14),
+        SizedBox(height: 10),
+        _SkeletonBox(height: 62, radius: 14),
+      ],
+    );
+  }
+}
+
+/// One shimmering placeholder block — the single building block every
+/// loading state on this screen is made of (header, search bar, stat
+/// grid, quick actions, activities), so there's exactly one loading
+/// visual language on this screen instead of skeletons in some places
+/// and a spinner in others.
+class _SkeletonBox extends StatelessWidget {
+  final double height;
+  final double? width;
+  final double radius;
+
+  const _SkeletonBox({required this.height, this.width, required this.radius});
+
+  @override
+  Widget build(BuildContext context) {
+    return _Shimmer(
+      child: Container(
+        height: height,
+        width: width,
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(radius),
+        ),
+      ),
+    );
+  }
+}
+
+/// Lightweight shimmer sweep used by [_SkeletonBox].
+class _Shimmer extends StatefulWidget {
+  final Widget child;
+
+  const _Shimmer({required this.child});
+
+  @override
+  State<_Shimmer> createState() => _ShimmerState();
+}
+
+class _ShimmerState extends State<_Shimmer> with SingleTickerProviderStateMixin {
+  late final AnimationController _controller = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 1200),
+  )..repeat();
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: _controller,
+      builder: (context, child) {
+        return ShaderMask(
+          blendMode: BlendMode.srcATop,
+          shaderCallback: (bounds) {
+            final t = _controller.value;
+            return LinearGradient(
+              colors: [
+                AppColors.lightGreen.withOpacity(0.5),
+                Colors.white,
+                AppColors.lightGreen.withOpacity(0.5),
+              ],
+              stops: const [0.35, 0.5, 0.65],
+              begin: Alignment(-1 - t * 2, 0),
+              end: Alignment(1 - t * 2, 0),
+            ).createShader(bounds);
+          },
+          child: child,
+        );
+      },
+      child: widget.child,
     );
   }
 }
