@@ -1,3 +1,4 @@
+import 'package:cloud_functions/cloud_functions.dart';
 import 'package:flutter/material.dart';
 import 'package:animate_do/animate_do.dart';
 import 'package:intl/intl.dart';
@@ -29,6 +30,7 @@ class NotificationScreen extends StatefulWidget {
 class _NotificationScreenState extends State<NotificationScreen> {
   String? _farmId;
   bool _loadingFarm = true;
+  bool _isOwner = false;
   final _timeFmt = DateFormat('d MMM, h:mm a');
 
   @override
@@ -39,9 +41,11 @@ class _NotificationScreenState extends State<NotificationScreen> {
 
   Future<void> _loadFarmId() async {
     final id = await FirestoreService.instance.currentFarmId();
+    final actor = await FirestoreService.instance.getCurrentActor();
     if (!mounted) return;
     setState(() {
       _farmId = id;
+      _isOwner = actor?.role == 'owner';
       _loadingFarm = false;
     });
   }
@@ -126,6 +130,46 @@ class _NotificationScreenState extends State<NotificationScreen> {
     return 2; // General health record — Health tab.
   }
 
+  Future<bool> _confirmDelete() async {
+    final result = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text('Delete notification?', style: AppTheme.heading(size: 15)),
+        content: Text('This can\'t be undone.', style: AppTheme.body(size: 13)),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: Text('Delete', style: TextStyle(color: AppColors.error)),
+          ),
+        ],
+      ),
+    );
+    return result ?? false;
+  }
+
+  Future<void> _deleteNotification(AppNotificationRecord n) async {
+    final farmId = _farmId;
+    if (farmId == null) return;
+    try {
+      await FirestoreService.instance.deleteNotification(farmId, n.id);
+    } on FirebaseFunctionsException catch (e) {
+      if (!mounted) return;
+      final message = e.code == 'permission-denied'
+          ? 'Only the farm owner can delete notifications.'
+          : 'Could not delete notification.';
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Could not delete notification.')),
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -169,7 +213,7 @@ class _NotificationScreenState extends State<NotificationScreen> {
             itemCount: notifications.length,
             itemBuilder: (context, index) {
               final n = notifications[index];
-              return FadeInUp(
+              final tile = FadeInUp(
                 delay: Duration(milliseconds: 25 * index),
                 duration: const Duration(milliseconds: 180),
                 child: InkWell(
@@ -220,6 +264,27 @@ class _NotificationScreenState extends State<NotificationScreen> {
                     ),
                   ),
                 ),
+              );
+
+              // Delete is server-enforced to owners only (see
+              // FirestoreService.deleteNotification) — only offering the
+              // swipe gesture to owners here is just the matching UX,
+              // not the actual security boundary.
+              if (!_isOwner) return tile;
+
+              return Dismissible(
+                key: ValueKey(n.id),
+                direction: DismissDirection.endToStart,
+                confirmDismiss: (_) => _confirmDelete(),
+                onDismissed: (_) => _deleteNotification(n),
+                background: Container(
+                  alignment: Alignment.centerRight,
+                  margin: const EdgeInsets.only(bottom: 10),
+                  padding: const EdgeInsets.symmetric(horizontal: 20),
+                  decoration: BoxDecoration(color: AppColors.error, borderRadius: BorderRadius.circular(14)),
+                  child: const Icon(Icons.delete_outline, color: Colors.white),
+                ),
+                child: tile,
               );
             },
           );

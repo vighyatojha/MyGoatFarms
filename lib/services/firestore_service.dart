@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:typed_data';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:cloud_functions/cloud_functions.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart';
 
@@ -2932,5 +2933,24 @@ class FirestoreService {
       batch.update(doc.reference, {'isRead': true});
     }
     await batch.commit().timeout(timeout);
+  }
+
+  /// Deletes one notification — **owner only**.
+  ///
+  /// This calls the `deleteNotification` Cloud Function (see
+  /// functions/index.js) rather than deleting the Firestore document
+  /// directly, because the role check has to happen somewhere the
+  /// client can't bypass. The function re-derives the caller's role
+  /// itself from the farm document's `authUid` field — it does not
+  /// trust anything this method sends about who's asking.
+  ///
+  /// Throws a [FirebaseFunctionsException] with code `permission-denied`
+  /// if the signed-in user isn't the farm owner. Callers (e.g.
+  /// NotificationScreen) should only present this action to owners in
+  /// the first place — hiding the button is the UX, this check is the
+  /// actual security boundary.
+  Future<void> deleteNotification(String farmId, String notificationId) async {
+    final callable = FirebaseFunctions.instance.httpsCallable('deleteNotification');
+    await callable.call({'farmId': farmId, 'notificationId': notificationId});
   }
 }
