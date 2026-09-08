@@ -1710,6 +1710,34 @@ class FirestoreService {
     return _customers(farmId).doc(customer.id).update(customer.toUpdateMap()).timeout(timeout);
   }
 
+  /// Saves the customer's Health Reminder Settings — Vaccination, Hoof
+  /// Cutting, and Hair Trimming reminder schedules (in days). These
+  /// apply to every goat under the customer: the record-creation
+  /// screens for each health-event type read the customer's setting to
+  /// compute that new record's `nextDueDate` (see [kGoatCareRecordTypes]
+  /// for how those due dates are later read back for reminders).
+  ///
+  /// Kept as its own partial `.update()` — rather than folded into
+  /// [updateCustomer] — so saving these three fields from the Health
+  /// Settings section can never clobber unrelated customer fields
+  /// (name/mobile/address/etc.) that might be mid-edit elsewhere.
+  ///
+  /// Pass `null` for a field to clear that reminder (turn it off).
+  Future<void> updateCustomerHealthReminderSettings(
+      String farmId,
+      String customerId, {
+        int? vaccinationReminderDays,
+        int? hoofCuttingReminderDays,
+        int? hairTrimmingReminderDays,
+      }) {
+    return _customers(farmId).doc(customerId).update({
+      'vaccinationReminderDays': vaccinationReminderDays,
+      'hoofCuttingReminderDays': hoofCuttingReminderDays,
+      'hairTrimmingReminderDays': hairTrimmingReminderDays,
+      'updatedAt': FieldValue.serverTimestamp(),
+    }).timeout(timeout);
+  }
+
   /// True if this customer currently has any goat checked into Palai and
   /// not yet checked out. Used to block deletion until goats are checked
   /// out, since a customer record is what check-out/billing hangs off of.

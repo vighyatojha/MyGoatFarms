@@ -183,6 +183,31 @@ class _CustomerProfileScreenState
   }
 
   // ================================================================
+  // HEALTH SETTINGS
+  // ================================================================
+
+  Future<void> _openHealthSettings() async {
+    final result = await showModalBottomSheet<bool>(
+      context: context,
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      useSafeArea: true,
+      builder: (context) {
+        return _HealthReminderSettingsSheet(
+          farmId: widget.farmId,
+          customer: _customer,
+        );
+      },
+    );
+
+    if (!mounted) return;
+
+    if (result == true) {
+      await _refreshCustomer();
+    }
+  }
+
+  // ================================================================
 // MONTHLY BILLS
 // ================================================================
 
@@ -494,7 +519,22 @@ class _CustomerProfileScreenState
                 const SizedBox(height: 24),
 
                 // ==================================================
-                // 2. PAYMENT INFORMATION
+                // 2. HEALTH SETTINGS
+                // ==================================================
+
+                _buildSectionHeader(
+                  title: 'Health Settings',
+                  icon: Icons.health_and_safety_outlined,
+                ),
+
+                const SizedBox(height: 12),
+
+                _buildHealthSettingsSection(),
+
+                const SizedBox(height: 24),
+
+                // ==================================================
+                // 3. PAYMENT INFORMATION
                 // ==================================================
 
                 _buildSectionHeader(
@@ -528,7 +568,7 @@ class _CustomerProfileScreenState
                 const SizedBox(height: 26),
 
                 // ==================================================
-                // 3. CHECK OUT GOAT(S)
+                // 4. CHECK OUT GOAT(S)
                 // ==================================================
 
                 _buildCheckoutButton(),
@@ -536,7 +576,7 @@ class _CustomerProfileScreenState
                 const SizedBox(height: 28),
 
                 // ==================================================
-                // 4. GOATS
+                // 5. GOATS
                 // ==================================================
 
                 _buildSectionHeader(
@@ -985,6 +1025,136 @@ class _CustomerProfileScreenState
           ),
         ],
       ),
+    );
+  }
+
+  // ================================================================
+  // HEALTH SETTINGS SECTION
+  //
+  // Shows the customer's three reminder schedules (Vaccination, Hoof
+  // Cutting, Hair Trimming) and lets the customer's caretaker open the
+  // Health Settings sheet to change them. These settings apply to every
+  // goat under this customer.
+  // ================================================================
+
+  Widget _buildHealthSettingsSection() {
+    return Container(
+      width: double.infinity,
+
+      decoration: AppTheme.card(
+        radius: 16,
+      ),
+
+      padding: const EdgeInsets.all(16),
+
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _healthReminderRow(
+            icon: Icons.vaccines_outlined,
+            label: 'Vaccination Reminder',
+            days: _customer.vaccinationReminderDays,
+          ),
+
+          const Divider(height: 24),
+
+          _healthReminderRow(
+            icon: Icons.content_cut,
+            label: 'Hoof Cutting Reminder',
+            days: _customer.hoofCuttingReminderDays,
+          ),
+
+          const Divider(height: 24),
+
+          _healthReminderRow(
+            icon: Icons.cut_outlined,
+            label: 'Hair Trimming Reminder',
+            days: _customer.hairTrimmingReminderDays,
+          ),
+
+          const SizedBox(height: 16),
+
+          SizedBox(
+            width: double.infinity,
+            child: OutlinedButton.icon(
+              onPressed: _openHealthSettings,
+              icon: const Icon(Icons.edit_outlined, size: 17),
+              label: const Text(
+                'Change Health Settings',
+                style: TextStyle(fontWeight: FontWeight.w600),
+              ),
+              style: OutlinedButton.styleFrom(
+                foregroundColor: AppColors.primaryGreen,
+                side: const BorderSide(color: AppColors.primaryGreen),
+                padding: const EdgeInsets.symmetric(vertical: 13),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _healthReminderRow({
+    required IconData icon,
+    required String label,
+    required int? days,
+  }) {
+    final isSet = days != null;
+
+    return Row(
+      children: [
+        Container(
+          width: 34,
+          height: 34,
+          decoration: const BoxDecoration(
+            color: AppColors.lightGreen,
+            shape: BoxShape.circle,
+          ),
+          child: Icon(
+            icon,
+            size: 16,
+            color: AppColors.primaryGreen,
+          ),
+        ),
+
+        const SizedBox(width: 12),
+
+        Expanded(
+          child: Text(
+            label,
+            style: AppTheme.body(
+              size: 13,
+              color: AppColors.textDark,
+              weight: FontWeight.w600,
+            ),
+          ),
+        ),
+
+        Container(
+          padding: const EdgeInsets.symmetric(
+            horizontal: 10,
+            vertical: 5,
+          ),
+          decoration: BoxDecoration(
+            color: isSet
+                ? AppColors.primaryGreen.withOpacity(0.10)
+                : AppColors.textGrey.withOpacity(0.10),
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: Text(
+            isSet ? 'Every $days days' : 'Not set',
+            style: TextStyle(
+              color: isSet ? AppColors.primaryGreen : AppColors.textGrey,
+              fontSize: 11,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+        ),
+      ],
     );
   }
 
@@ -3929,6 +4099,281 @@ class _AddOutstandingSheetState
                     fontWeight:
                     FontWeight.w600,
                   ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// ============================================================================
+// HEALTH REMINDER SETTINGS SHEET
+//
+// Lets the customer's caretaker set/change the three Health Reminder
+// Settings (Vaccination, Hoof Cutting, Hair Trimming) from Customer
+// Profile → Health Settings → Change Health Settings. Saves all three
+// in one write via FirestoreService.updateCustomerHealthReminderSettings,
+// which applies to every goat under this customer.
+// ============================================================================
+
+class _HealthReminderSettingsSheet extends StatefulWidget {
+  final String farmId;
+  final PalaiCustomer customer;
+
+  const _HealthReminderSettingsSheet({
+    required this.farmId,
+    required this.customer,
+  });
+
+  @override
+  State<_HealthReminderSettingsSheet> createState() =>
+      _HealthReminderSettingsSheetState();
+}
+
+class _HealthReminderSettingsSheetState
+    extends State<_HealthReminderSettingsSheet> {
+  // Vaccination offers a broader set of common intervals since farms
+  // vary widely on vaccination cadence; Hoof Cutting and Hair Trimming
+  // are fixed to 30 / 45 / 60 days per the Health Settings spec.
+  static const List<int> _vaccinationOptions = [15, 30, 45, 60, 90];
+  static const List<int> _hoofCuttingOptions = [30, 45, 60];
+  static const List<int> _hairTrimmingOptions = [30, 45, 60];
+
+  late int? _vaccinationDays = widget.customer.vaccinationReminderDays;
+  late int? _hoofCuttingDays = widget.customer.hoofCuttingReminderDays;
+  late int? _hairTrimmingDays = widget.customer.hairTrimmingReminderDays;
+
+  bool _saving = false;
+
+  Future<void> _save() async {
+    if (_saving) return;
+
+    setState(() {
+      _saving = true;
+    });
+
+    try {
+      await FirestoreService.instance.updateCustomerHealthReminderSettings(
+        widget.farmId,
+        widget.customer.id,
+        vaccinationReminderDays: _vaccinationDays,
+        hoofCuttingReminderDays: _hoofCuttingDays,
+        hairTrimmingReminderDays: _hairTrimmingDays,
+      );
+
+      if (!mounted) return;
+
+      Navigator.of(context).pop(true);
+    } catch (e) {
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Could not save Health Settings: $e'),
+          backgroundColor: AppColors.error,
+        ),
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _saving = false;
+        });
+      }
+    }
+  }
+
+  Widget _reminderPicker({
+    required String title,
+    required String subtitle,
+    required List<int> options,
+    required int? selected,
+    required ValueChanged<int?> onChanged,
+  }) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          title,
+          style: AppTheme.body(
+            size: 12,
+            color: AppColors.textDark,
+            weight: FontWeight.w700,
+          ),
+        ),
+
+        const SizedBox(height: 3),
+
+        Text(
+          subtitle,
+          style: AppTheme.body(
+            size: 11,
+            color: AppColors.textGrey,
+          ),
+        ),
+
+        const SizedBox(height: 10),
+
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: [
+            ...options.map((days) {
+              final isSelected = selected == days;
+
+              return ChoiceChip(
+                label: Text('$days days'),
+                selected: isSelected,
+                onSelected: (_) => onChanged(days),
+                selectedColor: AppColors.primaryGreen,
+                backgroundColor: AppColors.paleGreen,
+                labelStyle: TextStyle(
+                  color: isSelected ? Colors.white : AppColors.textDark,
+                  fontWeight: FontWeight.w600,
+                  fontSize: 12,
+                ),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(20),
+                  side: BorderSide(
+                    color: isSelected
+                        ? AppColors.primaryGreen
+                        : AppColors.divider,
+                  ),
+                ),
+              );
+            }),
+
+            // "None" clears the reminder for this record type.
+            ChoiceChip(
+              label: const Text('None'),
+              selected: selected == null,
+              onSelected: (_) => onChanged(null),
+              selectedColor: AppColors.textGrey,
+              backgroundColor: AppColors.paleGreen,
+              labelStyle: TextStyle(
+                color: selected == null ? Colors.white : AppColors.textDark,
+                fontWeight: FontWeight.w600,
+                fontSize: 12,
+              ),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(20),
+                side: BorderSide(
+                  color: selected == null
+                      ? AppColors.textGrey
+                      : AppColors.divider,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: EdgeInsets.fromLTRB(
+        20,
+        12,
+        20,
+        20 + MediaQuery.of(context).viewInsets.bottom,
+      ),
+
+      decoration: const BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.vertical(
+          top: Radius.circular(26),
+        ),
+      ),
+
+      child: SingleChildScrollView(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Center(
+              child: Container(
+                width: 42,
+                height: 4,
+                decoration: BoxDecoration(
+                  color: Colors.grey.shade300,
+                  borderRadius: BorderRadius.circular(10),
+                ),
+              ),
+            ),
+
+            const SizedBox(height: 20),
+
+            Text(
+              'Health Settings',
+              style: AppTheme.heading(size: 20),
+            ),
+
+            const SizedBox(height: 3),
+
+            Text(
+              '${widget.customer.name} · applies to all goats',
+              style: AppTheme.body(size: 12),
+            ),
+
+            const SizedBox(height: 22),
+
+            _reminderPicker(
+              title: 'Vaccination Reminder',
+              subtitle: 'Remind again this many days after each vaccination.',
+              options: _vaccinationOptions,
+              selected: _vaccinationDays,
+              onChanged: (v) => setState(() => _vaccinationDays = v),
+            ),
+
+            const SizedBox(height: 22),
+
+            _reminderPicker(
+              title: 'Hoof Cutting Reminder',
+              subtitle: 'Remind again this many days after each hoof cutting.',
+              options: _hoofCuttingOptions,
+              selected: _hoofCuttingDays,
+              onChanged: (v) => setState(() => _hoofCuttingDays = v),
+            ),
+
+            const SizedBox(height: 22),
+
+            _reminderPicker(
+              title: 'Hair Trimming Reminder',
+              subtitle: 'Remind again this many days after each hair trimming.',
+              options: _hairTrimmingOptions,
+              selected: _hairTrimmingDays,
+              onChanged: (v) => setState(() => _hairTrimmingDays = v),
+            ),
+
+            const SizedBox(height: 26),
+
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton(
+                onPressed: _saving ? null : _save,
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppColors.primaryGreen,
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(vertical: 15),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                ),
+                child: _saving
+                    ? const SizedBox(
+                  height: 20,
+                  width: 20,
+                  child: CircularProgressIndicator(
+                    color: Colors.white,
+                    strokeWidth: 2,
+                  ),
+                )
+                    : const Text(
+                  'Save Health Settings',
+                  style: TextStyle(fontWeight: FontWeight.w600),
                 ),
               ),
             ),
