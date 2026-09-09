@@ -1,5 +1,6 @@
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:flutter/material.dart';
+import 'package:firebase_core/firebase_core.dart';
 import 'package:animate_do/animate_do.dart';
 import 'package:intl/intl.dart';
 
@@ -7,19 +8,32 @@ import '../../app_theme.dart';
 import '../../models/notification_model.dart';
 import '../../services/firestore_service.dart';
 import '../../widgets/farm_not_linked_state.dart';
+import '../customers/customer_management_screen.dart';
+import '../finance/customer_ledger_screen.dart';
+import '../finance/expense_list_screen.dart';
+import '../finance/revenue_list_screen.dart';
 import '../palai/customer_palai/goat_profile_screen.dart';
+import '../palai/goat_list_screen.dart';
 import '../palai/own_farm/own_farm_goat_detail_screen.dart';
+import '../palai/own_farm/own_farm_goat_list_screen.dart';
+import '../stocks/stock_screen.dart';
 
 /// Notification center — reads from `farms/{farmId}/notifications`.
 ///
-/// This collection is populated two ways (see NotificationService /
+/// This collection is populated three ways (see NotificationService /
 /// HealthReminderScheduler docs):
 ///   * HealthReminderScheduler's due-check, for vaccination / hoof
 ///     cutting / hair trimming reminders that are due today or overdue.
-///   * Any future event-based write (payment received, check-in/out,
-///     low stock) — not wired up everywhere yet, so those categories
-///     may be sparse until the corresponding screens call
-///     FirestoreService.addNotification themselves.
+///   * FirestoreService.notifyPartnerActivity, fired automatically
+///     whenever a PARTNER (not the owner) logs an activity anywhere in
+///     the app — Palai, Stock, Finance, Own Farm, Customers — so the
+///     owner sees every partner action here, and tapping it opens the
+///     screen where that change took place (see
+///     _openActivityDestination).
+///   * Any future event-based write (low stock, etc.) — not wired up
+///     everywhere yet, so those categories may be sparse until the
+///     corresponding screens call FirestoreService.addNotification
+///     themselves.
 class NotificationScreen extends StatefulWidget {
   const NotificationScreen({super.key});
 
@@ -60,6 +74,10 @@ class _NotificationScreenState extends State<NotificationScreen> {
         return Icons.pets_outlined;
       case 'inventory':
         return Icons.warning_amber_outlined;
+      // A partner's action, mirrored from the Activity feed — see
+      // FirestoreService.notifyPartnerActivity.
+      case 'activity':
+        return Icons.groups_outlined;
       default:
         return Icons.notifications_active_outlined;
     }
@@ -83,6 +101,16 @@ class _NotificationScreenState extends State<NotificationScreen> {
     if (!n.isRead) {
       // Fire-and-forget — don't block navigation on this write.
       FirestoreService.instance.markNotificationRead(farmId, n.id);
+    }
+
+    // Partner-activity notifications (mirrored from the Activity feed —
+    // see FirestoreService.notifyPartnerActivity) redirect to the
+    // module's list screen instead of a specific record, since a
+    // record-level id isn't uniformly available at every activity call
+    // site. See _openActivityDestination for the module → screen map.
+    if (n.category == 'activity') {
+      _openActivityDestination(n);
+      return;
     }
 
     // Health notifications carry a goatId — deep-link to that goat.
@@ -115,6 +143,53 @@ class _NotificationScreenState extends State<NotificationScreen> {
           );
         }
       }
+    }
+  }
+
+  /// Redirects a partner-activity notification to the screen where that
+  /// change actually took place — Goat List, Customer Management,
+  /// Stock, Expense/Revenue List, Customer Ledger, Own Farm — based on
+  /// the `module` + `activityType` the notification carries (see
+  /// FirestoreService.notifyPartnerActivity). These screens all resolve
+  /// their own farmId internally, so no extra data needs to travel
+  /// through the notification for this to work.
+  void _openActivityDestination(AppNotificationRecord n) {
+    final module = n.reference['module'];
+    final activityType = n.reference['activityType'] ?? '';
+
+    Widget? destination;
+    switch (module) {
+      case 'palai':
+        destination = (activityType.startsWith('customer'))
+            ? const CustomerManagementScreen()
+            : const GoatListScreen();
+        break;
+      case 'stock':
+        destination = const StockScreen();
+        break;
+      case 'finance':
+        if (activityType == 'paymentReceived') {
+          destination = const CustomerLedgerScreen();
+        } else if (activityType.startsWith('revenue')) {
+          destination = const RevenueListScreen();
+        } else {
+          // expenseAdded / expenseVoided, and any future finance type.
+          destination = const ExpenseListScreen();
+        }
+        break;
+      case 'ownFarm':
+        destination = activityType == 'ownFarmExpenseAdded'
+            ? const ExpenseListScreen()
+            : const OwnFarmGoatListScreen();
+        break;
+      default:
+        destination = null;
+    }
+
+    if (destination != null && mounted) {
+      Navigator.of(context).push(
+        MaterialPageRoute(builder: (_) => destination!),
+      );
     }
   }
 
@@ -154,18 +229,29 @@ class _NotificationScreenState extends State<NotificationScreen> {
   Future<void> _deleteNotification(AppNotificationRecord n) async {
     final farmId = _farmId;
     if (farmId == null) return;
+
     try {
-      await FirestoreService.instance.deleteNotification(farmId, n.id);
-    } on FirebaseFunctionsException catch (e) {
+      await FirestoreService.instance.deleteNotification(
+        farmId,
+        n.id,
+      );
+    } on FirebaseException catch (e) {
       if (!mounted) return;
+
       final message = e.code == 'permission-denied'
           ? 'Only the farm owner can delete notifications.'
           : 'Could not delete notification.';
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(message)),
+      );
     } catch (e) {
       if (!mounted) return;
+
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Could not delete notification.')),
+        const SnackBar(
+          content: Text('Could not delete notification.'),
+        ),
       );
     }
   }

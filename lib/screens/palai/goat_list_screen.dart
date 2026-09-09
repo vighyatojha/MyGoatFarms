@@ -56,6 +56,10 @@ class _GoatListScreenState extends State<GoatListScreen> {
 
   _HealthFilter _filter = _HealthFilter.all;
 
+  bool _selectionMode = false;
+  bool _deleting = false;
+  final Set<String> _selectedGoatIds = {};
+
   @override
   void initState() {
     super.initState();
@@ -304,6 +308,130 @@ class _GoatListScreenState extends State<GoatListScreen> {
     }).toList();
   }
 
+  void _toggleSelectionMode() {
+    if (_deleting) return;
+    setState(() {
+      _selectionMode = !_selectionMode;
+      _selectedGoatIds.clear();
+    });
+  }
+
+  void _toggleGoatSelection(PalaiGoat goat) {
+    if (_deleting) return;
+    setState(() {
+      if (_selectedGoatIds.contains(goat.id)) {
+        _selectedGoatIds.remove(goat.id);
+      } else {
+        _selectedGoatIds.add(goat.id);
+      }
+    });
+  }
+
+  Future<void> _deleteSelectedGoats() async {
+    final farmId = _farmId;
+    if (farmId == null || _selectedGoatIds.isEmpty || _deleting) return;
+
+    final selectedGoats = _goats
+        .where((goat) => _selectedGoatIds.contains(goat.id))
+        .toList();
+
+    if (selectedGoats.isEmpty) return;
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) {
+        final count = selectedGoats.length;
+        final names = selectedGoats
+            .take(3)
+            .map((goat) => goat.goatCode)
+            .join(', ');
+        final more = count > 3 ? ' and ${count - 3} more' : '';
+
+        return AlertDialog(
+          title: Text(
+            count == 1 ? 'Delete goat?' : 'Delete goats?',
+            style: AppTheme.heading(size: 17),
+          ),
+          content: Text(
+            count == 1
+                ? 'Delete $names permanently from the database?'
+                : 'Delete $names$more permanently from the database? This will also remove their saved health, care, photo and report records.',
+            style: AppTheme.body(size: 13, color: AppColors.textDark),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext, false),
+              child: Text(
+                'Cancel',
+                style: AppTheme.body(
+                  size: 13,
+                  color: AppColors.textGrey,
+                  weight: FontWeight.w600,
+                ),
+              ),
+            ),
+            ElevatedButton(
+              onPressed: () => Navigator.pop(dialogContext, true),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: AppColors.error,
+                foregroundColor: Colors.white,
+              ),
+              child: const Text('Delete'),
+            ),
+          ],
+        );
+      },
+    );
+
+    if (confirmed != true || !mounted) return;
+
+    setState(() {
+      _deleting = true;
+    });
+
+    try {
+      for (final goat in selectedGoats) {
+        await FirestoreService.instance.deletePalaiGoat(
+          farmId,
+          goat.customerId,
+          goat.id,
+        );
+      }
+
+      if (!mounted) return;
+
+      setState(() {
+        _selectedGoatIds.clear();
+        _selectionMode = false;
+        _deleting = false;
+      });
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            selectedGoats.length == 1
+                ? 'Goat deleted successfully.'
+                : '${selectedGoats.length} goats deleted successfully.',
+          ),
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+
+      setState(() {
+        _deleting = false;
+      });
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'Could not delete goat${selectedGoats.length == 1 ? '' : 's'}: ${FirestoreService.instance.describeError(e)}',
+          ),
+        ),
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -315,13 +443,41 @@ class _GoatListScreenState extends State<GoatListScreen> {
         foregroundColor: AppColors.textDark,
         titleSpacing: 0,
         title: Text(
-          'Goats in Palai',
+          _selectionMode
+              ? '${_selectedGoatIds.length} selected'
+              : 'Goats in Palai',
           style: AppTheme.heading(size: 17),
         ),
+        actions: [
+          if (_selectionMode) ...[
+            if (_selectedGoatIds.isNotEmpty)
+              IconButton(
+                onPressed: _deleting ? null : _deleteSelectedGoats,
+                tooltip: 'Delete selected',
+                icon: _deleting
+                    ? const SizedBox(
+                  width: 20,
+                  height: 20,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+                    : const Icon(Icons.delete_outline_rounded),
+              ),
+            IconButton(
+              onPressed: _deleting ? null : _toggleSelectionMode,
+              tooltip: 'Cancel selection',
+              icon: const Icon(Icons.close_rounded),
+            ),
+          ] else
+            IconButton(
+              onPressed: _toggleSelectionMode,
+              tooltip: 'Select goats',
+              icon: const Icon(Icons.checklist_rounded),
+            ),
+        ],
       ),
 
       floatingActionButton:
-      (_farmId == null || _goats.isEmpty)
+      (_farmId == null || _goats.isEmpty || _selectionMode)
           ? null
           : FloatingActionButton.extended(
         onPressed: () {
@@ -1324,7 +1480,13 @@ class _GoatListScreenState extends State<GoatListScreen> {
       color: Colors.transparent,
       child: InkWell(
         borderRadius: BorderRadius.circular(18),
-        onTap: () => _openGoatProfile(goat),
+        onTap: () {
+          if (_selectionMode) {
+            _toggleGoatSelection(goat);
+          } else {
+            _openGoatProfile(goat);
+          }
+        },
         child: Container(
           width: double.infinity,
           decoration: AppTheme.card(radius: 18),
@@ -1332,6 +1494,18 @@ class _GoatListScreenState extends State<GoatListScreen> {
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
+              if (_selectionMode)
+                Padding(
+                  padding: const EdgeInsets.only(right: 8, top: 17),
+                  child: Checkbox(
+                    value: _selectedGoatIds.contains(goat.id),
+                    onChanged: (_) => _toggleGoatSelection(goat),
+                    activeColor: AppColors.primaryGreen,
+                    checkColor: Colors.white,
+                    materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  ),
+                ),
+
               // ------------------------------------------------------------
               // GOAT IMAGE
               // ------------------------------------------------------------

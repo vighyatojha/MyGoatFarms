@@ -19,6 +19,7 @@ import '../../widgets/app_bottom_nav.dart';
 import '../../widgets/farm_not_linked_state.dart';
 import '../login_screen.dart';
 import 'profile_partner_dashboard.dart';
+import 'bill_settings_screen.dart';
 
 class ProfileScreen extends StatefulWidget {
   const ProfileScreen({super.key});
@@ -454,31 +455,22 @@ class _ProfileScreenState extends State<ProfileScreen> {
   }
 
   Future<void> _showBillSettings() async {
-    // Defense in depth: the "Edit Bill Details" button is hidden for
-    // partners (see _buildBillDetailsCard), but guard the method itself
-    // too in case it's ever reachable another way.
     if (!_isOwner) return;
     if (_farmId == null) return;
 
-    final current =
-        _farm?.billSettings ?? const BillSettings();
+    final current = (_farm?.billSettings ?? const BillSettings()).copyWith(
+      email: (_farm?.billSettings?.email.trim().isNotEmpty ?? false)
+          ? _farm!.billSettings!.email
+          : (_farm?.email ?? ''),
+    );
 
-    await showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      showDragHandle: true,
-      backgroundColor: AppColors.paleGreen,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(
-          top: Radius.circular(28),
-        ),
-      ),
-      builder: (_) {
-        return _BillSettingsSheet(
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => BillSettingsScreen(
           farmId: _farmId!,
           initialSettings: current,
-        );
-      },
+        ),
+      ),
     );
   }
 
@@ -1324,124 +1316,142 @@ class _ProfileScreenState extends State<ProfileScreen> {
   Widget _buildBillDetailsCard(
       FarmModel? farm,
       ) {
-    final settings =
-        farm?.billSettings ?? const BillSettings();
+    final settings = farm?.billSettings ?? const BillSettings();
+    final enabledTerms = settings.termsSections.where((e) => e.enabled).length;
+    final enabledNotes = settings.importantNotes.where((e) => e.enabled).length;
 
     return _sectionCard(
       title: 'Bill Details',
       icon: Icons.receipt_long_outlined,
       child: Column(
-        crossAxisAlignment:
-        CrossAxisAlignment.start,
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
-            'These details appear on Palai check-out bills.',
-            style: AppTheme.body(size: 12),
-          ),
-
-          const SizedBox(height: 14),
-
           Container(
             width: double.infinity,
-            padding:
-            const EdgeInsets.all(14),
+            padding: const EdgeInsets.all(14),
             decoration: BoxDecoration(
-              color: const Color(0xFFF1F3F1),
-              borderRadius:
-              BorderRadius.circular(14),
+              gradient: LinearGradient(
+                colors: [
+                  AppColors.lightGreen.withOpacity(.75),
+                  Colors.white,
+                ],
+              ),
+              borderRadius: BorderRadius.circular(17),
+              border: Border.all(color: AppColors.lightGreen),
             ),
-            child: Column(
-              crossAxisAlignment:
-              CrossAxisAlignment.start,
+            child: Row(
               children: [
-                Text(
-                  settings.businessName,
-                  style: AppTheme.body(
-                    size: 14,
-                    color: AppColors.textDark,
-                    weight: FontWeight.w700,
+                Container(
+                  width: 54,
+                  height: 54,
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(15),
+                    border: Border.all(color: AppColors.lightGreen),
+                  ),
+                  clipBehavior: Clip.antiAlias,
+                  child: settings.billLogo != null
+                      ? Image.memory(settings.billLogo!, fit: BoxFit.cover)
+                      : const Icon(
+                    Icons.receipt_long_outlined,
+                    color: AppColors.primaryGreen,
+                    size: 28,
                   ),
                 ),
-
-                if (settings.tagline
-                    .trim()
-                    .isNotEmpty) ...[
-                  const SizedBox(height: 3),
-                  Text(
-                    settings.tagline,
-                    style:
-                    AppTheme.body(size: 11),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        settings.businessName,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: AppTheme.heading(size: 14),
+                      ),
+                      if (settings.address.trim().isNotEmpty) ...[
+                        const SizedBox(height: 3),
+                        Text(
+                          settings.address,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: AppTheme.body(size: 10),
+                        ),
+                      ],
+                      if (settings.phone.trim().isNotEmpty) ...[
+                        const SizedBox(height: 2),
+                        Text(
+                          settings.phone,
+                          style: AppTheme.body(size: 10, color: AppColors.textGrey),
+                        ),
+                      ],
+                      if (settings.email.trim().isNotEmpty) ...[
+                        const SizedBox(height: 2),
+                        Text(
+                          settings.email,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: AppTheme.body(size: 10, color: AppColors.textGrey),
+                        ),
+                      ],
+                    ],
                   ),
-                ],
-
-                if (settings.address
-                    .trim()
-                    .isNotEmpty) ...[
-                  const SizedBox(height: 5),
-                  Text(
-                    settings.address,
-                    style:
-                    AppTheme.body(size: 11),
-                  ),
-                ],
-
-                if (settings.phone
-                    .trim()
-                    .isNotEmpty)
-                  Text(
-                    'Phone: ${settings.phone}',
-                    style:
-                    AppTheme.body(size: 11),
-                  ),
-
-                if (settings.upiId
-                    .trim()
-                    .isNotEmpty)
-                  Text(
-                    'UPI: ${settings.upiId}',
-                    style:
-                    AppTheme.body(size: 11),
-                  ),
+                ),
               ],
             ),
           ),
-
-          // Editing bill/pricing details is a farm-level setting —
-          // owner-only (see task 2). Hidden entirely for partners rather
-          // than shown disabled.
-          if (_isOwner) ...[
-            const SizedBox(height: 14),
-
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              Expanded(child: _billStat(Icons.gavel_outlined, '$enabledTerms', 'Terms')),
+              const SizedBox(width: 8),
+              Expanded(child: _billStat(Icons.info_outline, '$enabledNotes', 'Notes')),
+              const SizedBox(width: 8),
+              Expanded(child: _billStat(Icons.image_outlined, settings.billLogo == null ? 'No' : 'Yes', 'Photo')),
+            ],
+          ),
+          const SizedBox(height: 12),
+          if (_isOwner)
             SizedBox(
               width: double.infinity,
               height: 48,
-              child: OutlinedButton.icon(
+              child: FilledButton.icon(
                 onPressed: _showBillSettings,
-                icon: const Icon(
-                  Icons.edit_outlined,
-                ),
-                label: const Text(
-                  'Edit Bill Details',
-                ),
-                style:
-                OutlinedButton.styleFrom(
-                  foregroundColor:
-                  AppColors.primaryGreen,
-                  side: const BorderSide(
-                    color:
-                    AppColors.primaryGreen,
-                  ),
-                  shape:
-                  RoundedRectangleBorder(
-                    borderRadius:
-                    BorderRadius.circular(
-                      30,
-                    ),
+                icon: const Icon(Icons.tune_outlined, size: 19),
+                label: const Text('Manage Bill Details'),
+                style: FilledButton.styleFrom(
+                  backgroundColor: AppColors.primaryGreen,
+                  foregroundColor: Colors.white,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(15),
                   ),
                 ),
               ),
+            )
+          else
+            _lockedField(
+              label: 'Bill configuration',
+              value: 'Managed by farm owner',
+              icon: Icons.lock_outline,
             ),
-          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _billStat(IconData icon, String value, String label) {
+    return Container(
+      padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 8),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF3F7F4),
+        borderRadius: BorderRadius.circular(13),
+      ),
+      child: Column(
+        children: [
+          Icon(icon, size: 17, color: AppColors.primaryGreen),
+          const SizedBox(height: 3),
+          Text(value, style: AppTheme.heading(size: 12)),
+          Text(label, style: AppTheme.body(size: 9, color: AppColors.textGrey)),
         ],
       ),
     );
@@ -1716,350 +1726,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
         style: AppTheme.body(size: 11),
       ),
       trailing: trailing,
-    );
-  }
-}
-
-class _BillSettingsSheet extends StatefulWidget {
-  final String farmId;
-  final BillSettings initialSettings;
-
-  const _BillSettingsSheet({
-    required this.farmId,
-    required this.initialSettings,
-  });
-
-  @override
-  State<_BillSettingsSheet> createState() =>
-      _BillSettingsSheetState();
-}
-
-class _BillSettingsSheetState
-    extends State<_BillSettingsSheet> {
-  late final TextEditingController _businessName;
-  late final TextEditingController _tagline;
-  late final TextEditingController _address;
-  late final TextEditingController _phone;
-  late final TextEditingController _upi;
-  late final TextEditingController _footer;
-  late final TextEditingController _terms;
-
-  bool _saving = false;
-
-  @override
-  void initState() {
-    super.initState();
-
-    final s = widget.initialSettings;
-
-    _businessName =
-        TextEditingController(text: s.businessName);
-
-    _tagline =
-        TextEditingController(text: s.tagline);
-
-    _address =
-        TextEditingController(text: s.address);
-
-    _phone =
-        TextEditingController(text: s.phone);
-
-    _upi =
-        TextEditingController(text: s.upiId);
-
-    _footer =
-        TextEditingController(text: s.footerNote);
-
-    _terms =
-        TextEditingController(text: s.terms);
-  }
-
-  @override
-  void dispose() {
-    _businessName.dispose();
-    _tagline.dispose();
-    _address.dispose();
-    _phone.dispose();
-    _upi.dispose();
-    _footer.dispose();
-    _terms.dispose();
-
-    super.dispose();
-  }
-
-  Future<void> _save() async {
-    if (_saving) return;
-
-    final businessName =
-    _businessName.text.trim();
-
-    if (businessName.isEmpty) {
-      _showError(
-        'Business name cannot be empty.',
-      );
-      return;
-    }
-
-    final phone = _phone.text.trim();
-
-    if (phone.isNotEmpty &&
-        !RegExp(
-          r'^[0-9+\-\s()]{7,20}$',
-        ).hasMatch(phone)) {
-      _showError(
-        'Please enter a valid phone number.',
-      );
-      return;
-    }
-
-    final upi = _upi.text.trim();
-
-    if (upi.isNotEmpty &&
-        !RegExp(
-          r'^[a-zA-Z0-9._-]+@[a-zA-Z0-9.-]+$',
-        ).hasMatch(upi)) {
-      _showError(
-        'Please enter a valid UPI ID.',
-      );
-      return;
-    }
-
-    setState(() {
-      _saving = true;
-    });
-
-    final settings = BillSettings(
-      businessName: businessName,
-      tagline: _tagline.text.trim(),
-      address: _address.text.trim(),
-      phone: phone,
-      upiId: upi,
-      footerNote:
-      _footer.text.trim().isEmpty
-          ? 'Thank you for trusting us with your goat.'
-          : _footer.text.trim(),
-      terms: _terms.text.trim(),
-    );
-
-    try {
-      await FirestoreService.instance
-          .updateBillSettings(
-        widget.farmId,
-        settings,
-      );
-
-      if (!mounted) return;
-
-      Navigator.pop(context, true);
-    } catch (e) {
-      _showError(
-        FirestoreService.instance.describeError(e),
-      );
-    } finally {
-      if (mounted) {
-        setState(() {
-          _saving = false;
-        });
-      }
-    }
-  }
-
-  void _showError(String message) {
-    if (!mounted) return;
-
-    ScaffoldMessenger.of(context)
-      ..hideCurrentSnackBar()
-      ..showSnackBar(
-        SnackBar(
-          content: Text(message),
-          backgroundColor: AppColors.error,
-          behavior: SnackBarBehavior.floating,
-        ),
-      );
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final bottom =
-        MediaQuery.of(context).viewInsets.bottom;
-
-    return Padding(
-      padding: EdgeInsets.only(
-        bottom: bottom,
-      ),
-      child: SafeArea(
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.fromLTRB(
-            20,
-            4,
-            20,
-            24,
-          ),
-          child: Column(
-            crossAxisAlignment:
-            CrossAxisAlignment.start,
-            children: [
-              Text(
-                'Bill Details',
-                style: AppTheme.heading(
-                  size: 20,
-                  color: AppColors.darkGreen,
-                ),
-              ),
-
-              const SizedBox(height: 5),
-
-              Text(
-                'These details appear on Palai check-out bills.',
-                style: AppTheme.body(size: 12),
-              ),
-
-              const SizedBox(height: 20),
-
-              _billField(
-                controller: _businessName,
-                label: 'Business name',
-                hint: 'My Goat Farms',
-                icon:
-                Icons.business_outlined,
-              ),
-
-              const SizedBox(height: 12),
-
-              _billField(
-                controller: _tagline,
-                label: 'Tagline',
-                hint:
-                'Palai - Goat Boarding & Care',
-                icon:
-                Icons.short_text_outlined,
-              ),
-
-              const SizedBox(height: 12),
-
-              _billField(
-                controller: _address,
-                label: 'Address',
-                hint: 'Farm address',
-                icon:
-                Icons.location_on_outlined,
-                maxLines: 3,
-              ),
-
-              const SizedBox(height: 12),
-
-              _billField(
-                controller: _phone,
-                label: 'Phone',
-                hint: '+91 90000 00000',
-                icon:
-                Icons.phone_outlined,
-                keyboardType:
-                TextInputType.phone,
-              ),
-
-              const SizedBox(height: 12),
-
-              _billField(
-                controller: _upi,
-                label: 'UPI ID',
-                hint: 'mygoatfarms@upi',
-                icon:
-                Icons.account_balance_outlined,
-              ),
-
-              const SizedBox(height: 12),
-
-              _billField(
-                controller: _footer,
-                label: 'Thank-you note',
-                hint:
-                'Thank you for trusting us with your goat.',
-                icon:
-                Icons.favorite_border,
-                maxLines: 2,
-              ),
-
-              const SizedBox(height: 12),
-
-              _billField(
-                controller: _terms,
-                label: 'Terms & conditions',
-                hint:
-                'Optional terms printed on the bill',
-                icon:
-                Icons.description_outlined,
-                maxLines: 4,
-              ),
-
-              const SizedBox(height: 20),
-
-              SizedBox(
-                width: double.infinity,
-                height: 52,
-                child: ElevatedButton(
-                  onPressed:
-                  _saving ? null : _save,
-                  style:
-                  ElevatedButton.styleFrom(
-                    backgroundColor:
-                    AppColors.primaryGreen,
-                    foregroundColor:
-                    Colors.white,
-                    shape:
-                    RoundedRectangleBorder(
-                      borderRadius:
-                      BorderRadius.circular(
-                        30,
-                      ),
-                    ),
-                  ),
-                  child: _saving
-                      ? const SizedBox(
-                    width: 21,
-                    height: 21,
-                    child:
-                    CircularProgressIndicator(
-                      color: Colors.white,
-                      strokeWidth: 2.5,
-                    ),
-                  )
-                      : const Text(
-                    'Save Bill Details',
-                    style: TextStyle(
-                      fontWeight:
-                      FontWeight.w700,
-                    ),
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _billField({
-    required TextEditingController controller,
-    required String label,
-    required String hint,
-    required IconData icon,
-    TextInputType? keyboardType,
-    int maxLines = 1,
-  }) {
-    return TextField(
-      controller: controller,
-      keyboardType: keyboardType,
-      maxLines: maxLines,
-      decoration: InputDecoration(
-        labelText: label,
-        hintText: hint,
-        prefixIcon: Icon(
-          icon,
-          color: AppColors.primaryGreen,
-        ),
-      ),
     );
   }
 }

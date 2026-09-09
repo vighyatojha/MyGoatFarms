@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:cloud_firestore/cloud_firestore.dart';
 
 import '../models/activity_model.dart';
@@ -144,12 +146,14 @@ class FinanceService {
       'referenceId': expenseRef.id,
     });
 
+    final activitySubtitle =
+        '${expense.category} · ₹${expense.amount.toStringAsFixed(0)}'
+        '${expense.supplierName != null && expense.supplierName!.trim().isNotEmpty ? ' · ${expense.supplierName}' : ''}';
+
     batch.set(activityRef, {
       'type': ActivityType.expenseAdded.name,
       'title': 'Expense Added',
-      'subtitle':
-      '${expense.category} · ₹${expense.amount.toStringAsFixed(0)}'
-          '${expense.supplierName != null && expense.supplierName!.trim().isNotEmpty ? ' · ${expense.supplierName}' : ''}',
+      'subtitle': activitySubtitle,
       'module': 'finance',
       'timestamp': FieldValue.serverTimestamp(),
       if (actor != null) 'actorUid': actor.uid,
@@ -158,6 +162,17 @@ class FinanceService {
     });
 
     await batch.commit().timeout(_timeout);
+
+    // Surfaces this to the owner's Notification screen when a partner
+    // added the expense — see FirestoreService.notifyPartnerActivity.
+    unawaited(FirestoreService.instance.notifyPartnerActivity(
+      farmId: farmId,
+      type: ActivityType.expenseAdded,
+      title: 'Expense Added',
+      subtitle: activitySubtitle,
+      module: 'finance',
+      actor: actor,
+    ));
   }
 
   /// Updates an expense in place. The mirrored `transactions` doc is
@@ -195,11 +210,11 @@ class FinanceService {
 
     final actor = await FirestoreService.instance.getCurrentActor();
     final activityRef = _activities(farmId).doc();
+    final activitySubtitle = '${updated.title} · ₹${updated.amount.toStringAsFixed(0)}';
     batch.set(activityRef, {
       'type': ActivityType.expenseAdded.name,
       'title': 'Expense Updated',
-      'subtitle':
-      '${updated.title} · ₹${updated.amount.toStringAsFixed(0)}',
+      'subtitle': activitySubtitle,
       'module': 'finance',
       'timestamp': FieldValue.serverTimestamp(),
       if (actor != null) 'actorUid': actor.uid,
@@ -208,6 +223,15 @@ class FinanceService {
     });
 
     await batch.commit().timeout(_timeout);
+
+    unawaited(FirestoreService.instance.notifyPartnerActivity(
+      farmId: farmId,
+      type: ActivityType.expenseAdded,
+      title: 'Expense Updated',
+      subtitle: activitySubtitle,
+      module: 'finance',
+      actor: actor,
+    ));
   }
 
   /// Soft-deletes (voids) an expense rather than removing it — per spec
@@ -237,10 +261,11 @@ class FinanceService {
 
     final actor = await FirestoreService.instance.getCurrentActor();
     final activityRef = _activities(farmId).doc();
+    final activitySubtitle = '${expense.title} · ₹${expense.amount.toStringAsFixed(0)}';
     batch.set(activityRef, {
       'type': ActivityType.expenseVoided.name,
       'title': 'Expense Voided',
-      'subtitle': '${expense.title} · ₹${expense.amount.toStringAsFixed(0)}',
+      'subtitle': activitySubtitle,
       'module': 'finance',
       'timestamp': FieldValue.serverTimestamp(),
       if (actor != null) 'actorUid': actor.uid,
@@ -249,6 +274,15 @@ class FinanceService {
     });
 
     await batch.commit().timeout(_timeout);
+
+    unawaited(FirestoreService.instance.notifyPartnerActivity(
+      farmId: farmId,
+      type: ActivityType.expenseVoided,
+      title: 'Expense Voided',
+      subtitle: activitySubtitle,
+      module: 'finance',
+      actor: actor,
+    ));
   }
 
   /// Live expense list for a date range. Filtered to a single field
@@ -336,10 +370,11 @@ class FinanceService {
       if (actor != null) 'createdByRole': actor.role,
     });
 
+    final activitySubtitle = '$category · ₹${amount.toStringAsFixed(0)}';
     batch.set(activityRef, {
       'type': ActivityType.revenueAdded.name,
       'title': 'Revenue Added',
-      'subtitle': '$category · ₹${amount.toStringAsFixed(0)}',
+      'subtitle': activitySubtitle,
       'module': 'finance',
       'timestamp': FieldValue.serverTimestamp(),
       if (actor != null) 'actorUid': actor.uid,
@@ -348,6 +383,15 @@ class FinanceService {
     });
 
     await batch.commit().timeout(_timeout);
+
+    unawaited(FirestoreService.instance.notifyPartnerActivity(
+      farmId: farmId,
+      type: ActivityType.revenueAdded,
+      title: 'Revenue Added',
+      subtitle: activitySubtitle,
+      module: 'finance',
+      actor: actor,
+    ));
   }
 
   Future<void> updateManualRevenue(
@@ -372,16 +416,26 @@ class FinanceService {
     }).timeout(_timeout);
 
     final actor = await FirestoreService.instance.getCurrentActor();
+    final activitySubtitle = '$category · ₹${amount.toStringAsFixed(0)}';
     await _activities(farmId).add({
       'type': ActivityType.revenueAdded.name,
       'title': 'Revenue Updated',
-      'subtitle': '$category · ₹${amount.toStringAsFixed(0)}',
+      'subtitle': activitySubtitle,
       'module': 'finance',
       'timestamp': FieldValue.serverTimestamp(),
       if (actor != null) 'actorUid': actor.uid,
       if (actor != null) 'actorName': actor.name,
       if (actor != null) 'actorRole': actor.role,
     }).timeout(_timeout);
+
+    unawaited(FirestoreService.instance.notifyPartnerActivity(
+      farmId: farmId,
+      type: ActivityType.revenueAdded,
+      title: 'Revenue Updated',
+      subtitle: activitySubtitle,
+      module: 'finance',
+      actor: actor,
+    ));
   }
 
   /// Voids a manual-revenue transaction. Customer-payment-derived
@@ -405,17 +459,27 @@ class FinanceService {
     }).timeout(_timeout);
 
     final actor = await FirestoreService.instance.getCurrentActor();
+    final activitySubtitle =
+        '${transactionData['category'] ?? ''} · ₹${((transactionData['amount'] ?? 0) as num).toStringAsFixed(0)}';
     await _activities(farmId).add({
       'type': ActivityType.revenueVoided.name,
       'title': 'Revenue Voided',
-      'subtitle':
-      '${transactionData['category'] ?? ''} · ₹${((transactionData['amount'] ?? 0) as num).toStringAsFixed(0)}',
+      'subtitle': activitySubtitle,
       'module': 'finance',
       'timestamp': FieldValue.serverTimestamp(),
       if (actor != null) 'actorUid': actor.uid,
       if (actor != null) 'actorName': actor.name,
       if (actor != null) 'actorRole': actor.role,
     }).timeout(_timeout);
+
+    unawaited(FirestoreService.instance.notifyPartnerActivity(
+      farmId: farmId,
+      type: ActivityType.revenueVoided,
+      title: 'Revenue Voided',
+      subtitle: activitySubtitle,
+      module: 'finance',
+      actor: actor,
+    ));
   }
 
   /// Live revenue (income) list for a date range — reads the *existing*

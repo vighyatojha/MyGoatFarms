@@ -49,7 +49,11 @@ enum HealthRecordStatus { complete, pending, upcoming }
 /// [HealthRecordStatus.upcoming] — i.e. "coming up soon enough to act
 /// on now". Reminders further out than this stay in Upcoming until they
 /// enter this window.
-const int kHealthRecordPendingWindowDays = 3;
+///
+/// Set to 2 so a record shows up in the Health Records screen's Pending
+/// tab starting 2 days before its due date (matching the "2 days
+/// before" reminder notification fired by HealthReminderScheduler).
+const int kHealthRecordPendingWindowDays = 2;
 
 /// Classifies a record's due date into Complete / Pending / Upcoming,
 /// shared by [FirestoreService.allCustomerHealthRecordSummaries] and
@@ -1559,6 +1563,62 @@ class FirestoreService {
         .collection('activities')
         .add(data)
         .timeout(timeout);
+
+    // Surface partner-performed activity to the farm owner's
+    // Notification screen too — see [notifyPartnerActivity]. Runs after
+    // the activity write but doesn't block on it; a failed notification
+    // write should never make the activity log itself appear to fail.
+    unawaited(notifyPartnerActivity(
+      farmId: farmId,
+      type: activity.type,
+      title: activity.title,
+      subtitle: activity.subtitle,
+      module: activity.module,
+      actor: actor,
+    ));
+  }
+
+  /// Mirrors any activity performed by a PARTNER (never the owner) into
+  /// `farms/{farmId}/notifications`, so the farm owner sees every
+  /// partner action — Palai, Stock, Finance, Own Farm, Customers, etc.
+  /// — in the Notification screen, not just health due-dates.
+  ///
+  /// A no-op when [actor] is null or `actor.role != 'partner'` — owner
+  /// actions are already visible to the owner via the Activity feed
+  /// itself, so they don't also need a notification about themselves.
+  ///
+  /// Deliberately does NOT carry a specific record id (goatId,
+  /// customerId, expenseId, ...) — those aren't uniformly available at
+  /// every one of the ~15 call sites that log an activity. Instead the
+  /// notification's `reference` carries `module` + `activityType`, and
+  /// NotificationScreen routes to that module's list screen (Goat List,
+  /// Stock, Customer Management, Expense/Revenue List, Customer Ledger,
+  /// Own Farm...) where the change can be seen in context. Called both
+  /// from [logActivity] (covers most call sites) and directly from
+  /// FinanceService (which batches its own activity writes and so
+  /// bypasses [logActivity] — see the comment on that class).
+  Future<void> notifyPartnerActivity({
+    required String farmId,
+    required ActivityType type,
+    required String title,
+    required String subtitle,
+    required String module,
+    required ({String uid, String name, String role})? actor,
+  }) async {
+    if (actor == null || actor.role != 'partner') return;
+
+    await addNotification(
+      farmId: farmId,
+      type: 'partnerActivity_${type.name}',
+      category: 'activity',
+      priority: 'normal',
+      title: title,
+      message: subtitle.trim().isNotEmpty ? '$subtitle · by ${actor.name}' : 'By ${actor.name}',
+      reference: {
+        'module': module,
+        'activityType': type.name,
+      },
+    );
   }
 
   Stream<List<ActivityLog>> activitiesStream(String farmId, {String? module, int limit = 20}) {
@@ -1840,6 +1900,38 @@ class FirestoreService {
         .orderBy('checkInDate', descending: true)
         .snapshots()
         .map((s) => s.docs.map(PalaiGoat.fromDoc).toList());
+  }
+
+  Future<void> deletePalaiGoat(
+      String farmId,
+      String customerId,
+      String goatId,
+      ) async {
+    final goatRef = _goats(farmId, customerId).doc(goatId);
+    const subcollections = [
+      'healthRecords',
+      'vaccinationRecords',
+      'hoofCuttingRecords',
+      'hairTrimmingRecords',
+      'healthEvents',
+      'monthlyPhotos',
+      'reports',
+      'medicineRecords',
+    ];
+
+    for (final collectionName in subcollections) {
+      final snapshot = await goatRef.collection(collectionName).get().timeout(timeout);
+      for (var start = 0; start < snapshot.docs.length; start += 450) {
+        final end = (start + 450).clamp(0, snapshot.docs.length);
+        final batch = _db.batch();
+        for (final doc in snapshot.docs.sublist(start, end)) {
+          batch.delete(doc.reference);
+        }
+        await batch.commit().timeout(timeout);
+      }
+    }
+
+    await goatRef.delete().timeout(timeout);
   }
 
   Future<String> checkInGoat(String farmId, String customerId, PalaiGoat goat) async {
@@ -3245,8 +3337,13 @@ class FirestoreService {
   /// NotificationScreen) should only present this action to owners in
   /// the first place — hiding the button is the UX, this check is the
   /// actual security boundary.
-  Future<void> deleteNotification(String farmId, String notificationId) async {
-    final callable = FirebaseFunctions.instance.httpsCallable('deleteNotification');
-    await callable.call({'farmId': farmId, 'notificationId': notificationId});
+  Future<void> deleteNotification(
+      String farmId,
+      String notificationId,
+      ) async {
+    await _notifications(farmId)
+        .doc(notificationId)
+        .delete()
+        .timeout(timeout);
   }
 }

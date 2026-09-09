@@ -36,7 +36,12 @@ class _AddHairTrimmingScreenState extends State<AddHairTrimmingScreen> {
 
   DateTime _trimmingDate = DateTime.now();
 
+  // 30 days is only ever a *default* fallback — it must never be
+  // confused with a customer having explicitly chosen 30. Whether the
+  // customer has a setting at all is tracked separately in
+  // [_customerSettingApplied] so the UI can tell the two apart.
   int? _reminderDays = 30;
+  bool _customerSettingApplied = false;
   bool _saving = false;
   bool _loadingReminderSetting = true;
 
@@ -57,37 +62,41 @@ class _AddHairTrimmingScreenState extends State<AddHairTrimmingScreen> {
     return 30;
   }
 
+  // Reads the Hair Trimming reminder cadence from the CUSTOMER'S profile —
+  // farm-scoped at farms/{farmId}/palaiCustomers/{customerId}, matching
+  // exactly where CustomerProfileScreen's Health Settings sheet writes it
+  // (see FirestoreService.updateCustomerHealthReminderSettings). The
+  // field is a flat top-level `hairTrimmingReminderDays`, not nested
+  // under a `settings` map.
+  //
+  // If a setting exists, it's applied and LOCKED — this screen becomes a
+  // read-only consumer of the customer's schedule, never a second place
+  // to change it. If no setting exists, the 30-day default stays
+  // editable.
   Future<void> _loadCustomerReminderSetting() async {
     try {
       final document = await FirebaseFirestore.instance
+          .collection('farms')
+          .doc(widget.farmId)
           .collection('palaiCustomers')
           .doc(widget.customerId)
           .get();
 
       final data = document.data();
+      final rawDays = data?['hairTrimmingReminderDays'];
 
-      if (data != null) {
-        final rawSettings = data['settings'];
+      int? days;
+      if (rawDays is num) {
+        days = rawDays.toInt();
+      } else if (rawDays != null) {
+        days = int.tryParse(rawDays.toString());
+      }
 
-        if (rawSettings is Map) {
-          final rawDays = rawSettings['hairTrimmingReminderDays'];
-
-          int? days;
-
-          if (rawDays is num) {
-            days = rawDays.toInt();
-          } else {
-            days = int.tryParse(rawDays?.toString() ?? '');
-          }
-
-          if (days != null && days > 0) {
-            if (mounted) {
-              setState(() {
-                _reminderDays = days;
-              });
-            }
-          }
-        }
+      if (days != null && days > 0 && mounted) {
+        setState(() {
+          _reminderDays = days;
+          _customerSettingApplied = true;
+        });
       }
     } catch (_) {
     } finally {
@@ -266,14 +275,20 @@ class _AddHairTrimmingScreenState extends State<AddHairTrimmingScreen> {
             ),
           ),
           const SizedBox(height: 14),
-          ReminderCadenceSelector(
-            value: _reminderDays,
-            onChanged: (days) {
-              setState(() {
-                _reminderDays = days;
-              });
-            },
-          ),
+          // While the customer's setting is still loading, the
+          // LinearProgressIndicator above already signals that — the
+          // selector itself is withheld rather than briefly flashing an
+          // editable default that then suddenly locks.
+          if (!_loadingReminderSetting)
+            ReminderCadenceSelector(
+              value: _reminderDays,
+              locked: _customerSettingApplied,
+              onChanged: (days) {
+                setState(() {
+                  _reminderDays = days;
+                });
+              },
+            ),
           const SizedBox(height: 14),
           TextFormField(
             controller: _performedByController,

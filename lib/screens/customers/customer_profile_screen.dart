@@ -4135,12 +4135,12 @@ class _HealthReminderSettingsSheet extends StatefulWidget {
 
 class _HealthReminderSettingsSheetState
     extends State<_HealthReminderSettingsSheet> {
-  // Vaccination offers a broader set of common intervals since farms
-  // vary widely on vaccination cadence; Hoof Cutting and Hair Trimming
-  // are fixed to 30 / 45 / 60 days per the Health Settings spec.
-  static const List<int> _vaccinationOptions = [15, 30, 45, 60, 90];
-  static const List<int> _hoofCuttingOptions = [30, 45, 60];
-  static const List<int> _hairTrimmingOptions = [30, 45, 60];
+  // All three recurring health reminders share the same selectable
+  // cadence: 30 / 45 / 60 / 90 days. There is intentionally no 15-day
+  // option. Customer Profile is the single source of truth for these —
+  // once set here, the corresponding Add screen for every one of this
+  // customer's goats shows the value locked and read-only.
+  static const List<int> _reminderOptions = [30, 45, 60, 90];
 
   late int? _vaccinationDays = widget.customer.vaccinationReminderDays;
   late int? _hoofCuttingDays = widget.customer.hoofCuttingReminderDays;
@@ -4185,6 +4185,11 @@ class _HealthReminderSettingsSheetState
     }
   }
 
+  // Sliding selector for one health-reminder cadence: a discrete 4-stop
+  // slider across 30 / 45 / 60 / 90 days, plus a switch to turn the
+  // reminder off entirely ("None" — clears the setting for this record
+  // type). This is what every Add Health screen for this customer's
+  // goats reads and then locks against.
   Widget _reminderPicker({
     required String title,
     required String subtitle,
@@ -4192,16 +4197,31 @@ class _HealthReminderSettingsSheetState
     required int? selected,
     required ValueChanged<int?> onChanged,
   }) {
+    final isOn = selected != null;
+    final index = isOn ? options.indexOf(selected).clamp(0, options.length - 1) : 0;
+    final displayValue = options[index == -1 ? 0 : index];
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(
-          title,
-          style: AppTheme.body(
-            size: 12,
-            color: AppColors.textDark,
-            weight: FontWeight.w700,
-          ),
+        Row(
+          children: [
+            Expanded(
+              child: Text(
+                title,
+                style: AppTheme.body(
+                  size: 12,
+                  color: AppColors.textDark,
+                  weight: FontWeight.w700,
+                ),
+              ),
+            ),
+            Switch(
+              value: isOn,
+              activeColor: AppColors.primaryGreen,
+              onChanged: (enabled) => onChanged(enabled ? displayValue : null),
+            ),
+          ],
         ),
 
         const SizedBox(height: 3),
@@ -4214,59 +4234,64 @@ class _HealthReminderSettingsSheetState
           ),
         ),
 
-        const SizedBox(height: 10),
+        const SizedBox(height: 6),
 
-        Wrap(
-          spacing: 8,
-          runSpacing: 8,
-          children: [
-            ...options.map((days) {
-              final isSelected = selected == days;
-
-              return ChoiceChip(
-                label: Text('$days days'),
-                selected: isSelected,
-                onSelected: (_) => onChanged(days),
-                selectedColor: AppColors.primaryGreen,
-                backgroundColor: AppColors.paleGreen,
-                labelStyle: TextStyle(
-                  color: isSelected ? Colors.white : AppColors.textDark,
-                  fontWeight: FontWeight.w600,
-                  fontSize: 12,
-                ),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(20),
-                  side: BorderSide(
-                    color: isSelected
-                        ? AppColors.primaryGreen
-                        : AppColors.divider,
+        Opacity(
+          opacity: isOn ? 1 : 0.4,
+          child: IgnorePointer(
+            ignoring: !isOn,
+            child: Column(
+              children: [
+                SliderTheme(
+                  data: SliderTheme.of(context).copyWith(
+                    activeTrackColor: AppColors.primaryGreen,
+                    inactiveTrackColor: AppColors.primaryGreen.withOpacity(0.15),
+                    thumbColor: AppColors.primaryGreen,
+                    overlayColor: AppColors.primaryGreen.withOpacity(0.15),
+                    valueIndicatorColor: AppColors.primaryGreen,
+                    trackHeight: 4,
+                  ),
+                  child: Slider(
+                    value: index.toDouble(),
+                    min: 0,
+                    max: (options.length - 1).toDouble(),
+                    divisions: options.length - 1,
+                    label: '$displayValue days',
+                    onChanged: (v) => onChanged(options[v.round()]),
                   ),
                 ),
-              );
-            }),
-
-            // "None" clears the reminder for this record type.
-            ChoiceChip(
-              label: const Text('None'),
-              selected: selected == null,
-              onSelected: (_) => onChanged(null),
-              selectedColor: AppColors.textGrey,
-              backgroundColor: AppColors.paleGreen,
-              labelStyle: TextStyle(
-                color: selected == null ? Colors.white : AppColors.textDark,
-                fontWeight: FontWeight.w600,
-                fontSize: 12,
-              ),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(20),
-                side: BorderSide(
-                  color: selected == null
-                      ? AppColors.textGrey
-                      : AppColors.divider,
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 4),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: options
+                        .map(
+                          (days) => Text(
+                            '$days',
+                            style: AppTheme.body(
+                              size: 11,
+                              color: displayValue == days ? AppColors.primaryGreen : AppColors.textGrey,
+                              weight: displayValue == days ? FontWeight.w700 : FontWeight.w400,
+                            ),
+                          ),
+                        )
+                        .toList(),
+                  ),
                 ),
-              ),
+              ],
             ),
-          ],
+          ),
+        ),
+
+        const SizedBox(height: 6),
+
+        Text(
+          isOn ? 'Every $displayValue days' : 'No reminder',
+          style: AppTheme.body(
+            size: 13,
+            color: AppColors.textDark,
+            weight: FontWeight.w600,
+          ),
         ),
       ],
     );
@@ -4323,7 +4348,7 @@ class _HealthReminderSettingsSheetState
             _reminderPicker(
               title: 'Vaccination Reminder',
               subtitle: 'Remind again this many days after each vaccination.',
-              options: _vaccinationOptions,
+              options: _reminderOptions,
               selected: _vaccinationDays,
               onChanged: (v) => setState(() => _vaccinationDays = v),
             ),
@@ -4333,7 +4358,7 @@ class _HealthReminderSettingsSheetState
             _reminderPicker(
               title: 'Hoof Cutting Reminder',
               subtitle: 'Remind again this many days after each hoof cutting.',
-              options: _hoofCuttingOptions,
+              options: _reminderOptions,
               selected: _hoofCuttingDays,
               onChanged: (v) => setState(() => _hoofCuttingDays = v),
             ),
@@ -4343,7 +4368,7 @@ class _HealthReminderSettingsSheetState
             _reminderPicker(
               title: 'Hair Trimming Reminder',
               subtitle: 'Remind again this many days after each hair trimming.',
-              options: _hairTrimmingOptions,
+              options: _reminderOptions,
               selected: _hairTrimmingDays,
               onChanged: (v) => setState(() => _hairTrimmingDays = v),
             ),
