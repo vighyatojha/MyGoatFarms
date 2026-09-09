@@ -503,38 +503,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
     }
   }
 
-  Future<void> _changeLanguage(
-      AppLanguage language,
-      ) async {
-    // preferredLanguage lives on the shared farm document (it's what lets
-    // the chosen language follow the farm profile across every device/
-    // login, owner or partner) rather than being a per-partner setting,
-    // so it's farm-level and off-limits to partners like the rest of
-    // this screen. The language-card UI hides the tappable options for
-    // partners (see _buildLanguageCard); this guard covers the method
-    // itself in case it's ever reachable another way.
-    if (!_isOwner) return;
-    if (_farmId == null) return;
-
-    try {
-      await context
-          .read<LocaleProvider>()
-          .setLanguage(language);
-
-      await FirestoreService.instance.updatePreferredLanguage(
-        _farmId!,
-        language.code,
-      );
-
-      _showSnack('Language updated.');
-    } catch (e) {
-      _showSnack(
-        'Could not update language.',
-        isError: true,
-      );
-    }
-  }
-
   Future<void> _logout() async {
     if (_loggingOut) return;
 
@@ -710,20 +678,12 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     ),
                     child: Column(
                       children: [
-                        // Plays every time this screen appears — first
-                        // open, or returning to it after switching tabs
-                        // and coming back — not just once ever.
                         FadeInUp(
-                          duration:
-                          const Duration(milliseconds: 260),
-                          child: _buildCompletionCard(),
+                          duration: const Duration(milliseconds: 260),
+                          child: _buildYourDetailsCard(farm),
                         ),
 
-                        const SizedBox(height: 16),
-
-                        _buildYourDetailsCard(farm),
-
-                        const SizedBox(height: 16),
+                        const SizedBox(height: 12),
 
                         ProfilePartnerDashboard(
                           farmId: _farmId!,
@@ -732,17 +692,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
                           onAddPartner: _showAddPartnerSheet,
                         ),
 
-                        const SizedBox(height: 16),
+                        const SizedBox(height: 12),
 
-                        _buildLanguageCard(),
-
-                        const SizedBox(height: 16),
-
-                        _buildBillDetailsCard(farm),
-
-                        const SizedBox(height: 20),
-
-                        _buildAccountCard(),
+                        _buildSettingsCard(),
 
                         const SizedBox(height: 20),
 
@@ -763,218 +715,200 @@ class _ProfileScreenState extends State<ProfileScreen> {
       String farmName,
       String ownerName,
       ) {
+    final percent = _percent;
+    final complete = percent >= 100;
+    final role = _isOwner ? 'OWNER' : 'PARTNER';
+    final roleSubtitle = _isOwner ? 'Super Admin' : 'Farm Partner';
+
     return Container(
-      padding: const EdgeInsets.fromLTRB(
-        20,
-        8,
-        20,
-        28,
-      ),
+      width: double.infinity,
+      padding: const EdgeInsets.fromLTRB(16, 10, 16, 14),
       decoration: const BoxDecoration(
-        gradient: LinearGradient(
-          begin: Alignment.topCenter,
-          end: Alignment.bottomCenter,
-          colors: AppColors.headerGradient,
-        ),
-        borderRadius: BorderRadius.only(
-          bottomLeft: Radius.circular(32),
-          bottomRight: Radius.circular(32),
-        ),
+        color: AppColors.paleGreen,
       ),
       child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
             children: [
-              IconButton(
-                onPressed: () async {
-                  final canLeave =
-                  await _confirmLeaveIfNeeded();
-
-                  if (canLeave && mounted) {
-                    Navigator.of(context).maybePop();
-                  }
-                },
-                icon: const Icon(
-                  Icons.arrow_back,
-                  color: Colors.white,
-                ),
-              ),
               Expanded(
-                child: Text(
-                  AppStrings.t(
-                    context,
-                    'profile_title',
-                  ),
-                  textAlign: TextAlign.center,
-                  style: AppTheme.heading(
-                    size: 17,
-                    color: Colors.white,
-                  ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      farmName,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: AppTheme.heading(
+                        size: 22,
+                        color: AppColors.textDark,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      'Account & Farm Settings',
+                      style: AppTheme.body(size: 10, color: AppColors.textGrey),
+                    ),
+                  ],
                 ),
               ),
-              const SizedBox(width: 48),
             ],
           ),
-
-          const SizedBox(height: 8),
-
-          GestureDetector(
-            // Only the owner can change the farm photo — see _pickPhoto/
-            // _removePhoto/_showPhotoOptions. For partners this is a
-            // read-only view of the farm owner's photo, so there's no
-            // edit affordance to tap.
-            onTap: _isOwner ? _showPhotoOptions : null,
-            child: Stack(
-              alignment: Alignment.center,
+          const SizedBox(height: 6),
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(13),
+            decoration: AppTheme.card(radius: 18),
+            child: Column(
               children: [
-                Container(
-                  width: 100,
-                  height: 100,
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    color: Colors.white,
-                    border: Border.all(
-                      color: Colors.white,
-                      width: 3,
-                    ),
-                    boxShadow: const [
-                      BoxShadow(
-                        blurRadius: 16,
-                        offset: Offset(0, 6),
-                        color: Colors.black26,
+                Row(
+                  children: [
+                    GestureDetector(
+                      onTap: _isOwner ? _showPhotoOptions : null,
+                      child: Stack(
+                        clipBehavior: Clip.none,
+                        children: [
+                          Container(
+                            width: 54,
+                            height: 54,
+                            decoration: BoxDecoration(
+                              shape: BoxShape.circle,
+                              color: AppColors.lightGreen,
+                              border: Border.all(
+                                color: Colors.white,
+                                width: 2,
+                              ),
+                            ),
+                            clipBehavior: Clip.antiAlias,
+                            child: _farm?.profileImage != null
+                                ? Image.memory(_farm!.profileImage!, fit: BoxFit.cover)
+                                : const Icon(
+                              Icons.home_work_outlined,
+                              color: AppColors.primaryGreen,
+                              size: 26,
+                            ),
+                          ),
+                          if (_isOwner)
+                            Positioned(
+                              right: -1,
+                              bottom: -1,
+                              child: Container(
+                                width: 18,
+                                height: 18,
+                                decoration: BoxDecoration(
+                                  color: AppColors.primaryGreen,
+                                  shape: BoxShape.circle,
+                                  border: Border.all(color: Colors.white, width: 1.5),
+                                ),
+                                child: const Icon(
+                                  Icons.add,
+                                  color: Colors.white,
+                                  size: 12,
+                                ),
+                              ),
+                            ),
+                        ],
                       ),
-                    ],
-                  ),
-                  child: ClipOval(
-                    child: _farm?.profileImage != null
-                        ? Image.memory(
-                      _farm!.profileImage!,
-                      fit: BoxFit.cover,
-                    )
-                        : const Icon(
-                      Icons.pets,
-                      color:
-                      AppColors.primaryGreen,
-                      size: 42,
                     ),
-                  ),
+                    const SizedBox(width: 11),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            children: [
+                              Flexible(
+                                child: Text(
+                                  farmName,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: AppTheme.heading(size: 15.5),
+                                ),
+                              ),
+                              const SizedBox(width: 6),
+                              Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+                                decoration: BoxDecoration(
+                                  color: AppColors.lightGreen,
+                                  borderRadius: BorderRadius.circular(999),
+                                ),
+                                child: Text(
+                                  role,
+                                  style: const TextStyle(
+                                    color: AppColors.primaryGreen,
+                                    fontSize: 7,
+                                    fontWeight: FontWeight.w900,
+                                    letterSpacing: .5,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 3),
+                          Text(
+                            ownerName.trim().isEmpty ? roleSubtitle : '$ownerName ($roleSubtitle)',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: AppTheme.body(size: 10, color: AppColors.textGrey),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
                 ),
-
-                if (_uploadingPhoto)
-                  Container(
-                    width: 100,
-                    height: 100,
-                    decoration:
-                    const BoxDecoration(
-                      color: Colors.black38,
-                      shape: BoxShape.circle,
-                    ),
-                    child:
-                    const CircularProgressIndicator(
-                      color: Colors.white,
-                    ),
-                  ),
-
-                // Edit affordance — owner only (see task 2). Hidden
-                // entirely for partners rather than shown disabled.
-                if (_isOwner)
-                  Positioned(
-                    right: 0,
-                    bottom: 0,
-                    child: Container(
-                      width: 32,
-                      height: 32,
+                const SizedBox(height: 12),
+                const Divider(height: 1),
+                const SizedBox(height: 10),
+                Row(
+                  children: [
+                    Container(
+                      width: 22,
+                      height: 22,
                       decoration: BoxDecoration(
-                        color: AppColors.darkGreen,
+                        color: AppColors.lightGreen,
                         shape: BoxShape.circle,
-                        border: Border.all(
-                          color: Colors.white,
-                          width: 2,
+                      ),
+                      child: Icon(
+                        complete ? Icons.check : Icons.check,
+                        size: 13,
+                        color: AppColors.primaryGreen,
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        'Profile ${complete ? 'Complete' : 'Progress'} $percent%',
+                        style: AppTheme.body(
+                          size: 10,
+                          color: AppColors.textDark,
+                          weight: FontWeight.w700,
                         ),
                       ),
-                      child: const Icon(
-                        Icons.camera_alt,
-                        color: Colors.white,
-                        size: 16,
+                    ),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                      decoration: BoxDecoration(
+                        color: complete ? AppColors.lightGreen : const Color(0xFFF3F6F4),
+                        borderRadius: BorderRadius.circular(999),
+                      ),
+                      child: Text(
+                        complete ? 'Verified' : 'Complete setup',
+                        style: TextStyle(
+                          color: complete ? AppColors.primaryGreen : AppColors.textGrey,
+                          fontSize: 8,
+                          fontWeight: FontWeight.w800,
+                        ),
                       ),
                     ),
-                  ),
+                  ],
+                ),
               ],
-            ),
-          ),
-
-          const SizedBox(height: 12),
-
-          Text(
-            farmName,
-            textAlign: TextAlign.center,
-            style: AppTheme.heading(
-              size: 19,
-              color: Colors.white,
-            ),
-          ),
-
-          if (ownerName.isNotEmpty) ...[
-            const SizedBox(height: 3),
-            Text(
-              ownerName,
-              style: AppTheme.body(
-                size: 13,
-                color: Colors.white.withOpacity(.9),
-              ),
-            ),
-          ],
-
-          const SizedBox(height: 8),
-
-          Container(
-            padding: const EdgeInsets.symmetric(
-              horizontal: 12,
-              vertical: 5,
-            ),
-            decoration: BoxDecoration(
-              color: Colors.white.withOpacity(.16),
-              borderRadius: BorderRadius.circular(999),
-              border: Border.all(
-                color: Colors.white.withOpacity(.35),
-              ),
-            ),
-            // Was hardcoded to 'OWNER' regardless of who was actually
-            // signed in, so a partner viewing their own Profile screen
-            // saw the same "OWNER" badge as the farm owner — this is the
-            // visual cue a partner needs to confirm which view/role
-            // they're currently in, so it must reflect _isOwner.
-            child: Text(
-              _isOwner ? 'OWNER' : 'PARTNER',
-              style: const TextStyle(
-                color: Colors.white,
-                fontSize: 10,
-                fontWeight: FontWeight.w900,
-                letterSpacing: .8,
-              ),
-            ),
-          ),
-
-          const SizedBox(height: 7),
-
-          Text(
-            // The photo shown here always comes from the shared farm
-            // document (see _farm?.profileImage below), so a partner is
-            // already looking at the farm owner's own photo — only the
-            // caption changes, since partners can't tap to edit it.
-            _isOwner
-                ? 'Tap the photo to change it'
-                : "This is your farm owner's photo",
-            style: AppTheme.body(
-              size: 11,
-              color: Colors.white.withOpacity(.75),
             ),
           ),
         ],
       ),
     );
   }
-
   Widget _buildCompletionCard() {
     final percent = _percent;
     final complete = percent >= 100;
@@ -1092,405 +1026,106 @@ class _ProfileScreenState extends State<ProfileScreen> {
     );
   }
 
-  Widget _buildYourDetailsCard(
-      FarmModel? farm,
-      ) {
+  Widget _buildYourDetailsCard(FarmModel? farm) {
     return _sectionCard(
-      title: 'Farm Details',
+      title: 'Farm Information',
       icon: Icons.storefront_outlined,
-      child: Column(
-        children: [
-          // Farm name, owner name, and address are farm-level settings —
-          // only the owner can edit them (see task 2). Partners get the
-          // same read-only, locked-field treatment already used just
-          // below for mobile/email, instead of editable TextFields.
-          if (_isOwner) ...[
-            _input(
-              controller: _farmNameController,
-              label: 'Farm name',
-              hint: 'Enter your farm name',
-              icon: Icons.storefront_outlined,
-            ),
-
-            const SizedBox(height: 12),
-
-            _input(
-              controller: _ownerNameController,
-              label: 'Owner name',
-              hint: 'Enter owner name',
-              icon: Icons.person_outline,
-            ),
-          ] else ...[
-            _lockedField(
-              label: 'Farm name',
-              value: farm?.farmName ?? '',
-              icon: Icons.storefront_outlined,
-            ),
-
-            const SizedBox(height: 12),
-
-            _lockedField(
-              label: 'Owner name',
-              value: farm?.ownerName ?? '',
-              icon: Icons.person_outline,
-            ),
-          ],
-
-          const SizedBox(height: 12),
-
-          _lockedField(
-            label: 'Mobile number',
-            value: farm?.mobileNumber ?? '',
-            icon: Icons.phone_outlined,
-          ),
-
-          const SizedBox(height: 12),
-
-          _lockedField(
-            label: 'Email',
-            value: farm?.email ?? '',
-            icon: Icons.email_outlined,
-          ),
-
-          const SizedBox(height: 12),
-
-          if (_isOwner)
-            _input(
-              controller: _addressController,
-              label: 'Farm address',
-              hint: 'Enter complete farm address',
-              icon: Icons.location_on_outlined,
-              maxLines: 3,
-            )
-          else
-            _lockedField(
-              label: 'Farm address',
-              value: farm?.address ?? '',
-              icon: Icons.location_on_outlined,
-            ),
-
-          // Save button is a farm-data write, so it's owner-only — hidden
-          // entirely for partners rather than shown disabled.
-          if (_isOwner) ...[
-            const SizedBox(height: 16),
-
-            SizedBox(
-              width: double.infinity,
-              height: 50,
-              child: ElevatedButton(
-                onPressed:
-                _savingDetails ? null : _saveDetails,
-                style: ElevatedButton.styleFrom(
-                  backgroundColor:
-                  AppColors.primaryGreen,
-                  foregroundColor: Colors.white,
-                  shape: RoundedRectangleBorder(
-                    borderRadius:
-                    BorderRadius.circular(30),
-                  ),
-                ),
-                child: _savingDetails
-                    ? const SizedBox(
-                  width: 21,
-                  height: 21,
-                  child:
-                  CircularProgressIndicator(
-                    color: Colors.white,
-                    strokeWidth: 2.5,
-                  ),
-                )
-                    : const Text(
-                  'Save Farm Details',
-                  style: TextStyle(
-                    fontWeight:
-                    FontWeight.w700,
-                  ),
-                ),
-              ),
-            ),
-          ],
-        ],
-      ),
-    );
-  }
-
-  Widget _buildLanguageCard() {
-    final current =
-        context.watch<LocaleProvider>().language;
-
-    // preferredLanguage lives on the shared farm document (see
-    // _changeLanguage), so it's a farm-level setting like the rest of
-    // this screen — partners get a read-only view of the current choice
-    // instead of the tappable selector.
-    if (!_isOwner) {
-      return _sectionCard(
-        title: 'App Language',
-        icon: Icons.language_outlined,
-        child: _lockedField(
-          label: 'App language',
-          value: current.label,
-          icon: Icons.language_outlined,
+      trailing: _isOwner
+          ? TextButton(
+        onPressed: _showEditFarmDetails,
+        style: TextButton.styleFrom(
+          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+          minimumSize: Size.zero,
+          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
         ),
-      );
-    }
-
-    return _sectionCard(
-      title: 'App Language',
-      icon: Icons.language_outlined,
+        child: const Text(
+          'Edit',
+          style: TextStyle(
+            color: AppColors.primaryGreen,
+            fontSize: 11,
+            fontWeight: FontWeight.w800,
+          ),
+        ),
+      )
+          : null,
       child: Column(
-        crossAxisAlignment:
-        CrossAxisAlignment.start,
         children: [
-          Text(
-            'Choose the language used throughout the application.',
-            style: AppTheme.body(size: 12),
+          _infoRow(
+            Icons.phone_outlined,
+            'MOBILE',
+            farm?.mobileNumber ?? '',
+            verified: true,
           ),
-
-          const SizedBox(height: 14),
-
-          Row(
-            children: AppLanguage.values.map(
-                  (language) {
-                final selected =
-                    language == current;
-
-                return Expanded(
-                  child: Padding(
-                    padding:
-                    const EdgeInsets.symmetric(
-                      horizontal: 4,
-                    ),
-                    child: GestureDetector(
-                      onTap: () =>
-                          _changeLanguage(
-                            language,
-                          ),
-                      child: AnimatedContainer(
-                        duration:
-                        const Duration(
-                          milliseconds: 180,
-                        ),
-                        padding:
-                        const EdgeInsets
-                            .symmetric(
-                          vertical: 13,
-                        ),
-                        decoration:
-                        BoxDecoration(
-                          color: selected
-                              ? AppColors
-                              .primaryGreen
-                              : const Color(
-                            0xFFF1F3F1,
-                          ),
-                          borderRadius:
-                          BorderRadius.circular(
-                            14,
-                          ),
-                        ),
-                        child: Center(
-                          child: Text(
-                            language.label,
-                            style:
-                            AppTheme.heading(
-                              size: 13,
-                              color: selected
-                                  ? Colors.white
-                                  : AppColors
-                                  .textDark,
-                            ),
-                          ),
-                        ),
-                      ),
-                    ),
-                  ),
-                );
-              },
-            ).toList(),
+          const SizedBox(height: 8),
+          _infoRow(
+            Icons.email_outlined,
+            'EMAIL ADDRESS',
+            farm?.email ?? '',
+            verified: true,
           ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildBillDetailsCard(
-      FarmModel? farm,
-      ) {
-    final settings = farm?.billSettings ?? const BillSettings();
-    final enabledTerms = settings.termsSections.where((e) => e.enabled).length;
-    final enabledNotes = settings.importantNotes.where((e) => e.enabled).length;
-
-    return _sectionCard(
-      title: 'Bill Details',
-      icon: Icons.receipt_long_outlined,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.all(14),
-            decoration: BoxDecoration(
-              gradient: LinearGradient(
-                colors: [
-                  AppColors.lightGreen.withOpacity(.75),
-                  Colors.white,
-                ],
-              ),
-              borderRadius: BorderRadius.circular(17),
-              border: Border.all(color: AppColors.lightGreen),
-            ),
-            child: Row(
-              children: [
-                Container(
-                  width: 54,
-                  height: 54,
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.circular(15),
-                    border: Border.all(color: AppColors.lightGreen),
-                  ),
-                  clipBehavior: Clip.antiAlias,
-                  child: settings.billLogo != null
-                      ? Image.memory(settings.billLogo!, fit: BoxFit.cover)
-                      : const Icon(
-                    Icons.receipt_long_outlined,
-                    color: AppColors.primaryGreen,
-                    size: 28,
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        settings.businessName,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: AppTheme.heading(size: 14),
-                      ),
-                      if (settings.address.trim().isNotEmpty) ...[
-                        const SizedBox(height: 3),
-                        Text(
-                          settings.address,
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
-                          style: AppTheme.body(size: 10),
-                        ),
-                      ],
-                      if (settings.phone.trim().isNotEmpty) ...[
-                        const SizedBox(height: 2),
-                        Text(
-                          settings.phone,
-                          style: AppTheme.body(size: 10, color: AppColors.textGrey),
-                        ),
-                      ],
-                      if (settings.email.trim().isNotEmpty) ...[
-                        const SizedBox(height: 2),
-                        Text(
-                          settings.email,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: AppTheme.body(size: 10, color: AppColors.textGrey),
-                        ),
-                      ],
-                    ],
-                  ),
-                ),
-              ],
-            ),
+          const SizedBox(height: 8),
+          _infoRow(
+            Icons.location_on_outlined,
+            'FARM ADDRESS',
+            farm?.address ?? '',
+            trailing: 'Primary',
           ),
-          const SizedBox(height: 12),
-          Row(
-            children: [
-              Expanded(child: _billStat(Icons.gavel_outlined, '$enabledTerms', 'Terms')),
-              const SizedBox(width: 8),
-              Expanded(child: _billStat(Icons.info_outline, '$enabledNotes', 'Notes')),
-              const SizedBox(width: 8),
-              Expanded(child: _billStat(Icons.image_outlined, settings.billLogo == null ? 'No' : 'Yes', 'Photo')),
-            ],
-          ),
-          const SizedBox(height: 12),
-          if (_isOwner)
+          if (_isOwner) ...[
+            const SizedBox(height: 11),
             SizedBox(
               width: double.infinity,
-              height: 48,
+              height: 40,
               child: FilledButton.icon(
-                onPressed: _showBillSettings,
-                icon: const Icon(Icons.tune_outlined, size: 19),
-                label: const Text('Manage Bill Details'),
+                onPressed: _showEditFarmDetails,
+                icon: const Icon(Icons.edit_outlined, size: 14),
+                label: const Text(
+                  'Update Farm Details',
+                  style: TextStyle(fontSize: 11, fontWeight: FontWeight.w800),
+                ),
                 style: FilledButton.styleFrom(
                   backgroundColor: AppColors.primaryGreen,
                   foregroundColor: Colors.white,
                   shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(15),
+                    borderRadius: BorderRadius.circular(11),
                   ),
                 ),
               ),
-            )
-          else
-            _lockedField(
-              label: 'Bill configuration',
-              value: 'Managed by farm owner',
-              icon: Icons.lock_outline,
             ),
+          ],
         ],
       ),
     );
   }
-
-  Widget _billStat(IconData icon, String value, String label) {
-    return Container(
-      padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 8),
-      decoration: BoxDecoration(
-        color: const Color(0xFFF3F7F4),
-        borderRadius: BorderRadius.circular(13),
-      ),
+  Widget _buildBillDetailsCard(FarmModel? farm) {
+    return _actionTile(
+      icon: Icons.receipt_long_outlined,
+      title: 'Bill & Invoice Settings',
+      subtitle: 'Configure bill details, terms, notes and branding',
+      trailing: const Icon(Icons.chevron_right_rounded, size: 19),
+      onTap: _isOwner ? _showBillSettings : null,
+    );
+  }
+  Widget _buildSettingsCard() {
+    return _sectionCard(
+      title: 'Account',
+      icon: Icons.manage_accounts_outlined,
       child: Column(
         children: [
-          Icon(icon, size: 17, color: AppColors.primaryGreen),
-          const SizedBox(height: 3),
-          Text(value, style: AppTheme.heading(size: 12)),
-          Text(label, style: AppTheme.body(size: 9, color: AppColors.textGrey)),
+          _buildBillDetailsCard(_farm),
+          const Divider(height: 1),
+          _actionTile(
+            icon: Icons.lock_outline_rounded,
+            title: 'Account Security & PIN',
+            subtitle: 'Manage your account security settings',
+            trailing: const Icon(Icons.chevron_right_rounded, size: 19),
+          ),
         ],
       ),
     );
   }
 
   Widget _buildAccountCard() {
-    return _sectionCard(
-      title: 'Account',
-      icon: Icons.manage_accounts_outlined,
-      child: Column(
-        children: [
-          _actionTile(
-            icon: Icons.security_outlined,
-            title: 'Account security',
-            subtitle:
-            'Your login email and mobile are protected',
-            trailing: const Icon(
-              Icons.lock_outline,
-              size: 19,
-            ),
-          ),
-
-          const Divider(),
-
-          _actionTile(
-            icon: Icons.refresh_outlined,
-            title: 'Refresh profile',
-            subtitle:
-            'Pull the latest farm information',
-            trailing: const Icon(
-              Icons.chevron_right,
-            ),
-            onTap: () async {
-              await _refreshFarm();
-            },
-          ),
-        ],
-      ),
-    );
+    return _buildSettingsCard();
   }
 
   Future<void> _refreshFarm() async {
@@ -1565,6 +1200,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
     required String title,
     required IconData icon,
     required Widget child,
+    Widget? trailing,
   }) {
     return Container(
       width: double.infinity,
@@ -1595,13 +1231,16 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
               const SizedBox(width: 11),
 
-              Text(
-                title,
-                style: AppTheme.heading(
-                  size: 15,
-                  color: AppColors.darkGreen,
+              Expanded(
+                child: Text(
+                  title,
+                  style: AppTheme.heading(
+                    size: 14,
+                    color: AppColors.darkGreen,
+                  ),
                 ),
               ),
+              if (trailing != null) trailing,
             ],
           ),
 
@@ -1611,6 +1250,159 @@ class _ProfileScreenState extends State<ProfileScreen> {
         ],
       ),
     );
+  }
+
+  Widget _infoRow(
+      IconData icon,
+      String label,
+      String value, {
+        bool verified = false,
+        String? trailing,
+      }) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 9),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF7F9F8),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: const Color(0xFFE9EEEB)),
+      ),
+      child: Row(
+        children: [
+          Icon(icon, size: 16, color: AppColors.textGrey),
+          const SizedBox(width: 9),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  label,
+                  style: const TextStyle(
+                    fontSize: 7,
+                    color: AppColors.textGrey,
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: .5,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  value.isEmpty ? 'Not provided' : value,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: AppTheme.body(
+                    size: 10,
+                    color: AppColors.textDark,
+                    weight: FontWeight.w600,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          if (trailing != null)
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 4),
+              decoration: BoxDecoration(
+                color: const Color(0xFFF0F2F1),
+                borderRadius: BorderRadius.circular(6),
+              ),
+              child: Text(
+                trailing,
+                style: const TextStyle(
+                  fontSize: 7,
+                  color: AppColors.textGrey,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            )
+          else if (verified)
+            const Icon(
+              Icons.verified_outlined,
+              size: 15,
+              color: AppColors.primaryGreen,
+            ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _showEditFarmDetails() async {
+    if (!_isOwner || _farmId == null) return;
+
+    final farmNameController = TextEditingController(text: _farmNameController.text);
+    final ownerNameController = TextEditingController(text: _ownerNameController.text);
+    final addressController = TextEditingController(text: _addressController.text);
+
+    final save = await showModalBottomSheet<bool>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      backgroundColor: AppColors.paleGreen,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(26)),
+      ),
+      builder: (sheetContext) {
+        return StatefulBuilder(
+          builder: (context, setSheetState) {
+            final keyboardBottom = MediaQuery.of(context).viewInsets.bottom;
+            return Padding(
+              padding: EdgeInsets.fromLTRB(20, 4, 20, 20 + keyboardBottom),
+              child: SingleChildScrollView(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text('Edit Farm Details', style: AppTheme.heading(size: 19, color: AppColors.darkGreen)),
+                    const SizedBox(height: 5),
+                    Text('Update the farm information shown on your profile.', style: AppTheme.body(size: 11)),
+                    const SizedBox(height: 18),
+                    _input(controller: farmNameController, label: 'Farm name', hint: 'Enter your farm name', icon: Icons.storefront_outlined),
+                    const SizedBox(height: 11),
+                    _input(controller: ownerNameController, label: 'Owner name', hint: 'Enter owner name', icon: Icons.person_outline),
+                    const SizedBox(height: 11),
+                    _input(controller: addressController, label: 'Farm address', hint: 'Enter complete farm address', icon: Icons.location_on_outlined, maxLines: 3),
+                    const SizedBox(height: 16),
+                    SizedBox(
+                      width: double.infinity,
+                      height: 48,
+                      child: FilledButton(
+                        onPressed: () async {
+                          if (farmNameController.text.trim().isEmpty || ownerNameController.text.trim().isEmpty) {
+                            ScaffoldMessenger.of(sheetContext).showSnackBar(
+                              const SnackBar(content: Text('Farm name and owner name cannot be empty.')),
+                            );
+                            return;
+                          }
+                          _farmNameController.text = farmNameController.text.trim();
+                          _ownerNameController.text = ownerNameController.text.trim();
+                          _addressController.text = addressController.text.trim();
+                          setSheetState(() {});
+                          await _saveDetails();
+                          if (sheetContext.mounted) Navigator.pop(sheetContext, true);
+                        },
+                        style: FilledButton.styleFrom(
+                          backgroundColor: AppColors.primaryGreen,
+                          foregroundColor: Colors.white,
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                        ),
+                        child: const Text('Save Changes', style: TextStyle(fontWeight: FontWeight.w800)),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+
+    farmNameController.dispose();
+    ownerNameController.dispose();
+    addressController.dispose();
+
+    if (save == true && mounted) {
+      setState(() {});
+    }
   }
 
   Widget _input({
@@ -1738,8 +1530,7 @@ class _AddPartnerSheet extends StatefulWidget {
   });
 
   @override
-  State<_AddPartnerSheet> createState() =>
-      _AddPartnerSheetState();
+  State<_AddPartnerSheet> createState() => _AddPartnerSheetState();
 }
 
 class _AddPartnerSheetState extends State<_AddPartnerSheet> {
@@ -1785,9 +1576,7 @@ class _AddPartnerSheetState extends State<_AddPartnerSheet> {
     }
 
     if (password.length < 6) {
-      _showError(
-        'Password must be at least 6 characters.',
-      );
+      _showError('Password must be at least 6 characters.');
       return;
     }
 
@@ -1797,11 +1586,9 @@ class _AddPartnerSheetState extends State<_AddPartnerSheet> {
     });
 
     try {
-      // Create the Firebase Auth account using
-      // the secondary Firebase app so the owner
-      // remains logged in.
-      final authUid =
-      await PartnerAuthService.instance.createPartnerAccount(
+      // Create the Firebase Auth account using the secondary Firebase app
+      // so the owner remains logged in.
+      final authUid = await PartnerAuthService.instance.createPartnerAccount(
         email: email,
         password: password,
       );
@@ -1816,14 +1603,8 @@ class _AddPartnerSheetState extends State<_AddPartnerSheet> {
       );
 
       if (!mounted) return;
-
-      // Close the Add Partner sheet. Permissions can be
-      // configured later from the partner's profile screen.
       Navigator.pop(context, true);
     } catch (e, stack) {
-      // Always log the raw error, regardless of type — this line is
-      // what to search for in logcat ("Add Partner failed:") when
-      // diagnosing a silent failure.
       debugPrint('Add Partner failed: $e');
       debugPrint('$stack');
 
@@ -1850,6 +1631,10 @@ class _AddPartnerSheetState extends State<_AddPartnerSheet> {
   void _showError(String message) {
     if (!mounted) return;
 
+    setState(() {
+      _inlineError = message;
+    });
+
     ScaffoldMessenger.of(context)
       ..hideCurrentSnackBar()
       ..showSnackBar(
@@ -1857,128 +1642,181 @@ class _AddPartnerSheetState extends State<_AddPartnerSheet> {
           content: Text(message),
           backgroundColor: AppColors.error,
           behavior: SnackBarBehavior.floating,
+          margin: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12),
+          ),
         ),
       );
   }
 
   @override
   Widget build(BuildContext context) {
-    final bottom =
-        MediaQuery.of(context).viewInsets.bottom;
+    final keyboardBottom = MediaQuery.of(context).viewInsets.bottom;
 
-    return Padding(
-      padding: EdgeInsets.only(bottom: bottom),
+    return AnimatedPadding(
+      duration: const Duration(milliseconds: 180),
+      curve: Curves.easeOut,
+      padding: EdgeInsets.only(bottom: keyboardBottom),
       child: SafeArea(
+        top: false,
         child: SingleChildScrollView(
-          padding: const EdgeInsets.fromLTRB(
-            20,
-            8,
-            20,
-            24,
-          ),
+          keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+          padding: const EdgeInsets.fromLTRB(16, 0, 16, 18),
           child: Column(
-            crossAxisAlignment:
-            CrossAxisAlignment.start,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
             children: [
-              Text(
-                'Add Farm Partner',
-                style: AppTheme.heading(
-                  size: 20,
-                  color: AppColors.darkGreen,
-                ),
-              ),
-
-              const SizedBox(height: 5),
-
-              Text(
-                'Create a partner account and configure their access.',
-                style: AppTheme.body(size: 12),
-              ),
-
-              const SizedBox(height: 20),
-
-              _partnerField(
-                controller: _nameController,
-                label: 'Partner name',
-                hint: 'Enter partner name',
-                icon: Icons.person_outline,
-              ),
-
-              const SizedBox(height: 12),
-
-              _partnerField(
-                controller: _mobileController,
-                label: 'Mobile number',
-                hint: '+91 90000 00000',
-                icon: Icons.phone_outlined,
-                keyboardType: TextInputType.phone,
-              ),
-
-              const SizedBox(height: 12),
-
-              _partnerField(
-                controller: _emailController,
-                label: 'Email',
-                hint: 'partner@example.com',
-                icon: Icons.email_outlined,
-                keyboardType: TextInputType.emailAddress,
-              ),
-
-              const SizedBox(height: 12),
-
-              TextField(
-                controller: _passwordController,
-                obscureText: _obscurePassword,
-                decoration: InputDecoration(
-                  labelText: 'Temporary password',
-                  hintText: 'Minimum 6 characters',
-                  prefixIcon: const Icon(
-                    Icons.lock_outline,
-                    color: AppColors.primaryGreen,
-                  ),
-                  suffixIcon: IconButton(
-                    onPressed: () {
-                      setState(() {
-                        _obscurePassword =
-                        !_obscurePassword;
-                      });
-                    },
-                    icon: Icon(
-                      _obscurePassword
-                          ? Icons.visibility_outlined
-                          : Icons.visibility_off_outlined,
+              // Header — follows the same compact card language as Profile.
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.fromLTRB(4, 4, 4, 12),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.center,
+                  children: [
+                    Container(
+                      width: 44,
+                      height: 44,
+                      decoration: BoxDecoration(
+                        color: AppColors.lightGreen,
+                        borderRadius: BorderRadius.circular(13),
+                      ),
+                      child: const Icon(
+                        Icons.person_add_alt_1_rounded,
+                        color: AppColors.primaryGreen,
+                        size: 23,
+                      ),
                     ),
-                  ),
+                    const SizedBox(width: 11),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'Add Farm Partner',
+                            style: AppTheme.heading(
+                              size: 18,
+                              color: AppColors.darkGreen,
+                            ),
+                          ),
+                          const SizedBox(height: 2),
+                          Text(
+                            'Create a partner account for your farm team.',
+                            style: AppTheme.body(
+                              size: 10,
+                              color: AppColors.textGrey,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
                 ),
               ),
 
-              const SizedBox(height: 20),
+              // Form card — same white rounded-card treatment used by Profile.
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(14),
+                decoration: AppTheme.card(radius: 18),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Partner Information',
+                      style: AppTheme.heading(
+                        size: 13,
+                        color: AppColors.darkGreen,
+                      ),
+                    ),
+                    const SizedBox(height: 11),
+                    _partnerField(
+                      controller: _nameController,
+                      label: 'Partner name',
+                      hint: 'Enter partner name',
+                      icon: Icons.person_outline_rounded,
+                    ),
+                    const SizedBox(height: 10),
+                    _partnerField(
+                      controller: _mobileController,
+                      label: 'Mobile number',
+                      hint: '+91 90000 00000',
+                      icon: Icons.phone_outlined,
+                      keyboardType: TextInputType.phone,
+                    ),
+                    const SizedBox(height: 10),
+                    _partnerField(
+                      controller: _emailController,
+                      label: 'Email address',
+                      hint: 'partner@example.com',
+                      icon: Icons.email_outlined,
+                      keyboardType: TextInputType.emailAddress,
+                    ),
+                    const SizedBox(height: 10),
+                    _passwordField(),
+                  ],
+                ),
+              ),
+
+              const SizedBox(height: 10),
+
+              // Small explanatory/security note.
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                decoration: BoxDecoration(
+                  color: AppColors.lightGreen.withOpacity(.55),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Icon(
+                      Icons.info_outline_rounded,
+                      color: AppColors.primaryGreen,
+                      size: 17,
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        'The temporary password must contain at least 6 characters. '
+                            'The partner can change it later.',
+                        style: AppTheme.body(
+                          size: 9,
+                          color: AppColors.textGrey,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
 
               if (_inlineError != null) ...[
+                const SizedBox(height: 10),
                 Container(
                   width: double.infinity,
-                  padding: const EdgeInsets.all(12),
+                  padding: const EdgeInsets.all(11),
                   decoration: BoxDecoration(
-                    color: AppColors.error.withOpacity(.08),
+                    color: AppColors.error.withOpacity(.07),
                     borderRadius: BorderRadius.circular(12),
                     border: Border.all(
-                      color: AppColors.error.withOpacity(.3),
+                      color: AppColors.error.withOpacity(.22),
                     ),
                   ),
                   child: Row(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       const Icon(
-                        Icons.error_outline,
+                        Icons.error_outline_rounded,
                         color: AppColors.error,
-                        size: 18,
+                        size: 17,
                       ),
                       const SizedBox(width: 8),
                       Expanded(
                         child: Text(
                           _inlineError!,
                           style: AppTheme.body(
-                            size: 12,
+                            size: 10,
                             color: AppColors.error,
                           ),
                         ),
@@ -1986,40 +1824,44 @@ class _AddPartnerSheetState extends State<_AddPartnerSheet> {
                     ],
                   ),
                 ),
-                const SizedBox(height: 14),
               ],
+
+              const SizedBox(height: 12),
 
               SizedBox(
                 width: double.infinity,
-                height: 52,
-                child: ElevatedButton(
-                  onPressed:
-                  _saving ? null : _createPartner,
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor:
-                    AppColors.primaryGreen,
-                    foregroundColor: Colors.white,
-                    shape: RoundedRectangleBorder(
-                      borderRadius:
-                      BorderRadius.circular(30),
-                    ),
-                  ),
-                  child: _saving
+                height: 48,
+                child: FilledButton.icon(
+                  onPressed: _saving ? null : _createPartner,
+                  icon: _saving
                       ? const SizedBox(
-                    width: 21,
-                    height: 21,
-                    child:
-                    CircularProgressIndicator(
+                    width: 18,
+                    height: 18,
+                    child: CircularProgressIndicator(
                       color: Colors.white,
-                      strokeWidth: 2.5,
+                      strokeWidth: 2.2,
                     ),
                   )
-                      : const Text(
-                    'Create Partner',
-                    style: TextStyle(
-                      fontWeight:
-                      FontWeight.w700,
+                      : const Icon(
+                    Icons.person_add_alt_1_rounded,
+                    size: 17,
+                  ),
+                  label: Text(
+                    _saving ? 'Creating Partner...' : 'Create Partner',
+                    style: AppTheme.body(
+                      size: 12,
+                      color: Colors.white,
+                      weight: FontWeight.w800,
                     ),
+                  ),
+                  style: FilledButton.styleFrom(
+                    backgroundColor: AppColors.primaryGreen,
+                    foregroundColor: Colors.white,
+                    disabledBackgroundColor: AppColors.primaryGreen.withOpacity(.55),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(14),
+                    ),
+                    elevation: 0,
                   ),
                 ),
               ),
@@ -2040,12 +1882,125 @@ class _AddPartnerSheetState extends State<_AddPartnerSheet> {
     return TextField(
       controller: controller,
       keyboardType: keyboardType,
+      textInputAction: TextInputAction.next,
+      style: AppTheme.body(
+        size: 11,
+        color: AppColors.textDark,
+        weight: FontWeight.w600,
+      ),
       decoration: InputDecoration(
         labelText: label,
         hintText: hint,
+        labelStyle: AppTheme.body(
+          size: 9,
+          color: AppColors.textGrey,
+        ),
+        hintStyle: AppTheme.body(
+          size: 10,
+          color: AppColors.textGrey,
+        ),
         prefixIcon: Icon(
           icon,
           color: AppColors.primaryGreen,
+          size: 18,
+        ),
+        filled: true,
+        fillColor: const Color(0xFFF7F9F8),
+        contentPadding: const EdgeInsets.symmetric(
+          horizontal: 11,
+          vertical: 11,
+        ),
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(11),
+          borderSide: const BorderSide(
+            color: Color(0xFFE9EEEB),
+          ),
+        ),
+        enabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(11),
+          borderSide: const BorderSide(
+            color: Color(0xFFE9EEEB),
+          ),
+        ),
+        focusedBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(11),
+          borderSide: const BorderSide(
+            color: AppColors.primaryGreen,
+            width: 1.2,
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _passwordField() {
+    return TextField(
+      controller: _passwordController,
+      obscureText: _obscurePassword,
+      textInputAction: TextInputAction.done,
+      style: AppTheme.body(
+        size: 11,
+        color: AppColors.textDark,
+        weight: FontWeight.w600,
+      ),
+      onSubmitted: (_) {
+        if (!_saving) _createPartner();
+      },
+      decoration: InputDecoration(
+        labelText: 'Temporary password',
+        hintText: 'Minimum 6 characters',
+        labelStyle: AppTheme.body(
+          size: 9,
+          color: AppColors.textGrey,
+        ),
+        hintStyle: AppTheme.body(
+          size: 10,
+          color: AppColors.textGrey,
+        ),
+        prefixIcon: const Icon(
+          Icons.lock_outline_rounded,
+          color: AppColors.primaryGreen,
+          size: 18,
+        ),
+        suffixIcon: IconButton(
+          tooltip: _obscurePassword ? 'Show password' : 'Hide password',
+          onPressed: () {
+            setState(() {
+              _obscurePassword = !_obscurePassword;
+            });
+          },
+          icon: Icon(
+            _obscurePassword
+                ? Icons.visibility_outlined
+                : Icons.visibility_off_outlined,
+            color: AppColors.textGrey,
+            size: 18,
+          ),
+        ),
+        filled: true,
+        fillColor: const Color(0xFFF7F9F8),
+        contentPadding: const EdgeInsets.symmetric(
+          horizontal: 11,
+          vertical: 11,
+        ),
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(11),
+          borderSide: const BorderSide(
+            color: Color(0xFFE9EEEB),
+          ),
+        ),
+        enabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(11),
+          borderSide: const BorderSide(
+            color: Color(0xFFE9EEEB),
+          ),
+        ),
+        focusedBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(11),
+          borderSide: const BorderSide(
+            color: AppColors.primaryGreen,
+            width: 1.2,
+          ),
         ),
       ),
     );

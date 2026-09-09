@@ -152,6 +152,16 @@ class _BillSettingsScreenState extends State<BillSettingsScreen> {
     }
   }
 
+  /// Shared dialog used for editing a title+text pair.
+  ///
+  /// IMPORTANT: We always unfocus any active text field, and then defer the
+  /// dialog's Navigator.pop() to the *next frame* via addPostFrameCallback.
+  /// unfocus() alone is not enough: it only marks the floating label's
+  /// AnimatedDefaultTextStyle dirty, it doesn't flush it. If pop() runs
+  /// synchronously right after, the dialog route can be torn down before
+  /// the current BuildScope flushes that dirty widget, which is what was
+  /// causing the "'_dependents.isEmpty': is not true" crash when saving
+  /// Terms/Notes.
   Future<(String, String)?> _showEditorDialog({
     required String title,
     required TextEditingController titleController,
@@ -160,7 +170,7 @@ class _BillSettingsScreenState extends State<BillSettingsScreen> {
   }) {
     return showDialog<(String, String)>(
       context: context,
-      builder: (context) => AlertDialog(
+      builder: (dialogContext) => AlertDialog(
         title: Text(title),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(22)),
         content: SingleChildScrollView(
@@ -175,7 +185,22 @@ class _BillSettingsScreenState extends State<BillSettingsScreen> {
         ),
         actions: [
           TextButton(
-            onPressed: () => Navigator.pop(context),
+            onPressed: () {
+              // Unfocus first so no TextField in this dialog still holds
+              // focus while the route/element gets torn down. The pop
+              // itself is deferred to the next frame via
+              // addPostFrameCallback so the unfocus-triggered
+              // AnimatedDefaultTextStyle rebuild (the floating label) is
+              // flushed by the current BuildScope *before* the dialog
+              // route's elements get torn down. Popping synchronously here
+              // tore down the route mid-frame, ahead of that flush, which
+              // is what produced the "'_dependents.isEmpty': is not true"
+              // assertion.
+              FocusManager.instance.primaryFocus?.unfocus();
+              WidgetsBinding.instance.addPostFrameCallback((_) {
+                if (dialogContext.mounted) Navigator.pop(dialogContext);
+              });
+            },
             child: const Text('Cancel'),
           ),
           FilledButton(
@@ -186,7 +211,16 @@ class _BillSettingsScreenState extends State<BillSettingsScreen> {
               final t = titleController.text.trim();
               final body = textController.text.trim();
               if (t.isEmpty || body.isEmpty) return;
-              Navigator.pop(context, (t, body));
+
+              // Same fix as Cancel: drop focus, then defer the pop to the
+              // next frame so the floating-label animation teardown is
+              // flushed before the dialog route disappears.
+              FocusManager.instance.primaryFocus?.unfocus();
+              WidgetsBinding.instance.addPostFrameCallback((_) {
+                if (dialogContext.mounted) {
+                  Navigator.pop(dialogContext, (t, body));
+                }
+              });
             },
             child: const Text('Apply'),
           ),
@@ -196,39 +230,62 @@ class _BillSettingsScreenState extends State<BillSettingsScreen> {
   }
 
   Future<void> _addOtherTerms() async {
-    final title = _otherTermsTitle.text.trim();
-    final text = _otherTermsText.text.trim();
-    if (title.isEmpty || text.isEmpty) {
-      final result = await _showEditorDialog(
-        title: 'Add Other Terms',
-        titleController: _otherTermsTitle,
-        textController: _otherTermsText,
-        textLabel: 'Other terms',
-      );
-      if (result != null && mounted) {
+    // Use scratch controllers seeded from the persisted values so that
+    // cancelling the dialog never leaves half-typed text behind in the
+    // controllers that actually get saved.
+    final title = TextEditingController(text: _otherTermsTitle.text);
+    final text = TextEditingController(text: _otherTermsText.text);
+
+    final result = await _showEditorDialog(
+      title: _otherTermsTitle.text.trim().isEmpty
+          ? 'Add Other Terms'
+          : 'Edit Other Terms',
+      titleController: title,
+      textController: text,
+      textLabel: 'Other terms',
+    );
+
+    title.dispose();
+    text.dispose();
+
+    if (result != null && mounted) {
+      setState(() {
         _otherTermsTitle.text = result.$1;
         _otherTermsText.text = result.$2;
-      }
+      });
     }
-    setState(() {});
   }
 
   Future<void> _addOtherNote() async {
+    final title = TextEditingController(text: _otherNoteTitle.text);
+    final text = TextEditingController(text: _otherNoteText.text);
+
     final result = await _showEditorDialog(
-      title: 'Add Other Note',
-      titleController: _otherNoteTitle,
-      textController: _otherNoteText,
+      title: _otherNoteTitle.text.trim().isEmpty
+          ? 'Add Other Note'
+          : 'Edit Other Note',
+      titleController: title,
+      textController: text,
       textLabel: 'Important note',
     );
+
+    title.dispose();
+    text.dispose();
+
     if (result != null && mounted) {
-      _otherNoteTitle.text = result.$1;
-      _otherNoteText.text = result.$2;
-      setState(() {});
+      setState(() {
+        _otherNoteTitle.text = result.$1;
+        _otherNoteText.text = result.$2;
+      });
     }
   }
 
   Future<void> _save() async {
     if (_saving) return;
+
+    // Also make sure nothing on the main form still holds focus before we
+    // start popping/showing snackbars after the async save completes.
+    FocusManager.instance.primaryFocus?.unfocus();
 
     final businessName = _businessName.text.trim();
     if (businessName.isEmpty) {
@@ -294,7 +351,16 @@ class _BillSettingsScreenState extends State<BillSettingsScreen> {
           behavior: SnackBarBehavior.floating,
         ),
       );
-      Navigator.of(context).pop(settings);
+      // Defer the pop to the next frame. The SnackBar's own entrance
+      // animation and the earlier unfocus() both dirty
+      // AnimatedDefaultTextStyle widgets (the SnackBar's text style and any
+      // floating field labels). Popping this route synchronously right
+      // after showSnackBar() tears the route down before that frame's
+      // rebuilds are flushed by the current BuildScope, which is what
+      // caused the "'_dependents.isEmpty': is not true" crash on save.
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) Navigator.of(context).pop(settings);
+      });
     } catch (e) {
       if (mounted) _showError(FirestoreService.instance.describeError(e));
     } finally {

@@ -63,6 +63,7 @@ flutter:
   assets:
     - assets/images/logo.png
     - assets/icon/app_icon.png
+    - assets/images/report_header_bg.jpg
 
   fonts:
     - family: Amaranth
