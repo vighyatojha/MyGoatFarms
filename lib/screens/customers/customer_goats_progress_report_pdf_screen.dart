@@ -71,12 +71,22 @@ class _PreviousInfo {
   final DateTime? latestHoofCuttingDate;
   final DateTime? latestHairTrimmingDate;
 
+  // FIX: full Arrival + past-report weight history for this goat, so
+  // the PDF's Weight & Gain box can show Arrival / last-3-months /
+  // Current instead of only Previous/Current. Built the same way as
+  // GoatWeightProgressTab's chain — Arrival weight plus every past
+  // GoatReport.endWeight, dated by GoatReport.generatedAt. Does NOT
+  // include the report being generated right now (that's currentWeight
+  // on GoatProgressEntry) since it hasn't been saved yet at fetch time.
+  final List<GoatWeightPoint> weightChain;
+
   const _PreviousInfo({
     required this.bytes,
     required this.label,
     required this.date,
     required this.weight,
     required this.latestHealthRecord,
+    required this.weightChain,
     this.latestVaccinationDate,
     this.latestHoofCuttingDate,
     this.latestHairTrimmingDate,
@@ -340,8 +350,8 @@ class _CustomerGoatsProgressReportScreenState
   }
 
   Future<_PreviousInfo> _fetchPrevious(PalaiGoat goat) async {
-    // Fired off together (not one-at-a-time) so adding the three new
-    // lookups below doesn't add sequential round trips per goat.
+    // Fired off together (not one-at-a-time) so adding the new lookups
+    // below doesn't add sequential round trips per goat.
     final results = await Future.wait([
       FirestoreService.instance.getLatestGoatReport(
         widget.farmId,
@@ -372,6 +382,12 @@ class _CustomerGoatsProgressReportScreenState
         widget.customer.id,
         goat.id,
       ),
+      // FIX: every past report for this goat (not just the latest one),
+      // so the PDF's Weight & Gain box can show a full Arrival / monthly
+      // chain — same source GoatWeightProgressTab's chain uses.
+      FirestoreService.instance
+          .goatReportsStream(widget.farmId, widget.customer.id, goat.id)
+          .first,
     ]);
 
     final latestReport = results[0] as GoatReport?;
@@ -379,6 +395,9 @@ class _CustomerGoatsProgressReportScreenState
     final latestVaccinationDate = results[2] as DateTime?;
     final latestHoofCuttingDate = results[3] as DateTime?;
     final latestHairTrimmingDate = results[4] as DateTime?;
+    final allReports = results[5] as List<GoatReport>;
+
+    final weightChain = _buildWeightChain(goat, allReports);
 
     if (latestReport != null && latestReport.images.isNotEmpty) {
       return _PreviousInfo(
@@ -387,6 +406,7 @@ class _CustomerGoatsProgressReportScreenState
         date: latestReport.generatedAt,
         weight: latestReport.endWeight ?? goat.weightAtCheckIn,
         latestHealthRecord: latestHealth,
+        weightChain: weightChain,
         latestVaccinationDate: latestVaccinationDate,
         latestHoofCuttingDate: latestHoofCuttingDate,
         latestHairTrimmingDate: latestHairTrimmingDate,
@@ -399,10 +419,34 @@ class _CustomerGoatsProgressReportScreenState
       date: goat.checkInDate,
       weight: goat.weightAtCheckIn,
       latestHealthRecord: latestHealth,
+      weightChain: weightChain,
       latestVaccinationDate: latestVaccinationDate,
       latestHoofCuttingDate: latestHoofCuttingDate,
       latestHairTrimmingDate: latestHairTrimmingDate,
     );
+  }
+
+  /// Arrival weight + every past report's endWeight, dated by that
+  /// report's generatedAt — exactly the same chain GoatWeightProgressTab
+  /// builds, minus the report being generated right now (it isn't saved
+  /// yet at this point, so it can't be in `reports`).
+  List<GoatWeightPoint> _buildWeightChain(PalaiGoat goat, List<GoatReport> reports) {
+    final points = <GoatWeightPoint>[
+      GoatWeightPoint(
+        date: goat.farmArrivalDate ?? goat.checkInDate,
+        weight: goat.weightAtCheckIn,
+        source: 'Arrival',
+      ),
+      for (final r in reports)
+        if (r.endWeight != null)
+          GoatWeightPoint(
+            date: r.generatedAt,
+            weight: r.endWeight!,
+            source: r.notes.isNotEmpty ? r.notes : 'Report',
+          ),
+    ];
+    points.sort((a, b) => a.date.compareTo(b.date));
+    return points;
   }
 
   void _backToSelecting() {
@@ -651,6 +695,7 @@ class _CustomerGoatsProgressReportScreenState
           currentImageBytes: captured.bytes,
           currentDate: now,
           currentWeight: currentWeight,
+          weightChain: previous.weightChain,
           latestHealthRecord: previous.latestHealthRecord,
           latestVaccinationDate: previous.latestVaccinationDate,
           latestHoofCuttingDate: previous.latestHoofCuttingDate,

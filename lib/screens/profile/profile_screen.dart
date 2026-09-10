@@ -9,6 +9,7 @@ import '../../app_theme.dart';
 import '../../l10n/app_strings.dart';
 import '../../models/bill_settings_model.dart';
 import '../../models/farm_model.dart';
+import '../../models/health_reminder_settings_model.dart';
 import '../../models/partner_model.dart';
 import '../../services/firestore_service.dart';
 import '../../services/image_service.dart';
@@ -20,6 +21,7 @@ import '../../widgets/farm_not_linked_state.dart';
 import '../login_screen.dart';
 import 'profile_partner_dashboard.dart';
 import 'bill_settings_screen.dart';
+import 'health_reminder_settings_screen.dart';
 
 class ProfileScreen extends StatefulWidget {
   const ProfileScreen({super.key});
@@ -467,6 +469,26 @@ class _ProfileScreenState extends State<ProfileScreen> {
     await Navigator.of(context).push(
       MaterialPageRoute(
         builder: (_) => BillSettingsScreen(
+          farmId: _farmId!,
+          initialSettings: current,
+        ),
+      ),
+    );
+  }
+
+  /// Opens the farm-level Health Reminder Settings editor — Vaccination,
+  /// Hoof Cutting, and Hair Trimming reminder cadences that apply to
+  /// every active goat in this farm regardless of customer. See
+  /// [HealthReminderSettingsScreen].
+  Future<void> _showHealthReminderSettings() async {
+    if (!_isOwner) return;
+    if (_farmId == null) return;
+
+    final current = _farm?.healthReminderSettings ?? HealthReminderSettings.defaults;
+
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => HealthReminderSettingsScreen(
           farmId: _farmId!,
           initialSettings: current,
         ),
@@ -1105,6 +1127,18 @@ class _ProfileScreenState extends State<ProfileScreen> {
       onTap: _isOwner ? _showBillSettings : null,
     );
   }
+  /// Vaccination / Hoof Cutting / Hair Trimming reminder days for the
+  /// whole farm — see [HealthReminderSettingsScreen]. Applies to every
+  /// active goat regardless of customer.
+  Widget _buildHealthReminderSettingsCard(FarmModel? farm) {
+    return _actionTile(
+      icon: Icons.health_and_safety_outlined,
+      title: 'Health Reminder Settings',
+      subtitle: 'Vaccination, hoof cutting & hair trimming reminder days',
+      trailing: const Icon(Icons.chevron_right_rounded, size: 19),
+      onTap: _isOwner ? _showHealthReminderSettings : null,
+    );
+  }
   Widget _buildSettingsCard() {
     return _sectionCard(
       title: 'Account',
@@ -1112,6 +1146,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
       child: Column(
         children: [
           _buildBillDetailsCard(_farm),
+          const Divider(height: 1),
+          _buildHealthReminderSettingsCard(_farm),
           const Divider(height: 1),
           _actionTile(
             icon: Icons.lock_outline_rounded,

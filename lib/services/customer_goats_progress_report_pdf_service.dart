@@ -12,6 +12,24 @@ import '../models/bill_settings_model.dart';
 import '../models/monthly_bill_model.dart';
 import '../models/palai_models.dart';
 
+/// One dated weigh-in on a goat's weight history — the arrival weight,
+/// or a weight recorded on a past GENERATED report (GoatReport.endWeight,
+/// dated by GoatReport.generatedAt). Same shape/source as the private
+/// `_WeighIn` used by GoatWeightProgressTab on the goat profile screen,
+/// made public here so the report-building screen can hand the chain to
+/// the PDF service.
+class GoatWeightPoint {
+  final DateTime date;
+  final double weight;
+  final String source;
+
+  const GoatWeightPoint({
+    required this.date,
+    required this.weight,
+    required this.source,
+  });
+}
+
 class GoatProgressEntry {
   final PalaiGoat goat;
 
@@ -23,6 +41,13 @@ class GoatProgressEntry {
   final Uint8List currentImageBytes;
   final DateTime currentDate;
   final double? currentWeight;
+
+  // FIX: Arrival + every past report weigh-in for this goat (NOT
+  // including the report being generated right now — that's
+  // currentWeight/currentDate above). Lets the Weight & Gain box on the
+  // PDF show Arrival / last-3-months / Current instead of only a single
+  // previous/current pair.
+  final List<GoatWeightPoint> weightChain;
 
   final HealthRecordEntry? latestHealthRecord;
 
@@ -49,6 +74,7 @@ class GoatProgressEntry {
     required this.currentImageBytes,
     required this.currentDate,
     required this.currentWeight,
+    required this.weightChain,
     required this.latestHealthRecord,
     this.latestVaccinationDate,
     this.latestHoofCuttingDate,
@@ -725,10 +751,6 @@ class CustomerGoatsProgressReportPdfService {
   pw.Widget _buildGoatCard(int number, GoatProgressEntry entry) {
     final goat = entry.goat;
 
-    final gain = entry.previousWeight != null && entry.currentWeight != null
-        ? entry.currentWeight! - entry.previousWeight!
-        : null;
-
     return pw.Container(
       width: double.infinity,
       padding: const pw.EdgeInsets.all(7),
@@ -757,7 +779,7 @@ class CustomerGoatsProgressReportPdfService {
           pw.Row(
             crossAxisAlignment: pw.CrossAxisAlignment.start,
             children: [
-              pw.Expanded(child: _weightGainBox(entry, gain)),
+              pw.Expanded(child: _weightGainBox(entry)),
               pw.SizedBox(width: 6),
               pw.Expanded(flex: 2, child: _healthStatusBox(entry)),
             ],
@@ -945,19 +967,61 @@ class CustomerGoatsProgressReportPdfService {
   // BELOW the details/photos row, full card width.
   // ==========================================================================
 
-  pw.Widget _weightGainBox(GoatProgressEntry entry, double? gain) {
+  /// WEIGHT & GAIN box — Arrival, then whichever of the last 3 calendar
+  /// months (relative to the report's current month) actually have a
+  /// report weigh-in, then Current month, then overall Gain. A month
+  /// with nothing recorded is skipped entirely rather than shown as a
+  /// blank row.
+  pw.Widget _weightGainBox(GoatProgressEntry entry) {
     return _statBox(
       title: 'WEIGHT & GAIN',
-      rows: [
-        _statRow('Previous', entry.previousWeight != null ? '${entry.previousWeight!.toStringAsFixed(1)} kg' : '-'),
-        _statRow('Current', entry.currentWeight != null ? '${entry.currentWeight!.toStringAsFixed(1)} kg' : '-'),
-        _statRow(
-          'Gain',
-          gain != null ? '${gain >= 0 ? '+' : ''}${gain.toStringAsFixed(1)} kg' : '-',
-          valueColor: gain == null ? PdfColors.grey800 : (gain >= 0 ? PdfColors.green700 : PdfColors.red700),
-        ),
-      ],
+      rows: _buildWeightRows(entry),
     );
+  }
+
+  List<pw.Widget> _buildWeightRows(GoatProgressEntry entry) {
+    final chain = List<GoatWeightPoint>.from(entry.weightChain)
+      ..sort((a, b) => a.date.compareTo(b.date));
+
+    final arrival = chain.isNotEmpty ? chain.first : null;
+    final current = entry.currentDate;
+
+    final rows = <pw.Widget>[
+      _statRow('Arrival', arrival != null ? '${arrival.weight.toStringAsFixed(1)} kg' : '-'),
+    ];
+
+    // Last 3 calendar months before the current one — skip any month
+    // with no weigh-in on record instead of showing a blank row.
+    for (int i = 3; i >= 1; i--) {
+      final monthDate = DateTime(current.year, current.month - i);
+      final monthPoints = chain
+          .where((p) => p.date.year == monthDate.year && p.date.month == monthDate.month)
+          .toList()
+        ..sort((a, b) => a.date.compareTo(b.date));
+      if (monthPoints.isEmpty) continue;
+
+      final point = monthPoints.last; // latest weigh-in in that month
+      rows.add(_statRow(DateFormat('MMM').format(monthDate), '${point.weight.toStringAsFixed(1)} kg'));
+    }
+
+    // Current month — always shown, straight from the report's own
+    // captured weight.
+    rows.add(_statRow(
+      '${DateFormat('MMM').format(current)} (Current)',
+      entry.currentWeight != null ? '${entry.currentWeight!.toStringAsFixed(1)} kg' : '-',
+    ));
+
+    // Overall Gain — Current vs Arrival.
+    final gain = (arrival != null && entry.currentWeight != null)
+        ? entry.currentWeight! - arrival.weight
+        : null;
+    rows.add(_statRow(
+      'Gain',
+      gain != null ? '${gain >= 0 ? '+' : ''}${gain.toStringAsFixed(1)} kg' : '-',
+      valueColor: gain == null ? PdfColors.grey800 : (gain >= 0 ? PdfColors.green700 : PdfColors.red700),
+    ));
+
+    return rows;
   }
 
   pw.Widget _healthStatusBox(GoatProgressEntry entry) {

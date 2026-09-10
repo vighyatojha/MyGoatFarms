@@ -8,6 +8,7 @@ import 'package:flutter/foundation.dart';
 
 import '../models/bill_settings_model.dart';
 import '../models/farm_model.dart';
+import '../models/health_reminder_settings_model.dart';
 import '../models/palai_models.dart';
 import '../models/report_models.dart';
 import '../models/stock_model.dart';
@@ -1770,33 +1771,16 @@ class FirestoreService {
     return _customers(farmId).doc(customer.id).update(customer.toUpdateMap()).timeout(timeout);
   }
 
-  /// Saves the customer's Health Reminder Settings — Vaccination, Hoof
-  /// Cutting, and Hair Trimming reminder schedules (in days). These
-  /// apply to every goat under the customer: the record-creation
-  /// screens for each health-event type read the customer's setting to
-  /// compute that new record's `nextDueDate` (see [kGoatCareRecordTypes]
-  /// for how those due dates are later read back for reminders).
-  ///
-  /// Kept as its own partial `.update()` — rather than folded into
-  /// [updateCustomer] — so saving these three fields from the Health
-  /// Settings section can never clobber unrelated customer fields
-  /// (name/mobile/address/etc.) that might be mid-edit elsewhere.
-  ///
-  /// Pass `null` for a field to clear that reminder (turn it off).
-  Future<void> updateCustomerHealthReminderSettings(
-      String farmId,
-      String customerId, {
-        int? vaccinationReminderDays,
-        int? hoofCuttingReminderDays,
-        int? hairTrimmingReminderDays,
-      }) {
-    return _customers(farmId).doc(customerId).update({
-      'vaccinationReminderDays': vaccinationReminderDays,
-      'hoofCuttingReminderDays': hoofCuttingReminderDays,
-      'hairTrimmingReminderDays': hairTrimmingReminderDays,
-      'updatedAt': FieldValue.serverTimestamp(),
-    }).timeout(timeout);
-  }
+  // NOTE: Health Reminder Day Settings (Vaccination / Hoof Cutting /
+  // Hair Trimming) used to be saved per-customer here via
+  // `updateCustomerHealthReminderSettings`. They are now a FARM-level
+  // setting — single source of truth for every active goat in the
+  // farm, regardless of customer — see [updateHealthReminderSettings]
+  // below and Profile > Health Reminder Settings. This method has been
+  // removed; the old `vaccinationReminderDays` / `hoofCuttingReminderDays`
+  // / `hairTrimmingReminderDays` fields on existing customer documents
+  // are simply no longer read or written — they're left in place
+  // untouched rather than deleted, in case a migration ever needs them.
 
   /// True if this customer currently has any goat checked into Palai and
   /// not yet checked out. Used to block deletion until goats are checked
@@ -2377,6 +2361,39 @@ class FirestoreService {
     );
   }
 
+  /// Marks one Vaccination / Hoof Cutting / Hair Trimming record as
+  /// completed by clearing its `nextDueDate` reminder — the same field
+  /// [_classifyHealthRecordStatus] reads to decide Pending/Upcoming vs
+  /// Complete (see [kGoatCareRecordTypes]), so this reclassifies the
+  /// record to Complete without touching anything else on it: the event
+  /// itself already happened on its own `vaccinationDate` /
+  /// `cuttingDate` / `trimmingDate`, only the "remind me again" date is
+  /// being cleared. Used by the Health Records screen's inline "Mark as
+  /// Completed" button on Pending/Upcoming record cards.
+  ///
+  /// [recordType] must be one of [kGoatCareRecordTypes]'s `type` values
+  /// ('vaccination' | 'hoofCutting' | 'hairTrimming') — the same value
+  /// carried on [HealthRecordSummary.recordType].
+  Future<void> markHealthCareRecordCompleted(
+      String farmId,
+      String customerId,
+      String goatId,
+      String recordType,
+      String recordId,
+      ) async {
+    final rt = kGoatCareRecordTypes.firstWhere(
+          (rt) => rt.type == recordType,
+      orElse: () => throw ArgumentError('Unknown health care record type: $recordType'),
+    );
+
+    await _goats(farmId, customerId)
+        .doc(goatId)
+        .collection(rt.collection)
+        .doc(recordId)
+        .update({rt.dueField: null}).timeout(timeout);
+  }
+
+
   // ---------------------------------------------------------------------
   // Stock — feed & medicine
   // ---------------------------------------------------------------------
@@ -2796,6 +2813,47 @@ class FirestoreService {
   Future<void> updateBillSettings(String farmId, BillSettings settings) async {
     await _farms.doc(farmId).update({
       'billSettings': settings.toMap(),
+      'updatedAt': FieldValue.serverTimestamp(),
+    }).timeout(timeout);
+  }
+
+  /// One-off read of this farm's Health Reminder Day Settings
+  /// (Vaccination / Hoof Cutting / Hair Trimming) — see Profile >
+  /// Health Reminder Settings. This is the single source of truth for
+  /// every active goat in the farm: the Add Vaccination / Add Hoof
+  /// Cutting / Add Hair Trimming screens call this to compute a new
+  /// record's `nextDueDate`, regardless of which customer the goat
+  /// currently belongs to. Falls back to
+  /// [HealthReminderSettings.defaults] if the farm doc can't be read or
+  /// hasn't configured anything yet, so a new goat/new record never
+  /// ends up with no reminder cadence at all.
+  Future<HealthReminderSettings> getHealthReminderSettings(String farmId) async {
+    try {
+      final doc = await _farms.doc(farmId).get().timeout(timeout);
+      if (!doc.exists) return HealthReminderSettings.defaults;
+      return HealthReminderSettings.fromMap(
+        doc.data()?['healthReminderSettings'] as Map<String, dynamic>?,
+      );
+    } catch (e) {
+      debugPrint('FirestoreService.getHealthReminderSettings error: $e');
+      return HealthReminderSettings.defaults;
+    }
+  }
+
+  /// Saves this farm's Health Reminder Day Settings — Vaccination, Hoof
+  /// Cutting, and Hair Trimming reminder schedules (in days). Applies
+  /// to every active goat in the farm regardless of customer. Kept as
+  /// its own partial `.update()`, same as [updateBillSettings], so it
+  /// can never clobber unrelated farm fields.
+  ///
+  /// Pass `null` for a field (via [HealthReminderSettings]) to clear
+  /// that reminder (turn it off) for every goat in the farm.
+  Future<void> updateHealthReminderSettings(
+      String farmId,
+      HealthReminderSettings settings,
+      ) async {
+    await _farms.doc(farmId).update({
+      'healthReminderSettings': settings.toMap(),
       'updatedAt': FieldValue.serverTimestamp(),
     }).timeout(timeout);
   }

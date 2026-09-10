@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 
 import '../../../app_theme.dart';
+import '../../../models/health_reminder_settings_model.dart';
 import '../../../models/palai_models.dart';
 import '../../../models/vaccination_record.dart';
 import '../../../services/firestore_service.dart';
@@ -16,14 +17,12 @@ class AddVaccinationScreen extends StatefulWidget {
   final String farmId;
   final String customerId;
   final PalaiGoat goat;
-  final int reminderDays;
 
   const AddVaccinationScreen({
     super.key,
     required this.farmId,
     required this.customerId,
     required this.goat,
-    this.reminderDays = 30,
   });
 
   @override
@@ -42,73 +41,38 @@ class _AddVaccinationScreenState extends State<AddVaccinationScreen> {
 
   DateTime _vaccinationDate = DateTime.now();
 
-  // 30 days is only ever a *default* fallback — it must never be
-  // confused with a customer having explicitly chosen 30. Whether the
-  // customer has a setting at all is tracked separately in
-  // [_customerSettingApplied] so the UI can tell the two apart.
+  // Sourced from the FARM'S Health Reminder Settings (Profile > Health
+  // Reminder Settings) — single source of truth for every active goat
+  // in the farm, regardless of customer. Null means the farm has
+  // switched this reminder off entirely. 30 is only ever shown while
+  // [_loadingReminderSetting] is true, as a placeholder before the real
+  // farm value arrives.
   int? _reminderDays = 30;
-  bool _customerSettingApplied = false;
   bool _saving = false;
   bool _loadingReminderSetting = true;
 
   @override
   void initState() {
     super.initState();
-    _reminderDays = _normalizeReminderDays(widget.reminderDays);
-    _loadCustomerReminderSetting();
+    _loadFarmReminderSetting();
   }
 
-  int _normalizeReminderDays(int? value) {
-    if (value != null && value > 0) {
-      return value;
-    }
-    return 30;
-  }
+  // Reads the Vaccination reminder cadence from the FARM'S Health
+  // Reminder Settings — farms/{farmId}.healthReminderSettings — see
+  // FirestoreService.getHealthReminderSettings and
+  // HealthReminderSettingsScreen (Profile > Health Reminder Settings).
+  // This value always governs the reminder: it's shown locked/read-only
+  // here, since Farm Profile is now the single place to change it.
+  Future<void> _loadFarmReminderSetting() async {
+    final HealthReminderSettings settings =
+    await FirestoreService.instance.getHealthReminderSettings(widget.farmId);
 
-  // Reads the Vaccination reminder cadence from the CUSTOMER'S profile —
-  // farm-scoped at farms/{farmId}/palaiCustomers/{customerId}, matching
-  // exactly where CustomerProfileScreen's Health Settings sheet writes it
-  // (see FirestoreService.updateCustomerHealthReminderSettings). The
-  // field is a flat top-level `vaccinationReminderDays`, not nested under
-  // a `settings` map.
-  //
-  // If a setting exists, it's applied and LOCKED — this screen becomes a
-  // read-only consumer of the customer's schedule, never a second place
-  // to change it. If no setting exists, the 30-day default stays
-  // editable.
-  Future<void> _loadCustomerReminderSetting() async {
-    try {
-      final document = await FirebaseFirestore.instance
-          .collection('farms')
-          .doc(widget.farmId)
-          .collection('palaiCustomers')
-          .doc(widget.customerId)
-          .get();
+    if (!mounted) return;
 
-      final data = document.data();
-      final rawDays = data?['vaccinationReminderDays'];
-
-      int? days;
-      if (rawDays is num) {
-        days = rawDays.toInt();
-      } else if (rawDays != null) {
-        days = int.tryParse(rawDays.toString());
-      }
-
-      if (days != null && days > 0 && mounted) {
-        setState(() {
-          _reminderDays = days;
-          _customerSettingApplied = true;
-        });
-      }
-    } catch (_) {
-    } finally {
-      if (mounted) {
-        setState(() {
-          _loadingReminderSetting = false;
-        });
-      }
-    }
+    setState(() {
+      _reminderDays = settings.vaccinationReminderDays;
+      _loadingReminderSetting = false;
+    });
   }
 
   @override
@@ -322,15 +286,18 @@ class _AddVaccinationScreenState extends State<AddVaccinationScreen> {
               ),
             ),
             const SizedBox(height: 14),
-            // While the customer's setting is still loading, the
+            // While the farm's setting is still loading, the
             // LinearProgressIndicator above already signals that — the
-            // selector itself is withheld rather than briefly flashing an
-            // editable default that then suddenly locks (see spec: never
-            // show an editable selector that snaps to locked).
+            // selector itself is withheld rather than briefly flashing a
+            // placeholder value.
             if (!_loadingReminderSetting)
               ReminderCadenceSelector(
                 value: _reminderDays,
-                locked: _customerSettingApplied,
+                locked: true,
+                lockedNote:
+                'This reminder schedule is set for the whole farm in '
+                    'Profile → Health Reminder Settings and applies to '
+                    'every goat, no matter which customer they belong to.',
                 onChanged: (days) {
                   setState(() {
                     _reminderDays = days;

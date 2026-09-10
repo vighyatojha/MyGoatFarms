@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:animate_do/animate_do.dart';
 import 'package:flutter/material.dart';
@@ -8,6 +10,7 @@ import 'customer_goats_report_screen.dart';
 import '../../models/monthly_bill_model.dart';
 import '../../services/monthly_billing_service.dart';
 import '../../app_theme.dart';
+import '../../models/health_reminder_settings_model.dart';
 import '../../models/palai_models.dart';
 import '../../services/firestore_service.dart';
 import '../../widgets/fast_route.dart';
@@ -15,6 +18,7 @@ import '../palai/add_customer_screen.dart';
 import '../palai/customer_palai/customer_goat_registration_screen.dart';
 import '../palai/customer_palai/goat_profile_screen.dart';
 import '../palai/multi_goat_checkout_screen.dart';
+import '../profile/health_reminder_settings_screen.dart';
 
 class CustomerProfileScreen extends StatefulWidget {
   final PalaiCustomer customer;
@@ -38,10 +42,39 @@ class _CustomerProfileScreenState
   bool _loadingCustomer = false;
   bool _syncingOutstanding = false;
 
+  // Health Reminder Settings are now FARM-level (Profile > Health
+  // Reminder Settings), applying to every active goat regardless of
+  // customer — see HealthReminderSettings / FarmModel.
+  // healthReminderSettings. This screen only shows a read-only summary
+  // of the farm's current settings; there is no per-customer editor
+  // anymore. Streamed (not a one-off fetch) so this summary stays live
+  // if the farm owner changes it from Profile while this screen is
+  // open.
+  HealthReminderSettings? _farmHealthSettings;
+  StreamSubscription<DocumentSnapshot<Map<String, dynamic>>>? _farmSub;
+
   @override
   void initState() {
     super.initState();
     _customer = widget.customer;
+    _farmSub = FirebaseFirestore.instance
+        .collection('farms')
+        .doc(widget.farmId)
+        .snapshots()
+        .listen((doc) {
+      if (!mounted) return;
+      setState(() {
+        _farmHealthSettings = HealthReminderSettings.fromMap(
+          doc.data()?['healthReminderSettings'] as Map<String, dynamic>?,
+        );
+      });
+    });
+  }
+
+  @override
+  void dispose() {
+    _farmSub?.cancel();
+    super.dispose();
   }
 
   // ================================================================
@@ -184,27 +217,26 @@ class _CustomerProfileScreenState
 
   // ================================================================
   // HEALTH SETTINGS
+  //
+  // Health Reminder Settings are farm-level now (Profile > Health
+  // Reminder Settings) and apply to every active goat in the farm,
+  // regardless of customer — there is no per-customer editor anymore.
+  // "Change Health Settings" here simply opens that farm-wide screen so
+  // the caretaker doesn't have to leave the customer they're looking at
+  // to find it. [_farmSub] picks up the change live once saved.
   // ================================================================
 
   Future<void> _openHealthSettings() async {
-    final result = await showModalBottomSheet<bool>(
-      context: context,
-      backgroundColor: Colors.transparent,
-      isScrollControlled: true,
-      useSafeArea: true,
-      builder: (context) {
-        return _HealthReminderSettingsSheet(
+    final current = _farmHealthSettings ?? HealthReminderSettings.defaults;
+
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => HealthReminderSettingsScreen(
           farmId: widget.farmId,
-          customer: _customer,
-        );
-      },
+          initialSettings: current,
+        ),
+      ),
     );
-
-    if (!mounted) return;
-
-    if (result == true) {
-      await _refreshCustomer();
-    }
   }
 
   // ================================================================
@@ -1031,13 +1063,18 @@ class _CustomerProfileScreenState
   // ================================================================
   // HEALTH SETTINGS SECTION
   //
-  // Shows the customer's three reminder schedules (Vaccination, Hoof
-  // Cutting, Hair Trimming) and lets the customer's caretaker open the
-  // Health Settings sheet to change them. These settings apply to every
-  // goat under this customer.
+  // Shows the FARM'S three reminder schedules (Vaccination, Hoof
+  // Cutting, Hair Trimming) — these are configured once for the whole
+  // farm (Profile > Health Reminder Settings) and apply to every active
+  // goat, no matter which customer they belong to. This section is a
+  // read-only summary; "Change Health Settings" opens the shared
+  // farm-level screen rather than a per-customer editor, since there is
+  // no longer a customer-specific setting to change here.
   // ================================================================
 
   Widget _buildHealthSettingsSection() {
+    final settings = _farmHealthSettings;
+
     return Container(
       width: double.infinity,
 
@@ -1050,10 +1087,17 @@ class _CustomerProfileScreenState
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          Text(
+            'Farm-wide setting · applies to every active goat',
+            style: AppTheme.body(size: 11, color: AppColors.textGrey),
+          ),
+
+          const SizedBox(height: 12),
+
           _healthReminderRow(
             icon: Icons.vaccines_outlined,
             label: 'Vaccination Reminder',
-            days: _customer.vaccinationReminderDays,
+            days: settings?.vaccinationReminderDays,
           ),
 
           const Divider(height: 24),
@@ -1061,7 +1105,7 @@ class _CustomerProfileScreenState
           _healthReminderRow(
             icon: Icons.content_cut,
             label: 'Hoof Cutting Reminder',
-            days: _customer.hoofCuttingReminderDays,
+            days: settings?.hoofCuttingReminderDays,
           ),
 
           const Divider(height: 24),
@@ -1069,7 +1113,7 @@ class _CustomerProfileScreenState
           _healthReminderRow(
             icon: Icons.cut_outlined,
             label: 'Hair Trimming Reminder',
-            days: _customer.hairTrimmingReminderDays,
+            days: settings?.hairTrimmingReminderDays,
           ),
 
           const SizedBox(height: 16),
@@ -4109,302 +4153,11 @@ class _AddOutstandingSheetState
   }
 }
 
-// ============================================================================
-// HEALTH REMINDER SETTINGS SHEET
-//
-// Lets the customer's caretaker set/change the three Health Reminder
-// Settings (Vaccination, Hoof Cutting, Hair Trimming) from Customer
-// Profile → Health Settings → Change Health Settings. Saves all three
-// in one write via FirestoreService.updateCustomerHealthReminderSettings,
-// which applies to every goat under this customer.
-// ============================================================================
-
-class _HealthReminderSettingsSheet extends StatefulWidget {
-  final String farmId;
-  final PalaiCustomer customer;
-
-  const _HealthReminderSettingsSheet({
-    required this.farmId,
-    required this.customer,
-  });
-
-  @override
-  State<_HealthReminderSettingsSheet> createState() =>
-      _HealthReminderSettingsSheetState();
-}
-
-class _HealthReminderSettingsSheetState
-    extends State<_HealthReminderSettingsSheet> {
-  // All three recurring health reminders share the same selectable
-  // cadence: 30 / 45 / 60 / 90 days. There is intentionally no 15-day
-  // option. Customer Profile is the single source of truth for these —
-  // once set here, the corresponding Add screen for every one of this
-  // customer's goats shows the value locked and read-only.
-  static const List<int> _reminderOptions = [30, 45, 60, 90];
-
-  late int? _vaccinationDays = widget.customer.vaccinationReminderDays;
-  late int? _hoofCuttingDays = widget.customer.hoofCuttingReminderDays;
-  late int? _hairTrimmingDays = widget.customer.hairTrimmingReminderDays;
-
-  bool _saving = false;
-
-  Future<void> _save() async {
-    if (_saving) return;
-
-    setState(() {
-      _saving = true;
-    });
-
-    try {
-      await FirestoreService.instance.updateCustomerHealthReminderSettings(
-        widget.farmId,
-        widget.customer.id,
-        vaccinationReminderDays: _vaccinationDays,
-        hoofCuttingReminderDays: _hoofCuttingDays,
-        hairTrimmingReminderDays: _hairTrimmingDays,
-      );
-
-      if (!mounted) return;
-
-      Navigator.of(context).pop(true);
-    } catch (e) {
-      if (!mounted) return;
-
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Could not save Health Settings: $e'),
-          backgroundColor: AppColors.error,
-        ),
-      );
-    } finally {
-      if (mounted) {
-        setState(() {
-          _saving = false;
-        });
-      }
-    }
-  }
-
-  // Sliding selector for one health-reminder cadence: a discrete 4-stop
-  // slider across 30 / 45 / 60 / 90 days, plus a switch to turn the
-  // reminder off entirely ("None" — clears the setting for this record
-  // type). This is what every Add Health screen for this customer's
-  // goats reads and then locks against.
-  Widget _reminderPicker({
-    required String title,
-    required String subtitle,
-    required List<int> options,
-    required int? selected,
-    required ValueChanged<int?> onChanged,
-  }) {
-    final isOn = selected != null;
-    final index = isOn ? options.indexOf(selected).clamp(0, options.length - 1) : 0;
-    final displayValue = options[index == -1 ? 0 : index];
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(
-          children: [
-            Expanded(
-              child: Text(
-                title,
-                style: AppTheme.body(
-                  size: 12,
-                  color: AppColors.textDark,
-                  weight: FontWeight.w700,
-                ),
-              ),
-            ),
-            Switch(
-              value: isOn,
-              activeColor: AppColors.primaryGreen,
-              onChanged: (enabled) => onChanged(enabled ? displayValue : null),
-            ),
-          ],
-        ),
-
-        const SizedBox(height: 3),
-
-        Text(
-          subtitle,
-          style: AppTheme.body(
-            size: 11,
-            color: AppColors.textGrey,
-          ),
-        ),
-
-        const SizedBox(height: 6),
-
-        Opacity(
-          opacity: isOn ? 1 : 0.4,
-          child: IgnorePointer(
-            ignoring: !isOn,
-            child: Column(
-              children: [
-                SliderTheme(
-                  data: SliderTheme.of(context).copyWith(
-                    activeTrackColor: AppColors.primaryGreen,
-                    inactiveTrackColor: AppColors.primaryGreen.withOpacity(0.15),
-                    thumbColor: AppColors.primaryGreen,
-                    overlayColor: AppColors.primaryGreen.withOpacity(0.15),
-                    valueIndicatorColor: AppColors.primaryGreen,
-                    trackHeight: 4,
-                  ),
-                  child: Slider(
-                    value: index.toDouble(),
-                    min: 0,
-                    max: (options.length - 1).toDouble(),
-                    divisions: options.length - 1,
-                    label: '$displayValue days',
-                    onChanged: (v) => onChanged(options[v.round()]),
-                  ),
-                ),
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 4),
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: options
-                        .map(
-                          (days) => Text(
-                            '$days',
-                            style: AppTheme.body(
-                              size: 11,
-                              color: displayValue == days ? AppColors.primaryGreen : AppColors.textGrey,
-                              weight: displayValue == days ? FontWeight.w700 : FontWeight.w400,
-                            ),
-                          ),
-                        )
-                        .toList(),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
-
-        const SizedBox(height: 6),
-
-        Text(
-          isOn ? 'Every $displayValue days' : 'No reminder',
-          style: AppTheme.body(
-            size: 13,
-            color: AppColors.textDark,
-            weight: FontWeight.w600,
-          ),
-        ),
-      ],
-    );
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: EdgeInsets.fromLTRB(
-        20,
-        12,
-        20,
-        20 + MediaQuery.of(context).viewInsets.bottom,
-      ),
-
-      decoration: const BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.vertical(
-          top: Radius.circular(26),
-        ),
-      ),
-
-      child: SingleChildScrollView(
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Center(
-              child: Container(
-                width: 42,
-                height: 4,
-                decoration: BoxDecoration(
-                  color: Colors.grey.shade300,
-                  borderRadius: BorderRadius.circular(10),
-                ),
-              ),
-            ),
-
-            const SizedBox(height: 20),
-
-            Text(
-              'Health Settings',
-              style: AppTheme.heading(size: 20),
-            ),
-
-            const SizedBox(height: 3),
-
-            Text(
-              '${widget.customer.name} · applies to all goats',
-              style: AppTheme.body(size: 12),
-            ),
-
-            const SizedBox(height: 22),
-
-            _reminderPicker(
-              title: 'Vaccination Reminder',
-              subtitle: 'Remind again this many days after each vaccination.',
-              options: _reminderOptions,
-              selected: _vaccinationDays,
-              onChanged: (v) => setState(() => _vaccinationDays = v),
-            ),
-
-            const SizedBox(height: 22),
-
-            _reminderPicker(
-              title: 'Hoof Cutting Reminder',
-              subtitle: 'Remind again this many days after each hoof cutting.',
-              options: _reminderOptions,
-              selected: _hoofCuttingDays,
-              onChanged: (v) => setState(() => _hoofCuttingDays = v),
-            ),
-
-            const SizedBox(height: 22),
-
-            _reminderPicker(
-              title: 'Hair Trimming Reminder',
-              subtitle: 'Remind again this many days after each hair trimming.',
-              options: _reminderOptions,
-              selected: _hairTrimmingDays,
-              onChanged: (v) => setState(() => _hairTrimmingDays = v),
-            ),
-
-            const SizedBox(height: 26),
-
-            SizedBox(
-              width: double.infinity,
-              child: ElevatedButton(
-                onPressed: _saving ? null : _save,
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: AppColors.primaryGreen,
-                  foregroundColor: Colors.white,
-                  padding: const EdgeInsets.symmetric(vertical: 15),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                ),
-                child: _saving
-                    ? const SizedBox(
-                  height: 20,
-                  width: 20,
-                  child: CircularProgressIndicator(
-                    color: Colors.white,
-                    strokeWidth: 2,
-                  ),
-                )
-                    : const Text(
-                  'Save Health Settings',
-                  style: TextStyle(fontWeight: FontWeight.w600),
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
+// Health Reminder Settings are farm-level now — see
+// HealthReminderSettingsScreen (lib/screens/profile/health_reminder_settings_screen.dart)
+// and FirestoreService.updateHealthReminderSettings. The bottom sheet
+// that used to live here for editing a single customer's Vaccination /
+// Hoof Cutting / Hair Trimming reminder days has been removed; Customer
+// Profile now only shows a read-only summary (see
+// _buildHealthSettingsSection above) and links out to the shared
+// farm-level screen.

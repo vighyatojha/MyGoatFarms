@@ -88,6 +88,28 @@ class _HealthRecordsScreenState extends State<HealthRecordsScreen>
     await future;
   }
 
+  /// Marks one Vaccination / Hoof Cutting / Hair Trimming record as
+  /// completed (clears its reminder so it reclassifies out of
+  /// Pending/Upcoming into Complete), then invalidates the shared
+  /// cache/future so the next read — e.g. when the owner backs out to
+  /// the status-selection screen and its counts refresh — picks up the
+  /// change instead of a stale snapshot.
+  Future<void> _markRecordCompleted(HealthRecordSummary record) async {
+    final farmId = _farmId;
+    if (farmId == null) return;
+
+    await FirestoreService.instance.markHealthCareRecordCompleted(
+      farmId,
+      record.goat.customerId,
+      record.goat.id,
+      record.recordType,
+      record.recordId,
+    );
+
+    _cache.clear();
+    _future = null;
+  }
+
   IconData _iconFor(String type) {
     switch (type) {
       case 'vaccination':
@@ -148,6 +170,7 @@ class _HealthRecordsScreenState extends State<HealthRecordsScreen>
           recordType: type,
           loader: () => _getRecordsForType(type),
           onRecordTap: _openRecord,
+          onMarkCompleted: _markRecordCompleted,
         ),
       ),
     );
@@ -387,6 +410,7 @@ class HealthStatusSelectionScreen extends StatefulWidget {
   final String recordType;
   final Future<List<HealthRecordSummary>> Function() loader;
   final void Function(HealthRecordSummary record) onRecordTap;
+  final Future<void> Function(HealthRecordSummary record) onMarkCompleted;
 
   const HealthStatusSelectionScreen({
     super.key,
@@ -394,6 +418,7 @@ class HealthStatusSelectionScreen extends StatefulWidget {
     required this.recordType,
     required this.loader,
     required this.onRecordTap,
+    required this.onMarkCompleted,
   });
 
   @override
@@ -461,17 +486,25 @@ class _HealthStatusSelectionScreenState
   void _openStatus(
       HealthRecordStatus status,
       List<HealthRecordSummary> records,
-      ) {
-    Navigator.of(context).push(
+      ) async {
+    // Awaited so that once the owner backs out of the Pending/Upcoming/
+    // Complete list (having possibly marked one or more records as
+    // completed there), this screen's own counts refresh immediately
+    // instead of still showing the pre-completion numbers.
+    await Navigator.of(context).push(
       MaterialPageRoute(
         builder: (_) => HealthStatusRecordsScreen(
           recordType: widget.recordType,
           status: status,
           records: records,
           onRecordTap: widget.onRecordTap,
+          onMarkCompleted: widget.onMarkCompleted,
         ),
       ),
     );
+
+    if (!mounted) return;
+    await _refresh();
   }
 
   @override
@@ -644,11 +677,12 @@ class _HealthStatusSelectionScreenState
   }
 }
 
-class HealthStatusRecordsScreen extends StatelessWidget {
+class HealthStatusRecordsScreen extends StatefulWidget {
   final String recordType;
   final HealthRecordStatus status;
   final List<HealthRecordSummary> records;
   final void Function(HealthRecordSummary record) onRecordTap;
+  final Future<void> Function(HealthRecordSummary record) onMarkCompleted;
 
   const HealthStatusRecordsScreen({
     super.key,
@@ -656,10 +690,35 @@ class HealthStatusRecordsScreen extends StatelessWidget {
     required this.status,
     required this.records,
     required this.onRecordTap,
+    required this.onMarkCompleted,
   });
 
+  @override
+  State<HealthStatusRecordsScreen> createState() =>
+      _HealthStatusRecordsScreenState();
+}
+
+class _HealthStatusRecordsScreenState
+    extends State<HealthStatusRecordsScreen> {
+  // Local, mutable copy of the records passed in — so a record can be
+  // removed from THIS list the moment it's marked completed, without
+  // waiting on a full re-fetch from Firestore. The parent
+  // (HealthStatusSelectionScreen) still refreshes its own counts from
+  // Firestore once this screen is popped.
+  late List<HealthRecordSummary> _records;
+
+  // recordIds currently being marked completed, so each card can show
+  // its own small spinner instead of blocking the whole list.
+  final Set<String> _markingIds = {};
+
+  @override
+  void initState() {
+    super.initState();
+    _records = [...widget.records];
+  }
+
   String get _title {
-    switch (recordType) {
+    switch (widget.recordType) {
       case 'vaccination':
         return 'Vaccination';
       case 'hoofCutting':
@@ -672,7 +731,7 @@ class HealthStatusRecordsScreen extends StatelessWidget {
   }
 
   Color get _color {
-    switch (status) {
+    switch (widget.status) {
       case HealthRecordStatus.complete:
         return AppColors.success;
       case HealthRecordStatus.upcoming:
@@ -683,7 +742,7 @@ class HealthStatusRecordsScreen extends StatelessWidget {
   }
 
   String get _statusTitle {
-    switch (status) {
+    switch (widget.status) {
       case HealthRecordStatus.complete:
         return 'Already Completed';
       case HealthRecordStatus.upcoming:
@@ -694,7 +753,7 @@ class HealthStatusRecordsScreen extends StatelessWidget {
   }
 
   IconData get _icon {
-    switch (recordType) {
+    switch (widget.recordType) {
       case 'vaccination':
         return Icons.vaccines_outlined;
       case 'hoofCutting':
@@ -723,7 +782,7 @@ class HealthStatusRecordsScreen extends StatelessWidget {
   }
 
   String _subtitle(HealthRecordSummary record) {
-    if (status == HealthRecordStatus.complete) {
+    if (widget.status == HealthRecordStatus.complete) {
       return 'Completed · ${_date(record.recordDate)}';
     }
 
@@ -746,7 +805,7 @@ class HealthStatusRecordsScreen extends StatelessWidget {
       due.day,
     );
 
-    if (status == HealthRecordStatus.pending) {
+    if (widget.status == HealthRecordStatus.pending) {
       if (dueDay.isBefore(today)) {
         return 'Overdue · ${_date(due)}';
       }
@@ -803,11 +862,39 @@ class HealthStatusRecordsScreen extends StatelessWidget {
     );
   }
 
+  /// Calls the shared completion handler, drops the record from this
+  /// screen's own list on success (so it disappears from Pending/
+  /// Upcoming immediately), and surfaces a snack bar either way.
+  Future<void> _handleMarkCompleted(HealthRecordSummary record) async {
+    setState(() => _markingIds.add(record.recordId));
+
+    try {
+      await widget.onMarkCompleted(record);
+      if (!mounted) return;
+      setState(() {
+        _records.remove(record);
+        _markingIds.remove(record.recordId);
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Marked as completed.')),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _markingIds.remove(record.recordId));
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Could not mark as completed: $e'),
+          backgroundColor: AppColors.error,
+        ),
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
-    final sorted = [...records];
+    final sorted = [..._records];
 
-    if (status == HealthRecordStatus.complete) {
+    if (widget.status == HealthRecordStatus.complete) {
       sorted.sort(
             (a, b) => b.recordDate.compareTo(a.recordDate),
       );
@@ -817,6 +904,10 @@ class HealthStatusRecordsScreen extends StatelessWidget {
             .compareTo(b.dueDate ?? DateTime(9999)),
       );
     }
+
+    // The "Mark as Completed" button only makes sense on records that
+    // aren't already complete.
+    final canMarkCompleted = widget.status != HealthRecordStatus.complete;
 
     return Scaffold(
       backgroundColor: AppColors.paleGreen,
@@ -921,9 +1012,11 @@ class HealthStatusRecordsScreen extends StatelessWidget {
                     ? record.goat.name
                     : _goatCode(record.goat);
 
+                final isMarking = _markingIds.contains(record.recordId);
+
                 return InkWell(
                   borderRadius: BorderRadius.circular(16),
-                  onTap: () => onRecordTap(record),
+                  onTap: () => widget.onRecordTap(record),
                   child: Container(
                     margin: const EdgeInsets.only(
                       bottom: 11,
@@ -943,75 +1036,129 @@ class HealthStatusRecordsScreen extends StatelessWidget {
                         ),
                       ],
                     ),
-                    child: Row(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        _image(record.goat),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment:
-                            CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                goatName,
-                                style: AppTheme.heading(
-                                  size: 14,
-                                  color: AppColors.textDark,
-                                ),
-                              ),
-                              const SizedBox(height: 3),
-                              Text(
-                                '#${_goatCode(record.goat)}',
-                                style: AppTheme.body(
-                                  size: 10.5,
-                                  color: AppColors.textGrey,
-                                ),
-                              ),
-                              const SizedBox(height: 7),
-                              Container(
-                                padding:
-                                const EdgeInsets.symmetric(
-                                  horizontal: 8,
-                                  vertical: 4,
-                                ),
-                                decoration: BoxDecoration(
-                                  color: _color.withOpacity(0.10),
-                                  borderRadius:
-                                  BorderRadius.circular(20),
-                                ),
-                                child: Text(
-                                  status ==
-                                      HealthRecordStatus
-                                          .complete
-                                      ? 'Completed'
-                                      : status ==
-                                      HealthRecordStatus
-                                          .upcoming
-                                      ? 'Scheduled'
-                                      : 'Pending',
-                                  style: AppTheme.body(
-                                    size: 9.5,
-                                    color: _color,
-                                    weight: FontWeight.w600,
+                        Row(
+                          children: [
+                            _image(record.goat),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment:
+                                CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    goatName,
+                                    style: AppTheme.heading(
+                                      size: 14,
+                                      color: AppColors.textDark,
+                                    ),
                                   ),
-                                ),
+                                  const SizedBox(height: 3),
+                                  Text(
+                                    '#${_goatCode(record.goat)}',
+                                    style: AppTheme.body(
+                                      size: 10.5,
+                                      color: AppColors.textGrey,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 7),
+                                  Container(
+                                    padding:
+                                    const EdgeInsets.symmetric(
+                                      horizontal: 8,
+                                      vertical: 4,
+                                    ),
+                                    decoration: BoxDecoration(
+                                      color: _color.withOpacity(0.10),
+                                      borderRadius:
+                                      BorderRadius.circular(20),
+                                    ),
+                                    child: Text(
+                                      widget.status ==
+                                          HealthRecordStatus
+                                              .complete
+                                          ? 'Completed'
+                                          : widget.status ==
+                                          HealthRecordStatus
+                                              .upcoming
+                                          ? 'Scheduled'
+                                          : 'Pending',
+                                      style: AppTheme.body(
+                                        size: 9.5,
+                                        color: _color,
+                                        weight: FontWeight.w600,
+                                      ),
+                                    ),
+                                  ),
+                                  const SizedBox(height: 4),
+                                  Text(
+                                    _subtitle(record),
+                                    style: AppTheme.body(
+                                      size: 10.5,
+                                      color: _color,
+                                    ),
+                                  ),
+                                ],
                               ),
-                              const SizedBox(height: 4),
-                              Text(
-                                _subtitle(record),
+                            ),
+                            const Icon(
+                              Icons.chevron_right,
+                              size: 20,
+                              color: AppColors.textGrey,
+                            ),
+                          ],
+                        ),
+                        if (canMarkCompleted) ...[
+                          const SizedBox(height: 10),
+                          const Divider(height: 1),
+                          const SizedBox(height: 8),
+                          SizedBox(
+                            width: double.infinity,
+                            height: 34,
+                            child: OutlinedButton.icon(
+                              onPressed: isMarking
+                                  ? null
+                                  : () => _handleMarkCompleted(record),
+                              icon: isMarking
+                                  ? SizedBox(
+                                width: 14,
+                                height: 14,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                  color: AppColors.success,
+                                ),
+                              )
+                                  : const Icon(
+                                Icons.check_circle_outline,
+                                size: 16,
+                              ),
+                              label: Text(
+                                isMarking
+                                    ? 'Marking...'
+                                    : 'Mark as Completed',
                                 style: AppTheme.body(
-                                  size: 10.5,
-                                  color: _color,
+                                  size: 11.5,
+                                  weight: FontWeight.w600,
+                                  color: AppColors.success,
                                 ),
                               ),
-                            ],
+                              style: OutlinedButton.styleFrom(
+                                foregroundColor: AppColors.success,
+                                side: BorderSide(
+                                  color: AppColors.success
+                                      .withOpacity(0.5),
+                                ),
+                                padding: EdgeInsets.zero,
+                                shape: RoundedRectangleBorder(
+                                  borderRadius:
+                                  BorderRadius.circular(8),
+                                ),
+                              ),
+                            ),
                           ),
-                        ),
-                        const Icon(
-                          Icons.chevron_right,
-                          size: 20,
-                          color: AppColors.textGrey,
-                        ),
+                        ],
                       ],
                     ),
                   ),

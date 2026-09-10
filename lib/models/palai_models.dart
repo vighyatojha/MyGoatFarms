@@ -25,25 +25,18 @@ class PalaiCustomer {
   final double price;
 
   // --------------------------------------------------------------------
-  // HEALTH REMINDER SETTINGS
-  //
-  // Set once per customer (Customer Profile → Health Settings) and
-  // applied to every goat under that customer — the individual
-  // vaccination / hoof-cutting / hair-trimming record screens read
-  // these to compute each new record's `nextDueDate` instead of using
-  // a hardcoded interval. Null means "no reminder configured yet".
+  // NOTE: Health Reminder Settings (Vaccination / Hoof Cutting / Hair
+  // Trimming reminder days) used to live here, per customer. They have
+  // moved to farm level — see HealthReminderSettings /
+  // FarmModel.healthReminderSettings / Profile > Health Reminder
+  // Settings — and now apply to every active goat in the farm,
+  // regardless of which customer they belong to. The corresponding
+  // `vaccinationReminderDays` / `hoofCuttingReminderDays` /
+  // `hairTrimmingReminderDays` fields that may still exist on OLD
+  // customer documents in Firestore are intentionally left untouched
+  // (not deleted) but are no longer read or written anywhere in the
+  // app.
   // --------------------------------------------------------------------
-
-  /// Days after a vaccination before the next one is due.
-  final int? vaccinationReminderDays;
-
-  /// Days after a hoof-cutting before the next one is due.
-  /// One of 30 / 45 / 60.
-  final int? hoofCuttingReminderDays;
-
-  /// Days after a hair-trimming before the next one is due.
-  /// One of 30 / 45 / 60.
-  final int? hairTrimmingReminderDays;
 
   PalaiCustomer({
     required this.id,
@@ -55,9 +48,6 @@ class PalaiCustomer {
     required this.pendingAmount,
     this.advanceAmount = 0,
     this.price = 0,
-    this.vaccinationReminderDays,
-    this.hoofCuttingReminderDays,
-    this.hairTrimmingReminderDays,
   });
 
   factory PalaiCustomer.fromDoc(
@@ -80,12 +70,6 @@ class PalaiCustomer {
       (data['advanceAmount'] as num?)?.toDouble() ?? 0,
       price:
       (data['price'] as num?)?.toDouble() ?? 0,
-      vaccinationReminderDays:
-      (data['vaccinationReminderDays'] as num?)?.toInt(),
-      hoofCuttingReminderDays:
-      (data['hoofCuttingReminderDays'] as num?)?.toInt(),
-      hairTrimmingReminderDays:
-      (data['hairTrimmingReminderDays'] as num?)?.toInt(),
     );
   }
 
@@ -106,9 +90,6 @@ class PalaiCustomer {
       'pendingAmount': pendingAmount,
       'advanceAmount': advanceAmount,
       'price': price,
-      'vaccinationReminderDays': vaccinationReminderDays,
-      'hoofCuttingReminderDays': hoofCuttingReminderDays,
-      'hairTrimmingReminderDays': hairTrimmingReminderDays,
       'createdAt': FieldValue.serverTimestamp(),
     };
   }
@@ -122,20 +103,6 @@ class PalaiCustomer {
       'pendingAmount': pendingAmount,
       'advanceAmount': advanceAmount,
       'price': price,
-      'vaccinationReminderDays': vaccinationReminderDays,
-      'hoofCuttingReminderDays': hoofCuttingReminderDays,
-      'hairTrimmingReminderDays': hairTrimmingReminderDays,
-    };
-  }
-
-  /// Just the three Health Reminder Settings, as a partial-update map —
-  /// used by [FirestoreService.updateCustomerHealthReminderSettings] so
-  /// saving them can never clobber unrelated customer fields.
-  Map<String, dynamic> toHealthReminderMap() {
-    return {
-      'vaccinationReminderDays': vaccinationReminderDays,
-      'hoofCuttingReminderDays': hoofCuttingReminderDays,
-      'hairTrimmingReminderDays': hairTrimmingReminderDays,
     };
   }
 
@@ -148,12 +115,6 @@ class PalaiCustomer {
     double? pendingAmount,
     double? advanceAmount,
     double? price,
-    int? vaccinationReminderDays,
-    int? hoofCuttingReminderDays,
-    int? hairTrimmingReminderDays,
-    bool clearVaccinationReminder = false,
-    bool clearHoofCuttingReminder = false,
-    bool clearHairTrimmingReminder = false,
   }) {
     return PalaiCustomer(
       id: id,
@@ -165,15 +126,6 @@ class PalaiCustomer {
       pendingAmount: pendingAmount ?? this.pendingAmount,
       advanceAmount: advanceAmount ?? this.advanceAmount,
       price: price ?? this.price,
-      vaccinationReminderDays: clearVaccinationReminder
-          ? null
-          : (vaccinationReminderDays ?? this.vaccinationReminderDays),
-      hoofCuttingReminderDays: clearHoofCuttingReminder
-          ? null
-          : (hoofCuttingReminderDays ?? this.hoofCuttingReminderDays),
-      hairTrimmingReminderDays: clearHairTrimmingReminder
-          ? null
-          : (hairTrimmingReminderDays ?? this.hairTrimmingReminderDays),
     );
   }
 }

@@ -2,6 +2,7 @@ import 'dart:typed_data';
 import 'package:cloud_firestore/cloud_firestore.dart';
 
 import 'bill_settings_model.dart';
+import 'health_reminder_settings_model.dart';
 
 class FarmModel {
   final String id;
@@ -27,6 +28,13 @@ class FarmModel {
   /// until the owner customizes it.
   final BillSettings billSettings;
 
+  /// Vaccination / Hoof Cutting / Hair Trimming reminder-day cadences —
+  /// see Profile > Health Reminder Settings. Single source of truth for
+  /// every active goat in this farm, regardless of which customer they
+  /// belong to. Replaces the old per-customer "Health Settings" that
+  /// used to live on [PalaiCustomer].
+  final HealthReminderSettings healthReminderSettings;
+
   FarmModel({
     required this.id,
     required this.farmName,
@@ -40,7 +48,10 @@ class FarmModel {
     this.profileImageContentType,
     this.preferredLanguage = 'en',
     BillSettings? billSettings,
-  }) : billSettings = billSettings ?? const BillSettings();
+    HealthReminderSettings? healthReminderSettings,
+  })  : billSettings = billSettings ?? const BillSettings(),
+        healthReminderSettings =
+            healthReminderSettings ?? HealthReminderSettings.defaults;
 
   factory FarmModel.fromDoc(DocumentSnapshot<Map<String, dynamic>> doc) {
     final data = doc.data() ?? {};
@@ -65,6 +76,9 @@ class FarmModel {
         fallbackName: farmName.toString().trim().isNotEmpty ? farmName : 'My Goat Farms',
         fallbackAddress: address,
         fallbackPhone: mobileNumber,
+      ),
+      healthReminderSettings: HealthReminderSettings.fromMap(
+        data['healthReminderSettings'] as Map<String, dynamic>?,
       ),
     );
   }

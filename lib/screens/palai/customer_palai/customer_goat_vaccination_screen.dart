@@ -31,44 +31,12 @@ class _CustomerGoatVaccinationScreenState
   final FirebaseFirestore _firestore =
       FirebaseFirestore.instance;
 
-  // Reminder interval for scheduling the next due date, pulled from
-  // this customer's settings (CustomerSettingsScreen); falls back to
-  // 30 days if the customer has no override saved yet.
-  int _reminderDays = 30;
-
-  @override
-  void initState() {
-    super.initState();
-    _loadReminderSetting();
-  }
-
-  Future<void> _loadReminderSetting() async {
-    try {
-      final doc = await _firestore
-          .collection('palaiCustomers')
-          .doc(widget.customerId)
-          .get();
-
-      final settings = doc.data()?['settings'];
-      final rawDays = settings is Map
-          ? settings['vaccinationReminderDays']
-          : null;
-
-      int? days;
-
-      if (rawDays is num) {
-        days = rawDays.toInt();
-      } else {
-        days = int.tryParse(rawDays?.toString() ?? '');
-      }
-
-      if (mounted && days != null && days > 0) {
-        setState(() {
-          _reminderDays = days!;
-        });
-      }
-    } catch (_) {}
-  }
+  // NOTE: this screen used to fetch a per-customer reminder-day
+  // override here and pass it down to AddVaccinationScreen. Health
+  // Reminder Settings are farm-level now (Profile > Health Reminder
+  // Settings) — AddVaccinationScreen reads them itself via
+  // FirestoreService.getHealthReminderSettings, so there is nothing to
+  // fetch or pass through here anymore.
 
   CollectionReference<Map<String, dynamic>>
   get _vaccinationCollection {
@@ -959,7 +927,6 @@ class _CustomerGoatVaccinationScreenState
           farmId: widget.farmId,
           customerId: widget.customerId,
           goat: widget.goat,
-          reminderDays: _reminderDays,
         ),
       ),
     );
