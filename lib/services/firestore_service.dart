@@ -1773,14 +1773,18 @@ class FirestoreService {
 
   // NOTE: Health Reminder Day Settings (Vaccination / Hoof Cutting /
   // Hair Trimming) used to be saved per-customer here via
-  // `updateCustomerHealthReminderSettings`. They are now a FARM-level
-  // setting — single source of truth for every active goat in the
-  // farm, regardless of customer — see [updateHealthReminderSettings]
-  // below and Profile > Health Reminder Settings. This method has been
+  // `updateCustomerHealthReminderSettings`. That method has been
   // removed; the old `vaccinationReminderDays` / `hoofCuttingReminderDays`
   // / `hairTrimmingReminderDays` fields on existing customer documents
   // are simply no longer read or written — they're left in place
   // untouched rather than deleted, in case a migration ever needs them.
+  //
+  // Of the three, only Hoof Cutting became a FARM-level setting — see
+  // [updateHealthReminderSettings] / [getHealthReminderSettings] below
+  // and Profile > Health Reminder Settings. Vaccination and Hair
+  // Trimming next-due dates are now picked manually, per record, on
+  // their own Add screens — neither is a customer- nor farm-level
+  // setting anymore.
 
   /// True if this customer currently has any goat checked into Palai and
   /// not yet checked out. Used to block deletion until goats are checked
@@ -2817,16 +2821,24 @@ class FirestoreService {
     }).timeout(timeout);
   }
 
-  /// One-off read of this farm's Health Reminder Day Settings
-  /// (Vaccination / Hoof Cutting / Hair Trimming) — see Profile >
-  /// Health Reminder Settings. This is the single source of truth for
-  /// every active goat in the farm: the Add Vaccination / Add Hoof
-  /// Cutting / Add Hair Trimming screens call this to compute a new
-  /// record's `nextDueDate`, regardless of which customer the goat
-  /// currently belongs to. Falls back to
-  /// [HealthReminderSettings.defaults] if the farm doc can't be read or
-  /// hasn't configured anything yet, so a new goat/new record never
-  /// ends up with no reminder cadence at all.
+  /// One-off read of this farm's Health Reminder Day Settings — see
+  /// Profile > Health Reminder Settings. This is the single source of
+  /// truth for every active goat's HOOF CUTTING reminder cadence in
+  /// the farm, regardless of which customer the goat currently belongs
+  /// to: the Add Hoof Cutting screen calls this to compute a new
+  /// record's `nextDueDate`.
+  ///
+  /// Vaccination and Hair Trimming do NOT use this — their next-due
+  /// dates are picked manually, per record, on their own Add screens
+  /// via a calendar date picker. [HealthReminderSettings] still carries
+  /// `vaccinationReminderDays` / `hairTrimmingReminderDays` fields for
+  /// backward compatibility with whatever a farm may have saved before
+  /// this changed, but nothing reads them anymore.
+  ///
+  /// Falls back to [HealthReminderSettings.defaults] if the farm doc
+  /// can't be read or hasn't configured anything yet, so a new
+  /// goat/new hoof-cutting record never ends up with no reminder
+  /// cadence at all.
   Future<HealthReminderSettings> getHealthReminderSettings(String farmId) async {
     try {
       final doc = await _farms.doc(farmId).get().timeout(timeout);
@@ -2840,14 +2852,20 @@ class FirestoreService {
     }
   }
 
-  /// Saves this farm's Health Reminder Day Settings — Vaccination, Hoof
-  /// Cutting, and Hair Trimming reminder schedules (in days). Applies
-  /// to every active goat in the farm regardless of customer. Kept as
-  /// its own partial `.update()`, same as [updateBillSettings], so it
-  /// can never clobber unrelated farm fields.
+  /// Saves this farm's Health Reminder Day Settings. In practice only
+  /// `hoofCuttingReminderDays` is edited through the UI now (Profile >
+  /// Health Reminder Settings shows just the Hoof Cutting picker) —
+  /// applies to every active goat's hoof-cutting reminder in the farm
+  /// regardless of customer. `vaccinationReminderDays` and
+  /// `hairTrimmingReminderDays` are still accepted on
+  /// [HealthReminderSettings] and round-tripped as-is by the settings
+  /// screen so old data isn't silently dropped, but nothing computes a
+  /// due date from them anymore. Kept as its own partial `.update()`,
+  /// same as [updateBillSettings], so it can never clobber unrelated
+  /// farm fields.
   ///
-  /// Pass `null` for a field (via [HealthReminderSettings]) to clear
-  /// that reminder (turn it off) for every goat in the farm.
+  /// Pass `null` for `hoofCuttingReminderDays` to turn that reminder
+  /// off for every goat in the farm.
   Future<void> updateHealthReminderSettings(
       String farmId,
       HealthReminderSettings settings,

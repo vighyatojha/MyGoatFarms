@@ -5,13 +5,11 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 
 import '../../../app_theme.dart';
-import '../../../models/health_reminder_settings_model.dart';
 import '../../../models/palai_models.dart';
 import '../../../models/vaccination_record.dart';
 import '../../../services/firestore_service.dart';
 import '../../../services/health_reminder_scheduler.dart';
 import '../../../services/notification_service.dart';
-import '../../../widgets/reminder_cadence_selector.dart';
 
 class AddVaccinationScreen extends StatefulWidget {
   final String farmId;
@@ -41,39 +39,15 @@ class _AddVaccinationScreenState extends State<AddVaccinationScreen> {
 
   DateTime _vaccinationDate = DateTime.now();
 
-  // Sourced from the FARM'S Health Reminder Settings (Profile > Health
-  // Reminder Settings) — single source of truth for every active goat
-  // in the farm, regardless of customer. Null means the farm has
-  // switched this reminder off entirely. 30 is only ever shown while
-  // [_loadingReminderSetting] is true, as a placeholder before the real
-  // farm value arrives.
-  int? _reminderDays = 30;
+  // Per the client's updated requirement, only Hoof Cutting uses the
+  // farm-level Health Reminder Settings cadence
+  // (Profile > Health Reminder Settings). Vaccination's next-due date
+  // is now picked manually per record, right here on this screen, via
+  // a calendar date picker — no farm/customer setting is read or
+  // applied. Null (left unset) means no reminder is scheduled for this
+  // record.
+  DateTime? _nextDueDate;
   bool _saving = false;
-  bool _loadingReminderSetting = true;
-
-  @override
-  void initState() {
-    super.initState();
-    _loadFarmReminderSetting();
-  }
-
-  // Reads the Vaccination reminder cadence from the FARM'S Health
-  // Reminder Settings — farms/{farmId}.healthReminderSettings — see
-  // FirestoreService.getHealthReminderSettings and
-  // HealthReminderSettingsScreen (Profile > Health Reminder Settings).
-  // This value always governs the reminder: it's shown locked/read-only
-  // here, since Farm Profile is now the single place to change it.
-  Future<void> _loadFarmReminderSetting() async {
-    final HealthReminderSettings settings =
-    await FirestoreService.instance.getHealthReminderSettings(widget.farmId);
-
-    if (!mounted) return;
-
-    setState(() {
-      _reminderDays = settings.vaccinationReminderDays;
-      _loadingReminderSetting = false;
-    });
-  }
 
   @override
   void dispose() {
@@ -124,11 +98,7 @@ class _AddVaccinationScreenState extends State<AddVaccinationScreen> {
       _saving = true;
     });
 
-    final nextDueDate = _reminderDays != null
-        ? _vaccinationDate.add(
-      Duration(days: _reminderDays!),
-    )
-        : null;
+    final nextDueDate = _nextDueDate;
 
     try {
       final reference = _vaccinationCollection.doc();
@@ -238,11 +208,6 @@ class _AddVaccinationScreenState extends State<AddVaccinationScreen> {
             100,
           ),
           children: [
-            if (_loadingReminderSetting)
-              const Padding(
-                padding: EdgeInsets.only(bottom: 12),
-                child: LinearProgressIndicator(),
-              ),
             TextFormField(
               controller: _vaccineController,
               autofocus: true,
@@ -286,24 +251,31 @@ class _AddVaccinationScreenState extends State<AddVaccinationScreen> {
               ),
             ),
             const SizedBox(height: 14),
-            // While the farm's setting is still loading, the
-            // LinearProgressIndicator above already signals that — the
-            // selector itself is withheld rather than briefly flashing a
-            // placeholder value.
-            if (!_loadingReminderSetting)
-              ReminderCadenceSelector(
-                value: _reminderDays,
-                locked: true,
-                lockedNote:
-                'This reminder schedule is set for the whole farm in '
-                    'Profile → Health Reminder Settings and applies to '
-                    'every goat, no matter which customer they belong to.',
-                onChanged: (days) {
+            // Next due date is picked manually here, from a calendar,
+            // rather than being computed from a farm/customer reminder
+            // cadence. Optional — leave unset for no reminder.
+            _DateTile(
+              label: 'Next vaccination due',
+              optional: true,
+              date: _nextDueDate,
+              onTap: () => _pickDate(
+                initial: _nextDueDate ?? _vaccinationDate,
+                first: DateTime(2000),
+                last: DateTime(2100),
+                onPicked: (d) {
                   setState(() {
-                    _reminderDays = days;
+                    _nextDueDate = d;
                   });
                 },
               ),
+              onClear: _nextDueDate == null
+                  ? null
+                  : () {
+                setState(() {
+                  _nextDueDate = null;
+                });
+              },
+            ),
             const SizedBox(height: 14),
             TextFormField(
               controller: _batchController,

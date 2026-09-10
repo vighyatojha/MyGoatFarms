@@ -31,44 +31,13 @@ class _CustomerGoatHairScreenState
   final FirebaseFirestore _firestore =
       FirebaseFirestore.instance;
 
-  // Reminder interval for scheduling the next due date, pulled from
-  // this customer's settings (CustomerSettingsScreen); falls back to
-  // 30 days if the customer has no override saved yet.
-  int _reminderDays = 30;
-
-  @override
-  void initState() {
-    super.initState();
-    _loadReminderSetting();
-  }
-
-  Future<void> _loadReminderSetting() async {
-    try {
-      final doc = await _firestore
-          .collection('palaiCustomers')
-          .doc(widget.customerId)
-          .get();
-
-      final settings = doc.data()?['settings'];
-      final rawDays = settings is Map
-          ? settings['hairTrimmingReminderDays']
-          : null;
-
-      int? days;
-
-      if (rawDays is num) {
-        days = rawDays.toInt();
-      } else {
-        days = int.tryParse(rawDays?.toString() ?? '');
-      }
-
-      if (mounted && days != null && days > 0) {
-        setState(() {
-          _reminderDays = days!;
-        });
-      }
-    } catch (_) {}
-  }
+  // NOTE: this screen used to fetch a per-customer
+  // `hairTrimmingReminderDays` override here and pass it down to
+  // AddHairTrimmingScreen. Per the client's updated requirement, Hair
+  // Trimming's next-due date is now picked manually via a calendar on
+  // AddHairTrimmingScreen itself — there is no farm or customer
+  // reminder-day setting for it anymore, so there is nothing to fetch
+  // or pass through here.
 
   CollectionReference<Map<String, dynamic>>
   get _hairCollection {
@@ -1058,7 +1027,6 @@ class _CustomerGoatHairScreenState
           farmId: widget.farmId,
           customerId: widget.customerId,
           goat: widget.goat,
-          reminderDays: _reminderDays,
         ),
       ),
     );
