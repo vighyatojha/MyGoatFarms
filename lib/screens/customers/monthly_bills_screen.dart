@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 
 import '../../app_theme.dart';
+import '../../models/bill_settings_model.dart';
 import '../../models/monthly_bill_model.dart';
 import '../../services/monthly_bill_pdf_service.dart';
 import 'monthly_bill_generate_screen.dart';
@@ -65,6 +66,25 @@ class _MonthlyBillsScreenState
 
   List<MonthlyBill> _bills = [];
 
+  // ==========================================================================
+  // PDF ACTION STATE
+  // ==========================================================================
+  //
+  // Tracks which bill currently has a View / Download / Share PDF action
+  // running, so the relevant button can show a spinner and disable itself
+  // instead of appearing to do nothing while the PDF is being generated
+  // (PDF generation can take a few seconds, e.g. while fonts are fetched).
+
+  final Set<String> _viewingBillIds = {};
+  final Set<String> _downloadingBillIds = {};
+  final Set<String> _sharingBillIds = {};
+
+  /// Cached after the first PDF action so View/Share/Download don't each
+  /// re-fetch the farm document — cleared to `null` if a fetch fails so
+  /// the next attempt tries again rather than getting stuck on a failed
+  /// read.
+  BillSettings? _billSettings;
+
   @override
   void initState() {
     super.initState();
@@ -90,6 +110,72 @@ class _MonthlyBillsScreenState
         .doc(widget.farmId)
         .collection('palaiCustomers')
         .doc(widget.customerId);
+  }
+
+  DocumentReference<Map<String, dynamic>>
+  get _farmReference {
+    return _db
+        .collection('farms')
+        .doc(widget.farmId);
+  }
+
+  // ========================================================================
+  // BILL SETTINGS (Business details / Terms & Conditions / Important Notes)
+  // ========================================================================
+  //
+  // Read fresh from the farm document each time a PDF action is first
+  // requested in this screen session, then cached — same source
+  // [FirestoreService.updateBillSettings] writes to (`farms/{farmId}`,
+  // field `billSettings`), so bill details edited on the Bill Details
+  // screen show up on the very next PDF generated here without needing
+  // an app restart.
+  //
+  // Falls back to the farm's own name/address/phone/email (same fields
+  // the old per-bill snapshot used) when Bill Details hasn't been filled
+  // in yet, so a farm that never opened Bill Details still gets a
+  // sensibly filled-in bill instead of blank fields.
+  //
+  // Logo: Bill Details has its own dedicated "Bill Logo" upload
+  // (`billLogo`), separate from the farm's Profile photo
+  // (`profileImage`, set via [FirestoreService.updateProfileImage]).
+  // When no Bill Logo has been set, we now fall back to the farm's own
+  // Profile photo here — NOT the bundled placeholder app icon — so the
+  // header always shows this farm's actual branding, matching how the
+  // Customer Goat Progress Report's header sources its logo. The PDF
+  // service's own placeholder-asset fallback only ever applies if a
+  // farm has neither a Bill Logo nor a Profile photo.
+
+  Future<BillSettings> _loadBillSettings() async {
+    if (_billSettings != null) {
+      return _billSettings!;
+    }
+
+    final farmSnapshot = await _farmReference.get();
+    final farmData = farmSnapshot.data() ?? {};
+
+    var settings = BillSettings.fromMap(
+      farmData['billSettings'] as Map<String, dynamic>?,
+      fallbackName: (farmData['farmName'] ?? '').toString(),
+      fallbackAddress: (farmData['address'] ?? '').toString(),
+      fallbackPhone: (farmData['mobileNumber'] ?? '').toString(),
+      fallbackEmail: (farmData['email'] ?? '').toString(),
+    );
+
+    if (settings.billLogo == null) {
+      final profileImage = farmData['profileImage'];
+
+      if (profileImage is Blob && profileImage.bytes.isNotEmpty) {
+        settings = settings.copyWith(
+          billLogo: profileImage.bytes,
+          billLogoContentType:
+          (farmData['profileImageContentType'] as String?) ??
+              settings.billLogoContentType,
+        );
+      }
+    }
+
+    _billSettings = settings;
+    return settings;
   }
 
   // ========================================================================
@@ -280,14 +366,27 @@ class _MonthlyBillsScreenState
   Future<void> _viewBill(
       MonthlyBill bill,
       ) async {
+    if (_viewingBillIds.contains(bill.id)) return;
+
+    setState(() {
+      _viewingBillIds.add(bill.id);
+    });
+
     try {
-      await _pdfService.preview(bill);
+      final settings = await _loadBillSettings();
+      await _pdfService.preview(bill, settings);
     } catch (e) {
       if (!mounted) return;
 
       _showError(
         'Unable to open bill PDF.\n$e',
       );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _viewingBillIds.remove(bill.id);
+        });
+      }
     }
   }
 
@@ -298,9 +397,17 @@ class _MonthlyBillsScreenState
   Future<void> _downloadBill(
       MonthlyBill bill,
       ) async {
+    if (_downloadingBillIds.contains(bill.id)) return;
+
+    setState(() {
+      _downloadingBillIds.add(bill.id);
+    });
+
     try {
+      final settings = await _loadBillSettings();
+
       final path =
-      await _pdfService.save(bill);
+      await _pdfService.save(bill, settings);
 
       if (!mounted) return;
 
@@ -313,6 +420,12 @@ class _MonthlyBillsScreenState
       _showError(
         'Unable to save bill PDF.\n$e',
       );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _downloadingBillIds.remove(bill.id);
+        });
+      }
     }
   }
 
@@ -323,14 +436,27 @@ class _MonthlyBillsScreenState
   Future<void> _shareBill(
       MonthlyBill bill,
       ) async {
+    if (_sharingBillIds.contains(bill.id)) return;
+
+    setState(() {
+      _sharingBillIds.add(bill.id);
+    });
+
     try {
-      await _pdfService.share(bill);
+      final settings = await _loadBillSettings();
+      await _pdfService.share(bill, settings);
     } catch (e) {
       if (!mounted) return;
 
       _showError(
         'Unable to share bill PDF.\n$e',
       );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _sharingBillIds.remove(bill.id);
+        });
+      }
     }
   }
 
@@ -674,85 +800,141 @@ class _MonthlyBillsScreenState
             // PDF ACTIONS
             // ----------------------------------------------------------
 
-            Row(
-              children: [
-                Expanded(
-                  child: OutlinedButton.icon(
-                    onPressed: () {
-                      _viewBill(bill);
-                    },
-                    icon: const Icon(
-                      Icons.visibility_outlined,
-                      size: 18,
-                    ),
-                    label:
-                    const Text('View Bill'),
-                    style:
-                    OutlinedButton.styleFrom(
-                      foregroundColor:
-                      AppColors
-                          .primaryGreen,
-                      side: const BorderSide(
-                        color:
-                        AppColors
-                            .primaryGreen,
-                      ),
-                      shape:
-                      RoundedRectangleBorder(
-                        borderRadius:
-                        BorderRadius.circular(
-                          11,
+            Builder(
+              builder: (context) {
+                final isViewing =
+                _viewingBillIds.contains(bill.id);
+                final isDownloading =
+                _downloadingBillIds.contains(bill.id);
+                final isSharing =
+                _sharingBillIds.contains(bill.id);
+
+                return Row(
+                  children: [
+                    Expanded(
+                      child: OutlinedButton.icon(
+                        onPressed: isViewing
+                            ? null
+                            : () {
+                          _viewBill(bill);
+                        },
+                        icon: isViewing
+                            ? const SizedBox(
+                          width: 16,
+                          height: 16,
+                          child:
+                          CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: AppColors
+                                .primaryGreen,
+                          ),
+                        )
+                            : const Icon(
+                          Icons.visibility_outlined,
+                          size: 18,
+                        ),
+                        label: Text(
+                          isViewing
+                              ? 'Opening…'
+                              : 'View Bill',
+                        ),
+                        style:
+                        OutlinedButton.styleFrom(
+                          foregroundColor:
+                          AppColors
+                              .primaryGreen,
+                          side: const BorderSide(
+                            color:
+                            AppColors
+                                .primaryGreen,
+                          ),
+                          shape:
+                          RoundedRectangleBorder(
+                            borderRadius:
+                            BorderRadius.circular(
+                              11,
+                            ),
+                          ),
                         ),
                       ),
                     ),
-                  ),
-                ),
 
-                const SizedBox(width: 8),
+                    const SizedBox(width: 8),
 
-                Expanded(
-                  child: OutlinedButton.icon(
-                    onPressed: () {
-                      _downloadBill(bill);
-                    },
-                    icon: const Icon(
-                      Icons.download_outlined,
-                      size: 18,
-                    ),
-                    label:
-                    const Text('Download'),
-                    style:
-                    OutlinedButton.styleFrom(
-                      foregroundColor:
-                      AppColors.textDark,
-                      side: BorderSide(
-                        color: Colors.grey.shade300,
-                      ),
-                      shape:
-                      RoundedRectangleBorder(
-                        borderRadius:
-                        BorderRadius.circular(
-                          11,
+                    Expanded(
+                      child: OutlinedButton.icon(
+                        onPressed: isDownloading
+                            ? null
+                            : () {
+                          _downloadBill(bill);
+                        },
+                        icon: isDownloading
+                            ? const SizedBox(
+                          width: 16,
+                          height: 16,
+                          child:
+                          CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: AppColors
+                                .textDark,
+                          ),
+                        )
+                            : const Icon(
+                          Icons.download_outlined,
+                          size: 18,
+                        ),
+                        label: Text(
+                          isDownloading
+                              ? 'Saving…'
+                              : 'Download',
+                        ),
+                        style:
+                        OutlinedButton.styleFrom(
+                          foregroundColor:
+                          AppColors.textDark,
+                          side: BorderSide(
+                            color: Colors.grey.shade300,
+                          ),
+                          shape:
+                          RoundedRectangleBorder(
+                            borderRadius:
+                            BorderRadius.circular(
+                              11,
+                            ),
+                          ),
                         ),
                       ),
                     ),
-                  ),
-                ),
 
-                const SizedBox(width: 8),
+                    const SizedBox(width: 8),
 
-                IconButton(
-                  tooltip: 'Share bill',
-                  onPressed: () {
-                    _shareBill(bill);
-                  },
-                  icon: const Icon(
-                    Icons.share_outlined,
-                  ),
-                  color:
-                  AppColors.primaryGreen,
-                ),
-              ],
+                    IconButton(
+                      tooltip: 'Share bill',
+                      onPressed: isSharing
+                          ? null
+                          : () {
+                        _shareBill(bill);
+                      },
+                      icon: isSharing
+                          ? const SizedBox(
+                        width: 18,
+                        height: 18,
+                        child:
+                        CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: AppColors
+                              .primaryGreen,
+                        ),
+                      )
+                          : const Icon(
+                        Icons.share_outlined,
+                      ),
+                      color:
+                      AppColors.primaryGreen,
+                    ),
+                  ],
+                );
+              },
             ),
           ],
         ),

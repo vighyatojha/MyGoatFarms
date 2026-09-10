@@ -551,22 +551,7 @@ class _CustomerProfileScreenState
                 const SizedBox(height: 24),
 
                 // ==================================================
-                // 2. HEALTH SETTINGS
-                // ==================================================
-
-                _buildSectionHeader(
-                  title: 'Health Settings',
-                  icon: Icons.health_and_safety_outlined,
-                ),
-
-                const SizedBox(height: 12),
-
-                _buildHealthSettingsSection(),
-
-                const SizedBox(height: 24),
-
-                // ==================================================
-                // 3. PAYMENT INFORMATION
+                // 2. PAYMENT INFORMATION
                 // ==================================================
 
                 _buildSectionHeader(
@@ -600,7 +585,7 @@ class _CustomerProfileScreenState
                 const SizedBox(height: 26),
 
                 // ==================================================
-                // 4. CHECK OUT GOAT(S)
+                // 3. CHECK OUT GOAT(S)
                 // ==================================================
 
                 _buildCheckoutButton(),
@@ -608,7 +593,7 @@ class _CustomerProfileScreenState
                 const SizedBox(height: 28),
 
                 // ==================================================
-                // 5. GOATS
+                // 4. GOATS
                 // ==================================================
 
                 _buildSectionHeader(
@@ -1057,148 +1042,6 @@ class _CustomerProfileScreenState
           ),
         ],
       ),
-    );
-  }
-
-  // ================================================================
-  // HEALTH SETTINGS SECTION
-  //
-  // Shows the FARM'S three reminder schedules (Vaccination, Hoof
-  // Cutting, Hair Trimming) — these are configured once for the whole
-  // farm (Profile > Health Reminder Settings) and apply to every active
-  // goat, no matter which customer they belong to. This section is a
-  // read-only summary; "Change Health Settings" opens the shared
-  // farm-level screen rather than a per-customer editor, since there is
-  // no longer a customer-specific setting to change here.
-  // ================================================================
-
-  Widget _buildHealthSettingsSection() {
-    final settings = _farmHealthSettings;
-
-    return Container(
-      width: double.infinity,
-
-      decoration: AppTheme.card(
-        radius: 16,
-      ),
-
-      padding: const EdgeInsets.all(16),
-
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            'Farm-wide setting · applies to every active goat',
-            style: AppTheme.body(size: 11, color: AppColors.textGrey),
-          ),
-
-          const SizedBox(height: 12),
-
-          _healthReminderRow(
-            icon: Icons.vaccines_outlined,
-            label: 'Vaccination Reminder',
-            days: settings?.vaccinationReminderDays,
-          ),
-
-          const Divider(height: 24),
-
-          _healthReminderRow(
-            icon: Icons.content_cut,
-            label: 'Hoof Cutting Reminder',
-            days: settings?.hoofCuttingReminderDays,
-          ),
-
-          const Divider(height: 24),
-
-          _healthReminderRow(
-            icon: Icons.cut_outlined,
-            label: 'Hair Trimming Reminder',
-            days: settings?.hairTrimmingReminderDays,
-          ),
-
-          const SizedBox(height: 16),
-
-          SizedBox(
-            width: double.infinity,
-            child: OutlinedButton.icon(
-              onPressed: _openHealthSettings,
-              icon: const Icon(Icons.edit_outlined, size: 17),
-              label: const Text(
-                'Change Health Settings',
-                style: TextStyle(fontWeight: FontWeight.w600),
-              ),
-              style: OutlinedButton.styleFrom(
-                foregroundColor: AppColors.primaryGreen,
-                side: const BorderSide(color: AppColors.primaryGreen),
-                padding: const EdgeInsets.symmetric(vertical: 13),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12),
-                ),
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _healthReminderRow({
-    required IconData icon,
-    required String label,
-    required int? days,
-  }) {
-    final isSet = days != null;
-
-    return Row(
-      children: [
-        Container(
-          width: 34,
-          height: 34,
-          decoration: const BoxDecoration(
-            color: AppColors.lightGreen,
-            shape: BoxShape.circle,
-          ),
-          child: Icon(
-            icon,
-            size: 16,
-            color: AppColors.primaryGreen,
-          ),
-        ),
-
-        const SizedBox(width: 12),
-
-        Expanded(
-          child: Text(
-            label,
-            style: AppTheme.body(
-              size: 13,
-              color: AppColors.textDark,
-              weight: FontWeight.w600,
-            ),
-          ),
-        ),
-
-        Container(
-          padding: const EdgeInsets.symmetric(
-            horizontal: 10,
-            vertical: 5,
-          ),
-          decoration: BoxDecoration(
-            color: isSet
-                ? AppColors.primaryGreen.withOpacity(0.10)
-                : AppColors.textGrey.withOpacity(0.10),
-            borderRadius: BorderRadius.circular(8),
-          ),
-          child: Text(
-            isSet ? 'Every $days days' : 'Not set',
-            style: TextStyle(
-              color: isSet ? AppColors.primaryGreen : AppColors.textGrey,
-              fontSize: 11,
-              fontWeight: FontWeight.w700,
-            ),
-          ),
-        ),
-      ],
     );
   }
 

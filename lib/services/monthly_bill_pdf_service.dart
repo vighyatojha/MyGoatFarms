@@ -1,11 +1,13 @@
 import 'dart:typed_data';
 import 'dart:io';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
+import '../models/bill_settings_model.dart';
 import '../models/monthly_bill_model.dart';
 
 /// Generates, previews, saves and shares Monthly Bill PDFs.
@@ -20,50 +22,109 @@ class MonthlyBillPdfService {
   MonthlyBillPdfService._();
 
   // ===========================================================================
+  // BRAND COLOR
+  // ===========================================================================
+  //
+  // PDFs use PdfColor (from `package:pdf`), a completely separate type
+  // from Flutter's Color used by AppColors.primaryGreen in app_theme.dart
+  // — the two can't be shared directly. I don't have app_theme.dart's
+  // actual hex value in this conversation, so this is my best-guess
+  // match for a "goat farm app" primary green. If it doesn't look right
+  // next to the rest of the app, tell me the exact hex from
+  // AppColors.primaryGreen (e.g. `Color(0xFF2E7D32)`) and I'll swap this
+  // constant for the real value — every green in this file reads from
+  // here, so it's a one-line fix.
+  static const PdfColor _brandGreen =
+  PdfColor.fromInt(0xFF2E7D32);
+
+  // ===========================================================================
   // PUBLIC API
   // ===========================================================================
 
   /// Generates the monthly bill PDF and returns the raw PDF bytes.
-  /// Generates the monthly bill PDF and returns the raw PDF bytes.
-  Future<Uint8List> generatePdf(MonthlyBill bill,) async {
+  ///
+  /// [settings] supplies everything about the FARM/BUSINESS side of the
+  /// bill — business name, address, phone, email, logo, footer note,
+  /// Terms & Conditions, and Important Notes. This replaces the old
+  /// behaviour of reading `bill.farmName` / `bill.farmAddress` / etc.
+  /// (a snapshot frozen on the bill at generation time) — the PDF now
+  /// always reflects whatever is currently saved in Bill Details /
+  /// Settings, the same source the Customer Goat Progress Report reads
+  /// from.
+  Future<Uint8List> generatePdf(
+      MonthlyBill bill,
+      BillSettings settings,
+      ) async {
     // -------------------------------------------------------------------------
     // Load a Unicode-aware font that supports the ₹ (Rupee) glyph.
     //
-    // The PDF package's default base font (Helvetica) has no ₹ character,
-    // which is why amounts were rendering with a broken box instead of ₹.
-    // Noto Sans covers ₹ (and most other currency symbols), so we load it
-    // once and set it as the document's theme — every pw.Text/pw.TextStyle
-    // below picks it up automatically since none of them set an explicit
-    // `font`.
+    // PdfGoogleFonts downloads Noto Sans from Google's font CDN the first
+    // time it's needed on a device, then caches it locally. That network
+    // call has NO built-in timeout — on a device with no internet
+    // connection, or a slow/blocked one, `await`ing it can hang
+    // indefinitely. That is exactly why View/Share/Download all looked
+    // like they did nothing: generatePdf() never finished, so it never
+    // reached success OR the calling screen's catch block/error snackbar.
+    //
+    // _loadFonts() below now bounds that call with a timeout and falls
+    // back to the PDF package's built-in default font if it fails or
+    // times out, so the bill always finishes generating. Offline, it
+    // just won't render the ₹ glyph (falls back to a box) until the
+    // fonts have been cached once while online — everything else about
+    // the PDF still works.
     // -------------------------------------------------------------------------
 
-    final baseFont = await PdfGoogleFonts.notoSansRegular();
-    final boldFont = await PdfGoogleFonts.notoSansBold();
+    final fonts = await _loadFonts();
 
     final pdf = pw.Document(
-      theme: pw.ThemeData.withFont(
-        base: baseFont,
-        bold: boldFont,
-      ),
+      theme: fonts != null
+          ? pw.ThemeData.withFont(
+        base: fonts.base,
+        bold: fonts.bold,
+      )
+          : null,
     );
 
     // -------------------------------------------------------------------------
-    // Load farm logo.
+    // Load the logo. Prefer the farm's own uploaded Bill Details logo
+    // (settings.billLogo); fall back to the bundled placeholder asset
+    // only when the farm hasn't set one, so a bill still looks branded
+    // out of the box.
     // -------------------------------------------------------------------------
 
     pw.MemoryImage? logo;
 
-    try {
-      final logoBytes =
-      await rootBundle.load('assets/images/logo.png');
+    if (settings.billLogo != null && settings.billLogo!.isNotEmpty) {
+      logo = pw.MemoryImage(settings.billLogo!);
+    } else {
+      try {
+        final logoBytes =
+        await rootBundle.load('assets/images/logo.png');
 
-      logo = pw.MemoryImage(
-        logoBytes.buffer.asUint8List(),
-      );
-    } catch (_) {
-      // Logo is optional.
-      logo = null;
+        logo = pw.MemoryImage(
+          logoBytes.buffer.asUint8List(),
+        );
+      } catch (_) {
+        // Logo is optional.
+        logo = null;
+      }
     }
+
+    // -------------------------------------------------------------------------
+    // Terms & Conditions / Important Notes are only shown when there's
+    // actually something enabled to show — otherwise the section (and
+    // its spacing) is skipped entirely rather than rendering an empty box.
+    // -------------------------------------------------------------------------
+
+    final hasTerms = settings.termsSections.any((s) => s.enabled) ||
+        (settings.otherTermsEnabled &&
+            settings.otherTermsTitle.trim().isNotEmpty &&
+            settings.otherTermsText.trim().isNotEmpty);
+
+    final hasImportantNotes = settings.importantNotes.any((n) => n.enabled) ||
+        (settings.otherNoteEnabled &&
+            settings.otherNoteTitle.trim().isNotEmpty &&
+            settings.otherNoteText.trim().isNotEmpty);
 
     // -------------------------------------------------------------------------
     // Build PDF.
@@ -81,7 +142,7 @@ class MonthlyBillPdfService {
 
         header: (context) {
           return _buildHeader(
-            bill,
+            settings,
             logo,
           );
         },
@@ -119,17 +180,23 @@ class MonthlyBillPdfService {
               _buildNotes(bill),
             ],
 
-            pw.SizedBox(height: 28),
+            if (hasTerms) ...[
+              pw.SizedBox(height: 28),
+              _buildTermsAndConditions(settings),
+            ],
 
-            _buildTermsAndConditions(bill),
+            if (hasImportantNotes) ...[
+              pw.SizedBox(height: 18),
+              _buildImportantNotes(settings),
+            ],
 
             pw.SizedBox(height: 20),
 
-            _buildSignatureSection(bill),
+            _buildSignatureSection(settings),
 
             pw.SizedBox(height: 14),
 
-            _buildThankYouSection(),
+            _buildThankYouSection(settings),
           ];
         },
       ),
@@ -138,9 +205,34 @@ class MonthlyBillPdfService {
     return pdf.save();
   }
 
+  /// Loads the Unicode-aware Noto Sans fonts, bounded by a timeout, and
+  /// falls back to `null` (the PDF package's default font) if the
+  /// network fetch fails or takes too long — so a slow/offline device
+  /// never blocks bill generation forever.
+  Future<_PdfFonts?> _loadFonts() async {
+    try {
+      final base = await PdfGoogleFonts.notoSansRegular()
+          .timeout(const Duration(seconds: 8));
+
+      final bold = await PdfGoogleFonts.notoSansBold()
+          .timeout(const Duration(seconds: 8));
+
+      return _PdfFonts(base, bold);
+    } catch (e) {
+      debugPrint(
+        'Monthly bill PDF: could not load Noto Sans (offline or slow '
+            'network?). Falling back to the default font. $e',
+      );
+      return null;
+    }
+  }
+
   /// Opens the system PDF preview.
-  Future<void> preview(MonthlyBill bill,) async {
-    final bytes = await generatePdf(bill);
+  Future<void> preview(
+      MonthlyBill bill,
+      BillSettings settings,
+      ) async {
+    final bytes = await generatePdf(bill, settings);
 
     await Printing.layoutPdf(
       onLayout: (_) async {
@@ -153,8 +245,11 @@ class MonthlyBillPdfService {
   /// Opens the system print/share sheet.
   ///
   /// On Android this can be used to share/save the generated PDF.
-  Future<void> share(MonthlyBill bill,) async {
-    final bytes = await generatePdf(bill);
+  Future<void> share(
+      MonthlyBill bill,
+      BillSettings settings,
+      ) async {
+    final bytes = await generatePdf(bill, settings);
 
     await Printing.sharePdf(
       bytes: bytes,
@@ -165,8 +260,11 @@ class MonthlyBillPdfService {
   /// Saves the PDF to the application documents directory.
   ///
   /// Returns the full local path.
-  Future<String> save(MonthlyBill bill,) async {
-    final bytes = await generatePdf(bill);
+  Future<String> save(
+      MonthlyBill bill,
+      BillSettings settings,
+      ) async {
+    final bytes = await generatePdf(bill, settings);
 
     final directory =
     await getApplicationDocumentsDirectory();
@@ -187,27 +285,33 @@ class MonthlyBillPdfService {
   // HEADER
   // ===========================================================================
 
-  pw.Widget _buildHeader(MonthlyBill bill,
+  pw.Widget _buildHeader(BillSettings settings,
       pw.MemoryImage? logo,) {
     final farmName =
-    bill.farmName
+    settings.businessName
         .trim()
         .isNotEmpty
-        ? bill.farmName.trim()
+        ? settings.businessName.trim()
         : 'My Goat Farms';
 
     final address =
-    bill.farmAddress.trim();
+    settings.address.trim();
 
     final phone =
-    bill.farmPhone.trim();
+    settings.phone.trim();
 
     final email =
-    bill.farmEmail.trim();
+    settings.email.trim();
+
+    final initial =
+    farmName.isNotEmpty
+        ? farmName[0].toUpperCase()
+        : '?';
 
     return pw.Container(
+      width: double.infinity,
       padding: const pw.EdgeInsets.only(
-        bottom: 12,
+        bottom: 14,
       ),
       decoration: const pw.BoxDecoration(
         border: pw.Border(
@@ -217,77 +321,103 @@ class MonthlyBillPdfService {
           ),
         ),
       ),
-      child: pw.Row(
+      child: pw.Column(
         crossAxisAlignment:
-        pw.CrossAxisAlignment.start,
+        pw.CrossAxisAlignment.center,
         children: [
-          if (logo != null) ...[
-            pw.Container(
-              width: 58,
-              height: 58,
-              margin: const pw.EdgeInsets.only(
-                right: 12,
+          // ---------------------------------------------------------------
+          // CIRCULAR LOGO
+          //
+          // Falls back to a green initial avatar (matching the app's own
+          // customer-avatar look) when the farm has neither a Bill Logo
+          // nor a Profile photo set.
+          // ---------------------------------------------------------------
+
+          pw.Container(
+            width: 78,
+            height: 78,
+            alignment: pw.Alignment.center,
+            decoration: pw.BoxDecoration(
+              shape: pw.BoxShape.circle,
+              color: PdfColors.grey100,
+              border: pw.Border.all(
+                color: _brandGreen,
+                width: 1.6,
               ),
-              child: pw.Image(
-                logo,
-                fit: pw.BoxFit.contain,
+              image: logo != null
+                  ? pw.DecorationImage(
+                image: logo,
+                fit: pw.BoxFit.cover,
+              )
+                  : null,
+            ),
+            child: logo == null
+                ? pw.Text(
+              initial,
+              style: pw.TextStyle(
+                fontSize: 30,
+                fontWeight: pw.FontWeight.bold,
+                color: _brandGreen,
+              ),
+            )
+                : null,
+          ),
+
+          pw.SizedBox(height: 8),
+
+          // ---------------------------------------------------------------
+          // FARM NAME
+          // ---------------------------------------------------------------
+
+          pw.Text(
+            farmName,
+            textAlign: pw.TextAlign.center,
+            style: pw.TextStyle(
+              fontSize: 22,
+              fontWeight: pw.FontWeight.bold,
+              color: _brandGreen,
+            ),
+          ),
+
+          if (address.isNotEmpty) ...[
+            pw.SizedBox(height: 4),
+            pw.Text(
+              address,
+              textAlign: pw.TextAlign.center,
+              style: const pw.TextStyle(
+                fontSize: 8.5,
+                color: PdfColors.grey700,
               ),
             ),
           ],
 
-          pw.Expanded(
-            child: pw.Column(
-              crossAxisAlignment:
-              pw.CrossAxisAlignment.start,
+          if (phone.isNotEmpty ||
+              email.isNotEmpty) ...[
+            pw.SizedBox(height: 3),
+
+            pw.Wrap(
+              alignment: pw.WrapAlignment.center,
+              spacing: 10,
+              runSpacing: 2,
               children: [
-                pw.Text(
-                  farmName,
-                  style: pw.TextStyle(
-                    fontSize: 19,
-                    fontWeight: pw.FontWeight.bold,
-                  ),
-                ),
-
-                pw.SizedBox(height: 3),
-
-                if (address.isNotEmpty)
+                if (phone.isNotEmpty)
                   pw.Text(
-                    address,
+                    'Phone: $phone',
                     style: const pw.TextStyle(
                       fontSize: 8.5,
-                      color: PdfColors.grey700,
                     ),
                   ),
 
-                if (phone.isNotEmpty ||
-                    email.isNotEmpty) ...[
-                  pw.SizedBox(height: 3),
-
-                  pw.Wrap(
-                    spacing: 10,
-                    runSpacing: 2,
-                    children: [
-                      if (phone.isNotEmpty)
-                        pw.Text(
-                          'Phone: $phone',
-                          style: const pw.TextStyle(
-                            fontSize: 8.5,
-                          ),
-                        ),
-
-                      if (email.isNotEmpty)
-                        pw.Text(
-                          'Email: $email',
-                          style: const pw.TextStyle(
-                            fontSize: 8.5,
-                          ),
-                        ),
-                    ],
+                if (email.isNotEmpty)
+                  pw.Text(
+                    'Email: $email',
+                    style: const pw.TextStyle(
+                      fontSize: 8.5,
+                    ),
                   ),
-                ],
               ],
             ),
-          ),
+          ],
         ],
       ),
     );
@@ -806,7 +936,15 @@ class MonthlyBillPdfService {
   // TERMS & CONDITIONS
   // ===========================================================================
 
-  pw.Widget _buildTermsAndConditions(MonthlyBill bill,) {
+  pw.Widget _buildTermsAndConditions(BillSettings settings,) {
+    final sections = settings.termsSections
+        .where((s) => s.enabled)
+        .toList();
+
+    final hasOtherTerms = settings.otherTermsEnabled &&
+        settings.otherTermsTitle.trim().isNotEmpty &&
+        settings.otherTermsText.trim().isNotEmpty;
+
     return pw.Container(
       width: double.infinity,
       padding: const pw.EdgeInsets.all(10),
@@ -833,54 +971,80 @@ class MonthlyBillPdfService {
 
           pw.SizedBox(height: 7),
 
-          _term(
-            'Animal Care',
-            'We provide proper care, feeding and shelter '
-                'for the goats under our Palai service.',
+          ...sections.map(
+                (section) => _bulletItem(
+              section.title,
+              section.text,
+            ),
           ),
 
-          _term(
-            'Health & Vaccination',
-            'Regular health care, vaccination and deworming '
-                'are carried out according to the farm schedule. '
-                'Additional treatment or medicine may be charged separately.',
-          ),
-
-          _term(
-            'Payment Terms',
-            'Monthly charges should be paid on time. '
-                'Outstanding amounts remain payable until fully settled.',
-          ),
-
-          _term(
-            'Additional Charges',
-            'Any additional service, medicine, treatment or '
-                'other agreed expense may be added separately.',
-          ),
-
-          _term(
-            'Ownership',
-            'The goat remains the property of the customer. '
-                'The Palai service does not transfer ownership to the farm.',
-          ),
-
-          _term(
-            'Notice',
-            'Please inform the farm in advance before taking '
-                'the goat out of the Palai service.',
-          ),
-
-          _term(
-            'Records',
-            'Please verify the details mentioned in this bill '
-                'and contact the farm if any correction is required.',
-          ),
+          if (hasOtherTerms)
+            _bulletItem(
+              settings.otherTermsTitle.trim(),
+              settings.otherTermsText.trim(),
+            ),
         ],
       ),
     );
   }
 
-  pw.Widget _term(String title,
+  // ===========================================================================
+  // IMPORTANT NOTES
+  // ===========================================================================
+
+  pw.Widget _buildImportantNotes(BillSettings settings,) {
+    final notes = settings.importantNotes
+        .where((n) => n.enabled)
+        .toList();
+
+    final hasOtherNote = settings.otherNoteEnabled &&
+        settings.otherNoteTitle.trim().isNotEmpty &&
+        settings.otherNoteText.trim().isNotEmpty;
+
+    return pw.Container(
+      width: double.infinity,
+      padding: const pw.EdgeInsets.all(10),
+      decoration: pw.BoxDecoration(
+        border: pw.Border.all(
+          color: PdfColors.grey400,
+        ),
+        borderRadius:
+        const pw.BorderRadius.all(
+          pw.Radius.circular(4),
+        ),
+      ),
+      child: pw.Column(
+        crossAxisAlignment:
+        pw.CrossAxisAlignment.start,
+        children: [
+          pw.Text(
+            'IMPORTANT NOTES',
+            style: pw.TextStyle(
+              fontSize: 9,
+              fontWeight: pw.FontWeight.bold,
+            ),
+          ),
+
+          pw.SizedBox(height: 7),
+
+          ...notes.map(
+                (note) => _bulletItem(
+              note.title,
+              note.text,
+            ),
+          ),
+
+          if (hasOtherNote)
+            _bulletItem(
+              settings.otherNoteTitle.trim(),
+              settings.otherNoteText.trim(),
+            ),
+        ],
+      ),
+    );
+  }
+
+  pw.Widget _bulletItem(String title,
       String description,) {
     return pw.Padding(
       padding: const pw.EdgeInsets.only(
@@ -929,12 +1093,12 @@ class MonthlyBillPdfService {
   // SIGNATURE
   // ===========================================================================
 
-  pw.Widget _buildSignatureSection(MonthlyBill bill,) {
+  pw.Widget _buildSignatureSection(BillSettings settings,) {
     final farmName =
-    bill.farmName
+    settings.businessName
         .trim()
         .isNotEmpty
-        ? bill.farmName.trim()
+        ? settings.businessName.trim()
         : 'Farm Owner';
 
     return pw.Row(
@@ -946,10 +1110,10 @@ class MonthlyBillPdfService {
             crossAxisAlignment:
             pw.CrossAxisAlignment.start,
             children: [
-              if (bill.farmPhone
+              if (settings.phone
                   .trim()
                   .isNotEmpty ||
-                  bill.farmEmail
+                  settings.email
                       .trim()
                       .isNotEmpty)
                 pw.Text(
@@ -961,7 +1125,7 @@ class MonthlyBillPdfService {
                   ),
                 ),
 
-              if (bill.farmPhone
+              if (settings.phone
                   .trim()
                   .isNotEmpty)
                 pw.Padding(
@@ -970,14 +1134,14 @@ class MonthlyBillPdfService {
                     top: 3,
                   ),
                   child: pw.Text(
-                    'Phone: ${bill.farmPhone}',
+                    'Phone: ${settings.phone.trim()}',
                     style: const pw.TextStyle(
                       fontSize: 8,
                     ),
                   ),
                 ),
 
-              if (bill.farmEmail
+              if (settings.email
                   .trim()
                   .isNotEmpty)
                 pw.Padding(
@@ -986,7 +1150,7 @@ class MonthlyBillPdfService {
                     top: 2,
                   ),
                   child: pw.Text(
-                    'Email: ${bill.farmEmail}',
+                    'Email: ${settings.email.trim()}',
                     style: const pw.TextStyle(
                       fontSize: 8,
                     ),
@@ -1045,7 +1209,14 @@ class MonthlyBillPdfService {
   // THANK YOU
   // ===========================================================================
 
-  pw.Widget _buildThankYouSection() {
+  pw.Widget _buildThankYouSection(BillSettings settings,) {
+    final footerNote =
+    settings.footerNote
+        .trim()
+        .isNotEmpty
+        ? settings.footerNote.trim()
+        : 'Thank you for trusting us with your goat.';
+
     return pw.Container(
       width: double.infinity,
       padding: const pw.EdgeInsets.symmetric(
@@ -1075,7 +1246,7 @@ class MonthlyBillPdfService {
           pw.SizedBox(height: 3),
 
           pw.Text(
-            'We care for your goats like our own.',
+            footerNote,
             style: const pw.TextStyle(
               fontSize: 8,
               color: PdfColors.grey700,
@@ -1165,4 +1336,12 @@ class MonthlyBillPdfService {
 
     return '$cleaned.pdf';
   }
+}
+
+/// Simple holder for the two Noto Sans weights used to theme the PDF.
+class _PdfFonts {
+  final pw.Font base;
+  final pw.Font bold;
+
+  const _PdfFonts(this.base, this.bold);
 }
