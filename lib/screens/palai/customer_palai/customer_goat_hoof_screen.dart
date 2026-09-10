@@ -652,10 +652,6 @@ class _CustomerGoatHoofScreenState
     await Future<void>.delayed(
       const Duration(milliseconds: 300),
     );
-
-    if (mounted) {
-      await _loadReminderSetting();
-    }
   }
 
   Future<void> _showRecordDetails(

@@ -10,20 +10,17 @@ import '../../../models/palai_models.dart';
 import '../../../services/firestore_service.dart';
 import '../../../services/health_reminder_scheduler.dart';
 import '../../../services/notification_service.dart';
-import '../../../widgets/reminder_cadence_selector.dart';
 
 class AddHairTrimmingScreen extends StatefulWidget {
   final String farmId;
   final String customerId;
   final PalaiGoat goat;
-  final int reminderDays;
 
   const AddHairTrimmingScreen({
     super.key,
     required this.farmId,
     required this.customerId,
     required this.goat,
-    this.reminderDays = 30,
   });
 
   @override
@@ -36,77 +33,16 @@ class _AddHairTrimmingScreenState extends State<AddHairTrimmingScreen> {
 
   DateTime _trimmingDate = DateTime.now();
 
-  // 30 days is only ever a *default* fallback — it must never be
-  // confused with a customer having explicitly chosen 30. Whether the
-  // customer has a setting at all is tracked separately in
-  // [_customerSettingApplied] so the UI can tell the two apart.
-  int? _reminderDays = 30;
-  bool _customerSettingApplied = false;
+  // Per the client's updated requirement, only Hoof Cutting uses the
+  // farm-level Health Reminder Settings cadence
+  // (Profile > Health Reminder Settings). Hair Trimming's next-due date
+  // is now picked manually per record, right here on this screen, via
+  // a calendar date picker. There is no farm or customer setting read
+  // anymore — the old per-customer `hairTrimmingReminderDays` lookup
+  // has been removed entirely. Null (left unset) means no reminder is
+  // scheduled for this record.
+  DateTime? _nextDueDate;
   bool _saving = false;
-  bool _loadingReminderSetting = true;
-
-  @override
-  void initState() {
-    super.initState();
-
-    _reminderDays = _normalizeReminderDays(widget.reminderDays);
-
-    _loadCustomerReminderSetting();
-  }
-
-  int _normalizeReminderDays(int? value) {
-    if (value != null && value > 0) {
-      return value;
-    }
-
-    return 30;
-  }
-
-  // Reads the Hair Trimming reminder cadence from the CUSTOMER'S profile —
-  // farm-scoped at farms/{farmId}/palaiCustomers/{customerId}, matching
-  // exactly where CustomerProfileScreen's Health Settings sheet writes it
-  // (see FirestoreService.updateCustomerHealthReminderSettings). The
-  // field is a flat top-level `hairTrimmingReminderDays`, not nested
-  // under a `settings` map.
-  //
-  // If a setting exists, it's applied and LOCKED — this screen becomes a
-  // read-only consumer of the customer's schedule, never a second place
-  // to change it. If no setting exists, the 30-day default stays
-  // editable.
-  Future<void> _loadCustomerReminderSetting() async {
-    try {
-      final document = await FirebaseFirestore.instance
-          .collection('farms')
-          .doc(widget.farmId)
-          .collection('palaiCustomers')
-          .doc(widget.customerId)
-          .get();
-
-      final data = document.data();
-      final rawDays = data?['hairTrimmingReminderDays'];
-
-      int? days;
-      if (rawDays is num) {
-        days = rawDays.toInt();
-      } else if (rawDays != null) {
-        days = int.tryParse(rawDays.toString());
-      }
-
-      if (days != null && days > 0 && mounted) {
-        setState(() {
-          _reminderDays = days;
-          _customerSettingApplied = true;
-        });
-      }
-    } catch (_) {
-    } finally {
-      if (mounted) {
-        setState(() {
-          _loadingReminderSetting = false;
-        });
-      }
-    }
-  }
 
   @override
   void dispose() {
@@ -149,11 +85,7 @@ class _AddHairTrimmingScreenState extends State<AddHairTrimmingScreen> {
       _saving = true;
     });
 
-    final nextDueDate = _reminderDays != null
-        ? _trimmingDate.add(
-      Duration(days: _reminderDays!),
-    )
-        : null;
+    final nextDueDate = _nextDueDate;
 
     try {
       final reference = _hairCollection.doc();
@@ -255,11 +187,6 @@ class _AddHairTrimmingScreenState extends State<AddHairTrimmingScreen> {
           100,
         ),
         children: [
-          if (_loadingReminderSetting)
-            const Padding(
-              padding: EdgeInsets.only(bottom: 12),
-              child: LinearProgressIndicator(),
-            ),
           _DateTile(
             label: 'Trimming date',
             date: _trimmingDate,
@@ -275,20 +202,31 @@ class _AddHairTrimmingScreenState extends State<AddHairTrimmingScreen> {
             ),
           ),
           const SizedBox(height: 14),
-          // While the customer's setting is still loading, the
-          // LinearProgressIndicator above already signals that — the
-          // selector itself is withheld rather than briefly flashing an
-          // editable default that then suddenly locks.
-          if (!_loadingReminderSetting)
-            ReminderCadenceSelector(
-              value: _reminderDays,
-              locked: _customerSettingApplied,
-              onChanged: (days) {
+          // Next due date is picked manually here, from a calendar,
+          // rather than being computed from a farm/customer reminder
+          // cadence. Optional — leave unset for no reminder.
+          _DateTile(
+            label: 'Next hair trimming due',
+            optional: true,
+            date: _nextDueDate,
+            onTap: () => _pickDate(
+              initial: _nextDueDate ?? _trimmingDate,
+              first: DateTime(2000),
+              last: DateTime(2100),
+              onPicked: (d) {
                 setState(() {
-                  _reminderDays = days;
+                  _nextDueDate = d;
                 });
               },
             ),
+            onClear: _nextDueDate == null
+                ? null
+                : () {
+              setState(() {
+                _nextDueDate = null;
+              });
+            },
+          ),
           const SizedBox(height: 14),
           TextFormField(
             controller: _performedByController,

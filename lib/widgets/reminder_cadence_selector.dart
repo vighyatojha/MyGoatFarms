@@ -2,9 +2,12 @@ import 'package:flutter/material.dart';
 
 import '../app_theme.dart';
 
-/// Picks the reminder cadence (in days) for a vaccination / hoof-cutting /
-/// hair-trimming record: how many days after the record's date the next
-/// occurrence is due.
+/// Picks the reminder cadence (in days) for a hoof-cutting record: how
+/// many days after the record's date the next occurrence is due.
+///
+/// Hoof Cutting is the only record type that uses a cadence like this
+/// — Vaccination and Hair Trimming next-due dates are now picked
+/// manually, per record, from a calendar on their own Add screens.
 ///
 /// The actual due date is computed by the caller as
 /// `recordDate.add(Duration(days: value))` — this widget only picks the
@@ -13,12 +16,14 @@ import '../app_theme.dart';
 /// This is a discrete horizontal slider snapping to [options] — 30, 45,
 /// 60, or 90 days. There is intentionally no 15-day option.
 ///
-/// When [locked] is true (the customer this record belongs to already has
-/// a schedule configured in their Customer Profile), the selector renders
-/// as a read-only summary with a lock icon and an explanatory note
-/// instead of an interactive slider, and [onChanged] is never called.
-/// This keeps Customer Profile the single source of truth for that
-/// customer's recurring health schedule — Add screens only consume it.
+/// When [locked] is true (the farm already has a schedule configured in
+/// Profile > Health Reminder Settings), the selector renders as a
+/// read-only summary with a lock icon and an explanatory note instead
+/// of an interactive slider, and [onChanged] is never called. This
+/// keeps farm-level Health Reminder Settings the single source of
+/// truth for the hoof-cutting cadence — the Add screen only consumes
+/// it. [locked] is always true in current usage; the editable path
+/// below is retained only as a fallback.
 class ReminderCadenceSelector extends StatelessWidget {
   final int? value;
   final ValueChanged<int?> onChanged;
@@ -88,16 +93,17 @@ class ReminderCadenceSelector extends StatelessWidget {
           ),
           const SizedBox(height: 6),
           Text(
-            'Selected in Customer Profile',
+            'Selected in Health Reminder Settings',
             style: AppTheme.body(size: 12, color: AppColors.darkGreen, weight: FontWeight.w600),
           ),
           const SizedBox(height: 2),
           Text(
             lockedNote ??
-                'This reminder schedule was chosen in the customer\'s profile '
-                    'and applies to every one of their goats. It can\'t be '
-                    'changed from this screen — update it from Customer '
-                    'Profile → Health Settings instead.',
+                'This reminder schedule was chosen in Profile → Health '
+                    'Reminder Settings and applies to every active goat in '
+                    'the farm. It can\'t be changed from this screen — '
+                    'update it from Profile → Health Reminder Settings '
+                    'instead.',
             style: AppTheme.body(size: 11.5, color: AppColors.textGrey),
           ),
         ],
@@ -143,8 +149,8 @@ class ReminderCadenceSelector extends StatelessWidget {
           ),
           const SizedBox(height: 2),
           Text(
-            'No customer schedule has been selected for this record type — '
-            'default reminder is ${options.first} days. You can change it below.',
+            'No schedule has been selected for this record type — '
+                'default reminder is ${options.first} days. You can change it below.',
             style: AppTheme.body(size: 11, color: AppColors.textGrey),
           ),
           const SizedBox(height: 4),
@@ -179,16 +185,16 @@ class ReminderCadenceSelector extends StatelessWidget {
                       children: options
                           .map(
                             (days) => Text(
-                              '$days',
-                              style: AppTheme.body(
-                                size: 11,
-                                color: (value ?? options.first) == days
-                                    ? AppColors.primaryGreen
-                                    : AppColors.textGrey,
-                                weight: (value ?? options.first) == days ? FontWeight.w700 : FontWeight.w400,
-                              ),
-                            ),
-                          )
+                          '$days',
+                          style: AppTheme.body(
+                            size: 11,
+                            color: (value ?? options.first) == days
+                                ? AppColors.primaryGreen
+                                : AppColors.textGrey,
+                            weight: (value ?? options.first) == days ? FontWeight.w700 : FontWeight.w400,
+                          ),
+                        ),
+                      )
                           .toList(),
                     ),
                   ),
