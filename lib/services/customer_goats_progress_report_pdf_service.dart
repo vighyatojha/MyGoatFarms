@@ -371,7 +371,7 @@ class CustomerGoatsProgressReportPdfService {
   }) {
     final darkGreen = PdfColor.fromHex('#1B5E20');
 
-    const double logoSize = 60.0;
+    const double logoSize = 90.0;
 
     final String farmName =
     billSettings.businessName.trim().isNotEmpty

@@ -16,6 +16,12 @@ class _TimelineEntry {
   final bool deletable;
   final String? photoId;
 
+  /// Weight gain vs. the chronologically previous entry. Computed once
+  /// while the list is still in ascending (oldest-first) order, then
+  /// carried along when the list is reversed for display — so display
+  /// order can be flipped without breaking the gain math.
+  final double? gain;
+
   const _TimelineEntry({
     required this.date,
     required this.bytes,
@@ -23,7 +29,18 @@ class _TimelineEntry {
     required this.weight,
     this.deletable = false,
     this.photoId,
+    this.gain,
   });
+
+  _TimelineEntry withGain(double? gain) => _TimelineEntry(
+    date: date,
+    bytes: bytes,
+    label: label,
+    weight: weight,
+    deletable: deletable,
+    photoId: photoId,
+    gain: gain,
+  );
 }
 
 /// Photos & Growth tab — a real visual timeline: arrival photo, every
@@ -176,7 +193,10 @@ class _GoatPhotosGrowthTabState extends State<GoatPhotosGrowthTab> {
           ..sort((a, b) => a.capturedAt.compareTo(b.capturedAt));
 
         final goat = widget.goat;
-        final entries = <_TimelineEntry>[
+
+        // Built oldest-first so each entry's gain can be computed against
+        // the entry immediately before it chronologically.
+        final chronological = <_TimelineEntry>[
           _TimelineEntry(
             date: goat.farmArrivalDate ?? goat.checkInDate,
             bytes: goat.beforeImage ?? Uint8List(0),
@@ -201,6 +221,20 @@ class _GoatPhotosGrowthTabState extends State<GoatPhotosGrowthTab> {
             ),
         ];
 
+        for (int i = 0; i < chronological.length; i++) {
+          final entry = chronological[i];
+          final previousWeight = i > 0 ? chronological[i - 1].weight : null;
+          final gain = (entry.weight != null && previousWeight != null)
+              ? entry.weight! - previousWeight
+              : null;
+          chronological[i] = entry.withGain(gain);
+        }
+
+        // Newest first for display: most recent month at the top, Arrival
+        // at the bottom. Gains stay correct since they were computed above
+        // while the list was still in chronological order.
+        final entries = chronological.reversed.toList();
+
         return ListView(
           padding: const EdgeInsets.fromLTRB(14, 12, 14, 90),
           children: [
@@ -221,15 +255,15 @@ class _GoatPhotosGrowthTabState extends State<GoatPhotosGrowthTab> {
               ],
             ),
             const SizedBox(height: 10),
-            for (int i = 0; i < entries.length; i++) _timelineCard(entries[i], i > 0 ? entries[i - 1] : null),
+            for (final entry in entries) _timelineCard(entry),
           ],
         );
       },
     );
   }
 
-  Widget _timelineCard(_TimelineEntry entry, _TimelineEntry? previous) {
-    final gain = (entry.weight != null && previous?.weight != null) ? entry.weight! - previous!.weight! : null;
+  Widget _timelineCard(_TimelineEntry entry) {
+    final gain = entry.gain;
 
     return Container(
       margin: const EdgeInsets.only(bottom: 10),

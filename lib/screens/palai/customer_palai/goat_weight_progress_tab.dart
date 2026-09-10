@@ -5,6 +5,7 @@ import 'package:intl/intl.dart';
 
 import '../../../app_theme.dart';
 import '../../../models/palai_models.dart';
+import '../../../models/report_models.dart';
 import '../../../services/firestore_service.dart';
 
 class _WeighIn {
@@ -14,11 +15,19 @@ class _WeighIn {
   const _WeighIn({required this.date, required this.weight, required this.source});
 }
 
-/// Weight & Progress tab — merges every weight ever recorded for this
-/// goat (health updates + monthly photos) with the arrival weight into
-/// one chronological chain, and computes Total Gain / Average Monthly
-/// Gain once here so the Monthly Report and Final Report can reuse the
-/// same numbers instead of recalculating them separately.
+/// Weight & Progress tab — chains the goat's arrival weight together with
+/// every weight that was actually captured on a GENERATED REPORT for this
+/// goat (GoatReport.endWeight, dated by GoatReport.generatedAt), and
+/// computes Total Gain / Average Monthly Gain once here so the Monthly
+/// Report and Final Report can reuse the same numbers instead of
+/// recalculating them separately.
+///
+/// FIX: this used to also pull in every raw HealthRecordEntry weigh-in
+/// and every MonthlyPhoto weigh-in, so the chain (and the gain figures
+/// derived from it) mixed in ad-hoc weight entries that were never part
+/// of an actual report. It now only looks at weights that are on a
+/// report — every entry here besides "Arrival" is a weight that a real,
+/// saved GoatReport recorded, on the date that report carries.
 class GoatWeightProgressTab extends StatefulWidget {
   final String farmId;
   final String customerId;
@@ -36,23 +45,21 @@ class GoatWeightProgressTab extends StatefulWidget {
 }
 
 class _GoatWeightProgressTabState extends State<GoatWeightProgressTab> {
-  List<HealthRecordEntry> _healthRecords = [];
-  List<MonthlyPhoto> _monthlyPhotos = [];
+  List<GoatReport> _reports = [];
   bool _loading = true;
   String? _error;
 
-  StreamSubscription<List<HealthRecordEntry>>? _healthSub;
-  StreamSubscription<List<MonthlyPhoto>>? _photoSub;
+  StreamSubscription<List<GoatReport>>? _reportsSub;
 
   @override
   void initState() {
     super.initState();
-    _healthSub = FirestoreService.instance
-        .healthRecordsStream(widget.farmId, widget.customerId, widget.goat.id)
-        .listen((records) {
+    _reportsSub = FirestoreService.instance
+        .goatReportsStream(widget.farmId, widget.customerId, widget.goat.id)
+        .listen((reports) {
       if (!mounted) return;
       setState(() {
-        _healthRecords = records;
+        _reports = reports;
         _loading = false;
       });
     }, onError: (e) {
@@ -62,29 +69,26 @@ class _GoatWeightProgressTabState extends State<GoatWeightProgressTab> {
         _error = 'Could not load weight history: $e';
       });
     });
-
-    _photoSub = FirestoreService.instance
-        .monthlyPhotosStream(widget.farmId, widget.customerId, widget.goat.id)
-        .listen((photos) {
-      if (!mounted) return;
-      setState(() => _monthlyPhotos = photos);
-    });
   }
 
   @override
   void dispose() {
-    _healthSub?.cancel();
-    _photoSub?.cancel();
+    _reportsSub?.cancel();
     super.dispose();
+  }
+
+  /// Report-generated label for a weigh-in tile: the report's own notes
+  /// (its range/date label) when present, otherwise a generic fallback.
+  String _reportSourceLabel(GoatReport report) {
+    return report.notes.isNotEmpty ? report.notes : 'Report';
   }
 
   List<_WeighIn> get _chain {
     final goat = widget.goat;
     final entries = <_WeighIn>[
       _WeighIn(date: goat.farmArrivalDate ?? goat.checkInDate, weight: goat.weightAtCheckIn, source: 'Arrival'),
-      for (final r in _healthRecords) _WeighIn(date: r.recordedAt, weight: r.weight, source: 'Health Update'),
-      for (final p in _monthlyPhotos)
-        if (p.weightKg != null) _WeighIn(date: p.capturedAt, weight: p.weightKg!, source: 'Monthly Photo'),
+      for (final r in _reports)
+        if (r.endWeight != null) _WeighIn(date: r.generatedAt, weight: r.endWeight!, source: _reportSourceLabel(r)),
     ];
     entries.sort((a, b) => a.date.compareTo(b.date));
     return entries;
@@ -107,11 +111,12 @@ class _GoatWeightProgressTabState extends State<GoatWeightProgressTab> {
     final avgMonthlyGain = months > 0.5 ? totalGain / months : null;
 
     // ------------------------------------------------------------
-    // GAIN IN LAST 3 MONTHS — compares the current weight against
-    // whatever weigh-in is closest to (but not after) 90 days ago.
-    // If every record is younger than 90 days, falls back to the
-    // earliest record so this still shows a real gain rather than
-    // going blank for a goat that's been here less than 3 months.
+    // GAIN IN LAST 3 MONTHS — compares the current (last-on-chain)
+    // weight against whichever report weigh-in is closest to (but
+    // not after) 90 days ago. If every report is younger than 90
+    // days, falls back to the earliest record so this still shows a
+    // real gain rather than going blank for a goat with less than 3
+    // months of report history.
     // ------------------------------------------------------------
     final cutoff = DateTime.now().subtract(const Duration(days: 90));
     final atOrBeforeCutoff = chain.where((e) => !e.date.isAfter(cutoff)).toList();
@@ -154,6 +159,14 @@ class _GoatWeightProgressTabState extends State<GoatWeightProgressTab> {
         const SizedBox(height: 14),
         Text('Weight Chain (${chain.length} record${chain.length == 1 ? '' : 's'})', style: AppTheme.heading(size: 13)),
         const SizedBox(height: 8),
+        if (chain.length == 1)
+          Padding(
+            padding: const EdgeInsets.only(top: 4, bottom: 4),
+            child: Text(
+              'No reports generated yet — only the arrival weight is on record.',
+              style: AppTheme.body(size: 11.5, color: AppColors.textMuted),
+            ),
+          ),
         for (int i = 0; i < chain.length; i++) _chainTile(chain[i], i > 0 ? chain[i - 1] : null, isLast: i == chain.length - 1),
       ],
     );

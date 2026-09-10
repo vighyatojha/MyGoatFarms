@@ -1,3 +1,4 @@
+import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
@@ -707,6 +708,30 @@ class _CustomerGoatsProgressReportScreenState
                 : goat.healthStatus,
             doctorNotes: 'Recorded during Progress Report generation.',
             recordedAt: now,
+          ),
+        );
+
+        // --------------------------------------------------------
+        // FIX: also save this report-day photo as a MonthlyPhoto,
+        // so it shows up in the goat's Photos & Growth timeline —
+        // previously the only place this photo lived was inside
+        // the GoatReport itself, so a goat could have several
+        // reports' worth of photos with nothing at all showing in
+        // Photos & Growth unless the owner separately used "Add
+        // Photo" there. This keeps every report-day photo AND every
+        // manually-added photo together in one full visual record.
+        // --------------------------------------------------------
+        await FirestoreService.instance.addMonthlyPhoto(
+          widget.farmId,
+          widget.customer.id,
+          goat.id,
+          MonthlyPhoto(
+            id: '',
+            month: DateTime(now.year, now.month),
+            image: captured.bytes,
+            imageContentType: captured.contentType,
+            weightKg: currentWeight,
+            capturedAt: now,
           ),
         );
       }
