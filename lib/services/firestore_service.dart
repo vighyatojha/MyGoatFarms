@@ -2297,6 +2297,86 @@ class FirestoreService {
     return HealthRecordEntry.fromDoc(snap.docs.first);
   }
 
+  /// One-time fetch of the most recent record date from one of a goat's
+  /// dedicated Vaccination / Hoof Cutting / Hair Trimming subcollections
+  /// (`vaccinationRecords`, `hoofCuttingRecords`, `hairTrimmingRecords` —
+  /// the same collections/date fields used by [upcomingCustomerHealthReminders]
+  /// and by CustomerGoatVaccinationScreen / CustomerGoatHoofScreen /
+  /// CustomerGoatHairScreen), or null if that goat has no record yet.
+  ///
+  /// Shared by [getLatestVaccinationDate], [getLatestHoofCuttingDate] and
+  /// [getLatestHairTrimmingDate] below so the three stay in sync with the
+  /// exact same collection/field names those tabs use, instead of three
+  /// hand-kept copies drifting apart.
+  Future<DateTime?> _getLatestCareRecordDate(
+      String farmId,
+      String customerId,
+      String goatId,
+      String collection,
+      String dateField,
+      ) async {
+    final snap = await _goats(farmId, customerId)
+        .doc(goatId)
+        .collection(collection)
+        .orderBy(dateField, descending: true)
+        .limit(1)
+        .get()
+        .timeout(timeout);
+    if (snap.docs.isEmpty) return null;
+    final ts = snap.docs.first.data()[dateField];
+    return ts is Timestamp ? ts.toDate() : null;
+  }
+
+  /// Latest Vaccination record date for this goat, or null if none exists
+  /// yet — used by the Progress Report PDF's Health Status box instead of
+  /// relying on the shared [HealthRecordEntry] snapshot (see
+  /// [GoatProgressEntry] bug fix notes).
+  Future<DateTime?> getLatestVaccinationDate(
+      String farmId,
+      String customerId,
+      String goatId,
+      ) {
+    return _getLatestCareRecordDate(
+      farmId,
+      customerId,
+      goatId,
+      'vaccinationRecords',
+      'vaccinationDate',
+    );
+  }
+
+  /// Latest Hoof Cutting record date for this goat, or null if none
+  /// exists yet. Same purpose as [getLatestVaccinationDate].
+  Future<DateTime?> getLatestHoofCuttingDate(
+      String farmId,
+      String customerId,
+      String goatId,
+      ) {
+    return _getLatestCareRecordDate(
+      farmId,
+      customerId,
+      goatId,
+      'hoofCuttingRecords',
+      'cuttingDate',
+    );
+  }
+
+  /// Latest Hair Trimming record date for this goat, or null if none
+  /// exists yet. Same purpose as [getLatestVaccinationDate].
+  Future<DateTime?> getLatestHairTrimmingDate(
+      String farmId,
+      String customerId,
+      String goatId,
+      ) {
+    return _getLatestCareRecordDate(
+      farmId,
+      customerId,
+      goatId,
+      'hairTrimmingRecords',
+      'trimmingDate',
+    );
+  }
+
   // ---------------------------------------------------------------------
   // Stock — feed & medicine
   // ---------------------------------------------------------------------

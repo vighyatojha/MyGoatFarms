@@ -61,12 +61,24 @@ class _PreviousInfo {
   final double? weight;
   final HealthRecordEntry? latestHealthRecord;
 
+  // Bug fix (item 7): Vaccination / Hoof Cutting / Hair Trimming are read
+  // from each goat's own dedicated record subcollection — the same ones
+  // shown on CustomerGoatVaccinationScreen / CustomerGoatHoofScreen /
+  // CustomerGoatHairScreen — instead of the single shared health-record
+  // snapshot above. Null means no record exists yet for that goat.
+  final DateTime? latestVaccinationDate;
+  final DateTime? latestHoofCuttingDate;
+  final DateTime? latestHairTrimmingDate;
+
   const _PreviousInfo({
     required this.bytes,
     required this.label,
     required this.date,
     required this.weight,
     required this.latestHealthRecord,
+    this.latestVaccinationDate,
+    this.latestHoofCuttingDate,
+    this.latestHairTrimmingDate,
   });
 }
 
@@ -327,16 +339,45 @@ class _CustomerGoatsProgressReportScreenState
   }
 
   Future<_PreviousInfo> _fetchPrevious(PalaiGoat goat) async {
-    final latestReport = await FirestoreService.instance.getLatestGoatReport(
-      widget.farmId,
-      widget.customer.id,
-      goat.id,
-    );
-    final latestHealth = await FirestoreService.instance.getLatestHealthRecord(
-      widget.farmId,
-      widget.customer.id,
-      goat.id,
-    );
+    // Fired off together (not one-at-a-time) so adding the three new
+    // lookups below doesn't add sequential round trips per goat.
+    final results = await Future.wait([
+      FirestoreService.instance.getLatestGoatReport(
+        widget.farmId,
+        widget.customer.id,
+        goat.id,
+      ),
+      FirestoreService.instance.getLatestHealthRecord(
+        widget.farmId,
+        widget.customer.id,
+        goat.id,
+      ),
+      // Bug fix (item 7): pulled from each goat's own dedicated
+      // Vaccination / Hoof Cutting / Hair Trimming record subcollection
+      // (the same data source their tabs use), not the shared health
+      // record snapshot above.
+      FirestoreService.instance.getLatestVaccinationDate(
+        widget.farmId,
+        widget.customer.id,
+        goat.id,
+      ),
+      FirestoreService.instance.getLatestHoofCuttingDate(
+        widget.farmId,
+        widget.customer.id,
+        goat.id,
+      ),
+      FirestoreService.instance.getLatestHairTrimmingDate(
+        widget.farmId,
+        widget.customer.id,
+        goat.id,
+      ),
+    ]);
+
+    final latestReport = results[0] as GoatReport?;
+    final latestHealth = results[1] as HealthRecordEntry?;
+    final latestVaccinationDate = results[2] as DateTime?;
+    final latestHoofCuttingDate = results[3] as DateTime?;
+    final latestHairTrimmingDate = results[4] as DateTime?;
 
     if (latestReport != null && latestReport.images.isNotEmpty) {
       return _PreviousInfo(
@@ -345,6 +386,9 @@ class _CustomerGoatsProgressReportScreenState
         date: latestReport.generatedAt,
         weight: latestReport.endWeight ?? goat.weightAtCheckIn,
         latestHealthRecord: latestHealth,
+        latestVaccinationDate: latestVaccinationDate,
+        latestHoofCuttingDate: latestHoofCuttingDate,
+        latestHairTrimmingDate: latestHairTrimmingDate,
       );
     }
 
@@ -354,6 +398,9 @@ class _CustomerGoatsProgressReportScreenState
       date: goat.checkInDate,
       weight: goat.weightAtCheckIn,
       latestHealthRecord: latestHealth,
+      latestVaccinationDate: latestVaccinationDate,
+      latestHoofCuttingDate: latestHoofCuttingDate,
+      latestHairTrimmingDate: latestHairTrimmingDate,
     );
   }
 
@@ -532,7 +579,20 @@ class _CustomerGoatsProgressReportScreenState
 
     try {
       final farm = await FirestoreService.instance.getFarmById(widget.farmId);
-      final billSettings = farm?.billSettings ?? const BillSettings();
+
+      final originalBillSettings =
+          farm?.billSettings ?? const BillSettings();
+
+      final billSettings =
+      originalBillSettings.billLogo != null &&
+          originalBillSettings.billLogo!.isNotEmpty
+          ? originalBillSettings
+          : originalBillSettings.copyWith(
+        billLogo: farm?.profileImage,
+        billLogoContentType:
+        farm?.profileImageContentType ?? 'image/jpeg',
+      );
+
       final now = DateTime.now();
 
       // ------------------------------------------------------------
@@ -591,6 +651,9 @@ class _CustomerGoatsProgressReportScreenState
           currentDate: now,
           currentWeight: currentWeight,
           latestHealthRecord: previous.latestHealthRecord,
+          latestVaccinationDate: previous.latestVaccinationDate,
+          latestHoofCuttingDate: previous.latestHoofCuttingDate,
+          latestHairTrimmingDate: previous.latestHairTrimmingDate,
         ));
 
         // Save this goat's own report under its existing report history —
@@ -1151,7 +1214,7 @@ class _CustomerGoatsProgressReportScreenState
           Text(
             existing != null
                 ? 'A bill for $monthLabel was already generated for this customer. Its saved amounts are shown below exactly as recorded — generating this report again will NOT create a duplicate bill or change these numbers.'
-                : 'Set each goat\'s Monthly Palai Amount below, then Current Outstanding and Current Advance. Nothing here is combined for you — you always see exactly what each figure is.',
+                : 'Set each goat\'s Monthly Palai Amount below, then Old Pending Payment and Current Advance. Nothing here is combined for you — you always see exactly what each figure is.',
             style: AppTheme.body(size: 11, color: AppColors.textMuted),
           ),
           if (existing == null) ...[
@@ -1227,11 +1290,11 @@ class _CustomerGoatsProgressReportScreenState
                 ],
                 _billingRow('Current Month Palai', _currency(existing.palaiCharges)),
                 const SizedBox(height: 4),
-                _billingRow('Outstanding (at time of billing)', _currency(existing.previousOutstanding)),
+                _billingRow('Old Pending Payment (at time of billing)', _currency(existing.previousOutstanding)),
                 const SizedBox(height: 4),
                 _billingRow('Advance Applied (at time of billing)', '- ${_currency(existing.advanceApplied)}'),
                 const Divider(height: 20),
-                _billingRow('Total Amount Due (as billed)', _currency(existing.totalDue), bold: true),
+                _billingRow('Total Pending Payment (as billed)', _currency(existing.totalDue), bold: true),
                 if (existing.amountPaid > 0) ...[
                   const SizedBox(height: 4),
                   _billingRow('Paid So Far', _currency(existing.amountPaid)),
@@ -1368,7 +1431,7 @@ class _CustomerGoatsProgressReportScreenState
                 const SizedBox(height: 14),
                 _billingField(
                   controller: _outstandingController,
-                  label: 'Current Outstanding',
+                  label: 'Old Pending Payment',
                   icon: Icons.account_balance_wallet_outlined,
                 ),
                 const SizedBox(height: 10),
@@ -1379,7 +1442,7 @@ class _CustomerGoatsProgressReportScreenState
                 ),
                 const Divider(height: 24),
                 _billingRow(
-                  'Current Amount Due',
+                  'Total Pending Payment',
                   _currency(_currentAmountDue),
                   bold: true,
                 ),
