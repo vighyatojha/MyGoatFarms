@@ -581,7 +581,7 @@ class PdfBillService {
     required FinalCheckoutReportData report,
   }) async {
     final bytes = await buildFinalCheckoutReport(report: report);
-    await Printing.sharePdf(
+    await shareReportBytes(
       bytes: bytes,
       filename: '${_safe(report.customerName)}_${_safe(report.reportId)}_final_report.pdf',
     );
@@ -591,10 +591,33 @@ class PdfBillService {
     required FinalCheckoutReportData report,
   }) async {
     final bytes = await buildFinalCheckoutReport(report: report);
-    final dir = await getApplicationDocumentsDirectory();
-    final file = File(
-      '${dir.path}/${_safe(report.customerName)}_${_safe(report.reportId)}_final_report_${DateTime.now().millisecondsSinceEpoch}.pdf',
+    return saveReportBytesToDevice(
+      bytes: bytes,
+      filename: '${_safe(report.customerName)}_${_safe(report.reportId)}_final_report_${DateTime.now().millisecondsSinceEpoch}.pdf',
     );
+  }
+
+  /// Shares PDF bytes that were already generated — use this instead of
+  /// [shareFinalCheckoutReport] whenever the caller has already built
+  /// the report once (e.g. right after Generate PDF) so the same
+  /// (potentially photo-heavy) report is never rebuilt from scratch a
+  /// second time just to share it.
+  Future<void> shareReportBytes({
+    required Uint8List bytes,
+    required String filename,
+  }) async {
+    await Printing.sharePdf(bytes: bytes, filename: filename);
+  }
+
+  /// Saves already-generated PDF bytes to device — the save-side
+  /// counterpart of [shareReportBytes], for the same reason: avoid
+  /// rebuilding a report that's already sitting in memory.
+  Future<String> saveReportBytesToDevice({
+    required Uint8List bytes,
+    required String filename,
+  }) async {
+    final dir = await getApplicationDocumentsDirectory();
+    final file = File('${dir.path}/$filename');
     await file.writeAsBytes(bytes, flush: true);
     return file.path;
   }

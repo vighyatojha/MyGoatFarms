@@ -7,7 +7,6 @@ import '../../app_theme.dart';
 import '../../models/bill_settings_model.dart';
 import '../../models/final_checkout_report_model.dart';
 import '../../models/palai_models.dart';
-import '../../services/finance_service.dart';
 import '../../services/firestore_service.dart';
 import '../../services/monthly_report_service.dart';
 import '../../services/pdf_bill_service.dart';
@@ -90,6 +89,11 @@ class _FinalCheckoutReportScreenState
   PalaiCustomer? _customer;
 
   FinalCheckoutReportData? _report;
+
+  /// Built once, in [_generatePdf] — [_downloadPdf]/[_sharePdf] reuse
+  /// these bytes instead of rebuilding the (photo-heavy) report a
+  /// second and third time.
+  Uint8List? _pdfBytes;
 
   _ReportStage _stage = _ReportStage.review;
 
@@ -223,21 +227,13 @@ class _FinalCheckoutReportScreenState
         );
       }
 
-      // --------------------------------------------------------------
-      // FINANCIAL SETTLEMENT
-      // --------------------------------------------------------------
-
-      final settlement =
-      await FinanceService.instance.buildFinalSettlement(
-        farmId: widget.farmId,
-        customerId: widget.customerId,
-        customerName: customer.name,
-        goatCount: widget.goats.length,
-        billResult: widget.billResult,
-        periodStart: earliestCheckIn,
-        periodEnd: checkoutDate,
-      );
-
+      // NOTE: FinalCheckoutReportData below is built entirely from
+      // widget.billResult (the live createMonthlyBill() result — the
+      // one source of truth for the balance) plus the goat/monthly
+      // data gathered above. A redundant FinanceService.
+      // buildFinalSettlement() call used to run here and its result
+      // was never used — removed; it only re-queried bills/payments
+      // for a value nothing read.
       // --------------------------------------------------------------
       // FARM IMPORTANT NOTES
       // --------------------------------------------------------------
@@ -349,17 +345,19 @@ class _FinalCheckoutReportScreenState
     });
 
     try {
-      // Build the complete PDF now.
+      // Build the complete PDF now, and keep the bytes — Download and
+      // Share below reuse them rather than rebuilding the report.
       //
       // We intentionally do not check out the goats here.
       // Checkout happens only after Download or Share and Done.
-      await PdfBillService.instance.buildFinalCheckoutReport(
+      final bytes = await PdfBillService.instance.buildFinalCheckoutReport(
         report: _report!,
       );
 
       if (!mounted) return;
 
       setState(() {
+        _pdfBytes = bytes;
         _busy = false;
         _stage = _ReportStage.generated;
       });
@@ -378,8 +376,11 @@ class _FinalCheckoutReportScreenState
   // DOWNLOAD
   // ========================================================================
 
+  String _safeFileName(String value) =>
+      value.trim().replaceAll(RegExp(r'[\\/:*?"<>|\s]+'), '_');
+
   Future<void> _downloadPdf() async {
-    if (_busy || _report == null) return;
+    if (_busy || _report == null || _pdfBytes == null) return;
 
     setState(() {
       _busy = true;
@@ -387,8 +388,10 @@ class _FinalCheckoutReportScreenState
 
     try {
       final path =
-      await PdfBillService.instance.saveFinalCheckoutReportToDevice(
-        report: _report!,
+      await PdfBillService.instance.saveReportBytesToDevice(
+        bytes: _pdfBytes!,
+        filename:
+        '${_safeFileName(_report!.customerName)}_${_safeFileName(_report!.reportId)}_final_report_${DateTime.now().millisecondsSinceEpoch}.pdf',
       );
 
       if (!mounted) return;
@@ -425,15 +428,16 @@ class _FinalCheckoutReportScreenState
   // ========================================================================
 
   Future<void> _sharePdf() async {
-    if (_busy || _report == null) return;
+    if (_busy || _report == null || _pdfBytes == null) return;
 
     setState(() {
       _busy = true;
     });
 
     try {
-      await PdfBillService.instance.shareFinalCheckoutReport(
-        report: _report!,
+      await PdfBillService.instance.shareReportBytes(
+        bytes: _pdfBytes!,
+        filename: '${_safeFileName(_report!.customerName)}_${_safeFileName(_report!.reportId)}_final_report.pdf',
       );
 
       if (!mounted) return;

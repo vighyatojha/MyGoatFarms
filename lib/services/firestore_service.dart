@@ -582,6 +582,24 @@ class FirestoreService {
   /// - activity log
   ///
   /// It also correctly handles customer advances.
+  /// Reserves a bill document ID (and its human-readable bill number)
+  /// WITHOUT writing anything to Firestore — `.doc()` with no argument
+  /// only allocates a local document reference, it never touches the
+  /// network. Used by the Final Checkout flow so the SAME bill number
+  /// shown on the generated PDF (before the user has pressed Done) is
+  /// the exact one the bill is actually created with later, at Done —
+  /// see [createMonthlyBill]'s `reservedBillId` parameter.
+  ({String billId, String billNumber}) reserveBillId(String farmId) {
+    final billRef = _farms.doc(farmId).collection('bills').doc();
+    final now = DateTime.now();
+    final billNumber =
+        'PAL-${now.year}'
+        '${now.month.toString().padLeft(2, '0')}'
+        '${now.day.toString().padLeft(2, '0')}'
+        '-${billRef.id.substring(0, 6).toUpperCase()}';
+    return (billId: billRef.id, billNumber: billNumber);
+  }
+
   Future<MonthlyBillResult> createMonthlyBill({
     required String farmId,
     required String customerId,
@@ -591,6 +609,12 @@ class FirestoreService {
     required double paidAmount,
     required String paymentMethod,
     String note = '',
+    // When set (see [reserveBillId]), the bill is created with THIS
+    // exact ID/number instead of a freshly generated one — so a bill
+    // number already shown on a Final Checkout Report PDF (generated
+    // before Done) still matches the bill actually written here.
+    String? reservedBillId,
+    String? reservedBillNumber,
   }) async {
     if (monthlyCharges < 0 ||
         transportCharges < 0 ||
@@ -621,7 +645,9 @@ class FirestoreService {
 
     // Generate references before the transaction.
     // They remain the same if Firestore retries the transaction.
-    final billRef = billsCollection.doc();
+    final billRef = reservedBillId != null
+        ? billsCollection.doc(reservedBillId)
+        : billsCollection.doc();
 
     final paymentRef = paidAmount > 0
         ? paymentsCollection.doc()
@@ -635,11 +661,17 @@ class FirestoreService {
 
     final now = DateTime.now();
 
-    final billNumber =
+    // Reuse the exact bill number already shown on the PDF (if this
+    // came from Final Checkout's reserved ID) instead of recomputing
+    // one from today's date — recomputing here could land on a
+    // different calendar day than when the PDF was generated (e.g.
+    // generated at 11:58pm, Done pressed just after midnight), which
+    // would make the committed bill's number not match the PDF.
+    final billNumber = reservedBillNumber ??
         'PAL-${now.year}'
-        '${now.month.toString().padLeft(2, '0')}'
-        '${now.day.toString().padLeft(2, '0')}'
-        '-${billRef.id.substring(0, 6).toUpperCase()}';
+            '${now.month.toString().padLeft(2, '0')}'
+            '${now.day.toString().padLeft(2, '0')}'
+            '-${billRef.id.substring(0, 6).toUpperCase()}';
 
     // Resolved once, before the transaction — see [addOutstandingAmount].
     final actor = await getCurrentActor();
