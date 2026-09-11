@@ -4,7 +4,6 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:intl/intl.dart';
 import 'package:mygoatfarms/services/pdf_bill_service.dart';
 
-import '../models/final_checkout_report_model.dart';
 import '../models/goat_history_models.dart';
 import '../models/monthly_report_model.dart';
 import '../models/palai_models.dart';
@@ -228,65 +227,6 @@ class MonthlyReportService {
   }
 
   // ===========================================================================
-  // GOAT MONTHLY HISTORY (Final Checkout Report)
-  //
-  // Same per-month counting logic as generateMonthlyReport()/
-  // _buildGoatReport(), but scoped to ONE goat across every month of
-  // [periodStart, periodEnd] instead of every goat for one month. Used
-  // by the Final Checkout Report to compress a goat's whole Palai
-  // period into a single "Monthly History" table instead of a page per
-  // month. READ-ONLY — never writes anything, never touches old
-  // monthly reports.
-  // ===========================================================================
-
-  Future<List<GoatMonthlyHistoryRow>> getGoatMonthlyHistory({
-    required String farmId,
-    required String customerId,
-    required String goatId,
-    required DateTime periodStart,
-    DateTime? periodEnd,
-  }) async {
-    final end = periodEnd ?? DateTime.now();
-
-    final rows = <GoatMonthlyHistoryRow>[];
-
-    DateTime cursor = DateTime(periodStart.year, periodStart.month, 1);
-    final lastMonth = DateTime(end.year, end.month, 1);
-
-    while (!cursor.isAfter(lastMonth)) {
-      final monthStart = cursor;
-      final nextMonthStart = DateTime(cursor.year, cursor.month + 1, 1);
-
-      final reportGoat = await _buildGoatReport(
-        farmId: farmId,
-        customerId: customerId,
-        goatId: goatId,
-        goatData: const {},
-        monthStart: monthStart,
-        nextMonthStart: nextMonthStart,
-      );
-
-      rows.add(
-        GoatMonthlyHistoryRow(
-          monthStart: monthStart,
-          monthLabel: DateFormat('MMM yyyy').format(monthStart),
-          weightRecords: reportGoat.weightRecordsCount,
-          health: reportGoat.healthRecordsCount,
-          vaccination: reportGoat.vaccinationCount,
-          medicine: reportGoat.medicineCount,
-          hoof: reportGoat.hoofCuttingCount,
-          hair: reportGoat.hairTrimmingCount,
-          photos: reportGoat.monthlyPhotoCount,
-        ),
-      );
-
-      cursor = nextMonthStart;
-    }
-
-    return rows;
-  }
-
-  // ===========================================================================
   // GOAT WEIGHT HISTORY (Final Checkout Report — weight-progress chart)
   //
   // Every actual weight record for this goat within the period,
@@ -429,8 +369,9 @@ class MonthlyReportService {
   //
   // One full row per calendar month across the goat's whole Palai
   // period, WITH the actual weight/photo/health details each month —
-  // unlike [getGoatMonthlyHistory] above, which only returns lightweight
-  // counts for the older per-goat summary view. Reuses the exact same
+  // this is the single source of truth for the Final Checkout Report's
+  // monthly breakdown table (the older lightweight per-month counts
+  // view this once mirrored has been removed). Reuses the exact same
   // 'monthlyPhotos' subcollection CustomerGoatMonthlyPhotosScreen writes
   // to (so weight + photo per month), plus [getGoatHealthHistory] for
   // the health columns. READ-ONLY — nothing is written, and no separate
@@ -523,6 +464,7 @@ class MonthlyReportService {
           vaccination: pickDetail(monthHealth, 'Vaccination'),
           deworming: pickDetail(monthHealth, 'Deworming'),
           hoofCutting: pickDetail(monthHealth, 'Hoof Cutting'),
+          hairTrimming: pickDetail(monthHealth, 'Hair Trimming'),
           medicineGiven: pickDetail(monthHealth, 'Medicine'),
           healthNotes: monthHealth
               .map((e) => e.notes.trim())

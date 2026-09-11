@@ -482,12 +482,11 @@ class FirestoreService {
   /// Deliberately mirrors [addOutstandingAmount]'s shape (a `bills` doc
   /// + customer balance update + activity log, all in one transaction)
   /// but tags the bill `type: 'checkInTransport'` instead of
-  /// `manualOutstanding`, so Final Checkout can tell the two apart when
-  /// it reads this customer's bill history back (see
-  /// FinanceService.buildFinalSettlement). This is the ONLY place a
-  /// Check-In Transport charge is ever created — Final Checkout only
-  /// ever reads it back, never re-creates it, so a goat's Check-In
-  /// Transport is never charged twice.
+  /// `manualOutstanding`, so the two remain distinguishable in this
+  /// customer's bill history. This is the ONLY place a Check-In
+  /// Transport charge is ever created — Final Checkout only ever reads
+  /// it back (via [PalaiGoat.checkInTransportCharge]), never re-creates
+  /// it, so a goat's Check-In Transport is never charged twice.
   Future<void> recordCheckInTransportCharge({
     required String farmId,
     required String customerId,

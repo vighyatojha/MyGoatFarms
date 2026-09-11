@@ -480,6 +480,7 @@ class PdfBillService {
               ['Vaccination', _dash(month.vaccination)],
               ['Deworming', _dash(month.deworming)],
               ['Hoof Cutting', _dash(month.hoofCutting)],
+              ['Hair Trimming', _dash(month.hairTrimming)],
               ['Medicine Given', _dash(month.medicineGiven)],
               ['Doctor / Notes', _dash(month.healthNotes)],
             ]),
@@ -1292,8 +1293,9 @@ class FinalCheckoutReportData {
   final BillSettings billSettings;
 
   /// Every payment received from this customer across the whole Palai
-  /// period, oldest first — sourced from [FinanceService.buildFinalSettlement]
-  /// (spec item 45: "Payment History"). This is a display-only list;
+  /// period, oldest first — sourced from
+  /// [FinanceService.getCustomerPaymentHistory] (spec item 45: "Payment
+  /// History"). This is a display-only list;
   /// the balance figures above (paidAmount/pendingAmount/advanceAfter)
   /// are never recomputed from it.
   final List<FinalPaymentHistoryRow> paymentHistory;
@@ -1398,6 +1400,7 @@ class MonthlyGoatReportData {
   final String vaccination;
   final String deworming;
   final String hoofCutting;
+  final String hairTrimming;
   final String medicineGiven;
   final String healthNotes;
 
@@ -1425,6 +1428,7 @@ class MonthlyGoatReportData {
     this.vaccination = '',
     this.deworming = '',
     this.hoofCutting = '',
+    this.hairTrimming = '',
     this.medicineGiven = '',
     this.healthNotes = '',
     this.previousImage,

@@ -714,54 +714,30 @@ class FinanceService {
   }
 
   // ---------------------------------------------------------------------
-  // FINAL CHECKOUT — SETTLEMENT BREAKDOWN
+  // FINAL CHECKOUT — PAYMENT HISTORY
   //
-  // Read-only aggregation over the customer's existing `bills` and
-  // `payments` docs, the same source [getCustomerLedger] already reads.
-  // The balance figures (finalOutstanding/finalAdvance/finalAmountDue/
-  // finalAmountPaid) are NOT recomputed here — they're carried straight
+  // Read-only aggregation over the customer's existing `payments` docs,
+  // the same source [getCustomerLedger] already reads. The Final
+  // Checkout Report's balance figures (pendingAmount/paidAmount/
+  // advanceAfter) are NOT recomputed here — they're carried straight
   // through from the [MonthlyBillResult] that FirestoreService.
   // createMonthlyBill() already returned for this exact checkout, which
   // is itself the atomic write against pendingAmount/advanceAmount.
-  // This method only builds the historical breakdown shown alongside
-  // that balance (total charges by type across the whole Palai period,
-  // and the full payment history table) — it never sums payments a
-  // second time into the balance itself (spec: don't double-count what
-  // the live customer balance already incorporates).
+  // This method only builds the payment-history table shown alongside
+  // that balance — it never sums payments a second time into the
+  // balance itself (spec: don't double-count what the live customer
+  // balance already incorporates).
   // ---------------------------------------------------------------------
 
-  Future<FinalSettlementData> buildFinalSettlement({
+  /// Every payment received from this customer, oldest first.
+  Future<List<FinalPaymentHistoryRow>> getCustomerPaymentHistory({
     required String farmId,
     required String customerId,
-    required String customerName,
-    required int goatCount,
-    required MonthlyBillResult billResult,
-    DateTime? periodStart,
-    DateTime? periodEnd,
   }) async {
-    final results = await Future.wait([
-      _bills(farmId).where('customerId', isEqualTo: customerId).get().timeout(_timeout),
-      _payments(farmId).where('customerId', isEqualTo: customerId).get().timeout(_timeout),
-    ]);
-
-    final billsSnap = results[0];
-    final paymentsSnap = results[1];
-
-    double totalMonthlyCharges = 0;
-    double totalTransport = 0;
-    double totalDiscount = 0;
-    double totalOtherCharges = 0;
-
-    for (final doc in billsSnap.docs) {
-      final data = doc.data();
-      if ((data['type'] ?? '').toString() == 'manualOutstanding') {
-        totalOtherCharges += ((data['amount'] ?? data['newCharges'] ?? 0) as num).toDouble();
-        continue;
-      }
-      totalMonthlyCharges += ((data['monthlyCharges'] ?? 0) as num).toDouble();
-      totalTransport += ((data['transportCharges'] ?? 0) as num).toDouble();
-      totalDiscount += ((data['discount'] ?? 0) as num).toDouble();
-    }
+    final paymentsSnap = await _payments(farmId)
+        .where('customerId', isEqualTo: customerId)
+        .get()
+        .timeout(_timeout);
 
     final paymentHistory = <FinalPaymentHistoryRow>[];
     for (final doc in paymentsSnap.docs) {
@@ -784,29 +760,7 @@ class FinanceService {
     }
     paymentHistory.sort((a, b) => a.date.compareTo(b.date));
 
-    final grossCharges = (totalMonthlyCharges + totalTransport + totalOtherCharges - totalDiscount)
-        .clamp(0, double.infinity)
-        .toDouble();
-
-    return FinalSettlementData(
-      customerName: customerName,
-      goatCount: goatCount,
-      periodStart: periodStart,
-      periodEnd: periodEnd ?? DateTime.now(),
-      totalMonthlyCharges: totalMonthlyCharges,
-      totalTransport: totalTransport,
-      totalOtherCharges: totalOtherCharges,
-      totalDiscount: totalDiscount,
-      grossCharges: grossCharges,
-      previousOutstanding: billResult.previousPending,
-      advanceBefore: billResult.advanceBefore,
-      advanceApplied: billResult.advanceApplied,
-      finalAmountDue: billResult.totalDue,
-      finalAmountPaid: billResult.paid,
-      finalOutstanding: billResult.pendingAfter,
-      finalAdvance: billResult.advanceAfter,
-      paymentHistory: paymentHistory,
-    );
+    return paymentHistory;
   }
 
   // ---------------------------------------------------------------------

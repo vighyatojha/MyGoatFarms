@@ -180,3 +180,4 @@ class FinalSettlementData {
     this.periodStart,
   });
 }
+

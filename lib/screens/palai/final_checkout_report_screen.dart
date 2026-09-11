@@ -7,6 +7,7 @@ import '../../app_theme.dart';
 import '../../models/bill_settings_model.dart';
 import '../../models/final_checkout_report_model.dart';
 import '../../models/palai_models.dart';
+import '../../services/finance_service.dart';
 import '../../services/firestore_service.dart';
 import '../../services/monthly_report_service.dart';
 import '../../services/pdf_bill_service.dart';
@@ -227,13 +228,40 @@ class _FinalCheckoutReportScreenState
         );
       }
 
-      // NOTE: FinalCheckoutReportData below is built entirely from
-      // widget.billResult (the live createMonthlyBill() result — the
-      // one source of truth for the balance) plus the goat/monthly
-      // data gathered above. A redundant FinanceService.
-      // buildFinalSettlement() call used to run here and its result
-      // was never used — removed; it only re-queried bills/payments
-      // for a value nothing read.
+      // NOTE: The balance figures on FinalCheckoutReportData below come
+      // entirely from widget.billResult (the live createMonthlyBill()
+      // result — the one source of truth for the balance), never
+      // recomputed here. A redundant FinanceService call used to run
+      // in this method and its result was never used — removed; it
+      // re-queried both bills and payments for a value nothing read.
+      // The lean getCustomerPaymentHistory() call below replaces it
+      // for the one piece that actually is needed: the payment rows
+      // for the PDF's Payment History table.
+      // --------------------------------------------------------------
+
+      // --------------------------------------------------------------
+      // PAYMENT HISTORY
+      // --------------------------------------------------------------
+      //
+      // Best-effort only: a failure here (e.g. a Firestore rules gap on
+      // the `payments` collection for this caller) must never block the
+      // rest of the report — weight/health/monthly data and the bill
+      // itself are already known-good by this point. On failure we log
+      // and fall back to an empty list; the PDF's Payment History
+      // section already handles empty gracefully (it simply omits the
+      // section — see `report.paymentHistory.isNotEmpty` in
+      // PdfBillService).
+
+      List<FinalPaymentHistoryRow> paymentHistory = const [];
+      try {
+        paymentHistory = await FinanceService.instance.getCustomerPaymentHistory(
+          farmId: widget.farmId,
+          customerId: widget.customerId,
+        );
+      } catch (e) {
+        debugPrint('Final Checkout Report: could not load payment history — $e');
+      }
+
       // --------------------------------------------------------------
       // FARM IMPORTANT NOTES
       // --------------------------------------------------------------
@@ -311,6 +339,7 @@ class _FinalCheckoutReportScreenState
         signatureBytes: null,
         importantNotes: importantNotes,
         billSettings: widget.billSettings,
+        paymentHistory: paymentHistory,
       );
 
       if (!mounted) return;
