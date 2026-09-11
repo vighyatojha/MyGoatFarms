@@ -1,5 +1,7 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:intl/intl.dart';
 
+import '../models/final_checkout_report_model.dart';
 import '../models/monthly_report_model.dart';
 
 /// Service for the structured Monthly Report.
@@ -218,6 +220,65 @@ class MonthlyReportService {
       generatedAt: DateTime.now(),
       goats: reportGoats,
     );
+  }
+
+  // ===========================================================================
+  // GOAT MONTHLY HISTORY (Final Checkout Report)
+  //
+  // Same per-month counting logic as generateMonthlyReport()/
+  // _buildGoatReport(), but scoped to ONE goat across every month of
+  // [periodStart, periodEnd] instead of every goat for one month. Used
+  // by the Final Checkout Report to compress a goat's whole Palai
+  // period into a single "Monthly History" table instead of a page per
+  // month. READ-ONLY — never writes anything, never touches old
+  // monthly reports.
+  // ===========================================================================
+
+  Future<List<GoatMonthlyHistoryRow>> getGoatMonthlyHistory({
+    required String farmId,
+    required String customerId,
+    required String goatId,
+    required DateTime periodStart,
+    DateTime? periodEnd,
+  }) async {
+    final end = periodEnd ?? DateTime.now();
+
+    final rows = <GoatMonthlyHistoryRow>[];
+
+    DateTime cursor = DateTime(periodStart.year, periodStart.month, 1);
+    final lastMonth = DateTime(end.year, end.month, 1);
+
+    while (!cursor.isAfter(lastMonth)) {
+      final monthStart = cursor;
+      final nextMonthStart = DateTime(cursor.year, cursor.month + 1, 1);
+
+      final reportGoat = await _buildGoatReport(
+        farmId: farmId,
+        customerId: customerId,
+        goatId: goatId,
+        goatData: const {},
+        monthStart: monthStart,
+        nextMonthStart: nextMonthStart,
+      );
+
+      rows.add(
+        GoatMonthlyHistoryRow(
+          monthStart: monthStart,
+          monthLabel: DateFormat('MMM yyyy').format(monthStart),
+          weightRecords: reportGoat.weightRecordsCount,
+          health: reportGoat.healthRecordsCount,
+          vaccination: reportGoat.vaccinationCount,
+          medicine: reportGoat.medicineCount,
+          hoof: reportGoat.hoofCuttingCount,
+          hair: reportGoat.hairTrimmingCount,
+          photos: reportGoat.monthlyPhotoCount,
+        ),
+      );
+
+      cursor = nextMonthStart;
+    }
+
+    return rows;
   }
 
   // ===========================================================================

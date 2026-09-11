@@ -8,7 +8,7 @@ import '../../models/palai_models.dart';
 import '../../services/firestore_service.dart';
 import '../../services/pdf_bill_service.dart';
 import '../../widgets/fast_route.dart';
-import 'checkout_success_screen.dart';
+import 'final_checkout_report_screen.dart';
 
 /// Data carried from the Review Checkout screen into
 /// Charges & Payment.
@@ -377,6 +377,18 @@ class _CheckoutChargesPaymentScreenState
       return;
     }
 
+    // ------------------------------------------------------------
+    // FINAL CHECKOUT MUST BE FULLY SETTLED BEFORE IT CAN PROCEED.
+    //
+    // Nothing has been written to Firestore yet at this point — no
+    // bill, no payment, no goat checked out — so blocking here can
+    // never leave a half-completed checkout behind.
+    // ------------------------------------------------------------
+    if (_pendingAfter > 0) {
+      await _showPaymentRequiredDialog();
+      return;
+    }
+
     setState(() {
       _saving = true;
     });
@@ -436,13 +448,14 @@ class _CheckoutChargesPaymentScreenState
       if (!mounted) return;
 
       // ------------------------------------------------------------
-      // 4. OFFER EACH GOAT'S OWN FINAL CHECK-OUT REPORT
+      // 4. OPEN THE COMBINED FINAL CHECKOUT REPORT
       // ------------------------------------------------------------
       // The dialog above covers the customer's combined monthly bill.
-      // Each goat also gets its own final report (weight, health,
-      // before/after photos) via CheckoutSuccessScreen.
+      // This ONE report additionally covers every checked-out goat's
+      // full lifetime history (one goat = one page) plus the
+      // customer-level Final Settlement, via FinalCheckoutReportScreen.
 
-      await _offerFinalCheckoutReports();
+      await _openFinalCheckoutReport(billResult);
 
       if (!mounted) return;
 
@@ -458,6 +471,70 @@ class _CheckoutChargesPaymentScreenState
         FirestoreService.instance.describeError(e),
       );
     }
+  }
+
+  // ================================================================
+  // PAYMENT REQUIRED (final checkout blocked)
+  // ================================================================
+
+  Future<void> _showPaymentRequiredDialog() async {
+    if (!mounted) return;
+
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) {
+        return AlertDialog(
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          title: Row(
+            children: const [
+              Icon(Icons.error_outline, color: Colors.orange),
+              SizedBox(width: 8),
+              Text('Payment Required'),
+            ],
+          ),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              const Text(
+                'The final checkout cannot be completed while an amount is still outstanding. '
+                    'Please collect the remaining balance before checking out.',
+              ),
+              const SizedBox(height: 16),
+              _paymentRequiredRow('Final Amount Due', _rupees(_totalDue)),
+              _paymentRequiredRow('Already Paid', _rupees(_paid)),
+              const Divider(height: 20),
+              _paymentRequiredRow('Remaining', _rupees(_pendingAfter), bold: true),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(),
+              child: const Text('Okay'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Widget _paymentRequiredRow(String label, String value, {bool bold = false}) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Text(label, style: TextStyle(fontWeight: bold ? FontWeight.w700 : FontWeight.w400)),
+          Text(
+            value,
+            style: TextStyle(
+              fontWeight: FontWeight.w700,
+              color: bold ? AppColors.error : AppColors.textDark,
+            ),
+          ),
+        ],
+      ),
+    );
   }
 
   // ================================================================
@@ -763,86 +840,23 @@ class _CheckoutChargesPaymentScreenState
   }
 
   // ================================================================
-  // PER-GOAT FINAL CHECK-OUT REPORT
+  // FINAL CHECKOUT REPORT (combined — one goat = one page + settlement)
   // ================================================================
 
-  /// Single goat: goes straight to its final report. Multiple goats:
-  /// offers a pick list so the user can view/share any (or all) of
-  /// them before finishing, without forcing a screen per goat.
-  Future<void> _offerFinalCheckoutReports() async {
-    if (widget.goats.length == 1) {
-      await _pushFinalCheckoutReport(widget.goats.first);
-      return;
-    }
-
-    if (!mounted) return;
-
-    await showModalBottomSheet<void>(
-      context: context,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(22)),
-      ),
-      builder: (sheetContext) {
-        return SafeArea(
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(20, 18, 20, 12),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  'Final Check-out Reports',
-                  style: AppTheme.heading(size: 16),
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  'View or share each goat\'s own report.',
-                  style: AppTheme.body(size: 12, color: AppColors.textGrey),
-                ),
-                const SizedBox(height: 12),
-                ...widget.goats.map(
-                      (draft) => ListTile(
-                    contentPadding: EdgeInsets.zero,
-                    leading: const Icon(Icons.description_outlined, color: AppColors.primaryGreen),
-                    title: Text(draft.goat.goatCode, style: AppTheme.body(size: 13, weight: FontWeight.w600)),
-                    trailing: const Icon(Icons.chevron_right, size: 20),
-                    onTap: () => _pushFinalCheckoutReport(draft),
-                  ),
-                ),
-                const SizedBox(height: 8),
-                SizedBox(
-                  width: double.infinity,
-                  child: ElevatedButton(
-                    onPressed: () => Navigator.of(sheetContext).pop(),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: AppColors.primaryGreen,
-                      foregroundColor: Colors.white,
-                      minimumSize: const Size.fromHeight(46),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                    ),
-                    child: const Text('Done'),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        );
-      },
-    );
-  }
-
-  Future<void> _pushFinalCheckoutReport(GoatCheckoutDraft draft) async {
+  /// Opens the single merged Final Checkout Report covering every
+  /// goat checked out together in this session (one goat = one page)
+  /// plus the customer-level Final Settlement page, via
+  /// [FinalCheckoutReportScreen] — replacing the old per-goat
+  /// CheckoutSuccessScreen/CheckoutDetailsScreen pick-list flow.
+  Future<void> _openFinalCheckoutReport(MonthlyBillResult billResult) async {
     if (!mounted) return;
     await Navigator.of(context).push(
       fastRoute(
-        CheckoutSuccessScreen(
-          goat: draft.goat,
-          finalWeight: draft.finalWeight,
-          healthStatus: draft.healthStatus,
-          deliveryStatus: draft.deliveryStatus,
-          totalCharges: draft.goat.pricing,
-          beforeImage: draft.goat.beforeImage,
-          afterImage: draft.afterImage,
+        FinalCheckoutReportScreen(
+          farmId: widget.farmId,
+          customerId: widget.customerId,
+          goats: widget.goats,
+          billResult: billResult,
           billSettings: _billSettings,
         ),
       ),

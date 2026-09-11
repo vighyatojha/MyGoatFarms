@@ -6,6 +6,7 @@ import '../models/activity_model.dart';
 import '../models/customer_ledger_entry_model.dart';
 import '../models/expense_categories.dart';
 import '../models/expense_model.dart';
+import '../models/final_checkout_report_model.dart';
 import '../models/finance_summary_model.dart';
 import '../models/supplier_ledger_entry_model.dart';
 import 'firestore_service.dart';
@@ -710,6 +711,102 @@ class FinanceService {
 
     entries.sort((a, b) => b.date.compareTo(a.date));
     return entries;
+  }
+
+  // ---------------------------------------------------------------------
+  // FINAL CHECKOUT — SETTLEMENT BREAKDOWN
+  //
+  // Read-only aggregation over the customer's existing `bills` and
+  // `payments` docs, the same source [getCustomerLedger] already reads.
+  // The balance figures (finalOutstanding/finalAdvance/finalAmountDue/
+  // finalAmountPaid) are NOT recomputed here — they're carried straight
+  // through from the [MonthlyBillResult] that FirestoreService.
+  // createMonthlyBill() already returned for this exact checkout, which
+  // is itself the atomic write against pendingAmount/advanceAmount.
+  // This method only builds the historical breakdown shown alongside
+  // that balance (total charges by type across the whole Palai period,
+  // and the full payment history table) — it never sums payments a
+  // second time into the balance itself (spec: don't double-count what
+  // the live customer balance already incorporates).
+  // ---------------------------------------------------------------------
+
+  Future<FinalSettlementData> buildFinalSettlement({
+    required String farmId,
+    required String customerId,
+    required String customerName,
+    required int goatCount,
+    required MonthlyBillResult billResult,
+    DateTime? periodStart,
+    DateTime? periodEnd,
+  }) async {
+    final results = await Future.wait([
+      _bills(farmId).where('customerId', isEqualTo: customerId).get().timeout(_timeout),
+      _payments(farmId).where('customerId', isEqualTo: customerId).get().timeout(_timeout),
+    ]);
+
+    final billsSnap = results[0];
+    final paymentsSnap = results[1];
+
+    double totalMonthlyCharges = 0;
+    double totalTransport = 0;
+    double totalDiscount = 0;
+    double totalOtherCharges = 0;
+
+    for (final doc in billsSnap.docs) {
+      final data = doc.data();
+      if ((data['type'] ?? '').toString() == 'manualOutstanding') {
+        totalOtherCharges += ((data['amount'] ?? data['newCharges'] ?? 0) as num).toDouble();
+        continue;
+      }
+      totalMonthlyCharges += ((data['monthlyCharges'] ?? 0) as num).toDouble();
+      totalTransport += ((data['transportCharges'] ?? 0) as num).toDouble();
+      totalDiscount += ((data['discount'] ?? 0) as num).toDouble();
+    }
+
+    final paymentHistory = <FinalPaymentHistoryRow>[];
+    for (final doc in paymentsSnap.docs) {
+      final data = doc.data();
+      // "Outstanding Added" payment docs represent money now OWED, not
+      // received — never show them as a payment (same rule the
+      // Customer Ledger and Customer Profile already follow).
+      if ((data['type'] ?? '').toString() == 'outstandingAdded') continue;
+
+      final amount = ((data['amount'] ?? 0) as num).toDouble();
+      paymentHistory.add(
+        FinalPaymentHistoryRow(
+          date: (data['date'] as Timestamp?)?.toDate() ?? DateTime.now(),
+          paymentNumber: (data['paymentNumber'] ?? '').toString(),
+          method: (data['paymentMethod'] ?? '').toString(),
+          amount: amount,
+          status: 'Paid',
+        ),
+      );
+    }
+    paymentHistory.sort((a, b) => a.date.compareTo(b.date));
+
+    final grossCharges = (totalMonthlyCharges + totalTransport + totalOtherCharges - totalDiscount)
+        .clamp(0, double.infinity)
+        .toDouble();
+
+    return FinalSettlementData(
+      customerName: customerName,
+      goatCount: goatCount,
+      periodStart: periodStart,
+      periodEnd: periodEnd ?? DateTime.now(),
+      totalMonthlyCharges: totalMonthlyCharges,
+      totalTransport: totalTransport,
+      totalOtherCharges: totalOtherCharges,
+      totalDiscount: totalDiscount,
+      grossCharges: grossCharges,
+      previousOutstanding: billResult.previousPending,
+      advanceBefore: billResult.advanceBefore,
+      advanceApplied: billResult.advanceApplied,
+      finalAmountDue: billResult.totalDue,
+      finalAmountPaid: billResult.paid,
+      finalOutstanding: billResult.pendingAfter,
+      finalAdvance: billResult.advanceAfter,
+      paymentHistory: paymentHistory,
+    );
   }
 
   // ---------------------------------------------------------------------
