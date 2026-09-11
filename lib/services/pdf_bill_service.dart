@@ -7,6 +7,7 @@ import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
 
 import '../models/bill_settings_model.dart';
+import '../models/goat_history_models.dart';
 import '../models/palai_models.dart';
 
 /// PDF generator for Palai monthly reports and final check-out reports.
@@ -380,6 +381,41 @@ class PdfBillService {
       ),
     );
 
+    // One page per goat: weight-progress chart + full chronological
+    // health history — inserted right after the overview page and
+    // before the monthly pages (spec order: summary -> goat detail
+    // pages -> monthly history -> transport/finance -> payments).
+    for (final goat in report.goats) {
+      if (goat.weightHistory.isEmpty && goat.healthHistory.isEmpty) continue;
+
+      doc.addPage(
+        pw.MultiPage(
+          pageFormat: PdfPageFormat.a4,
+          margin: const pw.EdgeInsets.all(22),
+          header: (_) => _header(
+            report.billSettings,
+            'GOAT DETAIL — ${goat.goatCode}',
+            right: 'Report ID: ${report.reportId}',
+            period: _range(report.checkInDate, report.checkOutDate),
+          ),
+          footer: (c) => _footer(report.billSettings, c.pageNumber, c.pagesCount),
+          build: (_) => [
+            if (goat.weightHistory.length >= 2) ...[
+              _boxLabel('WEIGHT PROGRESS'),
+              pw.SizedBox(height: 6),
+              _weightProgressChart(goat.weightHistory),
+              pw.SizedBox(height: 10),
+            ],
+            if (goat.healthHistory.isNotEmpty) ...[
+              _boxLabel('HEALTH HISTORY'),
+              pw.SizedBox(height: 6),
+              _healthHistoryTable(goat.healthHistory),
+            ],
+          ],
+        ),
+      );
+    }
+
     // One or more pages per month, matching the supplied report structure.
     for (final month in report.months) {
       doc.addPage(
@@ -481,7 +517,8 @@ class PdfBillService {
                   ...report.goats.map(
                         (g) => ['${g.goatCode} - Palai Charges', _rs(g.charges)],
                   ),
-                  ['Transportation', _rs(report.transport)],
+                  if (report.checkInTransport > 0) ['Check-In Transport', _rs(report.checkInTransport)],
+                  ['Check-Out Transport', _rs(report.checkOutTransport)],
                   ['Previous Balance', _rs(report.previousBalance)],
                   ['Discount', '- ${_rs(report.discount)}'],
                   ['TOTAL BILL', _rs(report.totalBill)],
@@ -743,6 +780,132 @@ class PdfBillService {
           ),
         ],
       ),
+    );
+  }
+
+  pw.Widget _boxLabel(String title) {
+    return pw.Text(
+      title,
+      style: pw.TextStyle(
+        fontSize: 10,
+        fontWeight: pw.FontWeight.bold,
+        color: PdfColors.green900,
+      ),
+    );
+  }
+
+  // ---------------------------------------------------------------------------
+  // WEIGHT PROGRESS CHART
+  //
+  // A bar chart (not a line/dot plot) — deliberately chosen since it
+  // only needs Container/Row/Column layout to render correctly, no PDF
+  // canvas/painter API calls that can't be verified without a Flutter
+  // build in this environment. Built strictly from actual weight
+  // records (never just check-in/final weight) whenever at least 2
+  // records exist.
+  // ---------------------------------------------------------------------------
+
+  pw.Widget _weightProgressChart(List<GoatWeightHistoryPoint> points) {
+    const chartHeight = 110.0;
+    const barWidth = 16.0;
+
+    final weights = points.map((p) => p.weight).toList();
+    final maxWeight = weights.reduce((a, b) => a > b ? a : b);
+    final minWeight = weights.reduce((a, b) => a < b ? a : b);
+    final range = (maxWeight - minWeight) <= 0 ? 1.0 : (maxWeight - minWeight);
+
+    return pw.Container(
+      width: double.infinity,
+      padding: const pw.EdgeInsets.all(10),
+      decoration: pw.BoxDecoration(
+        border: pw.Border.all(color: PdfColors.grey300),
+        borderRadius: pw.BorderRadius.circular(5),
+      ),
+      child: pw.Row(
+        crossAxisAlignment: pw.CrossAxisAlignment.end,
+        mainAxisAlignment: pw.MainAxisAlignment.spaceEvenly,
+        children: [
+          for (final point in points)
+            pw.Column(
+              mainAxisSize: pw.MainAxisSize.min,
+              mainAxisAlignment: pw.MainAxisAlignment.end,
+              children: [
+                pw.Text(
+                  '${point.weight.toStringAsFixed(1)}',
+                  style: const pw.TextStyle(fontSize: 6, color: PdfColors.grey700),
+                ),
+                pw.SizedBox(height: 3),
+                pw.Container(
+                  width: barWidth,
+                  height: 18 + ((point.weight - minWeight) / range) * chartHeight,
+                  decoration: pw.BoxDecoration(
+                    color: PdfColors.green400,
+                    borderRadius: const pw.BorderRadius.vertical(top: pw.Radius.circular(3)),
+                  ),
+                ),
+                pw.SizedBox(height: 4),
+                pw.Text(
+                  '${point.date.day}/${point.date.month}',
+                  style: const pw.TextStyle(fontSize: 5.5, color: PdfColors.grey600),
+                ),
+              ],
+            ),
+        ],
+      ),
+    );
+  }
+
+  // ---------------------------------------------------------------------------
+  // HEALTH HISTORY TABLE — chronological, across every event type.
+  // Vaccination rows never carry a charge (health information only).
+  // ---------------------------------------------------------------------------
+
+  pw.Widget _healthHistoryTable(List<GoatHealthHistoryEntry> entries) {
+    final headerStyle = pw.TextStyle(fontSize: 7, fontWeight: pw.FontWeight.bold, color: PdfColors.white);
+    final cellStyle = const pw.TextStyle(fontSize: 7.5);
+
+    return pw.Table(
+      border: pw.TableBorder.all(color: PdfColors.grey300, width: 0.5),
+      columnWidths: const {
+        0: pw.FlexColumnWidth(1.4),
+        1: pw.FlexColumnWidth(1.6),
+        2: pw.FlexColumnWidth(2.4),
+        3: pw.FlexColumnWidth(2.6),
+      },
+      children: [
+        pw.TableRow(
+          decoration: const pw.BoxDecoration(color: PdfColors.green700),
+          children: [
+            _historyHeaderCell('Date', headerStyle),
+            _historyHeaderCell('Type', headerStyle),
+            _historyHeaderCell('Status / Action', headerStyle),
+            _historyHeaderCell('Notes', headerStyle),
+          ],
+        ),
+        for (final entry in entries)
+          pw.TableRow(
+            children: [
+              _historyCell(_fmt(entry.date), cellStyle),
+              _historyCell(entry.type, cellStyle),
+              _historyCell(entry.detail, cellStyle),
+              _historyCell(entry.notes.trim().isEmpty ? '-' : entry.notes, cellStyle),
+            ],
+          ),
+      ],
+    );
+  }
+
+  pw.Widget _historyHeaderCell(String text, pw.TextStyle style) {
+    return pw.Padding(
+      padding: const pw.EdgeInsets.symmetric(vertical: 5, horizontal: 4),
+      child: pw.Text(text, style: style),
+    );
+  }
+
+  pw.Widget _historyCell(String text, pw.TextStyle style) {
+    return pw.Padding(
+      padding: const pw.EdgeInsets.symmetric(vertical: 4, horizontal: 4),
+      child: pw.Text(text, style: style),
     );
   }
 
@@ -1037,7 +1200,8 @@ class FinalCheckoutReportData {
   final List<FinalGoatReportData> goats;
   final List<MonthlyGoatReportData> months;
 
-  final double transport;
+  final double checkInTransport;
+  final double checkOutTransport;
   final double previousBalance;
   final double discount;
   final double totalBill;
@@ -1068,7 +1232,8 @@ class FinalCheckoutReportData {
     this.finalHealthStatus = '',
     this.goats = const [],
     this.months = const [],
-    this.transport = 0,
+    this.checkInTransport = 0,
+    this.checkOutTransport = 0,
     this.previousBalance = 0,
     this.discount = 0,
     this.totalBill = 0,
@@ -1103,6 +1268,19 @@ class FinalGoatReportData {
   final String deliveryStatus;
   final double charges;
 
+  /// Every actual weight record for this goat across its whole Palai
+  /// period, oldest first — feeds the weight-progress chart. Empty
+  /// when there aren't at least 2 records (nothing meaningful to
+  /// chart), in which case only Check-In/Final weight are shown.
+  final List<GoatWeightHistoryPoint> weightHistory;
+
+  /// Every health event for this goat, oldest first — vaccination,
+  /// deworming, hoof cutting, hair trimming, medicine, and general
+  /// health-update checkups, aggregated from their existing
+  /// collections (see MonthlyReportService.getGoatHealthHistory).
+  /// Vaccination entries here never carry a charge.
+  final List<GoatHealthHistoryEntry> healthHistory;
+
   const FinalGoatReportData({
     required this.goatCode,
     required this.breed,
@@ -1113,6 +1291,8 @@ class FinalGoatReportData {
     this.healthStatus = '',
     this.deliveryStatus = '',
     this.charges = 0,
+    this.weightHistory = const [],
+    this.healthHistory = const [],
   });
 
   double get weightGain => finalWeight - checkInWeight;

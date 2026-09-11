@@ -255,6 +255,23 @@ class PalaiGoat {
   final double pricing;
 
   // --------------------------------------------------------------------------
+  // TRANSPORT (CHECK-IN)
+  // --------------------------------------------------------------------------
+
+  /// Optional transport charge recorded at check-in time, when the
+  /// goat/customer first arrives at the farm.
+  ///
+  /// This is deliberately separate from any transport charge collected
+  /// later at final checkout (see the Final Checkout payment screen's
+  /// "Check-Out Transport" field) — the two are independent one-time
+  /// charges, per the Palai spec's Rule 4/5 ("do not combine Check-In
+  /// and Check-Out transport into one generic amount"). Posted to
+  /// Finance once, at check-in, via
+  /// [FirestoreService.recordCheckInTransport] — the Final Checkout
+  /// flow only ever reads this value back, it never re-charges it.
+  final double checkInTransportCharge;
+
+  // --------------------------------------------------------------------------
   // REGISTRATION
   // --------------------------------------------------------------------------
 
@@ -372,6 +389,7 @@ class PalaiGoat {
     // Package / pricing
     this.monthlyPackage = '',
     this.pricing = 0,
+    this.checkInTransportCharge = 0,
 
     // Registration
     DateTime? registrationDate,
@@ -517,6 +535,9 @@ class PalaiGoat {
 
       pricing:
       _readDouble(data['pricing']),
+
+      checkInTransportCharge:
+      _readDouble(data['checkInTransportCharge']),
 
       // ----------------------------------------------------------------------
       // REGISTRATION
@@ -690,6 +711,9 @@ class PalaiGoat {
       pricing:
       _readDouble(data['pricing']),
 
+      checkInTransportCharge:
+      _readDouble(data['checkInTransportCharge']),
+
       registrationDate:
       _readDate(
         data['registrationDate'],
@@ -798,6 +822,7 @@ class PalaiGoat {
       // Package / price
       'monthlyPackage': monthlyPackage,
       'pricing': pricing,
+      'checkInTransportCharge': checkInTransportCharge,
 
       // Registration
       'registrationDate':
@@ -988,6 +1013,7 @@ class PalaiGoat {
 
     String? monthlyPackage,
     double? pricing,
+    double? checkInTransportCharge,
 
     DateTime? registrationDate,
     DateTime? updatedAt,
@@ -1068,6 +1094,9 @@ class PalaiGoat {
 
       pricing:
       pricing ?? this.pricing,
+
+      checkInTransportCharge:
+      checkInTransportCharge ?? this.checkInTransportCharge,
 
       registrationDate:
       registrationDate ??

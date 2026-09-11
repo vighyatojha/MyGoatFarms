@@ -2,6 +2,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:intl/intl.dart';
 
 import '../models/final_checkout_report_model.dart';
+import '../models/goat_history_models.dart';
 import '../models/monthly_report_model.dart';
 
 /// Service for the structured Monthly Report.
@@ -59,7 +60,7 @@ class MonthlyReportService {
     return _goats(
       farmId,
       customerId,
-    ).doc(goatId).collection('weightRecords');
+    ).doc(goatId).collection('palaiWeightRecords');
   }
 
   CollectionReference<Map<String, dynamic>> _healthRecords(
@@ -282,6 +283,144 @@ class MonthlyReportService {
   }
 
   // ===========================================================================
+  // GOAT WEIGHT HISTORY (Final Checkout Report — weight-progress chart)
+  //
+  // Every actual weight record for this goat within the period,
+  // oldest first. Reads the SAME 'palaiWeightRecords' subcollection
+  // PalaiFoundationService.addWeightRecord writes to — no separate
+  // weight-tracking system.
+  // ===========================================================================
+
+  Future<List<GoatWeightHistoryPoint>> getGoatWeightHistory({
+    required String farmId,
+    required String customerId,
+    required String goatId,
+    required DateTime periodStart,
+    DateTime? periodEnd,
+  }) async {
+    final end = periodEnd ?? DateTime.now();
+
+    final snapshot = await _weightRecords(farmId, customerId, goatId).get();
+
+    final points = snapshot.docs
+        .map((doc) {
+      final data = doc.data();
+      final date = _readDate(data['recordedAt'] ?? data['date']);
+      final weight = (data['weight'] as num?)?.toDouble();
+      if (date == null || weight == null) return null;
+      return GoatWeightHistoryPoint(date: date, weight: weight);
+    })
+        .whereType<GoatWeightHistoryPoint>()
+        .where((p) => !p.date.isBefore(periodStart) && !p.date.isAfter(end))
+        .toList()
+      ..sort((a, b) => a.date.compareTo(b.date));
+
+    return points;
+  }
+
+  // ===========================================================================
+  // GOAT HEALTH HISTORY (Final Checkout Report — chronological log)
+  //
+  // Aggregates the goat's existing vaccination/hoof-cutting/hair-
+  // trimming/medicine/general-health-update subcollections into one
+  // date-sorted list. READ-ONLY — every event keeps living in its own
+  // existing collection; this never creates a new health-event system,
+  // it only reads across the ones that already exist.
+  //
+  // Vaccination entries never carry a price/charge (the farm does not
+  // charge for vaccination) — only health details (vaccine name,
+  // dose count context) are ever included here.
+  // ===========================================================================
+
+  Future<List<GoatHealthHistoryEntry>> getGoatHealthHistory({
+    required String farmId,
+    required String customerId,
+    required String goatId,
+    required DateTime periodStart,
+    DateTime? periodEnd,
+  }) async {
+    final end = periodEnd ?? DateTime.now();
+
+    final results = await Future.wait([
+      _vaccinationRecords(farmId, customerId, goatId).get(),
+      _medicineRecords(farmId, customerId, goatId).get(),
+      _hoofCuttingRecords(farmId, customerId, goatId).get(),
+      _hairTrimmingRecords(farmId, customerId, goatId).get(),
+      _healthRecords(farmId, customerId, goatId).get(),
+    ]);
+
+    final entries = <GoatHealthHistoryEntry>[];
+
+    bool inRange(DateTime? d) => d != null && !d.isBefore(periodStart) && !d.isAfter(end);
+
+    for (final doc in results[0].docs) {
+      final data = doc.data();
+      final date = _readDate(data['vaccinationDate']);
+      if (!inRange(date)) continue;
+      final vaccine = (data['vaccineName'] ?? '').toString();
+      entries.add(GoatHealthHistoryEntry(
+        date: date!,
+        type: 'Vaccination',
+        detail: vaccine.trim().isEmpty ? 'Vaccination given' : vaccine,
+        notes: (data['note'] ?? '').toString(),
+      ));
+    }
+
+    for (final doc in results[1].docs) {
+      final data = doc.data();
+      final date = _readDate(data['treatmentDate']);
+      if (!inRange(date)) continue;
+      final medicine = (data['medicineName'] ?? '').toString();
+      entries.add(GoatHealthHistoryEntry(
+        date: date!,
+        type: 'Medicine',
+        detail: medicine.trim().isEmpty ? 'Medicine given' : 'Medicine given: $medicine',
+        notes: (data['note'] ?? '').toString(),
+      ));
+    }
+
+    for (final doc in results[2].docs) {
+      final data = doc.data();
+      final date = _readDate(data['cuttingDate']);
+      if (!inRange(date)) continue;
+      entries.add(GoatHealthHistoryEntry(
+        date: date!,
+        type: 'Hoof Cutting',
+        detail: 'Completed',
+        notes: (data['note'] ?? '').toString(),
+      ));
+    }
+
+    for (final doc in results[3].docs) {
+      final data = doc.data();
+      final date = _readDate(data['trimmingDate']);
+      if (!inRange(date)) continue;
+      entries.add(GoatHealthHistoryEntry(
+        date: date!,
+        type: 'Hair Trimming',
+        detail: 'Completed',
+        notes: (data['note'] ?? '').toString(),
+      ));
+    }
+
+    for (final doc in results[4].docs) {
+      final data = doc.data();
+      final date = _readDate(data['recordedAt'] ?? data['date']);
+      if (!inRange(date)) continue;
+      final status = (data['healthStatus'] ?? '').toString();
+      entries.add(GoatHealthHistoryEntry(
+        date: date!,
+        type: 'Health Update',
+        detail: status.trim().isEmpty ? 'Checkup recorded' : status,
+        notes: (data['doctorNotes'] ?? '').toString(),
+      ));
+    }
+
+    entries.sort((a, b) => a.date.compareTo(b.date));
+    return entries;
+  }
+
+  // ===========================================================================
   // BUILD ONE GOAT REPORT
   // ===========================================================================
 
@@ -367,9 +506,9 @@ class MonthlyReportService {
               (doc) {
             final data = doc.data();
 
-            // GoatWeightRecord stores the measurement date
-            // in the "date" field.
-            final date = _readDate(data['date']);
+            // GoatWeightRecord stores the measurement date in
+            // "recordedAt" (see palai_record_models.dart).
+            final date = _readDate(data['recordedAt'] ?? data['date']);
 
             return _isInsideMonth(
               date,

@@ -475,6 +475,100 @@ class FirestoreService {
     ).timeout(FirestoreService.timeout);
   }
 
+  /// Posts a goat's optional Check-In Transport charge to Finance —
+  /// called once, right after [checkInGoat], if the owner entered an
+  /// amount > 0 on the Check-In screen.
+  ///
+  /// Deliberately mirrors [addOutstandingAmount]'s shape (a `bills` doc
+  /// + customer balance update + activity log, all in one transaction)
+  /// but tags the bill `type: 'checkInTransport'` instead of
+  /// `manualOutstanding`, so Final Checkout can tell the two apart when
+  /// it reads this customer's bill history back (see
+  /// FinanceService.buildFinalSettlement). This is the ONLY place a
+  /// Check-In Transport charge is ever created — Final Checkout only
+  /// ever reads it back, never re-creates it, so a goat's Check-In
+  /// Transport is never charged twice.
+  Future<void> recordCheckInTransportCharge({
+    required String farmId,
+    required String customerId,
+    required String goatId,
+    required String goatCode,
+    required double amount,
+  }) async {
+    if (amount <= 0) return;
+
+    final customerRef = _customers(farmId).doc(customerId);
+    final billsCollection = _farms.doc(farmId).collection('bills');
+    final activitiesCollection = _farms.doc(farmId).collection('activities');
+
+    final billRef = billsCollection.doc();
+    final activityRef = activitiesCollection.doc();
+
+    final actor = await getCurrentActor();
+
+    await _db.runTransaction<void>((transaction) async {
+      final customerSnapshot = await transaction.get(customerRef);
+      if (!customerSnapshot.exists) {
+        throw StateError('Customer no longer exists.');
+      }
+
+      final data = customerSnapshot.data() ?? {};
+      final customerName = (data['name'] ?? '').toString();
+      final currentPending = (data['pendingAmount'] ?? 0).toDouble();
+      final newPending = currentPending + amount;
+
+      final now = DateTime.now();
+      final billNumber = 'CIT-${now.year}'
+          '${now.month.toString().padLeft(2, '0')}'
+          '${now.day.toString().padLeft(2, '0')}'
+          '-${billRef.id.substring(0, 6).toUpperCase()}';
+
+      // This is a CHARGE, not a payment — money has not been received
+      // yet, only added to what the customer owes (Rule 8/9: charges
+      // and payments received are never the same thing).
+      transaction.set(billRef, {
+        'billNumber': billNumber,
+        'type': 'checkInTransport',
+
+        'customerId': customerId,
+        'customerName': customerName,
+        'goatId': goatId,
+        'goatCode': goatCode,
+
+        'newCharges': amount,
+        'amount': amount,
+        'totalAmount': amount,
+
+        'previousPending': currentPending,
+        'pendingAfter': newPending,
+
+        'amountPaid': 0,
+        'status': 'pending',
+
+        'note': 'Check-In Transport — $goatCode',
+
+        'createdAt': FieldValue.serverTimestamp(),
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
+
+      transaction.update(customerRef, {
+        'pendingAmount': newPending,
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
+
+      transaction.set(activityRef, {
+        'type': 'checkInTransportAdded',
+        'title': 'Check-In Transport Charge',
+        'subtitle': '$customerName · $goatCode · \u20b9${amount.toStringAsFixed(0)}',
+        'module': 'palai',
+        'timestamp': FieldValue.serverTimestamp(),
+        if (actor != null) 'actorUid': actor.uid,
+        if (actor != null) 'actorName': actor.name,
+        if (actor != null) 'actorRole': actor.role,
+      });
+    }).timeout(FirestoreService.timeout);
+  }
+
   /// Creates a complete monthly Palai bill.
   ///
   /// This is the ONLY operation the Billing screen should use to create

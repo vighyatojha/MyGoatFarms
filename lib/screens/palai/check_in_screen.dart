@@ -34,6 +34,7 @@ class _CheckInGoatScreenState extends State<CheckInGoatScreen> {
   final _colorController = TextEditingController();
   final _weightController = TextEditingController();
   final _pricingController = TextEditingController();
+  final _checkInTransportController = TextEditingController();
   final _notesController = TextEditingController();
   String _gender = 'Male';
   String _healthStatus = 'Healthy';
@@ -74,6 +75,7 @@ class _CheckInGoatScreenState extends State<CheckInGoatScreen> {
     _colorController.dispose();
     _weightController.dispose();
     _pricingController.dispose();
+    _checkInTransportController.dispose();
     _notesController.dispose();
     super.dispose();
   }
@@ -123,12 +125,27 @@ class _CheckInGoatScreenState extends State<CheckInGoatScreen> {
       checkInDate: DateTime.now(),
       monthlyPackage: _monthlyPackage,
       pricing: double.tryParse(_pricingController.text.trim()) ?? 0,
+      checkInTransportCharge: double.tryParse(_checkInTransportController.text.trim()) ?? 0,
       notes: _notesController.text.trim(),
       beforeImage: _beforeImageBytes,
       beforeImageContentType: _beforeImageContentType,
     );
 
-    await FirestoreService.instance.checkInGoat(_farmId!, _selectedCustomer!.id, goat);
+    final goatId = await FirestoreService.instance.checkInGoat(_farmId!, _selectedCustomer!.id, goat);
+
+    // Post the optional Check-In Transport charge to Finance ONCE, right
+    // now — Final Checkout later only ever reads this back, it never
+    // creates it again (avoids double-charging, per the Palai spec).
+    if (goat.checkInTransportCharge > 0) {
+      await FirestoreService.instance.recordCheckInTransportCharge(
+        farmId: _farmId!,
+        customerId: _selectedCustomer!.id,
+        goatId: goatId,
+        goatCode: goat.goatCode,
+        amount: goat.checkInTransportCharge,
+      );
+    }
+
     await FirestoreService.instance.logActivity(
       _farmId!,
       ActivityLog(
@@ -232,6 +249,14 @@ class _CheckInGoatScreenState extends State<CheckInGoatScreen> {
               const SizedBox(height: 16),
               _label('Pricing (₹)'),
               _textField(_pricingController, hint: 'e.g. 1500', keyboardType: TextInputType.number),
+              const SizedBox(height: 16),
+              _label('Check-In Transport (₹) — optional'),
+              _textField(
+                _checkInTransportController,
+                hint: 'Leave blank if no transport charge',
+                keyboardType: TextInputType.number,
+                optional: true,
+              ),
               const SizedBox(height: 16),
               _label('Notes'),
               _textField(_notesController, hint: 'Optional notes', maxLines: 3, optional: true),
