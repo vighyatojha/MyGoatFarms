@@ -7,6 +7,7 @@ import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
 
 import '../models/bill_settings_model.dart';
+import '../models/final_checkout_report_model.dart' show FinalPaymentHistoryRow;
 import '../models/goat_history_models.dart';
 import '../models/palai_models.dart';
 
@@ -541,6 +542,12 @@ class PdfBillService {
               pw.Expanded(child: _thankYou(report.billSettings)),
             ],
           ),
+          if (report.paymentHistory.isNotEmpty) ...[
+            pw.SizedBox(height: 10),
+            _boxLabel('PAYMENT HISTORY'),
+            pw.SizedBox(height: 6),
+            _paymentHistoryTable(report.paymentHistory),
+          ],
           if (report.billSettings.upiId.trim().isNotEmpty) ...[
             pw.SizedBox(height: 10),
             _upi(report.billSettings.upiId),
@@ -895,6 +902,47 @@ class PdfBillService {
     );
   }
 
+  /// Payment History table (spec item 45) — every payment received
+  /// across the whole Palai period, oldest first. Read-only: amounts
+  /// come straight from [FinalPaymentHistoryRow], nothing recomputed.
+  pw.Widget _paymentHistoryTable(List<FinalPaymentHistoryRow> rows) {
+    final headerStyle = pw.TextStyle(fontSize: 7, fontWeight: pw.FontWeight.bold, color: PdfColors.white);
+    final cellStyle = const pw.TextStyle(fontSize: 7.5);
+
+    return pw.Table(
+      border: pw.TableBorder.all(color: PdfColors.grey300, width: 0.5),
+      columnWidths: const {
+        0: pw.FlexColumnWidth(1.6),
+        1: pw.FlexColumnWidth(1.8),
+        2: pw.FlexColumnWidth(1.8),
+        3: pw.FlexColumnWidth(1.4),
+        4: pw.FlexColumnWidth(1.4),
+      },
+      children: [
+        pw.TableRow(
+          decoration: const pw.BoxDecoration(color: PdfColors.green700),
+          children: [
+            _historyHeaderCell('Date', headerStyle),
+            _historyHeaderCell('Payment No.', headerStyle),
+            _historyHeaderCell('Method', headerStyle),
+            _historyHeaderCell('Amount', headerStyle),
+            _historyHeaderCell('Status', headerStyle),
+          ],
+        ),
+        for (final row in rows)
+          pw.TableRow(
+            children: [
+              _historyCell(_fmt(row.date), cellStyle),
+              _historyCell(_dash(row.paymentNumber), cellStyle),
+              _historyCell(_dash(row.method), cellStyle),
+              _historyCell(_rs(row.amount), cellStyle),
+              _historyCell(row.status, cellStyle),
+            ],
+          ),
+      ],
+    );
+  }
+
   pw.Widget _historyHeaderCell(String text, pw.TextStyle style) {
     return pw.Padding(
       padding: const pw.EdgeInsets.symmetric(vertical: 5, horizontal: 4),
@@ -1220,6 +1268,13 @@ class FinalCheckoutReportData {
   final List<String> importantNotes;
   final BillSettings billSettings;
 
+  /// Every payment received from this customer across the whole Palai
+  /// period, oldest first — sourced from [FinanceService.buildFinalSettlement]
+  /// (spec item 45: "Payment History"). This is a display-only list;
+  /// the balance figures above (paidAmount/pendingAmount/advanceAfter)
+  /// are never recomputed from it.
+  final List<FinalPaymentHistoryRow> paymentHistory;
+
   const FinalCheckoutReportData({
     required this.reportId,
     required this.customerName,
@@ -1248,6 +1303,7 @@ class FinalCheckoutReportData {
     this.signatureBytes,
     this.importantNotes = const [],
     required this.billSettings,
+    this.paymentHistory = const [],
   });
 
   double get totalFinalWeight =>

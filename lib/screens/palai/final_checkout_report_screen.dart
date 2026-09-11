@@ -1,6 +1,5 @@
 import 'dart:typed_data';
 
-import 'package:animate_do/animate_do.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 
@@ -9,25 +8,35 @@ import '../../models/bill_settings_model.dart';
 import '../../models/final_checkout_report_model.dart';
 import '../../models/palai_models.dart';
 import '../../services/finance_service.dart';
-import '../../services/final_checkout_report_pdf_service.dart';
 import '../../services/firestore_service.dart';
 import '../../services/monthly_report_service.dart';
+import '../../services/pdf_bill_service.dart';
 import 'checkout_charges_payment_screen.dart' show GoatCheckoutDraft;
 
-/// Shown once, right after a customer-level checkout completes — the
-/// merged replacement for the old per-goat CheckoutSuccessScreen +
-/// CheckoutDetailsScreen pair.
+/// Final stage of the Palai checkout flow.
 ///
-/// Instead of a separate "Checked Out!" celebration screen per goat
-/// (each opening its own single-goat bill PDF), this ONE screen covers
-/// every goat checked out together: it builds the Final Checkout
-/// Report (one goat = one page, compressed monthly history, then a
-/// customer-level Final Settlement page) and lets the owner
-/// Preview/Share/Save it.
+/// Flow:
 ///
-/// Pops with `true` when dismissed via "Done", same as the screen it
-/// replaces, so callers that chain several pops together (multi-goat
-/// checkout -> goat list refresh) keep working unchanged.
+/// Charges & Payment
+///        ↓
+/// Final Checkout Report
+///        ↓
+/// Review all information
+///        ↓
+/// Generate PDF
+///        ↓
+/// PDF Generated
+///        ↓
+/// Download OR Share
+///        ↓
+/// Done becomes enabled
+///        ↓
+/// Goat(s) are finally marked as checked out.
+///
+/// IMPORTANT:
+/// This screen does NOT check out goats when it opens.
+/// The parent supplies [onDone], and only after the generated PDF has
+/// successfully been downloaded/shared do we call that callback.
 class FinalCheckoutReportScreen extends StatefulWidget {
   final String farmId;
   final String customerId;
@@ -35,166 +44,465 @@ class FinalCheckoutReportScreen extends StatefulWidget {
   final MonthlyBillResult billResult;
   final BillSettings billSettings;
 
+  /// Check-out transport entered on the Payment Details screen.
+  ///
+  /// Check-in transport is already stored against each goat and is
+  /// therefore read from [PalaiGoat.checkInTransportCharge].
+  final double checkOutTransport;
+
+  /// Called only after the user successfully downloads or shares the
+  /// final PDF and presses Done.
+  ///
+  /// The callback is responsible for performing the actual Firestore
+  /// goat checkout.
+  final Future<void> Function()? onDone;
+
   const FinalCheckoutReportScreen({
     super.key,
     required this.farmId,
     required this.customerId,
     required this.goats,
     required this.billResult,
-    this.billSettings = const BillSettings(),
+    required this.billSettings,
+    this.checkOutTransport = 0,
+    this.onDone,
   });
 
   @override
-  State<FinalCheckoutReportScreen> createState() => _FinalCheckoutReportScreenState();
+  State<FinalCheckoutReportScreen> createState() =>
+      _FinalCheckoutReportScreenState();
 }
 
-class _FinalCheckoutReportScreenState extends State<FinalCheckoutReportScreen> {
+enum _ReportStage {
+  review,
+  generating,
+  generated,
+}
+
+class _FinalCheckoutReportScreenState
+    extends State<FinalCheckoutReportScreen> {
   bool _loading = true;
-  String? _error;
   bool _busy = false;
+  bool _doneUnlocked = false;
+
+  String? _error;
 
   PalaiCustomer? _customer;
-  List<GoatFinalReportEntry> _entries = [];
-  FinalSettlementData? _settlement;
+
+  FinalCheckoutReportData? _report;
+
+  _ReportStage _stage = _ReportStage.review;
 
   @override
   void initState() {
     super.initState();
-    _load();
+    _loadReportData();
   }
 
-  Future<void> _load() async {
+  // ========================================================================
+  // LOAD / BUILD REPORT DATA
+  // ========================================================================
+
+  Future<void> _loadReportData() async {
+    if (!mounted) return;
+
     setState(() {
       _loading = true;
       _error = null;
     });
 
     try {
-      final customer = await FirestoreService.instance.getCustomer(widget.farmId, widget.customerId);
+      final customer = await FirestoreService.instance.getCustomer(
+        widget.farmId,
+        widget.customerId,
+      );
+
       if (customer == null) {
         throw StateError('Customer could not be found.');
       }
 
+      final checkoutDate = DateTime.now();
+
       DateTime? earliestCheckIn;
-      final entries = <GoatFinalReportEntry>[];
+
+      final goatReports = <FinalGoatReportData>[];
+
+      // This now comes directly from MonthlyReportService.
+      //
+      // Previously this screen manually recreated the monthly rows.
+      // That duplicated logic and could make the Final Checkout Report
+      // different from the actual monthly report logic.
+      final allMonthlyReports = <MonthlyGoatReportData>[];
 
       for (final draft in widget.goats) {
         final goat = draft.goat;
-        final periodStart = goat.farmArrivalDate ?? goat.checkInDate;
-        final periodEnd = DateTime.now();
 
-        if (earliestCheckIn == null || periodStart.isBefore(earliestCheckIn)) {
-          earliestCheckIn = periodStart;
+        final start = goat.farmArrivalDate ?? goat.checkInDate;
+
+        if (earliestCheckIn == null ||
+            start.isBefore(earliestCheckIn!)) {
+          earliestCheckIn = start;
         }
 
-        final monthlyHistory = await MonthlyReportService.instance.getGoatMonthlyHistory(
+        // --------------------------------------------------------------
+        // WEIGHT HISTORY
+        // --------------------------------------------------------------
+
+        final weightHistory =
+        await MonthlyReportService.instance.getGoatWeightHistory(
           farmId: widget.farmId,
           customerId: widget.customerId,
           goatId: goat.id,
-          periodStart: periodStart,
-          periodEnd: periodEnd,
+          periodStart: start,
+          periodEnd: checkoutDate,
         );
 
-        final photos = await FirestoreService.instance
-            .monthlyPhotosStream(widget.farmId, widget.customerId, goat.id)
-            .first;
+        // --------------------------------------------------------------
+        // HEALTH HISTORY
+        // --------------------------------------------------------------
 
-        final photoByMonth = <String, Uint8List>{};
-        for (final row in monthlyHistory) {
-          final match = photos.where(
-                (p) => p.month.year == row.monthStart.year && p.month.month == row.monthStart.month,
-          );
-          if (match.isNotEmpty) {
-            photoByMonth[row.monthLabel] = match.first.image;
-          }
-        }
+        final healthHistory =
+        await MonthlyReportService.instance.getGoatHealthHistory(
+          farmId: widget.farmId,
+          customerId: widget.customerId,
+          goatId: goat.id,
+          periodStart: start,
+          periodEnd: checkoutDate,
+        );
 
-        entries.add(
-          GoatFinalReportEntry(
-            goat: goat,
-            checkInDate: periodStart,
-            checkOutDate: periodEnd,
-            initialWeight: goat.weightAtCheckIn,
+        // --------------------------------------------------------------
+        // COMPLETE MONTHLY HISTORY
+        // --------------------------------------------------------------
+        //
+        // IMPORTANT:
+        // Do not manually construct MonthlyGoatReportData here.
+        //
+        // MonthlyReportService already contains the complete logic for:
+        //
+        // - monthly weight
+        // - carry-forward weight
+        // - monthly photos
+        // - carry-forward photos
+        // - vaccination
+        // - medicine
+        // - hoof cutting
+        // - hair trimming
+        // - health notes
+        //
+        // This is now the single source of truth.
+        // --------------------------------------------------------------
+
+        final monthlyReports =
+        await MonthlyReportService.instance.getGoatFinalMonthlyReports(
+          farmId: widget.farmId,
+          customerId: widget.customerId,
+          goat: goat,
+          periodEnd: checkoutDate,
+        );
+
+        allMonthlyReports.addAll(monthlyReports);
+
+        // --------------------------------------------------------------
+        // FINAL GOAT REPORT
+        // --------------------------------------------------------------
+
+        goatReports.add(
+          FinalGoatReportData(
+            goatCode: goat.goatCode,
+            breed: goat.breed,
+            gender: goat.gender,
+            color: goat.color,
+            checkInWeight: goat.weightAtCheckIn,
             finalWeight: draft.finalWeight,
-            beforeImage: goat.beforeImage,
-            afterImage: draft.afterImage,
-            monthlyHistory: monthlyHistory,
-            representativePhotoByMonth: photoByMonth,
             healthStatus: draft.healthStatus,
             deliveryStatus: draft.deliveryStatus,
+            charges: goat.pricing,
+            weightHistory: weightHistory,
+            healthHistory: healthHistory,
           ),
         );
       }
 
-      final settlement = await FinanceService.instance.buildFinalSettlement(
+      // --------------------------------------------------------------
+      // FINANCIAL SETTLEMENT
+      // --------------------------------------------------------------
+
+      final settlement =
+      await FinanceService.instance.buildFinalSettlement(
         farmId: widget.farmId,
         customerId: widget.customerId,
         customerName: customer.name,
         goatCount: widget.goats.length,
         billResult: widget.billResult,
         periodStart: earliestCheckIn,
-        periodEnd: DateTime.now(),
+        periodEnd: checkoutDate,
+      );
+
+      // --------------------------------------------------------------
+      // FARM IMPORTANT NOTES
+      // --------------------------------------------------------------
+
+      final importantNotes = <String>[];
+
+      for (final note in widget.billSettings.importantNotes) {
+        if (!note.enabled) continue;
+
+        final title = note.title.trim();
+        final text = note.text.trim();
+
+        if (title.isNotEmpty && text.isNotEmpty) {
+          importantNotes.add('$title: $text');
+        } else if (text.isNotEmpty) {
+          importantNotes.add(text);
+        }
+      }
+
+      if (widget.billSettings.otherNoteEnabled &&
+          widget.billSettings.otherNoteText.trim().isNotEmpty) {
+        final title = widget.billSettings.otherNoteTitle.trim();
+
+        if (title.isEmpty) {
+          importantNotes.add(
+            widget.billSettings.otherNoteText.trim(),
+          );
+        } else {
+          importantNotes.add(
+            '$title: ${widget.billSettings.otherNoteText.trim()}',
+          );
+        }
+      }
+
+      // --------------------------------------------------------------
+      // FINAL REPORT DATA
+      // --------------------------------------------------------------
+
+      final firstGoat = widget.goats.first.goat;
+
+      final report = FinalCheckoutReportData(
+        reportId: widget.billResult.billNumber,
+        customerName: customer.name,
+        customerMobile: customer.mobileNumber,
+        customerAddress: customer.address,
+        packageName: customer.package,
+        checkInDate: earliestCheckIn ?? checkoutDate,
+        checkOutDate: checkoutDate,
+        deliveryStatus: widget.goats.length == 1
+            ? widget.goats.first.deliveryStatus
+            : 'Multiple goats',
+        finalHealthStatus: widget.goats.length == 1
+            ? widget.goats.first.healthStatus
+            : 'See individual goat health details',
+        goats: goatReports,
+        months: allMonthlyReports,
+        checkInTransport: widget.goats.fold<double>(
+          0,
+              (sum, draft) =>
+          sum + draft.goat.checkInTransportCharge,
+        ),
+        checkOutTransport: widget.checkOutTransport,
+        previousBalance: widget.billResult.previousPending,
+        totalBill: widget.billResult.totalDue,
+        paidAmount: widget.billResult.paid,
+        pendingAmount: widget.billResult.pendingAfter,
+        advanceBefore: widget.billResult.advanceBefore,
+        advanceApplied: widget.billResult.advanceApplied,
+        advanceAfter: widget.billResult.advanceAfter,
+        paymentMethod: widget.billResult.paymentMethod,
+        beforeImage: firstGoat.beforeImage,
+        afterImage: widget.goats.length == 1
+            ? widget.goats.first.afterImage
+            : null,
+        signatureBytes: null,
+        importantNotes: importantNotes,
+        billSettings: widget.billSettings,
       );
 
       if (!mounted) return;
+
       setState(() {
         _customer = customer;
-        _entries = entries;
-        _settlement = settlement;
+        _report = report;
         _loading = false;
       });
     } catch (e) {
       if (!mounted) return;
+
       setState(() {
         _loading = false;
-        _error = 'Could not build the final checkout report: $e';
+        _error =
+        'Could not prepare the final checkout report.\n\n$e';
       });
     }
   }
 
-  Future<void> _preview() => _run(() => FinalCheckoutReportPdfService.instance.preview(
-    customer: _customer!,
-    goatEntries: _entries,
-    settlement: _settlement!,
-    billSettings: widget.billSettings,
-  ));
+  // ========================================================================
+  // GENERATE PDF
+  // ========================================================================
 
-  Future<void> _share() => _run(() => FinalCheckoutReportPdfService.instance.share(
-    customer: _customer!,
-    goatEntries: _entries,
-    settlement: _settlement!,
-    billSettings: widget.billSettings,
-  ));
+  Future<void> _generatePdf() async {
+    if (_busy || _report == null) return;
 
-  Future<void> _save() => _run(() async {
-    final path = await FinalCheckoutReportPdfService.instance.save(
-      customer: _customer!,
-      goatEntries: _entries,
-      settlement: _settlement!,
-      billSettings: widget.billSettings,
-    );
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('Report saved: $path'), backgroundColor: AppColors.darkGreen),
-    );
-  });
+    setState(() {
+      _busy = true;
+      _stage = _ReportStage.generating;
+      _error = null;
+    });
 
-  Future<void> _run(Future<void> Function() action) async {
-    if (_busy || _customer == null || _settlement == null) return;
-    setState(() => _busy = true);
     try {
-      await action();
-    } catch (_) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Could not build the report. Please try again.'), backgroundColor: AppColors.error),
+      // Build the complete PDF now.
+      //
+      // We intentionally do not check out the goats here.
+      // Checkout happens only after Download or Share and Done.
+      await PdfBillService.instance.buildFinalCheckoutReport(
+        report: _report!,
       );
-    } finally {
-      if (mounted) setState(() => _busy = false);
+
+      if (!mounted) return;
+
+      setState(() {
+        _busy = false;
+        _stage = _ReportStage.generated;
+      });
+    } catch (e) {
+      if (!mounted) return;
+
+      setState(() {
+        _busy = false;
+        _stage = _ReportStage.review;
+        _error = 'Could not generate the PDF.\n\n$e';
+      });
     }
   }
 
-  String _currency(double value) => NumberFormat.currency(locale: 'en_IN', symbol: '₹', decimalDigits: 0).format(value);
+  // ========================================================================
+  // DOWNLOAD
+  // ========================================================================
+
+  Future<void> _downloadPdf() async {
+    if (_busy || _report == null) return;
+
+    setState(() {
+      _busy = true;
+    });
+
+    try {
+      final path =
+      await PdfBillService.instance.saveFinalCheckoutReportToDevice(
+        report: _report!,
+      );
+
+      if (!mounted) return;
+
+      setState(() {
+        _busy = false;
+        _doneUnlocked = true;
+      });
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'Final report saved successfully.\n$path',
+          ),
+          backgroundColor: AppColors.primaryGreen,
+          duration: const Duration(seconds: 4),
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+
+      setState(() {
+        _busy = false;
+      });
+
+      _showError(
+        'Could not download the report.\n\n$e',
+      );
+    }
+  }
+
+  // ========================================================================
+  // SHARE
+  // ========================================================================
+
+  Future<void> _sharePdf() async {
+    if (_busy || _report == null) return;
+
+    setState(() {
+      _busy = true;
+    });
+
+    try {
+      await PdfBillService.instance.shareFinalCheckoutReport(
+        report: _report!,
+      );
+
+      if (!mounted) return;
+
+      setState(() {
+        _busy = false;
+        _doneUnlocked = true;
+      });
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Final report is ready to share.',
+          ),
+          backgroundColor: AppColors.primaryGreen,
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+
+      setState(() {
+        _busy = false;
+      });
+
+      _showError(
+        'Could not share the report.\n\n$e',
+      );
+    }
+  }
+
+  // ========================================================================
+  // DONE / ACTUAL CHECKOUT
+  // ========================================================================
+
+  Future<void> _finishCheckout() async {
+    if (_busy || !_doneUnlocked) return;
+
+    setState(() {
+      _busy = true;
+    });
+
+    try {
+      if (widget.onDone != null) {
+        await widget.onDone!();
+      }
+
+      if (!mounted) return;
+
+      setState(() {
+        _busy = false;
+      });
+
+      Navigator.of(context).pop(true);
+    } catch (e) {
+      if (!mounted) return;
+
+      setState(() {
+        _busy = false;
+      });
+
+      _showError(
+        'The report was generated, but the goats could not be marked as checked out.\n\n$e',
+      );
+    }
+  }
+
+  // ========================================================================
+  // UI
+  // ========================================================================
 
   @override
   Widget build(BuildContext context) {
@@ -204,212 +512,1138 @@ class _FinalCheckoutReportScreenState extends State<FinalCheckoutReportScreen> {
         backgroundColor: AppColors.paleGreen,
         elevation: 0,
         foregroundColor: AppColors.textDark,
-        title: Text('Final Checkout Report', style: AppTheme.heading(size: 17)),
+        title: Text(
+          _stage == _ReportStage.generated
+              ? 'Report Generated'
+              : 'Final Checkout Report',
+          style: AppTheme.heading(size: 17),
+        ),
       ),
       body: _loading
-          ? const Center(child: CircularProgressIndicator(color: AppColors.primaryGreen))
-          : _error != null
-          ? _buildError()
-          : _buildContent(),
+          ? const Center(
+        child: CircularProgressIndicator(
+          color: AppColors.primaryGreen,
+        ),
+      )
+          : _error != null && _report == null
+          ? _buildFatalError()
+          : _stage == _ReportStage.generating
+          ? _buildGenerating()
+          : _stage == _ReportStage.generated
+          ? _buildGenerated()
+          : _buildReview(),
     );
   }
 
-  Widget _buildError() {
+  // ========================================================================
+  // REVIEW SCREEN
+  // ========================================================================
+
+  Widget _buildReview() {
+    final report = _report!;
+
+    return Column(
+      children: [
+        Expanded(
+          child: ListView(
+            padding: const EdgeInsets.fromLTRB(
+              16,
+              16,
+              16,
+              20,
+            ),
+            children: [
+              _buildReviewHeader(),
+              const SizedBox(height: 16),
+
+              if (_error != null) ...[
+                _errorCard(),
+                const SizedBox(height: 12),
+              ],
+
+              _sectionTitle(
+                Icons.person_outline,
+                'Customer Details',
+              ),
+              _customerCard(report),
+
+              const SizedBox(height: 14),
+
+              _sectionTitle(
+                Icons.calendar_month_outlined,
+                'Checkout Period',
+              ),
+              _periodCard(report),
+
+              const SizedBox(height: 14),
+
+              _sectionTitle(
+                Icons.pets_outlined,
+                'Goats',
+              ),
+
+              for (int i = 0; i < widget.goats.length; i++) ...[
+                _goatReviewCard(
+                  widget.goats[i],
+                  report.goats[i],
+                ),
+                const SizedBox(height: 10),
+              ],
+
+              const SizedBox(height: 4),
+
+              _sectionTitle(
+                Icons.monitor_weight_outlined,
+                'Weight Progress',
+              ),
+              _weightSummary(report),
+
+              const SizedBox(height: 14),
+
+              _sectionTitle(
+                Icons.medical_services_outlined,
+                'Health History',
+              ),
+              _healthSummary(report),
+
+              const SizedBox(height: 14),
+
+              _sectionTitle(
+                Icons.history_outlined,
+                'Monthly History',
+              ),
+              _monthlyHistory(report),
+
+              const SizedBox(height: 14),
+
+              _sectionTitle(
+                Icons.account_balance_wallet_outlined,
+                'Payment Summary',
+              ),
+              _paymentSummary(report),
+            ],
+          ),
+        ),
+        _buildReviewBottomBar(),
+      ],
+    );
+  }
+
+  Widget _buildReviewHeader() {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+          color: AppColors.primaryGreen.withOpacity(.18),
+        ),
+      ),
+      child: Column(
+        children: [
+          Container(
+            width: 58,
+            height: 58,
+            decoration: const BoxDecoration(
+              color: AppColors.lightGreen,
+              shape: BoxShape.circle,
+            ),
+            child: const Icon(
+              Icons.fact_check_outlined,
+              color: AppColors.primaryGreen,
+              size: 30,
+            ),
+          ),
+          const SizedBox(height: 10),
+          Text(
+            'Review Final Checkout',
+            style: AppTheme.heading(size: 17),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            'Review all checkout, health, monthly and payment information before generating the final report.',
+            textAlign: TextAlign.center,
+            style: AppTheme.body(
+              size: 12,
+              color: AppColors.textGrey,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _customerCard(FinalCheckoutReportData report) {
+    return _card(
+      children: [
+        _infoRow('Name', report.customerName),
+        _infoRow('Mobile', report.customerMobile),
+        _infoRow('Address', report.customerAddress),
+        _infoRow('Package', report.packageName),
+      ],
+    );
+  }
+
+  Widget _periodCard(FinalCheckoutReportData report) {
+    final duration =
+        report.checkOutDate.difference(report.checkInDate).inDays;
+
+    return _card(
+      children: [
+        _infoRow(
+          'Check-in',
+          _date(report.checkInDate),
+        ),
+        _infoRow(
+          'Check-out',
+          _date(report.checkOutDate),
+        ),
+        _infoRow(
+          'Duration',
+          '$duration day${duration == 1 ? '' : 's'}',
+        ),
+        _infoRow(
+          'Total goats',
+          '${report.goats.length}',
+        ),
+      ],
+    );
+  }
+
+  Widget _goatReviewCard(
+      GoatCheckoutDraft draft,
+      FinalGoatReportData report,
+      ) {
+    final goat = draft.goat;
+
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: AppTheme.card(radius: 14),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              CircleAvatar(
+                radius: 22,
+                backgroundColor: AppColors.lightGreen,
+                child: const Icon(
+                  Icons.pets,
+                  color: AppColors.darkGreen,
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment:
+                  CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      goat.goatCode,
+                      style: AppTheme.body(
+                        size: 14,
+                        color: AppColors.textDark,
+                        weight: FontWeight.w700,
+                      ),
+                    ),
+                    Text(
+                      '${goat.breed} • ${goat.gender}',
+                      style: AppTheme.body(
+                        size: 11,
+                        color: AppColors.textGrey,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+
+          const SizedBox(height: 12),
+
+          Row(
+            children: [
+              Expanded(
+                child: _miniStat(
+                  'Arrival',
+                  '${report.checkInWeight.toStringAsFixed(1)} kg',
+                ),
+              ),
+              Expanded(
+                child: _miniStat(
+                  'Current',
+                  '${report.finalWeight.toStringAsFixed(1)} kg',
+                ),
+              ),
+              Expanded(
+                child: _miniStat(
+                  'Gain',
+                  '${report.weightGain >= 0 ? '+' : ''}'
+                      '${report.weightGain.toStringAsFixed(1)} kg',
+                ),
+              ),
+            ],
+          ),
+
+          const Divider(height: 20),
+
+          _infoRow('Color', goat.color),
+          _infoRow('Health', draft.healthStatus),
+          _infoRow('Delivery', draft.deliveryStatus),
+
+          if (draft.notes.trim().isNotEmpty)
+            _infoRow('Notes', draft.notes),
+
+          const SizedBox(height: 8),
+
+          Row(
+            children: [
+              Expanded(
+                child: _photoStatus(
+                  Icons.photo_camera_outlined,
+                  'Arrival photo',
+                  goat.beforeImage != null,
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: _photoStatus(
+                  Icons.photo_camera_back_outlined,
+                  'Current photo',
+                  draft.afterImage != null,
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _weightSummary(FinalCheckoutReportData report) {
+    return _card(
+      children: [
+        _infoRow(
+          'Total arrival weight',
+          '${report.goats.fold<double>(
+            0,
+                (s, g) => s + g.checkInWeight,
+          ).toStringAsFixed(1)} kg',
+        ),
+        _infoRow(
+          'Total current weight',
+          '${report.totalFinalWeight.toStringAsFixed(1)} kg',
+        ),
+        _infoRow(
+          'Total weight gain',
+          '${report.totalWeightGain >= 0 ? '+' : ''}'
+              '${report.totalWeightGain.toStringAsFixed(1)} kg',
+          valueColor: AppColors.darkGreen,
+        ),
+        const SizedBox(height: 8),
+        const Text(
+          'Each goat’s complete weight history is included in the generated PDF.',
+          style: TextStyle(
+            fontSize: 11,
+            color: AppColors.textGrey,
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _healthSummary(
+      FinalCheckoutReportData report,
+      ) {
+    return Column(
+      children: [
+        for (final goat in report.goats)
+          Container(
+            width: double.infinity,
+            margin: const EdgeInsets.only(bottom: 8),
+            padding: const EdgeInsets.all(12),
+            decoration: AppTheme.card(radius: 12),
+            child: Column(
+              crossAxisAlignment:
+              CrossAxisAlignment.start,
+              children: [
+                Text(
+                  goat.goatCode,
+                  style: AppTheme.body(
+                    size: 13,
+                    color: AppColors.textDark,
+                    weight: FontWeight.w700,
+                  ),
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  '${goat.healthHistory.length} health record'
+                      '${goat.healthHistory.length == 1 ? '' : 's'}',
+                  style: AppTheme.body(
+                    size: 11,
+                    color: AppColors.textGrey,
+                  ),
+                ),
+                if (goat.healthHistory.isNotEmpty) ...[
+                  const SizedBox(height: 8),
+                  for (final entry
+                  in goat.healthHistory.take(5))
+                    Padding(
+                      padding:
+                      const EdgeInsets.only(bottom: 5),
+                      child: Row(
+                        crossAxisAlignment:
+                        CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            _date(entry.date),
+                            style: const TextStyle(
+                              fontSize: 10,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              '${entry.type}: ${entry.detail}',
+                              style: const TextStyle(
+                                fontSize: 10,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                ],
+              ],
+            ),
+          ),
+      ],
+    );
+  }
+
+  Widget _monthlyHistory(
+      FinalCheckoutReportData report,
+      ) {
+    if (report.months.isEmpty) {
+      return _card(
+        children: const [
+          Text(
+            'No previous monthly records were found for the selected goats.',
+            style: TextStyle(
+              fontSize: 12,
+              color: AppColors.textGrey,
+            ),
+          ),
+        ],
+      );
+    }
+
+    return Column(
+      children: [
+        for (final month in report.months)
+          Container(
+            width: double.infinity,
+            margin: const EdgeInsets.only(bottom: 8),
+            padding: const EdgeInsets.all(12),
+            decoration: AppTheme.card(radius: 12),
+            child: Row(
+              children: [
+                Container(
+                  width: 42,
+                  height: 42,
+                  decoration: const BoxDecoration(
+                    color: AppColors.lightGreen,
+                    shape: BoxShape.circle,
+                  ),
+                  child: const Icon(
+                    Icons.calendar_month_outlined,
+                    size: 20,
+                    color: AppColors.darkGreen,
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment:
+                    CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        month.monthLabel,
+                        style: AppTheme.body(
+                          size: 13,
+                          color: AppColors.textDark,
+                          weight: FontWeight.w700,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        '${month.goatCode} • '
+                            '${month.weightGain >= 0 ? '+' : ''}'
+                            '${month.weightGain.toStringAsFixed(1)} kg',
+                        style: AppTheme.body(
+                          size: 11,
+                          color: AppColors.textGrey,
+                        ),
+                      ),
+                      const SizedBox(height: 3),
+                      Text(
+                        'Health ${month.healthStatus} • '
+                            'Vaccination ${month.vaccination}',
+                        style: AppTheme.body(
+                          size: 10,
+                          color: AppColors.textGrey,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+      ],
+    );
+  }
+
+  Widget _paymentSummary(
+      FinalCheckoutReportData report,
+      ) {
+    return _card(
+      children: [
+        _infoRow(
+          'Previous pending',
+          _currency(report.previousBalance),
+        ),
+        _infoRow(
+          'Previous advance',
+          _currency(report.advanceBefore),
+        ),
+        _infoRow(
+          'Check-in transport',
+          _currency(report.checkInTransport),
+        ),
+        _infoRow(
+          'Check-out transport',
+          _currency(report.checkOutTransport),
+        ),
+        const Divider(height: 18),
+        _infoRow(
+          'Total due',
+          _currency(report.totalBill),
+          bold: true,
+        ),
+        _infoRow(
+          'Paid',
+          _currency(report.paidAmount),
+        ),
+        _infoRow(
+          'Pending after checkout',
+          _currency(report.pendingAmount),
+        ),
+        _infoRow(
+          'Advance after checkout',
+          _currency(report.advanceAfter),
+        ),
+        _infoRow(
+          'Payment method',
+          report.paymentMethod,
+        ),
+      ],
+    );
+  }
+
+  Widget _buildReviewBottomBar() {
+    return Container(
+      padding: const EdgeInsets.fromLTRB(
+        16,
+        10,
+        16,
+        16,
+      ),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(.06),
+            blurRadius: 10,
+            offset: const Offset(0, -2),
+          ),
+        ],
+      ),
+      child: SafeArea(
+        top: false,
+        child: Row(
+          children: [
+            Expanded(
+              child: OutlinedButton(
+                onPressed: _busy
+                    ? null
+                    : () => Navigator.of(context).pop(
+                  'edit',
+                ),
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: AppColors.darkGreen,
+                  padding: const EdgeInsets.symmetric(
+                    vertical: 15,
+                  ),
+                  side: const BorderSide(
+                    color: AppColors.primaryGreen,
+                  ),
+                  shape: RoundedRectangleBorder(
+                    borderRadius:
+                    BorderRadius.circular(12),
+                  ),
+                ),
+                child: const Text('Edit'),
+              ),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              flex: 2,
+              child: ElevatedButton.icon(
+                onPressed:
+                _busy ? null : _generatePdf,
+                icon: const Icon(
+                  Icons.picture_as_pdf_outlined,
+                  size: 19,
+                ),
+                label: const Text('Generate PDF'),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor:
+                  AppColors.primaryGreen,
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(
+                    vertical: 15,
+                  ),
+                  elevation: 0,
+                  shape: RoundedRectangleBorder(
+                    borderRadius:
+                    BorderRadius.circular(12),
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // ========================================================================
+  // GENERATING
+  // ========================================================================
+
+  Widget _buildGenerating() {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Container(
+          width: double.infinity,
+          padding: const EdgeInsets.all(24),
+          decoration: AppTheme.card(radius: 20),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const SizedBox(
+                width: 58,
+                height: 58,
+                child: CircularProgressIndicator(
+                  strokeWidth: 4,
+                  color: AppColors.primaryGreen,
+                ),
+              ),
+              const SizedBox(height: 20),
+              Text(
+                'Generating Final Report...',
+                style: AppTheme.heading(size: 18),
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 8),
+              Text(
+                'Preparing your complete checkout report.',
+                style: AppTheme.body(
+                  size: 12,
+                  color: AppColors.textGrey,
+                ),
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 22),
+              _progressItem(
+                Icons.person_outline,
+                'Customer & checkout details',
+              ),
+              _progressItem(
+                Icons.pets_outlined,
+                'Goat records',
+              ),
+              _progressItem(
+                Icons.monitor_weight_outlined,
+                'Weight history',
+              ),
+              _progressItem(
+                Icons.medical_services_outlined,
+                'Health history',
+              ),
+              _progressItem(
+                Icons.calendar_month_outlined,
+                'Monthly history',
+              ),
+              _progressItem(
+                Icons.account_balance_wallet_outlined,
+                'Payment information',
+              ),
+              _progressItem(
+                Icons.picture_as_pdf_outlined,
+                'Generating PDF',
+                active: true,
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _progressItem(
+      IconData icon,
+      String title, {
+        bool active = false,
+      }) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 5),
+      child: Row(
+        children: [
+          Icon(
+            icon,
+            size: 17,
+            color: active
+                ? AppColors.primaryGreen
+                : AppColors.textGrey,
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              title,
+              style: TextStyle(
+                fontSize: 11,
+                color: active
+                    ? AppColors.textDark
+                    : AppColors.textGrey,
+                fontWeight: active
+                    ? FontWeight.w600
+                    : FontWeight.w400,
+              ),
+            ),
+          ),
+          if (active)
+            const SizedBox(
+              width: 13,
+              height: 13,
+              child: CircularProgressIndicator(
+                strokeWidth: 2,
+                color: AppColors.primaryGreen,
+              ),
+            )
+          else
+            const Icon(
+              Icons.check,
+              size: 15,
+              color: AppColors.primaryGreen,
+            ),
+        ],
+      ),
+    );
+  }
+
+  // ========================================================================
+  // GENERATED SCREEN
+  // ========================================================================
+
+  Widget _buildGenerated() {
+    return Center(
+      child: SingleChildScrollView(
+        padding: const EdgeInsets.all(20),
+        child: Container(
+          width: double.infinity,
+          padding: const EdgeInsets.all(24),
+          decoration: AppTheme.card(radius: 22),
+          child: Column(
+            children: [
+              Container(
+                width: 84,
+                height: 84,
+                decoration: const BoxDecoration(
+                  color: AppColors.lightGreen,
+                  shape: BoxShape.circle,
+                ),
+                child: const Icon(
+                  Icons.check_rounded,
+                  color: AppColors.primaryGreen,
+                  size: 52,
+                ),
+              ),
+              const SizedBox(height: 18),
+              Text(
+                'PDF Generated',
+                style: AppTheme.heading(size: 20),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                'Your final checkout report has been generated successfully.',
+                textAlign: TextAlign.center,
+                style: AppTheme.body(
+                  size: 12,
+                  color: AppColors.textGrey,
+                ),
+              ),
+              const SizedBox(height: 24),
+
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton.icon(
+                  onPressed:
+                  _busy ? null : _downloadPdf,
+                  icon: const Icon(
+                    Icons.download_rounded,
+                  ),
+                  label: const Text('Download'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor:
+                    AppColors.primaryGreen,
+                    foregroundColor: Colors.white,
+                    minimumSize:
+                    const Size.fromHeight(52),
+                    elevation: 0,
+                    shape: RoundedRectangleBorder(
+                      borderRadius:
+                      BorderRadius.circular(13),
+                    ),
+                  ),
+                ),
+              ),
+
+              const SizedBox(height: 10),
+
+              SizedBox(
+                width: double.infinity,
+                child: OutlinedButton.icon(
+                  onPressed:
+                  _busy ? null : _sharePdf,
+                  icon: const Icon(
+                    Icons.share_outlined,
+                  ),
+                  label: const Text('Share'),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor:
+                    AppColors.darkGreen,
+                    minimumSize:
+                    const Size.fromHeight(52),
+                    side: const BorderSide(
+                      color: AppColors.primaryGreen,
+                    ),
+                    shape: RoundedRectangleBorder(
+                      borderRadius:
+                      BorderRadius.circular(13),
+                    ),
+                  ),
+                ),
+              ),
+
+              const SizedBox(height: 18),
+
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton(
+                  onPressed:
+                  _doneUnlocked && !_busy
+                      ? _finishCheckout
+                      : null,
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor:
+                    AppColors.darkGreen,
+                    foregroundColor: Colors.white,
+                    disabledBackgroundColor:
+                    Colors.grey.shade300,
+                    disabledForegroundColor:
+                    Colors.grey.shade600,
+                    minimumSize:
+                    const Size.fromHeight(52),
+                    elevation: 0,
+                    shape: RoundedRectangleBorder(
+                      borderRadius:
+                      BorderRadius.circular(13),
+                    ),
+                  ),
+                  child: Text(
+                    _doneUnlocked
+                        ? 'Done'
+                        : 'Done — Download or Share First',
+                    textAlign: TextAlign.center,
+                  ),
+                ),
+              ),
+
+              const SizedBox(height: 12),
+
+              Text(
+                _doneUnlocked
+                    ? 'Report action completed. You can now finish checkout.'
+                    : 'Download or share the report to unlock Done.',
+                textAlign: TextAlign.center,
+                style: AppTheme.body(
+                  size: 10,
+                  color: AppColors.textGrey,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  // ========================================================================
+  // HELPERS
+  // ========================================================================
+
+  Widget _sectionTitle(
+      IconData icon,
+      String title,
+      ) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Row(
+        children: [
+          Icon(
+            icon,
+            size: 18,
+            color: AppColors.darkGreen,
+          ),
+          const SizedBox(width: 7),
+          Text(
+            title,
+            style: AppTheme.heading(size: 13),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _card({
+    required List<Widget> children,
+  }) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(14),
+      decoration: AppTheme.card(radius: 14),
+      child: Column(
+        crossAxisAlignment:
+        CrossAxisAlignment.start,
+        children: children,
+      ),
+    );
+  }
+
+  Widget _infoRow(
+      String label,
+      String value, {
+        bool bold = false,
+        Color? valueColor,
+      }) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(
+        vertical: 4,
+      ),
+      child: Row(
+        crossAxisAlignment:
+        CrossAxisAlignment.start,
+        children: [
+          Expanded(
+            child: Text(
+              label,
+              style: AppTheme.body(
+                size: 11,
+                color: AppColors.textGrey,
+              ),
+            ),
+          ),
+          const SizedBox(width: 12),
+          Flexible(
+            child: Text(
+              value.trim().isEmpty ? '-' : value,
+              textAlign: TextAlign.right,
+              style: AppTheme.body(
+                size: bold ? 13 : 11,
+                color:
+                valueColor ?? AppColors.textDark,
+                weight: bold
+                    ? FontWeight.w700
+                    : FontWeight.w600,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _miniStat(
+      String label,
+      String value,
+      ) {
+    return Column(
+      children: [
+        Text(
+          value,
+          style: AppTheme.body(
+            size: 13,
+            color: AppColors.darkGreen,
+            weight: FontWeight.w700,
+          ),
+        ),
+        const SizedBox(height: 2),
+        Text(
+          label,
+          style: AppTheme.body(
+            size: 9,
+            color: AppColors.textGrey,
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _photoStatus(
+      IconData icon,
+      String title,
+      bool available,
+      ) {
+    return Container(
+      padding: const EdgeInsets.symmetric(
+        horizontal: 8,
+        vertical: 7,
+      ),
+      decoration: BoxDecoration(
+        color: available
+            ? AppColors.lightGreen
+            : Colors.grey.shade100,
+        borderRadius: BorderRadius.circular(9),
+      ),
+      child: Row(
+        children: [
+          Icon(
+            available
+                ? Icons.check_circle_outline
+                : icon,
+            size: 15,
+            color: available
+                ? AppColors.darkGreen
+                : AppColors.textGrey,
+          ),
+          const SizedBox(width: 5),
+          Expanded(
+            child: Text(
+              available
+                  ? '$title available'
+                  : '$title missing',
+              style: TextStyle(
+                fontSize: 9,
+                color: available
+                    ? AppColors.darkGreen
+                    : AppColors.textGrey,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _errorCard() {
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: Colors.red.shade50,
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Row(
+        crossAxisAlignment:
+        CrossAxisAlignment.start,
+        children: [
+          const Icon(
+            Icons.error_outline,
+            color: Colors.red,
+            size: 18,
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              _error!,
+              style: const TextStyle(
+                fontSize: 11,
+                color: Colors.red,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildFatalError() {
     return Center(
       child: Padding(
         padding: const EdgeInsets.all(24),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Text(_error!, textAlign: TextAlign.center, style: AppTheme.body(size: 12, color: AppColors.error)),
+            const Icon(
+              Icons.error_outline,
+              color: Colors.red,
+              size: 44,
+            ),
             const SizedBox(height: 12),
-            OutlinedButton.icon(onPressed: _load, icon: const Icon(Icons.refresh, size: 16), label: const Text('Retry')),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildContent() {
-    final settlement = _settlement!;
-    final settled = settlement.isFullySettled;
-
-    return Column(
-      children: [
-        Expanded(
-          child: ListView(
-            padding: const EdgeInsets.fromLTRB(20, 20, 20, 12),
-            children: [
-              ElasticIn(
-                duration: const Duration(milliseconds: 600),
-                child: Container(
-                  width: 90,
-                  height: 90,
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    color: settled ? AppColors.primaryGreen : Colors.orange,
-                  ),
-                  child: Icon(settled ? Icons.check : Icons.hourglass_bottom, color: Colors.white, size: 46),
-                ),
+            Text(
+              _error ?? 'Something went wrong.',
+              textAlign: TextAlign.center,
+              style: const TextStyle(
+                fontSize: 12,
+                color: Colors.red,
               ),
-              const SizedBox(height: 16),
-              Center(
-                child: Text(
-                  settled ? 'Checkout Complete — Fully Settled' : 'Checkout Complete — Payment Pending',
-                  textAlign: TextAlign.center,
-                  style: AppTheme.heading(size: 16),
-                ),
-              ),
-              const SizedBox(height: 4),
-              Center(
-                child: Text(
-                  '${settlement.goatCount} goat${settlement.goatCount == 1 ? '' : 's'} checked out for ${settlement.customerName}',
-                  style: AppTheme.body(size: 12, color: AppColors.textGrey),
-                ),
-              ),
-              const SizedBox(height: 20),
-              Container(
-                width: double.infinity,
-                decoration: AppTheme.card(radius: 14),
-                padding: const EdgeInsets.all(14),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    _row('Total Due', _currency(settlement.finalAmountDue)),
-                    _row('Total Paid', _currency(settlement.finalAmountPaid)),
-                    const Divider(height: 20),
-                    _row('Remaining', _currency(settlement.finalOutstanding), bold: true),
-                    if (settlement.finalAdvance > 0) ...[
-                      const SizedBox(height: 6),
-                      _row('Advance Carried Forward', _currency(settlement.finalAdvance)),
-                    ],
-                  ],
-                ),
-              ),
-              const SizedBox(height: 16),
-              Text('Goats in this report', style: AppTheme.heading(size: 13)),
-              const SizedBox(height: 8),
-              for (final entry in _entries) _goatTile(entry),
-            ],
-          ),
-        ),
-        _buildBottomBar(),
-      ],
-    );
-  }
-
-  Widget _row(String label, String value, {bool bold = false}) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 3),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children: [
-          Text(label, style: AppTheme.body(size: 13)),
-          Text(
-            value,
-            style: AppTheme.body(size: bold ? 15 : 13, color: AppColors.textDark, weight: bold ? FontWeight.w700 : FontWeight.w600),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _goatTile(GoatFinalReportEntry entry) {
-    final goat = entry.goat;
-    final label = goat.name.trim().isNotEmpty ? goat.name : goat.goatCode;
-    final change = entry.weightChange;
-
-    return Container(
-      margin: const EdgeInsets.only(bottom: 8),
-      decoration: AppTheme.card(radius: 12),
-      padding: const EdgeInsets.all(12),
-      child: Row(
-        children: [
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(label, style: AppTheme.body(size: 13, weight: FontWeight.w600)),
-                const SizedBox(height: 2),
-                Text(
-                  '${entry.totalMonths} month${entry.totalMonths == 1 ? '' : 's'} • '
-                      '${change >= 0 ? '+' : ''}${change.toStringAsFixed(1)} kg',
-                  style: AppTheme.body(size: 11, color: AppColors.textMuted),
-                ),
-              ],
             ),
-          ),
-          Text(entry.healthStatus.isEmpty ? '-' : entry.healthStatus, style: AppTheme.body(size: 11, color: AppColors.textGrey)),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildBottomBar() {
-    return Container(
-      padding: const EdgeInsets.fromLTRB(16, 10, 16, 16),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 8, offset: const Offset(0, -2))],
-      ),
-      child: SafeArea(
-        top: false,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Row(
-              children: [
-                Expanded(
-                  child: OutlinedButton.icon(
-                    onPressed: _busy ? null : _preview,
-                    icon: const Icon(Icons.visibility_outlined, size: 18),
-                    label: const Text('Preview'),
-                    style: OutlinedButton.styleFrom(
-                      padding: const EdgeInsets.symmetric(vertical: 14),
-                      side: const BorderSide(color: AppColors.primaryGreen),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: OutlinedButton.icon(
-                    onPressed: _busy ? null : _save,
-                    icon: const Icon(Icons.download_outlined, size: 18),
-                    label: const Text('Save'),
-                    style: OutlinedButton.styleFrom(
-                      padding: const EdgeInsets.symmetric(vertical: 14),
-                      side: const BorderSide(color: AppColors.primaryGreen),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: ElevatedButton.icon(
-                    onPressed: _busy ? null : _share,
-                    icon: _busy
-                        ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
-                        : const Icon(Icons.ios_share, size: 18),
-                    label: const Text('Share'),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: AppColors.primaryGreen,
-                      foregroundColor: Colors.white,
-                      padding: const EdgeInsets.symmetric(vertical: 14),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                    ),
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 8),
-            TextButton(
-              onPressed: () => Navigator.of(context).pop(true),
-              child: Text('Done', style: AppTheme.body(size: 13, color: AppColors.textGrey)),
+            const SizedBox(height: 14),
+            OutlinedButton.icon(
+              onPressed: _loadReportData,
+              icon: const Icon(Icons.refresh),
+              label: const Text('Retry'),
             ),
           ],
         ),
       ),
     );
+  }
+
+  void _showError(String message) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        backgroundColor: AppColors.error,
+        duration: const Duration(seconds: 4),
+      ),
+    );
+  }
+
+  String _currency(double value) {
+    return NumberFormat.currency(
+      locale: 'en_IN',
+      symbol: '₹',
+      decimalDigits: 0,
+    ).format(value);
+  }
+
+  String _date(DateTime value) {
+    return DateFormat(
+      'dd MMM yyyy',
+    ).format(value);
   }
 }

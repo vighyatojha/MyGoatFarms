@@ -1,9 +1,13 @@
+import 'dart:typed_data';
+
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:intl/intl.dart';
+import 'package:mygoatfarms/services/pdf_bill_service.dart';
 
 import '../models/final_checkout_report_model.dart';
 import '../models/goat_history_models.dart';
 import '../models/monthly_report_model.dart';
+import '../models/palai_models.dart';
 
 /// Service for the structured Monthly Report.
 ///
@@ -418,6 +422,124 @@ class MonthlyReportService {
 
     entries.sort((a, b) => a.date.compareTo(b.date));
     return entries;
+  }
+
+  // ===========================================================================
+  // GOAT FINAL MONTHLY REPORTS (Final Checkout Report — spec items 40/41)
+  //
+  // One full row per calendar month across the goat's whole Palai
+  // period, WITH the actual weight/photo/health details each month —
+  // unlike [getGoatMonthlyHistory] above, which only returns lightweight
+  // counts for the older per-goat summary view. Reuses the exact same
+  // 'monthlyPhotos' subcollection CustomerGoatMonthlyPhotosScreen writes
+  // to (so weight + photo per month), plus [getGoatHealthHistory] for
+  // the health columns. READ-ONLY — nothing is written, and no separate
+  // per-month snapshot collection is introduced.
+  //
+  // Weight/photo carry forward month-to-month when a given month has no
+  // new photo logged, so the chart/table never shows a false drop back
+  // to the check-in weight.
+  // ===========================================================================
+
+  Future<List<MonthlyGoatReportData>> getGoatFinalMonthlyReports({
+    required String farmId,
+    required String customerId,
+    required PalaiGoat goat,
+    DateTime? periodEnd,
+  }) async {
+    final arrival = goat.farmArrivalDate ?? goat.checkInDate;
+    final start = DateTime(arrival.year, arrival.month, 1);
+    final end = periodEnd ?? goat.checkOutDate ?? DateTime.now();
+
+    final photosSnap = await _monthlyPhotos(farmId, customerId, goat.id)
+        .orderBy('month')
+        .get();
+    final photos = photosSnap.docs.map(MonthlyPhoto.fromDoc).toList();
+
+    final health = await getGoatHealthHistory(
+      farmId: farmId,
+      customerId: customerId,
+      goatId: goat.id,
+      periodStart: start,
+      periodEnd: end,
+    );
+
+    String pickDetail(List<GoatHealthHistoryEntry> monthHealth, String type) {
+      final matches = monthHealth.where((e) => e.type == type);
+      if (matches.isEmpty) return '';
+      return matches.map((e) => e.detail).join(', ');
+    }
+
+    final rows = <MonthlyGoatReportData>[];
+
+    DateTime cursor = start;
+    final lastMonth = DateTime(end.year, end.month, 1);
+
+    double previousWeight = goat.weightAtCheckIn;
+    Uint8List? previousImage = goat.beforeImage;
+
+    while (!cursor.isAfter(lastMonth)) {
+      final monthStart = cursor;
+      final nextMonthStart = DateTime(cursor.year, cursor.month + 1, 1);
+      final periodClose = nextMonthStart.isAfter(end) ? end : nextMonthStart;
+
+      MonthlyPhoto? photoForMonth;
+      for (final p in photos) {
+        if (p.month.year == monthStart.year && p.month.month == monthStart.month) {
+          photoForMonth = p;
+          break;
+        }
+      }
+
+      // Carry forward when this month has no new photo/weight logged —
+      // never fall back to check-in weight after progress was made.
+      final currentWeight = photoForMonth?.weightKg ?? previousWeight;
+      final currentImage =
+      (photoForMonth != null && photoForMonth.image.isNotEmpty)
+          ? photoForMonth.image
+          : previousImage;
+
+      final monthHealth = health
+          .where((e) =>
+      !e.date.isBefore(monthStart) && e.date.isBefore(nextMonthStart))
+          .toList();
+
+      rows.add(
+        MonthlyGoatReportData(
+          monthLabel: DateFormat('MMM yyyy').format(monthStart),
+          periodStart: monthStart,
+          periodEnd: periodClose,
+          reportDate: periodClose,
+          goatCode: goat.goatCode,
+          breed: goat.breed,
+          gender: goat.gender,
+          color: goat.color,
+          checkInDate: goat.checkInDate,
+          previousWeight: previousWeight,
+          currentWeight: currentWeight,
+          monthlyCharge: goat.pricing,
+          packageName: goat.monthlyPackage,
+          healthStatus: goat.healthStatus,
+          vaccination: pickDetail(monthHealth, 'Vaccination'),
+          deworming: pickDetail(monthHealth, 'Deworming'),
+          hoofCutting: pickDetail(monthHealth, 'Hoof Cutting'),
+          medicineGiven: pickDetail(monthHealth, 'Medicine'),
+          healthNotes: monthHealth
+              .map((e) => e.notes.trim())
+              .where((n) => n.isNotEmpty)
+              .join('; '),
+          previousImage: previousImage,
+          currentImage: currentImage,
+          notes: photoForMonth?.notes ?? '',
+        ),
+      );
+
+      previousWeight = currentWeight;
+      previousImage = currentImage;
+      cursor = nextMonthStart;
+    }
+
+    return rows;
   }
 
   // ===========================================================================
