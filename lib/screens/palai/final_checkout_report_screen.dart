@@ -483,6 +483,7 @@ class _FinalCheckoutReportScreenState
           beforeImage: goat.beforeImage,
           afterImage: draft.afterImage,
           monthlyHistory: monthlyHistory,
+          weightHistory: goatData.weightHistory,
           representativePhotoByMonth: representativePhotoByMonth,
           healthStatus: goatData.healthStatus,
           deliveryStatus: goatData.deliveryStatus,

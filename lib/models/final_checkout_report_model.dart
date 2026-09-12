@@ -56,6 +56,12 @@ class GoatFinalReportEntry {
 
   final List<GoatMonthlyHistoryRow> monthlyHistory;
 
+  /// Every actual weight record for this goat across its whole Palai
+  /// period, oldest first — the raw data behind the weight chart AND
+  /// the weight-related counts in [monthlyHistory]. Both must read
+  /// from this single list, never two independently-derived datasets.
+  final List<GoatWeightHistoryPoint> weightHistory;
+
   /// One representative photo per month, keyed by the same
   /// [GoatMonthlyHistoryRow.monthLabel] used in the history table, so
   /// the PDF can show a compact "Month → representative photo" grid
@@ -97,6 +103,7 @@ class GoatFinalReportEntry {
     required this.representativePhotoByMonth,
     required this.healthStatus,
     required this.deliveryStatus,
+    this.weightHistory = const [],
     this.beforeImage,
     this.afterImage,
   });

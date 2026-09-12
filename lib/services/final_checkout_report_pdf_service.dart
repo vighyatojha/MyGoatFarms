@@ -13,11 +13,17 @@ import '../models/palai_models.dart';
 
 /// Builds the combined "Final Checkout Report" PDF:
 ///
-///   Page 1..N  -> one page per goat (goat info, full Monthly History
-///                 compressed into one table, a representative photo
-///                 per month, and that goat's lifetime summary).
-///   Last page  -> Final Settlement: charges breakdown, payment
-///                 history, final balance and settlement status.
+///   Page 1..N  -> one page per goat (goat info, arrival/current
+///                 photos, a weight-progress chart built from real
+///                 per-date records, full Monthly History compressed
+///                 into one table, a representative photo per month,
+///                 and that goat's lifetime summary).
+///   Next page  -> Final Settlement: charges breakdown and final
+///                 balance/status. No payment-history table — kept
+///                 deliberately out of this report; charges/balance
+///                 only, so the page doesn't read like a ledger.
+///   Last page  -> Terms & Conditions, Important Notes, and a closing
+///                 thank-you banner, all sourced from BillSettings.
 ///
 /// The header/footer/logo/section-banner structure below is
 /// deliberately the SAME structure already used by
@@ -42,6 +48,15 @@ class FinalCheckoutReportPdfService {
     required List<GoatFinalReportEntry> goatEntries,
     required FinalSettlementData settlement,
     required BillSettings billSettings,
+    /// Optional override for the farm logo image bytes.
+    ///
+    /// When the caller has the farm's actual "profile photo" bytes
+    /// (wherever that lives in the database — e.g. a farm profile
+    /// document, distinct from [BillSettings.billLogo]), pass them
+    /// here and they take priority. Falls back to
+    /// [BillSettings.billLogo] when not supplied, so nothing changes
+    /// for callers that don't pass it.
+    Uint8List? farmLogoOverride,
   }) async {
     final regularFont = await PdfGoogleFonts.notoSansRegular();
     final boldFont = await PdfGoogleFonts.notoSansBold();
@@ -50,7 +65,7 @@ class FinalCheckoutReportPdfService {
       theme: pw.ThemeData.withFont(base: regularFont, bold: boldFont),
     );
 
-    final logoImage = _safeMemoryImage(billSettings.billLogo);
+    final logoImage = _safeMemoryImage(farmLogoOverride ?? billSettings.billLogo);
 
     pdf.addPage(
       pw.MultiPage(
@@ -72,6 +87,7 @@ class FinalCheckoutReportPdfService {
           customer: customer,
           goatEntries: goatEntries,
           settlement: settlement,
+          billSettings: billSettings,
         ),
       ),
     );
@@ -84,12 +100,14 @@ class FinalCheckoutReportPdfService {
     required List<GoatFinalReportEntry> goatEntries,
     required FinalSettlementData settlement,
     required BillSettings billSettings,
+    Uint8List? farmLogoOverride,
   }) async {
     final bytes = await generatePdf(
       customer: customer,
       goatEntries: goatEntries,
       settlement: settlement,
       billSettings: billSettings,
+      farmLogoOverride: farmLogoOverride,
     );
     await Printing.layoutPdf(onLayout: (_) async => bytes, name: _safeFileName(customer));
   }
@@ -99,12 +117,14 @@ class FinalCheckoutReportPdfService {
     required List<GoatFinalReportEntry> goatEntries,
     required FinalSettlementData settlement,
     required BillSettings billSettings,
+    Uint8List? farmLogoOverride,
   }) async {
     final bytes = await generatePdf(
       customer: customer,
       goatEntries: goatEntries,
       settlement: settlement,
       billSettings: billSettings,
+      farmLogoOverride: farmLogoOverride,
     );
     await Printing.sharePdf(bytes: bytes, filename: _safeFileName(customer));
   }
@@ -114,12 +134,14 @@ class FinalCheckoutReportPdfService {
     required List<GoatFinalReportEntry> goatEntries,
     required FinalSettlementData settlement,
     required BillSettings billSettings,
+    Uint8List? farmLogoOverride,
   }) async {
     final bytes = await generatePdf(
       customer: customer,
       goatEntries: goatEntries,
       settlement: settlement,
       billSettings: billSettings,
+      farmLogoOverride: farmLogoOverride,
     );
     final directory = await getApplicationDocumentsDirectory();
     final file = File('${directory.path}/${_safeFileName(customer)}');
@@ -171,6 +193,7 @@ class FinalCheckoutReportPdfService {
     required PalaiCustomer customer,
     required List<GoatFinalReportEntry> goatEntries,
     required FinalSettlementData settlement,
+    required BillSettings billSettings,
   }) {
     final content = <pw.Widget>[];
 
@@ -196,6 +219,24 @@ class FinalCheckoutReportPdfService {
 
     // FINAL SETTLEMENT — always its own page, after every goat page.
     content.add(_buildFinalSettlementPage(customer, settlement));
+
+    // TERMS & CONDITIONS / IMPORTANT NOTES / CLOSING — always its own
+    // page, last. Sourced entirely from BillSettings, same as the
+    // Progress Report — never hard-coded terms text in this file.
+    content.add(pw.NewPage());
+    content.add(
+      _buildSectionBanner(
+        number: '\u00a7',
+        title: 'Terms & Conditions',
+        subtitle: 'Important notes • Customer acknowledgement • Farm policies',
+      ),
+    );
+    content.add(pw.SizedBox(height: 10));
+    content.add(_buildTermsGrid(billSettings));
+    content.add(pw.SizedBox(height: 9));
+    content.add(_buildImportantNotes(billSettings));
+    content.add(pw.SizedBox(height: 14));
+    content.add(_buildClosingBanner(billSettings));
 
     return content;
   }
@@ -225,9 +266,9 @@ class FinalCheckoutReportPdfService {
           ],
         ),
         pw.SizedBox(height: 8),
-        _sectionLabel('MONTHLY HISTORY'),
+        _sectionLabel('WEIGHT PROGRESS'),
         pw.SizedBox(height: 4),
-        _buildMonthlyHistoryTable(entry.monthlyHistory),
+        _buildWeightProgressChart(entry),
         pw.SizedBox(height: 8),
         if (entry.representativePhotoByMonth.isNotEmpty) ...[
           _sectionLabel('MONTHLY PHOTOS'),
@@ -329,71 +370,167 @@ class FinalCheckoutReportPdfService {
   }
 
   // ==========================================================================
-  // MONTHLY HISTORY TABLE (+ Total Activity row)
+  // WEIGHT PROGRESS CHART — connected line + dot markers, built strictly
+  // from entry.weightHistory (real per-date records, never just
+  // initialWeight/finalWeight). Given deliberate visual priority: this
+  // is the tallest single element on the goat page, taller than the
+  // info box, the photo pair, or any row in the monthly table.
   // ==========================================================================
 
-  pw.Widget _buildMonthlyHistoryTable(List<GoatMonthlyHistoryRow> rows) {
-    if (rows.isEmpty) {
-      return pw.Text('No monthly activity recorded.', style: const pw.TextStyle(fontSize: 8, color: PdfColors.grey600));
+  pw.Widget _buildWeightProgressChart(GoatFinalReportEntry entry) {
+    final points = entry.weightHistory;
+    final summary = pw.Row(
+      mainAxisAlignment: pw.MainAxisAlignment.spaceEvenly,
+      children: [
+        _weightStat('Arrival Weight', '${entry.initialWeight.toStringAsFixed(1)} kg'),
+        _weightStat('Current Weight', '${entry.finalWeight.toStringAsFixed(1)} kg'),
+        _weightStat(
+          'Total Gain',
+          '${entry.weightChange >= 0 ? '+' : ''}${entry.weightChange.toStringAsFixed(1)} kg',
+          emphasize: true,
+        ),
+      ],
+    );
+
+    // Fewer than 2 real records: nothing meaningful to plot a line
+    // through — show only the Arrival/Current/Gain summary rather
+    // than fabricating a chart from two invented endpoints.
+    if (points.length < 2) {
+      return pw.Container(
+        width: double.infinity,
+        padding: const pw.EdgeInsets.all(10),
+        decoration: pw.BoxDecoration(
+          color: PdfColors.green50,
+          border: pw.Border.all(color: PdfColors.green200),
+          borderRadius: const pw.BorderRadius.all(pw.Radius.circular(8)),
+        ),
+        child: summary,
+      );
     }
 
-    final headerStyle = pw.TextStyle(fontSize: 7, fontWeight: pw.FontWeight.bold, color: PdfColors.white);
-    final cellStyle = const pw.TextStyle(fontSize: 7.5);
-    final totalStyle = pw.TextStyle(fontSize: 7.5, fontWeight: pw.FontWeight.bold, color: PdfColors.green900);
+    // Extra headroom above/below the plotted line itself, so the
+    // per-point weight labels (above each dot) and date labels
+    // (below each dot) never collide with the line — mirrors the
+    // "value above dot / month below dot" trend-chart reference.
+    const chartHeight = 130.0;
+    const chartWidth = 460.0;
+    const topPadding = 24.0;
+    const bottomPadding = 16.0;
+    const plotHeight = chartHeight - topPadding - bottomPadding;
 
-    int sum(int Function(GoatMonthlyHistoryRow) pick) => rows.fold(0, (s, r) => s + pick(r));
+    final weights = points.map((p) => p.weight).toList();
+    final maxWeight = weights.reduce((a, b) => a > b ? a : b);
+    final minWeight = weights.reduce((a, b) => a < b ? a : b);
+    final range = (maxWeight - minWeight) <= 0 ? 1.0 : (maxWeight - minWeight);
+    final step = points.length > 1 ? chartWidth / (points.length - 1) : 0.0;
 
-    return pw.Table(
-      border: pw.TableBorder.all(color: PdfColors.grey300, width: 0.5),
-      columnWidths: const {
-        0: pw.FlexColumnWidth(2.2),
-        1: pw.FlexColumnWidth(1.4),
-        2: pw.FlexColumnWidth(1.2),
-        3: pw.FlexColumnWidth(1.4),
-        4: pw.FlexColumnWidth(1.4),
-        5: pw.FlexColumnWidth(1.1),
-        6: pw.FlexColumnWidth(1.1),
-        7: pw.FlexColumnWidth(1.2),
-      },
-      children: [
-        pw.TableRow(
-          decoration: const pw.BoxDecoration(color: PdfColors.green700),
-          children: [
-            _tableHeaderCell('Month', headerStyle),
-            _tableHeaderCell('Weight', headerStyle, align: pw.TextAlign.center),
-            _tableHeaderCell('Health', headerStyle, align: pw.TextAlign.center),
-            _tableHeaderCell('Vaccine', headerStyle, align: pw.TextAlign.center),
-            _tableHeaderCell('Medicine', headerStyle, align: pw.TextAlign.center),
-            _tableHeaderCell('Hoof', headerStyle, align: pw.TextAlign.center),
-            _tableHeaderCell('Hair', headerStyle, align: pw.TextAlign.center),
-            _tableHeaderCell('Photos', headerStyle, align: pw.TextAlign.center),
-          ],
-        ),
-        for (final row in rows)
-          pw.TableRow(
-            children: [
-              _tableCell(row.monthLabel, cellStyle),
-              _tableCell('${row.weightRecords}', cellStyle, align: pw.TextAlign.center),
-              _tableCell('${row.health}', cellStyle, align: pw.TextAlign.center),
-              _tableCell('${row.vaccination}', cellStyle, align: pw.TextAlign.center),
-              _tableCell('${row.medicine}', cellStyle, align: pw.TextAlign.center),
-              _tableCell('${row.hoof}', cellStyle, align: pw.TextAlign.center),
-              _tableCell('${row.hair}', cellStyle, align: pw.TextAlign.center),
-              _tableCell('${row.photos}', cellStyle, align: pw.TextAlign.center),
-            ],
+    // (x, yFromTop) — yFromTop measured from the top of the chart box,
+    // so it can be used directly as a pw.Positioned "top" value for
+    // the label widgets. Higher weight -> smaller yFromTop (closer to
+    // the top), same as the reference trend chart.
+    (double, double) plot(int i) {
+      final x = step * i;
+      final yFromTop = topPadding +
+          (1 - ((points[i].weight - minWeight) / range)) * plotHeight;
+      return (x, yFromTop);
+    }
+
+    const dotRadius = 2.8;
+    const labelWidth = 34.0;
+
+    return pw.Container(
+      width: double.infinity,
+      padding: const pw.EdgeInsets.all(10),
+      decoration: pw.BoxDecoration(
+        color: PdfColors.green50,
+        border: pw.Border.all(color: PdfColors.green200),
+        borderRadius: const pw.BorderRadius.all(pw.Radius.circular(8)),
+      ),
+      child: pw.Column(
+        children: [
+          pw.SizedBox(
+            width: chartWidth,
+            height: chartHeight,
+            child: pw.Stack(
+              children: [
+                // Connecting line + dot markers.
+                pw.Positioned.fill(
+                  child: pw.CustomPaint(
+                    size: const PdfPoint(chartWidth, chartHeight),
+                    painter: (canvas, size) {
+                      canvas
+                        ..setStrokeColor(PdfColors.green700)
+                        ..setLineWidth(1.6);
+                      for (int i = 0; i < points.length - 1; i++) {
+                        final (ax, ay) = plot(i);
+                        final (bx, by) = plot(i + 1);
+                        canvas
+                          ..moveTo(ax, size.y - ay)
+                          ..lineTo(bx, size.y - by)
+                          ..strokePath();
+                      }
+                      for (int i = 0; i < points.length; i++) {
+                        final (px, py) = plot(i);
+                        canvas
+                          ..setColor(PdfColors.green700)
+                          ..drawEllipse(px, size.y - py, dotRadius, dotRadius)
+                          ..fillPath();
+                      }
+                    },
+                  ),
+                ),
+                // Weight value label directly above each dot.
+                for (int i = 0; i < points.length; i++)
+                  pw.Positioned(
+                    left: plot(i).$1 - (labelWidth / 2),
+                    top: plot(i).$2 - 15,
+                    right: labelWidth,
+                    child: pw.Text(
+                      '${points[i].weight.toStringAsFixed(0)} kg',
+                      textAlign: pw.TextAlign.center,
+                      style: pw.TextStyle(
+                        fontSize: 6.5,
+                        fontWeight: pw.FontWeight.bold,
+                        color: PdfColors.green900,
+                      ),
+                    ),
+                  ),
+                // Date label directly below each dot.
+                for (int i = 0; i < points.length; i++)
+                  pw.Positioned(
+                    left: plot(i).$1 - (labelWidth / 2),
+                    top: chartHeight - bottomPadding + 3,
+                    right: labelWidth,
+                    child: pw.Text(
+                      DateFormat('d MMM').format(points[i].date),
+                      textAlign: pw.TextAlign.center,
+                      style: const pw.TextStyle(fontSize: 5.5, color: PdfColors.grey600),
+                    ),
+                  ),
+              ],
+            ),
           ),
-        pw.TableRow(
-          decoration: const pw.BoxDecoration(color: PdfColors.green50),
-          children: [
-            _tableCell('Total', totalStyle),
-            _tableCell('${sum((r) => r.weightRecords)}', totalStyle, align: pw.TextAlign.center),
-            _tableCell('${sum((r) => r.health)}', totalStyle, align: pw.TextAlign.center),
-            _tableCell('${sum((r) => r.vaccination)}', totalStyle, align: pw.TextAlign.center),
-            _tableCell('${sum((r) => r.medicine)}', totalStyle, align: pw.TextAlign.center),
-            _tableCell('${sum((r) => r.hoof)}', totalStyle, align: pw.TextAlign.center),
-            _tableCell('${sum((r) => r.hair)}', totalStyle, align: pw.TextAlign.center),
-            _tableCell('${sum((r) => r.photos)}', totalStyle, align: pw.TextAlign.center),
-          ],
+          pw.SizedBox(height: 8),
+          pw.Divider(color: PdfColors.green200),
+          pw.SizedBox(height: 4),
+          summary,
+        ],
+      ),
+    );
+  }
+
+  pw.Widget _weightStat(String label, String value, {bool emphasize = false}) {
+    return pw.Column(
+      children: [
+        pw.Text(label, style: const pw.TextStyle(fontSize: 6.5, color: PdfColors.grey600)),
+        pw.SizedBox(height: 2),
+        pw.Text(
+          value,
+          style: pw.TextStyle(
+            fontSize: emphasize ? 12 : 10,
+            fontWeight: pw.FontWeight.bold,
+            color: PdfColors.green900,
+          ),
         ),
       ],
     );
@@ -442,42 +579,42 @@ class FinalCheckoutReportPdfService {
   }
 
   // ==========================================================================
-  // GOAT SUMMARY BOX
+  // GOAT SUMMARY — TABLE FORMAT
   // ==========================================================================
 
   pw.Widget _buildGoatSummaryBox(GoatFinalReportEntry entry) {
-    return pw.Container(
-      width: double.infinity,
-      padding: const pw.EdgeInsets.all(8),
-      decoration: pw.BoxDecoration(
-        color: PdfColors.white,
-        border: pw.Border.all(color: PdfColors.green200),
-        borderRadius: const pw.BorderRadius.all(pw.Radius.circular(7)),
-      ),
-      child: pw.Wrap(
-        spacing: 14,
-        runSpacing: 4,
-        children: [
-          _summaryStat('Total Months', '${entry.totalMonths}'),
-          _summaryStat('Health Records', '${entry.totalHealthRecords}'),
-          _summaryStat('Vaccinations', '${entry.totalVaccinations}'),
-          _summaryStat('Medicines', '${entry.totalMedicines}'),
-          _summaryStat('Hoof Cutting', '${entry.totalHoofCutting}'),
-          _summaryStat('Hair Trimming', '${entry.totalHairTrimming}'),
-          _summaryStat('Monthly Photos', '${entry.totalPhotos}'),
-          _summaryStat('Health Status', entry.healthStatus.trim().isEmpty ? '-' : entry.healthStatus),
-          _summaryStat('Delivery Status', entry.deliveryStatus.trim().isEmpty ? '-' : entry.deliveryStatus),
-        ],
-      ),
-    );
-  }
+    final rows = <(String, String)>[
+      ('Total Months', '${entry.totalMonths}'),
+      ('Health Records', '${entry.totalHealthRecords}'),
+      ('Vaccinations', '${entry.totalVaccinations}'),
+      ('Medicines', '${entry.totalMedicines}'),
+      ('Hoof Cutting', '${entry.totalHoofCutting}'),
+      ('Hair Trimming', '${entry.totalHairTrimming}'),
+      ('Monthly Photos', '${entry.totalPhotos}'),
+      ('Health Status', entry.healthStatus.trim().isEmpty ? '-' : entry.healthStatus),
+      ('Delivery Status', entry.deliveryStatus.trim().isEmpty ? '-' : entry.deliveryStatus),
+    ];
 
-  pw.Widget _summaryStat(String label, String value) {
-    return pw.Column(
-      crossAxisAlignment: pw.CrossAxisAlignment.start,
+    final labelStyle = pw.TextStyle(fontSize: 7.5, color: PdfColors.grey700);
+    final valueStyle = pw.TextStyle(fontSize: 8, fontWeight: pw.FontWeight.bold, color: PdfColors.green900);
+
+    return pw.Table(
+      border: pw.TableBorder.all(color: PdfColors.grey300, width: 0.5),
+      columnWidths: const {
+        0: pw.FlexColumnWidth(2.4),
+        1: pw.FlexColumnWidth(1.6),
+      },
       children: [
-        pw.Text(label, style: const pw.TextStyle(fontSize: 6.2, color: PdfColors.grey600)),
-        pw.Text(value, style: pw.TextStyle(fontSize: 8, fontWeight: pw.FontWeight.bold, color: PdfColors.green900)),
+        for (int i = 0; i < rows.length; i++)
+          pw.TableRow(
+            decoration: pw.BoxDecoration(
+              color: i.isEven ? PdfColors.white : PdfColors.green50,
+            ),
+            children: [
+              _tableCell(rows[i].$1, labelStyle),
+              _tableCell(rows[i].$2, valueStyle, align: pw.TextAlign.right),
+            ],
+          ),
       ],
     );
   }
@@ -500,26 +637,41 @@ class FinalCheckoutReportPdfService {
           subtitle: 'Customer: ${s.customerName}  •  Goats: ${s.goatCount}  •  Palai Period: $periodLabel',
         ),
         pw.SizedBox(height: 10),
+        _buildPaymentStatRow(s),
+        pw.SizedBox(height: 10),
         _buildChargesBreakdown(s),
         pw.SizedBox(height: 10),
-        if (s.paymentHistory.isNotEmpty) ...[
-          _sectionLabel('PAYMENT HISTORY'),
-          pw.SizedBox(height: 4),
-          _buildPaymentHistoryTable(s.paymentHistory),
-          pw.SizedBox(height: 4),
-          pw.Align(
-            alignment: pw.Alignment.centerRight,
-            child: pw.Text(
-              'Total Paid: ${_currency(s.totalPaidHistorical)}',
-              style: pw.TextStyle(fontSize: 8.5, fontWeight: pw.FontWeight.bold, color: PdfColors.green900),
-            ),
-          ),
-          pw.SizedBox(height: 10),
-        ],
         _buildFinalBalanceBox(s),
         pw.SizedBox(height: 10),
         _buildStatusBanner(s),
       ],
+    );
+  }
+
+  /// Prominent "Total Amount Paid / Remaining" stat row — same visual
+  /// language as the goat page's weight-stat row, so the settlement
+  /// page opens with the two numbers a customer actually looks for
+  /// before they read the full charges breakdown below.
+  pw.Widget _buildPaymentStatRow(FinalSettlementData s) {
+    return pw.Container(
+      width: double.infinity,
+      padding: const pw.EdgeInsets.all(10),
+      decoration: pw.BoxDecoration(
+        color: PdfColors.green50,
+        border: pw.Border.all(color: PdfColors.green200),
+        borderRadius: const pw.BorderRadius.all(pw.Radius.circular(8)),
+      ),
+      child: pw.Row(
+        mainAxisAlignment: pw.MainAxisAlignment.spaceEvenly,
+        children: [
+          _weightStat('Total Amount Paid', _currency(s.finalAmountPaid)),
+          _weightStat(
+            'Remaining',
+            _currency(s.finalOutstanding),
+            emphasize: true,
+          ),
+        ],
+      ),
     );
   }
 
@@ -548,44 +700,6 @@ class FinalCheckoutReportPdfService {
           if (s.advanceApplied > 0) _billingRow('Advance Applied', '- ${_currency(s.advanceApplied)}'),
         ],
       ),
-    );
-  }
-
-  pw.Widget _buildPaymentHistoryTable(List<FinalPaymentHistoryRow> rows) {
-    final headerStyle = pw.TextStyle(fontSize: 7.5, fontWeight: pw.FontWeight.bold, color: PdfColors.white);
-    final cellStyle = const pw.TextStyle(fontSize: 8);
-
-    return pw.Table(
-      border: pw.TableBorder.all(color: PdfColors.grey300, width: 0.5),
-      columnWidths: const {
-        0: pw.FlexColumnWidth(1.6),
-        1: pw.FlexColumnWidth(2),
-        2: pw.FlexColumnWidth(1.6),
-        3: pw.FlexColumnWidth(1.6),
-        4: pw.FlexColumnWidth(1.4),
-      },
-      children: [
-        pw.TableRow(
-          decoration: const pw.BoxDecoration(color: PdfColors.green700),
-          children: [
-            _tableHeaderCell('Date', headerStyle),
-            _tableHeaderCell('Payment No.', headerStyle),
-            _tableHeaderCell('Method', headerStyle),
-            _tableHeaderCell('Amount', headerStyle, align: pw.TextAlign.right),
-            _tableHeaderCell('Status', headerStyle, align: pw.TextAlign.center),
-          ],
-        ),
-        for (final row in rows)
-          pw.TableRow(
-            children: [
-              _tableCell(_formatDate(row.date), cellStyle),
-              _tableCell(row.paymentNumber, cellStyle),
-              _tableCell(row.method, cellStyle),
-              _tableCell(_currency(row.amount), cellStyle, align: pw.TextAlign.right),
-              _tableCell(row.status, cellStyle, align: pw.TextAlign.center),
-            ],
-          ),
-      ],
     );
   }
 
@@ -728,28 +842,39 @@ class FinalCheckoutReportPdfService {
     );
   }
 
+  /// Clean "logo + farm name" bar used on every page after page 1 —
+  /// styled to match the reference sub-header screenshot: a white
+  /// pill-shaped bar, circular logo on the left, bold green farm name
+  /// next to it, with the report label kept small on the right so the
+  /// logo/name pairing reads first.
   pw.Widget _buildMinorHeader({
     required BillSettings billSettings,
     required pw.MemoryImage? logoImage,
   }) {
-    return pw.SizedBox(
+    return pw.Container(
       width: double.infinity,
-      height: 30,
+      height: 34,
+      padding: const pw.EdgeInsets.symmetric(horizontal: 8),
+      decoration: pw.BoxDecoration(
+        color: PdfColors.white,
+        borderRadius: const pw.BorderRadius.all(pw.Radius.circular(8)),
+        border: pw.Border.all(color: PdfColors.green200, width: 0.7),
+      ),
       child: pw.Row(
         crossAxisAlignment: pw.CrossAxisAlignment.center,
         children: [
-          _buildFarmLogo(logoImage, size: 22),
+          _buildFarmLogo(logoImage, size: 26),
           pw.SizedBox(width: 8),
           pw.Expanded(
             child: pw.Text(
               billSettings.businessName.trim().isNotEmpty ? billSettings.businessName : 'My Goat Farm',
               maxLines: 1,
-              style: pw.TextStyle(fontSize: 10, fontWeight: pw.FontWeight.bold, color: PdfColors.green900),
+              style: pw.TextStyle(fontSize: 12, fontWeight: pw.FontWeight.bold, color: PdfColors.green900),
             ),
           ),
           pw.Text(
             'FINAL CHECKOUT REPORT',
-            style: pw.TextStyle(fontSize: 7.5, fontWeight: pw.FontWeight.bold, color: PdfColors.green700),
+            style: pw.TextStyle(fontSize: 6.5, fontWeight: pw.FontWeight.bold, color: PdfColors.green700),
           ),
         ],
       ),
@@ -928,17 +1053,150 @@ class FinalCheckoutReportPdfService {
     );
   }
 
-  pw.Widget _tableHeaderCell(String text, pw.TextStyle style, {pw.TextAlign align = pw.TextAlign.left}) {
-    return pw.Padding(
-      padding: const pw.EdgeInsets.symmetric(vertical: 6, horizontal: 5),
-      child: pw.Text(text, style: style, textAlign: align),
-    );
-  }
-
   pw.Widget _tableCell(String text, pw.TextStyle style, {pw.TextAlign align = pw.TextAlign.left}) {
     return pw.Padding(
       padding: const pw.EdgeInsets.symmetric(vertical: 5, horizontal: 5),
       child: pw.Text(text, style: style, textAlign: align),
+    );
+  }
+
+  // ==========================================================================
+  // TERMS & CONDITIONS / IMPORTANT NOTES / CLOSING — same visual
+  // language as CustomerGoatsProgressReportPdfService's equivalents.
+  // This is currently a second, duplicated copy of that widget code
+  // rather than a shared import — the same trade-off already made for
+  // the header/footer/logo in this file (see the class-level doc
+  // comment). Extracting a shared pdf_report_chrome.dart for all of
+  // these is real cleanup debt, not done here.
+  // ==========================================================================
+
+  pw.Widget _buildTermsGrid(BillSettings b) {
+    final sections = b.termsSections.where((s) => s.enabled).toList();
+    final widgets = <pw.Widget>[];
+
+    for (int i = 0; i < sections.length; i++) {
+      widgets.add(_termCard(i + 1, sections[i].title, sections[i].text));
+    }
+
+    if (b.otherTermsEnabled && b.otherTermsText.trim().isNotEmpty) {
+      widgets.add(_termCard(
+        sections.length + 1,
+        b.otherTermsTitle.trim().isNotEmpty ? b.otherTermsTitle : 'Other',
+        b.otherTermsText,
+      ));
+    }
+
+    if (widgets.isEmpty) {
+      return pw.Text(
+        'No terms and conditions configured.',
+        style: const pw.TextStyle(fontSize: 8, color: PdfColors.grey600),
+      );
+    }
+
+    final rows = <pw.Widget>[];
+    for (int i = 0; i < widgets.length; i += 2) {
+      rows.add(
+        pw.Padding(
+          padding: const pw.EdgeInsets.only(bottom: 7),
+          child: pw.Row(
+            crossAxisAlignment: pw.CrossAxisAlignment.start,
+            children: [
+              pw.Expanded(child: widgets[i]),
+              pw.SizedBox(width: 8),
+              pw.Expanded(child: i + 1 < widgets.length ? widgets[i + 1] : pw.SizedBox()),
+            ],
+          ),
+        ),
+      );
+    }
+
+    return pw.Column(children: rows);
+  }
+
+  pw.Widget _termCard(int number, String title, String text) {
+    return pw.Container(
+      height: 82,
+      padding: const pw.EdgeInsets.all(8),
+      decoration: pw.BoxDecoration(
+        color: PdfColors.green50,
+        borderRadius: const pw.BorderRadius.all(pw.Radius.circular(7)),
+        border: pw.Border.all(color: PdfColors.green200, width: 0.7),
+      ),
+      child: pw.Row(
+        crossAxisAlignment: pw.CrossAxisAlignment.start,
+        children: [
+          pw.Container(
+            width: 19,
+            height: 19,
+            alignment: pw.Alignment.center,
+            decoration: const pw.BoxDecoration(color: PdfColors.green700, shape: pw.BoxShape.circle),
+            child: pw.Text('$number', style: pw.TextStyle(fontSize: 7, fontWeight: pw.FontWeight.bold, color: PdfColors.white)),
+          ),
+          pw.SizedBox(width: 6),
+          pw.Expanded(
+            child: pw.Column(
+              crossAxisAlignment: pw.CrossAxisAlignment.start,
+              children: [
+                pw.Text(title, maxLines: 2, style: pw.TextStyle(fontSize: 8, fontWeight: pw.FontWeight.bold, color: PdfColors.green900)),
+                pw.SizedBox(height: 4),
+                pw.Text(text, style: const pw.TextStyle(fontSize: 6.8, color: PdfColors.grey700, lineSpacing: 1.15)),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  pw.Widget _buildImportantNotes(BillSettings b) {
+    final notes = b.importantNotes.where((n) => n.enabled).toList();
+
+    return pw.Container(
+      width: double.infinity,
+      padding: const pw.EdgeInsets.all(9),
+      decoration: pw.BoxDecoration(
+        color: PdfColors.green50,
+        borderRadius: const pw.BorderRadius.all(pw.Radius.circular(7)),
+        border: pw.Border.all(color: PdfColors.green200),
+      ),
+      child: pw.Column(
+        crossAxisAlignment: pw.CrossAxisAlignment.start,
+        children: [
+          pw.Text('IMPORTANT NOTES', style: pw.TextStyle(fontSize: 8.5, fontWeight: pw.FontWeight.bold, color: PdfColors.green900)),
+          pw.SizedBox(height: 5),
+          for (final note in notes) _bullet('${note.title}: ${note.text}'),
+          if (b.otherNoteEnabled && b.otherNoteText.trim().isNotEmpty) _bullet(b.otherNoteText),
+        ],
+      ),
+    );
+  }
+
+  pw.Widget _bullet(String text) {
+    return pw.Padding(
+      padding: const pw.EdgeInsets.only(bottom: 3),
+      child: pw.Row(
+        crossAxisAlignment: pw.CrossAxisAlignment.start,
+        children: [
+          pw.Text('\u2022', style: pw.TextStyle(fontSize: 8, fontWeight: pw.FontWeight.bold, color: PdfColors.green700)),
+          pw.SizedBox(width: 5),
+          pw.Expanded(child: pw.Text(text, style: const pw.TextStyle(fontSize: 6.8, color: PdfColors.grey700))),
+        ],
+      ),
+    );
+  }
+
+  pw.Widget _buildClosingBanner(BillSettings b) {
+    final text = b.footerNote.trim().isNotEmpty ? b.footerNote : 'We care for your goats as our own.';
+
+    return pw.Container(
+      width: double.infinity,
+      padding: const pw.EdgeInsets.symmetric(vertical: 9, horizontal: 10),
+      decoration: pw.BoxDecoration(color: PdfColors.green900, borderRadius: const pw.BorderRadius.all(pw.Radius.circular(7))),
+      child: pw.Text(
+        text,
+        textAlign: pw.TextAlign.center,
+        style: pw.TextStyle(fontSize: 8, fontWeight: pw.FontWeight.bold, color: PdfColors.white),
+      ),
     );
   }
 
