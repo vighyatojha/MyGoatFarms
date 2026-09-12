@@ -5,6 +5,7 @@ import 'package:intl/intl.dart';
 
 import '../../app_theme.dart';
 import '../../models/bill_settings_model.dart';
+import '../../models/farm_model.dart';
 import '../../models/final_checkout_report_model.dart';
 import '../../models/palai_models.dart';
 import '../../services/finance_service.dart';
@@ -89,6 +90,17 @@ class _FinalCheckoutReportScreenState
 
   PalaiCustomer? _customer;
 
+  /// The signed-in farm's document — fetched once alongside the customer
+  /// so its [FarmModel.profileImage] (the farm's actual "profile photo",
+  /// stored as a Firestore Blob on the farm doc — distinct from
+  /// [BillSettings.billLogo]) can be handed to
+  /// [FinalCheckoutReportPdfService] as `farmLogoOverride`. Without this,
+  /// the PDF header/sub-header only ever fall back to
+  /// `billSettings.billLogo`, which is typically empty, so the logo
+  /// circle rendered as a "LOGO" placeholder on both the full header and
+  /// every page's mini header.
+  FarmModel? _farm;
+
   FinalCheckoutReportData? _report;
 
   /// Built once, in [_generatePdf] — [_downloadPdf]/[_sharePdf] reuse
@@ -124,6 +136,19 @@ class _FinalCheckoutReportScreenState
 
       if (customer == null) {
         throw StateError('Customer could not be found.');
+      }
+
+      // Best-effort only: the farm doc is purely for the PDF's logo
+      // override (see [_farm] doc comment) — a failure here must never
+      // block the rest of the report, which is already known-good by
+      // this point. On failure we simply fall back to no logo override,
+      // exactly like before this fix (BillSettings.billLogo still gets
+      // its normal chance in the PDF service).
+      FarmModel? farm;
+      try {
+        farm = await FirestoreService.instance.getFarmById(widget.farmId);
+      } catch (e) {
+        debugPrint('Final Checkout Report: could not load farm profile — $e');
       }
 
       final checkoutDate = DateTime.now();
@@ -346,6 +371,7 @@ class _FinalCheckoutReportScreenState
 
       setState(() {
         _customer = customer;
+        _farm = farm;
         _report = report;
         _loading = false;
       });
@@ -561,6 +587,7 @@ class _FinalCheckoutReportScreenState
         goatEntries: _toGoatFinalReportEntries(),
         settlement: await _toFinalSettlementData(),
         billSettings: widget.billSettings,
+        farmLogoOverride: _farm?.profileImage,
       );
 
       if (!mounted) return;
