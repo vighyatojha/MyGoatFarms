@@ -36,8 +36,6 @@ class _AddCustomerScreenState extends State<AddCustomerScreen> {
   bool _saving = false;
   bool _deleting = false;
 
-  static const List<String> _packages = ['Basic Palai', 'Bharai Palai', 'Standard Palai'];
-
   static String _trimZero(double value) => value == value.roundToDouble() ? value.toStringAsFixed(0) : value.toString();
 
   @override
@@ -253,23 +251,6 @@ class _AddCustomerScreenState extends State<AddCustomerScreen> {
               const SizedBox(height: 16),
               _label('Address'),
               _textField(_addressController, hint: 'Village / City, District', maxLines: 2, optional: true),
-              const SizedBox(height: 16),
-              _label('Palai Package'),
-              Container(
-                decoration: AppTheme.card(radius: 12),
-                padding: const EdgeInsets.symmetric(horizontal: 12),
-                child: DropdownButtonHideUnderline(
-                  child: DropdownButton<String>(
-                    value: _package,
-                    isExpanded: true,
-                    items: _packages.map((p) => DropdownMenuItem(value: p, child: Text(p, style: AppTheme.body(size: 13, color: AppColors.textDark)))).toList(),
-                    onChanged: (v) => setState(() => _package = v ?? _package),
-                  ),
-                ),
-              ),
-              const SizedBox(height: 16),
-              _label('Palai Price (₹)'),
-              _textField(_priceController, hint: 'e.g. 1500', keyboardType: const TextInputType.numberWithOptions(decimal: true), optional: true),
               const SizedBox(height: 16),
               _label('Old Pending Payments (₹)'),
               _textField(_pendingController, hint: '0', keyboardType: const TextInputType.numberWithOptions(decimal: true), optional: true),

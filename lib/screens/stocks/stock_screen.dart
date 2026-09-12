@@ -694,23 +694,15 @@ class _StockScreenState extends State<StockScreen> {
     required List<StockItem> medicineItems,
     required List<StockItem> lowStockItems,
   }) {
-    final feedTotal =
+    // Summed in normalized KG, not raw `quantity` — feed items can be a
+    // mix of Bag and Kg stock, and adding "5 Bags" + "100 Kg" as if both
+    // were the same unit is exactly the bug this total must avoid.
+    final feedTotalKg =
     feedItems.fold<double>(
       0,
           (sum, item) =>
-      sum + item.quantity,
+      sum + item.totalKg,
     );
-
-    final feedUnits = feedItems
-        .map(
-          (item) => item.unit,
-    )
-        .toSet();
-
-    final feedUnit =
-    feedUnits.length == 1
-        ? feedUnits.first
-        : '';
 
     return Column(
       crossAxisAlignment:
@@ -771,14 +763,12 @@ class _StockScreenState extends State<StockScreen> {
                 title:
                 'Feed Stock',
                 value:
-                feedTotal
+                feedTotalKg
                     .toStringAsFixed(
                   0,
                 ),
                 unit:
-                feedUnit.isEmpty
-                    ? 'units'
-                    : feedUnit,
+                'KG',
                 color:
                 AppColors
                     .primaryGreen,
@@ -1605,56 +1595,32 @@ class _StockScreenState extends State<StockScreen> {
                   height: 3,
                 ),
 
-                Row(
-                  crossAxisAlignment:
-                  CrossAxisAlignment
-                      .baseline,
-                  textBaseline:
-                  TextBaseline
-                      .alphabetic,
-                  children: [
-                    Flexible(
-                      child: Text(
-                        item.quantity
-                            .toStringAsFixed(
-                          0,
-                        ),
-                        maxLines: 1,
-                        overflow:
-                        TextOverflow
-                            .ellipsis,
-                        style:
-                        AppTheme
-                            .heading(
-                          size: 19,
-                          color: color,
-                        ),
-                      ),
-                    ),
-
-                    const SizedBox(
-                      width: 4,
-                    ),
-
-                    Text(
-                      item.unit,
-                      maxLines: 1,
-                      overflow:
-                      TextOverflow
-                          .ellipsis,
-                      style:
-                      AppTheme.body(
-                        size: 9,
-                        color:
-                        AppColors
-                            .textGrey,
-                        weight:
-                        FontWeight
-                            .w600,
-                      ),
-                    ),
-                  ],
+                // For Bag stock this reads "5 Bags" (never a raw KG
+                // number mislabeled as bags, or vice versa — see
+                // StockItem.quantityLabel). For Kg stock it's "100 KG".
+                Text(
+                  item.quantityLabel,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: AppTheme.heading(
+                    size: item.isBagUnit ? 15 : 19,
+                    color: color,
+                  ),
                 ),
+
+                if (item.isBagUnit && !item.needsBagWeight) ...[
+                  const SizedBox(height: 2),
+                  Text(
+                    '${item.weightPerBag!.toStringAsFixed(item.weightPerBag! % 1 == 0 ? 0 : 1)} KG/Bag · ${item.totalKg.toStringAsFixed(item.totalKg % 1 == 0 ? 0 : 1)} KG total',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: AppTheme.body(
+                      size: 9,
+                      color: AppColors.textGrey,
+                      weight: FontWeight.w600,
+                    ),
+                  ),
+                ],
 
                 const SizedBox(
                   height: 6,
@@ -1983,7 +1949,7 @@ class _StockScreenState extends State<StockScreen> {
                         title:
                         'Available',
                         value:
-                        '${item.quantity.toStringAsFixed(0)} ${item.unit}',
+                        item.quantityLabel,
                         color:
                         color,
                       ),
@@ -2010,6 +1976,24 @@ class _StockScreenState extends State<StockScreen> {
                     ),
                   ],
                 ),
+
+                if (item.isBagUnit) ...[
+                  const SizedBox(height: 10),
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                    decoration: BoxDecoration(
+                      color: AppColors.paleGreen,
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Text(
+                      item.needsBagWeight
+                          ? 'Bag weight not set — add stock again and enter it to see the total in KG.'
+                          : '${item.weightPerBag!.toStringAsFixed(item.weightPerBag! % 1 == 0 ? 0 : 1)} KG per bag  ·  ${item.totalKg.toStringAsFixed(item.totalKg % 1 == 0 ? 0 : 1)} KG total',
+                      style: AppTheme.body(size: 11, color: AppColors.textDark, weight: FontWeight.w600),
+                    ),
+                  ),
+                ],
 
                 const SizedBox(
                   height: 10,
@@ -2534,7 +2518,7 @@ class _StockScreenState extends State<StockScreen> {
                     .end,
                 children: [
                   Text(
-                    '${isAddition ? '+' : '-'}${movement.quantity.toStringAsFixed(0)} ${movement.unit}',
+                    '${isAddition ? '+' : '-'}${movement.quantityLabel}',
                     style:
                     AppTheme.body(
                       size: 11,

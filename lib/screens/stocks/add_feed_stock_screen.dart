@@ -24,6 +24,9 @@ class _AddFeedStockScreenState extends State<AddFeedStockScreen> {
   final _quantityController = TextEditingController();
   final _thresholdController = TextEditingController(text: '20');
   final _notesController = TextEditingController();
+  // Optional for KG stock; required for Bag stock. When supplied for KG,
+  // it is retained so the stock card can show an equivalent bag count.
+  final _weightPerBagController = TextEditingController();
 
   // --- Purchase cost (Finance integration) ---
   final _totalCostController = TextEditingController();
@@ -69,6 +72,7 @@ class _AddFeedStockScreenState extends State<AddFeedStockScreen> {
     _quantityController.dispose();
     _thresholdController.dispose();
     _notesController.dispose();
+    _weightPerBagController.dispose();
     _totalCostController.dispose();
     _supplierController.dispose();
     super.dispose();
@@ -94,6 +98,24 @@ class _AddFeedStockScreenState extends State<AddFeedStockScreen> {
 
     if (quantity <= 0) {
       _message('Enter a quantity greater than 0.', error: true);
+      return;
+    }
+
+    final isBag = _unit.trim().toLowerCase() == 'bag';
+    final weightText = _weightPerBagController.text.trim();
+    final weightPerBag = double.tryParse(weightText);
+
+    // Weight per Bag is required only when the stock unit is Bags.
+    // For KG stock it is optional, but when supplied it is retained so the
+    // stock card can also show the equivalent number of bags.
+    if (isBag && (weightPerBag == null || weightPerBag <= 0)) {
+      _message('Enter how much 1 bag weighs.', error: true);
+      return;
+    }
+
+    if (!isBag && weightText.isNotEmpty &&
+        (weightPerBag == null || weightPerBag <= 0)) {
+      _message('Enter a valid Weight per Bag, or leave it empty.', error: true);
       return;
     }
 
@@ -139,6 +161,7 @@ class _AddFeedStockScreenState extends State<AddFeedStockScreen> {
         type: StockType.feed,
         quantity: quantity,
         unit: _unit,
+        weightPerBag: weightPerBag,
         lowStockThreshold: threshold,
         notes: _notesController.text.trim(),
         totalCost: totalCost > 0 ? totalCost : null,
@@ -154,7 +177,9 @@ class _AddFeedStockScreenState extends State<AddFeedStockScreen> {
           id: '',
           type: ActivityType.feedStockAdded,
           title: 'Feed Stock Added',
-          subtitle: '${quantity.toStringAsFixed(0)} $_unit of $name added'
+          subtitle: '${quantity.toStringAsFixed(0)} $_unit'
+              '${isBag ? ' (${(quantity * weightPerBag!).toStringAsFixed(0)} KG)' : ''}'
+              ' of $name added'
               '${_notesController.text.trim().isEmpty ? '' : ' — ${_notesController.text.trim()}'}',
           module: 'stock',
           timestamp: DateTime.now(),
@@ -261,6 +286,9 @@ class _AddFeedStockScreenState extends State<AddFeedStockScreen> {
                           inputFormatters: [
                             FilteringTextInputFormatter.allow(RegExp(r'[0-9.]')),
                           ],
+                          // Rebuild so the "Total Weight" preview (Bag unit)
+                          // and the "after addition" summary stay live.
+                          onChanged: (_) => setState(() {}),
                         ),
                       ),
                       const SizedBox(width: 12),
@@ -270,6 +298,8 @@ class _AddFeedStockScreenState extends State<AddFeedStockScreen> {
                       ),
                     ],
                   ),
+                  const SizedBox(height: 14),
+                  _bagWeightSection(),
                 ],
               ),
               const SizedBox(height: 14),
@@ -956,6 +986,11 @@ class _AddFeedStockScreenState extends State<AddFeedStockScreen> {
       _thresholdController.text = item.lowStockThreshold.toStringAsFixed(
         item.lowStockThreshold % 1 == 0 ? 0 : 1,
       );
+      // Pre-fill the known bag weight so re-adding stock for a Bag item
+      // doesn't ask again unless the user wants to change it.
+      _weightPerBagController.text = item.weightPerBag != null
+          ? item.weightPerBag!.toStringAsFixed(item.weightPerBag! % 1 == 0 ? 0 : 1)
+          : '';
     });
   }
 
@@ -1021,12 +1056,23 @@ class _AddFeedStockScreenState extends State<AddFeedStockScreen> {
       _nameController.text = name.trim();
       _unit = 'Kg';
       _thresholdController.text = '20';
+      _weightPerBagController.clear();
     });
   }
 
   Widget _selectedFeedSummary(StockItem item) {
     final newQuantity = double.tryParse(_quantityController.text.trim()) ?? 0;
-    final projected = item.quantity + newQuantity;
+    final isBag = _unit.trim().toLowerCase() == 'bag';
+    final enteredWeightPerBag = double.tryParse(_weightPerBagController.text.trim());
+
+    // Preview the resulting total using whatever the user has typed so
+    // far, falling back to the item's own weightPerBag when they haven't
+    // touched that field yet (e.g. re-adding stock in the same unit).
+    final previewWeightPerBag = enteredWeightPerBag ?? item.weightPerBag;
+    final newKg = newQuantity <= 0
+        ? 0.0
+        : (isBag ? newQuantity * (previewWeightPerBag ?? 0) : newQuantity);
+    final projectedKg = item.totalKg + newKg;
 
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 11),
@@ -1044,12 +1090,12 @@ class _AddFeedStockScreenState extends State<AddFeedStockScreen> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  'Current stock  ${item.quantity.toStringAsFixed(item.quantity % 1 == 0 ? 0 : 1)} ${item.unit}',
+                  'Current stock  ${item.stockSummary}',
                   style: AppTheme.body(size: 11, color: AppColors.textGrey),
                 ),
                 if (newQuantity > 0)
                   Text(
-                    'After addition  ${projected.toStringAsFixed(projected % 1 == 0 ? 0 : 1)} ${item.unit}',
+                    'After addition  ${projectedKg.toStringAsFixed(projectedKg % 1 == 0 ? 0 : 1)} KG total',
                     style: AppTheme.body(
                       size: 12,
                       color: AppColors.darkGreen,
@@ -1064,6 +1110,12 @@ class _AddFeedStockScreenState extends State<AddFeedStockScreen> {
       ),
     );
   }
+
+  /// Popup asking "How much does 1 bag weigh?" — shown the moment the
+  /// user switches the unit to Bag (per the Proposed Stock Logic doc).
+  /// Pre-fills with whatever's already in [_weightPerBagController] (e.g.
+  /// a known weight from re-adding the same feed) so it's an edit, not a
+  /// blank prompt, when that's already known.
 
   Widget _unitSelector() {
     return Column(
@@ -1082,7 +1134,9 @@ class _AddFeedStockScreenState extends State<AddFeedStockScreen> {
               final selected = _unit == unit;
               return Expanded(
                 child: GestureDetector(
-                  onTap: () => setState(() => _unit = unit),
+                  onTap: () {
+                    setState(() => _unit = unit);
+                  },
                   child: AnimatedContainer(
                     duration: const Duration(milliseconds: 180),
                     padding: const EdgeInsets.symmetric(vertical: 11),
@@ -1107,6 +1161,110 @@ class _AddFeedStockScreenState extends State<AddFeedStockScreen> {
               );
             }).toList(),
           ),
+        ),
+      ],
+    );
+  }
+
+  /// Weight per Bag is always visible. It is required for Bag stock and
+  /// optional for KG stock. When supplied for KG, the equivalent bag count
+  /// is shown as a live preview and retained with the stock item.
+  Widget _bagWeightSection() {
+    final quantity = double.tryParse(_quantityController.text.trim()) ?? 0;
+    final isBag = _unit.trim().toLowerCase() == 'bag';
+    final weightPerBag = double.tryParse(_weightPerBagController.text.trim());
+    final totalKg = isBag && quantity > 0 && weightPerBag != null && weightPerBag > 0
+        ? quantity * weightPerBag
+        : (!isBag && quantity > 0 ? quantity : null);
+    final equivalentBags = !isBag && quantity > 0 && weightPerBag != null && weightPerBag > 0
+        ? quantity / weightPerBag
+        : null;
+
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: AppColors.paleGreen,
+        borderRadius: BorderRadius.circular(13),
+        border: Border.all(color: AppColors.primaryGreen.withOpacity(.14)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          TextFormField(
+            controller: _weightPerBagController,
+            keyboardType: const TextInputType.numberWithOptions(decimal: true),
+            inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'[0-9.]'))],
+            onChanged: (_) => setState(() {}),
+            validator: (value) {
+              final text = value?.trim() ?? '';
+              if (isBag && text.isEmpty) return 'Required';
+              if (text.isEmpty) return null;
+              final parsed = double.tryParse(text);
+              if (parsed == null || parsed <= 0) return 'Enter a valid weight';
+              return null;
+            },
+            style: AppTheme.body(size: 13, color: AppColors.textDark),
+            decoration: InputDecoration(
+              labelText: isBag ? 'Weight per Bag (Required)' : 'Weight per Bag (Optional)',
+              hintText: isBag ? '50' : 'e.g. 50',
+              suffixText: 'KG',
+              prefixIcon: const Icon(Icons.scale_outlined, color: AppColors.primaryGreen, size: 20),
+              labelStyle: AppTheme.body(size: 12, color: AppColors.textGrey),
+              filled: true,
+              fillColor: Colors.white,
+              contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(13),
+                borderSide: BorderSide(color: AppColors.divider),
+              ),
+              enabledBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(13),
+                borderSide: BorderSide(color: AppColors.divider),
+              ),
+              focusedBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(13),
+                borderSide: const BorderSide(color: AppColors.primaryGreen, width: 1.5),
+              ),
+            ),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            isBag
+                ? 'Required because Bag stock must be converted to KG.'
+                : 'Optional. Enter it if you also want the number of bags shown for this KG stock.',
+            style: AppTheme.body(size: 10, color: AppColors.textGrey),
+          ),
+          if (isBag && totalKg != null) ...[
+            const SizedBox(height: 10),
+            _weightPreviewRow(
+              'Total Weight',
+              '${quantity.toStringAsFixed(quantity % 1 == 0 ? 0 : 1)} × ${weightPerBag!.toStringAsFixed(weightPerBag % 1 == 0 ? 0 : 1)} = ${totalKg.toStringAsFixed(totalKg % 1 == 0 ? 0 : 1)} KG',
+            ),
+          ],
+          if (!isBag && equivalentBags != null) ...[
+            const SizedBox(height: 10),
+            _weightPreviewRow(
+              'Equivalent Bags',
+              '${equivalentBags.toStringAsFixed(equivalentBags % 1 == 0 ? 0 : 1)} Bags',
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _weightPreviewRow(String label, String value) {
+    return Row(
+      children: [
+        Expanded(
+          child: Text(
+            label,
+            style: AppTheme.body(size: 12, color: AppColors.textGrey, weight: FontWeight.w600),
+          ),
+        ),
+        Text(
+          value,
+          style: AppTheme.body(size: 12, color: AppColors.darkGreen, weight: FontWeight.w800),
         ),
       ],
     );

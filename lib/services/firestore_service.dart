@@ -2552,9 +2552,26 @@ class FirestoreService {
     return q.snapshots().map((s) => s.docs.map(StockItem.fromDoc).toList());
   }
 
+  /// Normalizes a quantity into KG. Bag amounts need [weightPerBag];
+  /// every other unit (Kg, or medicine's Bottle/Unit) is 1:1 with itself.
+  /// Centralizing this one calculation is what stops "Bag" and "Kg"
+  /// entries from ever being silently treated as the same number.
+  double _toKg(double quantity, String unit, double? weightPerBag) {
+    if (unit.trim().toLowerCase() == 'bag') {
+      return quantity * (weightPerBag ?? 0);
+    }
+    return quantity;
+  }
+
   /// Adds stock (creates the item if it doesn't exist yet, matching on name
   /// + type so a feed item and a medicine item can share the same name) and
   /// logs the movement.
+  ///
+  /// [weightPerBag] (KG per bag) is required whenever [unit] is "Bag".
+  /// It is optional for KG feed; when supplied it is retained only so the UI
+  /// can show the equivalent number of bags. All stock math remains normalized
+  /// in KG, so Bags and KG are never silently added as the same raw number.
+  ///
   /// Returns the new stock-movement document's id. [unitCost]/
   /// [totalCost]/[supplierName]/[paymentMethod] are all optional and
   /// purely for audit on the movement doc itself — they do NOT create a
@@ -2568,6 +2585,7 @@ class FirestoreService {
         required StockType type,
         required double quantity,
         required String unit,
+        double? weightPerBag,
         double lowStockThreshold = 0,
         String notes = '',
         double? unitCost,
@@ -2576,6 +2594,14 @@ class FirestoreService {
         String? paymentMethod,
       }) async {
     final typeStr = type == StockType.medicine ? 'medicine' : 'feed';
+    final isBag = unit.trim().toLowerCase() == 'bag';
+
+    if (isBag && (weightPerBag == null || weightPerBag <= 0)) {
+      throw ArgumentError('Enter the weight of 1 bag before adding Bag stock.');
+    }
+
+    final entryKg = _toKg(quantity, unit, weightPerBag);
+
     final existing = await _stockItems(farmId)
         .where('name', isEqualTo: itemName)
         .where('type', isEqualTo: typeStr)
@@ -2584,24 +2610,103 @@ class FirestoreService {
         .timeout(timeout);
 
     String itemId;
+    // The final resolved fields written to the stock item doc, and what
+    // this specific movement's own quantity/unit end up being (a merge
+    // against a differently-unit'd existing item converts the *movement*
+    // quantity too, so the activity log matches what actually got saved).
+    late final String finalUnit;
+    late final double? finalWeightPerBag;
+    late final double finalQuantity;
+    late final double finalTotalKg;
+    late final double movementQuantity;
+    late final String movementUnit;
+    late final double? movementWeightPerBag;
+    late final double? movementKg;
+
     if (existing.docs.isEmpty) {
+      finalUnit = unit;
+      finalWeightPerBag = weightPerBag;
+      finalQuantity = quantity;
+      finalTotalKg = entryKg;
+      movementQuantity = quantity;
+      movementUnit = unit;
+      movementWeightPerBag = isBag ? weightPerBag : null;
+      movementKg = isBag ? entryKg : null;
+
       final ref = await _stockItems(farmId).add(StockItem(
         id: '',
         name: itemName,
         type: type,
-        quantity: quantity,
-        unit: unit,
+        quantity: finalQuantity,
+        unit: finalUnit,
+        weightPerBag: finalWeightPerBag,
+        totalKg: finalTotalKg,
         lowStockThreshold: lowStockThreshold,
         lastUpdated: DateTime.now(),
       ).toMap()).timeout(timeout);
       itemId = ref.id;
     } else {
-      itemId = existing.docs.first.id;
-      final currentQty = (existing.docs.first.data()['quantity'] ?? 0).toDouble();
+      final doc = existing.docs.first;
+      itemId = doc.id;
+      final data = doc.data();
+      final existingUnit = (data['unit'] ?? 'kg').toString();
+      final existingIsBag = existingUnit.trim().toLowerCase() == 'bag';
+      final existingQty = (data['quantity'] ?? 0).toDouble();
+      final existingWeightPerBag = (data['weightPerBag'] as num?)?.toDouble();
+      final existingTotalKg = (data['totalKg'] as num?)?.toDouble() ??
+          (existingIsBag ? existingQty * (existingWeightPerBag ?? 0) : existingQty);
+
+      final sameUnit = existingUnit.trim().toLowerCase() == unit.trim().toLowerCase();
+      final sameBagWeight = !isBag || existingWeightPerBag == null || existingWeightPerBag == weightPerBag;
+
+      if (sameUnit && sameBagWeight) {
+        // Simple case: same unit (and, for Bag, same bag weight) as what's
+        // already on record — just add the raw quantities, exactly as
+        // before. No conversion needed or possible to get wrong.
+        finalUnit = existingUnit;
+        finalWeightPerBag = isBag
+            ? (weightPerBag ?? existingWeightPerBag)
+            : (weightPerBag ?? existingWeightPerBag);
+        finalQuantity = existingQty + quantity;
+        finalTotalKg = existingTotalKg + entryKg;
+      } else {
+        // Units (or bag weight) differ from what's already stored — adding
+        // the raw numbers together would silently mix Bags and KG. Convert
+        // this purchase to KG and merge in KG-space instead, then express
+        // the new total back in whichever unit the item is tracked in.
+        if (existingIsBag && (existingWeightPerBag == null || existingWeightPerBag <= 0)) {
+          // Legacy Bag record with no known bag weight — we can't safely
+          // convert. Adopt this purchase's unit/weight as the item's
+          // definition going forward rather than guessing; the previous
+          // quantity is carried over as-is in KG terms (best effort).
+          finalUnit = unit;
+          finalWeightPerBag = isBag ? weightPerBag : null;
+        } else {
+          // Keep tracking the item the way it's already tracked; only the
+          // bag weight may get refreshed to the latest value entered.
+          finalUnit = existingUnit;
+          finalWeightPerBag = existingIsBag
+              ? (weightPerBag ?? existingWeightPerBag)
+              : (weightPerBag ?? existingWeightPerBag);
+        }
+
+        finalTotalKg = existingTotalKg + entryKg;
+        finalQuantity = finalUnit.trim().toLowerCase() == 'bag'
+            ? finalTotalKg / finalWeightPerBag!
+            : finalTotalKg;
+      }
+
+      movementQuantity = quantity;
+      movementUnit = unit;
+      movementWeightPerBag = isBag ? weightPerBag : null;
+      movementKg = isBag ? entryKg : null;
+
       await _stockItems(farmId).doc(itemId).update({
-        'quantity': currentQty + quantity,
+        'quantity': finalQuantity,
+        'unit': finalUnit,
+        if (finalWeightPerBag != null) 'weightPerBag': finalWeightPerBag,
+        'totalKg': finalTotalKg,
         'lowStockThreshold': lowStockThreshold,
-        'unit': unit,
         'lastUpdated': FieldValue.serverTimestamp(),
       }).timeout(timeout);
     }
@@ -2612,14 +2717,16 @@ class FirestoreService {
       id: '',
       stockItemId: itemId,
       itemName: itemName,
-      quantity: quantity,
-      unit: unit,
+      quantity: movementQuantity,
+      unit: movementUnit,
       isAddition: true,
       date: DateTime.now(),
       notes: notes,
       actorUid: actor?.uid,
       actorName: actor?.name,
       actorRole: actor?.role,
+      weightPerBag: movementWeightPerBag,
+      kgAmount: movementKg,
     ).toMap();
 
     // Cost fields are purely additive — StockMovement.fromDoc() ignores
@@ -2648,20 +2755,71 @@ class FirestoreService {
   /// Deducts stock used (e.g. "Feed Used Today" / "Medicine Used") and logs
   /// the movement. Runs as a transaction so concurrent usage entries can't
   /// race each other and corrupt the running quantity.
+  ///
+  /// [quantity]/[unit] must match the stock item's own current unit (the
+  /// usage screens always pass `item.unit`, never a different one — usage
+  /// isn't purchased in a different-sized bag). Internally this still
+  /// deducts from the authoritative [totalKg] so a Bag item's KG total and
+  /// bag count never drift apart, reading the item's bag weight fresh
+  /// inside the transaction rather than trusting a possibly-stale value
+  /// passed in by the caller.
   Future<void> useStock(
       String farmId, {
         required String itemId,
         required String itemName,
         required double quantity,
         required String unit,
+        String? usageUnit,
         String notes = '',
       }) async {
+    double? movementWeightPerBag;
+    double? movementKg;
+    String movementUsageUnit = unit;
+
     await _db.runTransaction((txn) async {
       final ref = _stockItems(farmId).doc(itemId);
       final snap = await txn.get(ref);
-      final currentQty = (snap.data()?['quantity'] ?? 0).toDouble();
+      final data = snap.data() ?? {};
+      final storedUnit = (data['unit'] ?? unit).toString();
+      final isBag = storedUnit.trim().toLowerCase() == 'bag';
+      final currentQty = (data['quantity'] ?? 0).toDouble();
+      final weightPerBag = (data['weightPerBag'] as num?)?.toDouble();
+      final currentTotalKg = (data['totalKg'] as num?)?.toDouble() ??
+          (isBag ? currentQty * (weightPerBag ?? 0) : currentQty);
+
+      movementUsageUnit = (usageUnit == null || usageUnit.trim().isEmpty)
+          ? storedUnit
+          : usageUnit.trim();
+      final usageIsBag = movementUsageUnit.toLowerCase() == 'bag';
+
+      if (usageIsBag && !isBag) {
+        throw ArgumentError('Bag usage is only available for Bag-based feed stock.');
+      }
+
+      if (isBag && (weightPerBag == null || weightPerBag <= 0)) {
+        throw ArgumentError('This feed needs a valid Weight per Bag before it can be used.');
+      }
+
+      final entryKg = usageIsBag
+          ? quantity * weightPerBag!
+          : (isBag ? quantity : quantity);
+      if (entryKg > currentTotalKg + 0.000001) {
+        throw StateError('Not enough stock available.');
+      }
+
+      final newTotalKg = (currentTotalKg - entryKg).clamp(0, double.infinity);
+      final newQuantity = (isBag && weightPerBag != null && weightPerBag > 0)
+          ? newTotalKg / weightPerBag
+          : newTotalKg;
+
+      if (isBag && weightPerBag != null && weightPerBag > 0) {
+        movementWeightPerBag = weightPerBag;
+        movementKg = entryKg;
+      }
+
       txn.update(ref, {
-        'quantity': (currentQty - quantity).clamp(0, double.infinity),
+        'quantity': newQuantity,
+        'totalKg': newTotalKg,
         'lastUpdated': FieldValue.serverTimestamp(),
       });
     }).timeout(timeout);
@@ -2677,13 +2835,15 @@ class FirestoreService {
       stockItemId: itemId,
       itemName: itemName,
       quantity: quantity,
-      unit: unit,
+      unit: movementUsageUnit,
       isAddition: false,
       date: DateTime.now(),
       notes: notes,
       actorUid: actor?.uid,
       actorName: actor?.name,
       actorRole: actor?.role,
+      weightPerBag: movementWeightPerBag,
+      kgAmount: movementKg,
     ).toMap()).timeout(timeout);
   }
 

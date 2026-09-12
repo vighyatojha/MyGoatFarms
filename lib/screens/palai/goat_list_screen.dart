@@ -6,10 +6,10 @@ import '../../app_theme.dart';
 import '../../models/palai_models.dart';
 import '../../services/firestore_service.dart';
 import '../../widgets/fast_route.dart';
-import 'check_in_screen.dart';
 import 'multi_goat_checkout_screen.dart';
 import 'generate_report_screen.dart';
 import 'health_records_screen.dart';
+import 'customer_palai/customer_goat_registration_screen.dart';
 import 'customer_palai/goat_profile_screen.dart';
 import 'health_reminders_screen.dart';
 
@@ -483,7 +483,7 @@ class _GoatListScreenState extends State<GoatListScreen> {
         onPressed: () {
           Navigator.of(context).push(
             fastRoute(
-              const CheckInGoatScreen(),
+              const CustomerGoatRegistrationScreen(),
             ),
           );
         },
@@ -494,7 +494,7 @@ class _GoatListScreenState extends State<GoatListScreen> {
           color: Colors.white,
         ),
         label: const Text(
-          'Check In',
+          'Add Goat',
           style: TextStyle(
             color: Colors.white,
             fontWeight: FontWeight.w600,
@@ -1873,7 +1873,7 @@ class _GoatListScreenState extends State<GoatListScreen> {
                         context,
                       ).push(
                         fastRoute(
-                          const CheckInGoatScreen(),
+                          const CustomerGoatRegistrationScreen(),
                         ),
                       );
                     },
@@ -1883,7 +1883,7 @@ class _GoatListScreenState extends State<GoatListScreen> {
                       size: 18,
                     ),
                     label: const Text(
-                      'Check In a Goat',
+                      'Add a Goat',
                     ),
                     style:
                     ElevatedButton

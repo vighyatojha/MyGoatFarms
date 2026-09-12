@@ -16,8 +16,6 @@ import 'add_customer_screen.dart';
 import 'customer_palai/customer_goat_registration_screen.dart';
 import 'goat_list_screen.dart';
 import 'own_farm/own_farm_palai_content.dart';
-import '../monthly_report_screen.dart';
-import '../home/notification_screen.dart';
 import '../../widgets/farm_not_linked_state.dart';
 
 /// Which kind of Palai this screen is showing.
@@ -56,7 +54,6 @@ class _PalaiScreenState extends State<PalaiScreen> {
   PalaiType _palaiType = PalaiType.customer;
 
   Stream<List<PalaiCustomer>>? _customersStream;
-  Stream<double>? _incomeStream;
   Stream<double>? _pendingStream;
   Stream<List<ActivityLog>>? _activitiesStream;
 
@@ -79,10 +76,6 @@ class _PalaiScreenState extends State<PalaiScreen> {
         if (id != null) {
           _customersStream =
               FirestoreService.instance.customersStream(id);
-
-          _incomeStream =
-              FirestoreService.instance.todaysIncomeStream(id);
-
           _pendingStream =
               FirestoreService.instance.totalPendingPaymentsStream(id);
 
@@ -196,95 +189,117 @@ class _PalaiScreenState extends State<PalaiScreen> {
       backgroundColor: AppColors.paleGreen,
       body: SafeArea(
         child: _loadingFarm
-            ? const Center(
-          child: CircularProgressIndicator(
-            color: AppColors.primaryGreen,
-          ),
-        )
+            ? const _PalaiLoadingState()
             : _farmId == null
             ? _buildNotLinkedState()
-            : SingleChildScrollView(
-          padding: const EdgeInsets.fromLTRB(
-            20,
-            12,
-            20,
-            24,
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              FadeInDown(
-                duration:
-                const Duration(milliseconds: 180),
-                child: _buildHeader(),
-              ),
-
-              const SizedBox(height: 14),
-
-              _buildPalaiTypeToggle(),
-
-              const SizedBox(height: 18),
-
-              if (_palaiType == PalaiType.customer) ...[
-                _buildDashboard(),
-
-                const SizedBox(height: 24),
-
-                Text(
-                  'Quick Actions',
-                  style: AppTheme.heading(size: 16),
+            : RefreshIndicator(
+          color: AppColors.primaryGreen,
+          backgroundColor: Colors.white,
+          onRefresh: () async {
+            setState(() => _loadingFarm = true);
+            _loadFarm();
+            await Future<void>.delayed(
+              const Duration(milliseconds: 350),
+            );
+          },
+          child: SingleChildScrollView(
+            physics: const AlwaysScrollableScrollPhysics(),
+            padding: const EdgeInsets.fromLTRB(16, 12, 16, 28),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                FadeInDown(
+                  duration: const Duration(milliseconds: 220),
+                  child: _buildHeader(),
                 ),
-
-                const SizedBox(height: 12),
-
-                _buildQuickActions(_farmId!),
-
-                const SizedBox(height: 24),
-
-                Row(
-                  mainAxisAlignment:
-                  MainAxisAlignment.spaceBetween,
-                  children: [
-                    Text(
-                      'Recent Activities',
-                      style:
-                      AppTheme.heading(size: 16),
-                    ),
-                    GestureDetector(
-                      onTap: () => _comingSoon(
-                        'Full activity list',
-                      ),
-                      child: Text(
-                        'View All',
-                        style: AppTheme.body(
-                          size: 13,
-                          color:
-                          AppColors.darkGreen,
-                          weight:
-                          FontWeight.w600,
-                        ),
-                      ),
-                    ),
-                  ],
+                const SizedBox(height: 14),
+                FadeInUp(
+                  delay: const Duration(milliseconds: 25),
+                  duration: const Duration(milliseconds: 220),
+                  child: _buildPalaiTypeToggle(),
                 ),
-
-                const SizedBox(height: 12),
-
-                _buildActivities(),
-
-                const SizedBox(height: 20),
-
-                _buildGenerateReportBanner(
-                  _farmId!,
-                ),
-              ] else
-                OwnFarmPalaiContent(
-                  farmId: _farmId!,
-                ),
-            ],
+                const SizedBox(height: 18),
+                if (_palaiType == PalaiType.customer) ...[
+                  _buildDashboard(),
+                  const SizedBox(height: 24),
+                  _buildSectionHeader(
+                    'Quick Actions',
+                    'Manage your Palai operations',
+                  ),
+                  const SizedBox(height: 12),
+                  _buildQuickActions(),
+                  const SizedBox(height: 24),
+                  _buildSectionHeader(
+                    'Recent Activities',
+                    'Latest Palai updates',
+                    actionLabel: 'View All',
+                    onAction: () =>
+                        _comingSoon('Full activity list'),
+                  ),
+                  const SizedBox(height: 12),
+                  _buildActivities(),
+                ] else
+                  OwnFarmPalaiContent(
+                    farmId: _farmId!,
+                  ),
+              ],
+            ),
           ),
         ),
       ),
+    );
+  }
+
+  Widget _buildSectionHeader(
+      String title,
+      String subtitle, {
+        String? actionLabel,
+        VoidCallback? onAction,
+      }) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.end,
+      children: [
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                title,
+                style: AppTheme.heading(size: 17),
+              ),
+              const SizedBox(height: 3),
+              Text(
+                subtitle,
+                style: AppTheme.body(
+                  size: 11.5,
+                  color: AppColors.textGrey,
+                ),
+              ),
+            ],
+          ),
+        ),
+        if (actionLabel != null && onAction != null)
+          TextButton(
+            onPressed: onAction,
+            style: TextButton.styleFrom(
+              foregroundColor: AppColors.darkGreen,
+              padding: const EdgeInsets.symmetric(
+                horizontal: 4,
+                vertical: 4,
+              ),
+              minimumSize: Size.zero,
+              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+            ),
+            child: Text(
+              actionLabel,
+              style: AppTheme.body(
+                size: 12.5,
+                color: AppColors.darkGreen,
+                weight: FontWeight.w700,
+              ),
+            ),
+          ),
+      ],
     );
   }
 
@@ -293,43 +308,61 @@ class _PalaiScreenState extends State<PalaiScreen> {
   // ===========================================================================
 
   Widget _buildPalaiTypeToggle() {
-    Widget segment(
-        String label,
-        PalaiType type,
-        ) {
+    Widget segment(String label, PalaiType type, IconData icon) {
       final selected = _palaiType == type;
 
       return Expanded(
         child: GestureDetector(
           onTap: () {
-            setState(() {
-              _palaiType = type;
-            });
+            if (_palaiType == type) return;
+            setState(() => _palaiType = type);
           },
           child: AnimatedContainer(
-            duration:
-            const Duration(milliseconds: 150),
-            padding:
-            const EdgeInsets.symmetric(
-              vertical: 10,
+            duration: const Duration(milliseconds: 180),
+            curve: Curves.easeOut,
+            padding: const EdgeInsets.symmetric(
+              horizontal: 10,
+              vertical: 11,
             ),
             decoration: BoxDecoration(
-              color: selected
-                  ? AppColors.primaryGreen
-                  : Colors.transparent,
-              borderRadius:
-              BorderRadius.circular(10),
+              color: selected ? Colors.white : Colors.transparent,
+              borderRadius: BorderRadius.circular(12),
+              boxShadow: selected
+                  ? [
+                BoxShadow(
+                  color: AppColors.primaryGreen.withOpacity(0.10),
+                  blurRadius: 10,
+                  offset: const Offset(0, 3),
+                ),
+              ]
+                  : null,
             ),
-            alignment: Alignment.center,
-            child: Text(
-              label,
-              style: AppTheme.body(
-                size: 12,
-                color: selected
-                    ? Colors.white
-                    : AppColors.textDark,
-                weight: FontWeight.w600,
-              ),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(
+                  icon,
+                  size: 17,
+                  color: selected
+                      ? AppColors.primaryGreen
+                      : AppColors.textGrey,
+                ),
+                const SizedBox(width: 7),
+                Flexible(
+                  child: Text(
+                    label,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: AppTheme.body(
+                      size: 12,
+                      color: selected
+                          ? AppColors.darkGreen
+                          : AppColors.textGrey,
+                      weight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+              ],
             ),
           ),
         ),
@@ -337,20 +370,26 @@ class _PalaiScreenState extends State<PalaiScreen> {
     }
 
     return Container(
-      padding: const EdgeInsets.all(4),
+      padding: const EdgeInsets.all(5),
       decoration: BoxDecoration(
         color: AppColors.lightGreen,
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+          color: AppColors.primaryGreen.withOpacity(0.08),
+        ),
       ),
       child: Row(
         children: [
           segment(
             'Customer Palai',
             PalaiType.customer,
+            Icons.people_alt_outlined,
           ),
+          const SizedBox(width: 4),
           segment(
-            'Own Farm Palai',
+            'Own Farm',
             PalaiType.ownFarm,
+            Icons.home_work_outlined,
           ),
         ],
       ),
@@ -362,85 +401,84 @@ class _PalaiScreenState extends State<PalaiScreen> {
   // ===========================================================================
 
   Widget _buildHeader() {
-    return Row(
-      children: [
-        Container(
-          width: 42,
-          height: 42,
-          decoration: const BoxDecoration(
-            color: AppColors.lightGreen,
-            shape: BoxShape.circle,
-          ),
-          child: const Icon(
-            Icons.home_work,
-            color: AppColors.primaryGreen,
-          ),
-        ),
-
-        const SizedBox(width: 12),
-
-        Expanded(
-          child: Column(
-            crossAxisAlignment:
-            CrossAxisAlignment.start,
-            children: [
-              Text(
-                'Palai',
-                style:
-                AppTheme.heading(size: 17),
-              ),
-              Text(
-                'Goat Boarding & Care',
-                style: AppTheme.body(size: 12),
-              ),
-            ],
-          ),
-        ),
-
-        IconButton(
-          onPressed: () {
-            Navigator.of(context).push(
-              fastRoute(
-                const NotificationScreen(),
-              ),
-            );
-          },
-          icon: const Icon(
-            Icons.notifications_none,
-            color: AppColors.textDark,
-          ),
-        ),
-
-        const SizedBox(width: 6),
-
-        ElevatedButton.icon(
-          onPressed: _palaiType == PalaiType.customer
-              ? _openGoatRegistration
-              : null,
-          icon: const Icon(
-            Icons.add,
-            size: 16,
-          ),
-          label: const Text('Add Goat'),
-          style: ElevatedButton.styleFrom(
-            backgroundColor: AppColors.primaryGreen,
-            foregroundColor: Colors.white,
-            disabledBackgroundColor: Colors.grey.shade400,
-            disabledForegroundColor: Colors.white,
-            padding: const EdgeInsets.symmetric(
-              horizontal: 12,
-              vertical: 10,
+    return Container(
+      padding: const EdgeInsets.fromLTRB(14, 14, 12, 14),
+      decoration: AppTheme.card(radius: 20),
+      child: Row(
+        children: [
+          Container(
+            width: 48,
+            height: 48,
+            decoration: BoxDecoration(
+              color: AppColors.lightGreen,
+              borderRadius: BorderRadius.circular(15),
             ),
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(10),
-            ),
-            textStyle: const TextStyle(
-              fontSize: 12,
-              fontWeight: FontWeight.w600,
+            child: const Icon(
+              Icons.home_work_rounded,
+              color: AppColors.primaryGreen,
+              size: 25,
             ),
           ),
-        ),
-      ],
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Palai',
+                  style: AppTheme.heading(size: 19),
+                ),
+                const SizedBox(height: 3),
+                Text(
+                  'Goat Boarding & Care',
+                  style: AppTheme.body(
+                    size: 11.5,
+                    color: AppColors.textGrey,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          if (_palaiType == PalaiType.customer)
+            ElevatedButton.icon(
+              onPressed: _openGoatRegistration,
+              icon: const Icon(Icons.add_rounded, size: 17),
+              label: const Text('Add Goat'),
+              style: ElevatedButton.styleFrom(
+                elevation: 0,
+                backgroundColor: AppColors.primaryGreen,
+                foregroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 11,
+                ),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                textStyle: const TextStyle(
+                  fontSize: 11.5,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            )
+          else
+            Container(
+              padding: const EdgeInsets.symmetric(
+                horizontal: 10,
+                vertical: 9,
+              ),
+              decoration: BoxDecoration(
+                color: AppColors.lightGreen,
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: const Icon(
+                Icons.home_work_outlined,
+                color: AppColors.darkGreen,
+                size: 19,
+              ),
+            ),
+        ],
+      ),
     );
   }
 
@@ -450,10 +488,8 @@ class _PalaiScreenState extends State<PalaiScreen> {
 
   Widget _buildDashboard() {
     return FadeInUp(
-      delay:
-      const Duration(milliseconds: 38),
-      duration:
-      const Duration(milliseconds: 220),
+      delay: const Duration(milliseconds: 38),
+      duration: const Duration(milliseconds: 220),
       child: Column(
         children: [
           Row(
@@ -461,50 +497,34 @@ class _PalaiScreenState extends State<PalaiScreen> {
               Expanded(
                 child: GoatCountBuilder(
                   farmId: _farmId!,
-                  builder:
-                      (context, count) {
-                    return StatCard(
-                      icon: Icons.pets,
-                      label:
-                      'Total Goats in Palai',
-                      value: count != null
-                          ? '$count'
-                          : '—',
-                      color:
-                      AppColors.primaryGreen,
+                  builder: (context, count) {
+                    return _buildDashboardStat(
+                      icon: Icons.pets_rounded,
+                      label: 'Total Goats',
+                      value: count != null ? '$count' : '—',
+                      color: AppColors.primaryGreen,
                       onTap: () {
-                        Navigator.of(context)
-                            .push(
-                          fastRoute(
-                            const GoatListScreen(),
-                          ),
+                        Navigator.of(context).push(
+                          fastRoute(const GoatListScreen()),
                         );
                       },
                     );
                   },
                 ),
               ),
-
               const SizedBox(width: 12),
-
               Expanded(
                 child: StreamBuilder<List<PalaiCustomer>>(
                   stream: _customersStream,
                   builder: (context, snap) {
-                    return StatCard(
-                      icon: Icons.people_outline,
-                      label: 'Total Customers',
-                      value: snap.hasData
-                          ? '${snap.data!.length}'
-                          : '—',
+                    return _buildDashboardStat(
+                      icon: Icons.people_alt_outlined,
+                      label: 'Customers',
+                      value: snap.hasData ? '${snap.data!.length}' : '—',
                       color: AppColors.info,
-
-                      // Open Customer Management Screen
                       onTap: () {
                         Navigator.of(context).push(
-                          fastRoute(
-                            const CustomerManagementScreen(),
-                          ),
+                          fastRoute(const CustomerManagementScreen()),
                         );
                       },
                     );
@@ -513,70 +533,45 @@ class _PalaiScreenState extends State<PalaiScreen> {
               ),
             ],
           ),
-
           const SizedBox(height: 12),
-
           Row(
             children: [
               Expanded(
-                child:
-                StreamBuilder<double>(
-                  stream:
-                  FirestoreService
-                      .instance
-                      .monthlyPaymentsReceivedStream(
-                    _farmId!,
-                  ),
-                  builder:
-                      (context, snap) {
-                    return StatCard(
-                      icon:
-                      Icons.receipt_long_outlined,
-                      label:
-                      'Payments',
+                child: StreamBuilder<double>(
+                  stream: FirestoreService.instance
+                      .monthlyPaymentsReceivedStream(_farmId!),
+                  builder: (context, snap) {
+                    return _buildDashboardStat(
+                      icon: Icons.currency_rupee_rounded,
+                      label: 'Payments',
                       value: snap.hasData
                           ? '₹${snap.data!.toStringAsFixed(0)}'
                           : '—',
-                      color:
-                      AppColors.warning,
+                      color: AppColors.warning,
                       onTap: () {
-                        Navigator.of(context)
-                            .push(
-                          fastRoute(
-                            const FinanceOverviewScreen(),
-                          ),
+                        Navigator.of(context).push(
+                          fastRoute(const FinanceOverviewScreen()),
                         );
                       },
                     );
                   },
                 ),
               ),
-
               const SizedBox(width: 12),
-
               Expanded(
-                child:
-                StreamBuilder<double>(
-                  stream:
-                  _pendingStream,
-                  builder:
-                      (context, snap) {
-                    return StatCard(
-                      icon:
-                      Icons.credit_card_outlined,
-                      label:
-                      'Pending Payments',
+                child: StreamBuilder<double>(
+                  stream: _pendingStream,
+                  builder: (context, snap) {
+                    return _buildDashboardStat(
+                      icon: Icons.account_balance_wallet_outlined,
+                      label: 'Pending',
                       value: snap.hasData
                           ? '₹${snap.data!.toStringAsFixed(0)}'
                           : '—',
-                      color:
-                      AppColors.error,
+                      color: AppColors.error,
                       onTap: () {
-                        Navigator.of(context)
-                            .push(
-                          fastRoute(
-                            const CustomerLedgerScreen(),
-                          ),
+                        Navigator.of(context).push(
+                          fastRoute(const CustomerLedgerScreen()),
                         );
                       },
                     );
@@ -590,99 +585,210 @@ class _PalaiScreenState extends State<PalaiScreen> {
     );
   }
 
+  Widget _buildDashboardStat({
+    required IconData icon,
+    required String label,
+    required String value,
+    required Color color,
+    required VoidCallback onTap,
+  }) {
+    return Material(
+      color: Colors.white,
+      borderRadius: BorderRadius.circular(18),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(18),
+        child: Container(
+          constraints: const BoxConstraints(minHeight: 98),
+          padding: const EdgeInsets.all(13),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(18),
+            border: Border.all(
+              color: color.withOpacity(0.10),
+            ),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withOpacity(0.035),
+                blurRadius: 12,
+                offset: const Offset(0, 4),
+              ),
+            ],
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Row(
+                children: [
+                  Container(
+                    width: 34,
+                    height: 34,
+                    decoration: BoxDecoration(
+                      color: color.withOpacity(0.11),
+                      borderRadius: BorderRadius.circular(11),
+                    ),
+                    child: Icon(
+                      icon,
+                      size: 18,
+                      color: color,
+                    ),
+                  ),
+                  const Expanded(child: SizedBox.shrink()),
+                  Icon(
+                    Icons.arrow_forward_ios_rounded,
+                    size: 11,
+                    color: AppColors.textGrey.withOpacity(0.65),
+                  ),
+                ],
+              ),
+              // NOTE: `Spacer()` needs a bounded parent height, but this
+              // Column sits inside a Row -> Expanded, whose cross axis
+              // (height) is loose/unbounded by default. That caused a
+              // layout exception here which cascaded up and blanked the
+              // whole screen. Fixed height gaps below instead.
+              const SizedBox(height: 18),
+              Text(
+                value,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: AppTheme.heading(
+                  size: 18,
+                  color: AppColors.textDark,
+                ),
+              ),
+              const SizedBox(height: 2),
+              Text(
+                label,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: AppTheme.body(
+                  size: 10.5,
+                  color: AppColors.textGrey,
+                  weight: FontWeight.w500,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   // ===========================================================================
   // QUICK ACTIONS
   // ===========================================================================
 
-  Widget _buildQuickActions(
-      String farmId,
-      ) {
+  Widget _buildQuickActions() {
     return FadeInUp(
-      delay:
-      const Duration(milliseconds: 62),
-      duration:
-      const Duration(milliseconds: 220),
-      child: GridView.count(
-        crossAxisCount: 4,
-        shrinkWrap: true,
-        physics:
-        const NeverScrollableScrollPhysics(),
-        mainAxisSpacing: 10,
-        crossAxisSpacing: 10,
-        childAspectRatio: 0.85,
-        children: [
-          ModuleTile(
-            icon:
-            Icons.person_add_alt,
-            label:
-            'Add Customer',
-            sub:
-            'New',
-            color:
-            AppColors.primaryGreen,
-            onTap: () {
-              Navigator.of(context)
-                  .push(
-                fastRoute(
-                  const AddCustomerScreen(),
+      delay: const Duration(milliseconds: 62),
+      duration: const Duration(milliseconds: 220),
+      child: Container(
+        padding: const EdgeInsets.all(12),
+        decoration: AppTheme.card(radius: 18),
+        child: GridView.count(
+          crossAxisCount: 2,
+          shrinkWrap: true,
+          physics: const NeverScrollableScrollPhysics(),
+          mainAxisSpacing: 10,
+          crossAxisSpacing: 10,
+          childAspectRatio: 2.15,
+          children: [
+            _buildQuickActionTile(
+              icon: Icons.person_add_alt_rounded,
+              label: 'Add Customer',
+              subtitle: 'Create new customer',
+              color: AppColors.primaryGreen,
+              onTap: () {
+                Navigator.of(context).push(
+                  fastRoute(const AddCustomerScreen()),
+                );
+              },
+            ),
+            _buildQuickActionTile(
+              icon: Icons.more_horiz_rounded,
+              label: 'More',
+              subtitle: 'More options',
+              color: AppColors.textGrey,
+              onTap: () => _comingSoon('More options'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildQuickActionTile({
+    required IconData icon,
+    required String label,
+    required String subtitle,
+    required Color color,
+    required VoidCallback onTap,
+  }) {
+    return Material(
+      color: Colors.transparent,
+      borderRadius: BorderRadius.circular(14),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(14),
+        child: Container(
+          padding: const EdgeInsets.symmetric(
+            horizontal: 11,
+            vertical: 9,
+          ),
+          decoration: BoxDecoration(
+            color: AppColors.paleGreen,
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(
+              color: color.withOpacity(0.10),
+            ),
+          ),
+          child: Row(
+            children: [
+              Container(
+                width: 38,
+                height: 38,
+                decoration: BoxDecoration(
+                  color: color.withOpacity(0.12),
+                  borderRadius: BorderRadius.circular(11),
                 ),
-              );
-            },
-          ),
-
-          ModuleTile(
-            icon:
-            Icons.local_shipping_outlined,
-            label:
-            'Delivery',
-            sub:
-            'Return',
-            color:
-            AppColors.info,
-            onTap: () {
-              _comingSoon(
-                'Delivery / Return',
-              );
-            },
-          ),
-
-          ModuleTile(
-            icon:
-            Icons.summarize_outlined,
-            label:
-            'Report',
-            sub:
-            'Monthly',
-            color:
-            AppColors.stockTeal,
-            onTap: () {
-              Navigator.of(context)
-                  .push(
-                fastRoute(
-                  MonthlyReportScreen(
-                    farmId: farmId,
-                  ),
+                child: Icon(
+                  icon,
+                  color: color,
+                  size: 19,
                 ),
-              );
-            },
+              ),
+              const SizedBox(width: 9),
+              Expanded(
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      label,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: AppTheme.body(
+                        size: 11.5,
+                        color: AppColors.textDark,
+                        weight: FontWeight.w700,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      subtitle,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: AppTheme.body(
+                        size: 9.5,
+                        color: AppColors.textGrey,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
           ),
-
-          ModuleTile(
-            icon:
-            Icons.more_horiz,
-            label:
-            'More',
-            sub:
-            '',
-            color:
-            AppColors.textGrey,
-            onTap: () {
-              _comingSoon(
-                'More options',
-              );
-            },
-          ),
-        ],
+        ),
       ),
     );
   }
@@ -693,144 +799,131 @@ class _PalaiScreenState extends State<PalaiScreen> {
 
   Widget _buildActivities() {
     return FadeInUp(
-      delay:
-      const Duration(milliseconds: 88),
-      duration:
-      const Duration(milliseconds: 220),
-      child:
-      StreamBuilder<List<ActivityLog>>(
-        stream:
-        _activitiesStream,
-        builder:
-            (context, snap) {
+      delay: const Duration(milliseconds: 88),
+      duration: const Duration(milliseconds: 220),
+      child: StreamBuilder<List<ActivityLog>>(
+        stream: _activitiesStream,
+        builder: (context, snap) {
           if (!snap.hasData) {
             return const Padding(
-              padding:
-              EdgeInsets.symmetric(
-                vertical: 16,
-              ),
+              padding: EdgeInsets.symmetric(vertical: 16),
               child: Center(
-                child:
-                CircularProgressIndicator(
-                  color:
-                  AppColors.primaryGreen,
+                child: CircularProgressIndicator(
+                  color: AppColors.primaryGreen,
                 ),
               ),
             );
           }
 
-          final activities =
-          snap.data!;
+          final activities = snap.data!;
 
           if (activities.isEmpty) {
             return Text(
               'No Palai activity yet.',
-              style:
-              AppTheme.body(size: 12),
+              style: AppTheme.body(size: 12),
             );
           }
 
-          return Column(
-            children:
-            activities
-                .map(
-                  (activity) =>
-                  ActivityTile(
-                    activity:
-                    activity,
-                  ),
-            )
-                .toList(),
+          return Container(
+            decoration: AppTheme.card(radius: 18),
+            padding: const EdgeInsets.symmetric(vertical: 4),
+            child: Column(
+              children: activities
+                  .map(
+                    (activity) => ActivityTile(
+                  activity: activity,
+                ),
+              )
+                  .toList(),
+            ),
           );
         },
       ),
     );
   }
 
-  // ===========================================================================
-  // MONTHLY REPORT
-  // ===========================================================================
+}
 
-  Widget _buildGenerateReportBanner(
-      String farmId,
-      ) {
-    return Container(
-      padding:
-      const EdgeInsets.all(16),
-      decoration:
-      BoxDecoration(
-        color:
-        AppColors.darkGreen,
-        borderRadius:
-        BorderRadius.circular(16),
-      ),
-      child: Row(
+// ===========================================================================
+// PALAI LOADING STATE
+// ===========================================================================
+
+class _PalaiLoadingState extends StatelessWidget {
+  const _PalaiLoadingState();
+
+  @override
+  Widget build(BuildContext context) {
+    return SingleChildScrollView(
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 28),
+      child: Column(
         children: [
-          const Icon(
-            Icons.description_outlined,
-            color: Colors.white,
-          ),
-
-          const SizedBox(width: 12),
-
-          Expanded(
-            child: Column(
-              crossAxisAlignment:
-              CrossAxisAlignment.start,
-              children: [
-                Text(
-                  'Generate Monthly Report',
-                  style:
-                  AppTheme.heading(
-                    size: 13,
-                    color: Colors.white,
-                  ),
-                ),
-                Text(
-                  'Send goat report with photos and weight updates to customer',
-                  style:
-                  AppTheme.body(
-                    size: 11,
-                    color: Colors.white70,
-                  ),
-                ),
-              ],
+          Container(
+            height: 78,
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(20),
             ),
           ),
-
-          ElevatedButton(
-            onPressed: () {
-              Navigator.of(context)
-                  .push(
-                fastRoute(
-                  MonthlyReportScreen(
-                    farmId: farmId,
-                  ),
-                ),
-              );
-            },
-            style:
-            ElevatedButton.styleFrom(
-              backgroundColor:
-              Colors.white,
-              foregroundColor:
-              AppColors.darkGreen,
-              shape:
-              RoundedRectangleBorder(
-                borderRadius:
-                BorderRadius.circular(10),
+          const SizedBox(height: 14),
+          Container(
+            height: 54,
+            decoration: BoxDecoration(
+              color: AppColors.lightGreen,
+              borderRadius: BorderRadius.circular(16),
+            ),
+          ),
+          const SizedBox(height: 18),
+          Row(
+            children: [
+              Expanded(child: _SkeletonCard()),
+              const SizedBox(width: 12),
+              Expanded(child: _SkeletonCard()),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              Expanded(child: _SkeletonCard()),
+              const SizedBox(width: 12),
+              Expanded(child: _SkeletonCard()),
+            ],
+          ),
+          const SizedBox(height: 24),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: Container(
+              width: 125,
+              height: 18,
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(8),
               ),
             ),
-            child: const Text(
-              'Generate',
-              style: TextStyle(
-                fontSize: 12,
-                fontWeight:
-                FontWeight.w600,
-              ),
+          ),
+          const SizedBox(height: 12),
+          Container(
+            height: 190,
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(18),
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+class _SkeletonCard extends StatelessWidget {
+  const _SkeletonCard();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      height: 98,
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(18),
       ),
     );
   }

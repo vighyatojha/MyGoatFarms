@@ -9,15 +9,23 @@ import '../../../models/activity_model.dart';
 import '../../../models/palai_models.dart';
 import '../../../services/firestore_service.dart';
 import '../../../services/image_service.dart';
+import '../../../widgets/fast_route.dart';
+import '../../../widgets/farm_not_linked_state.dart';
 import '../../../widgets/image_source_sheet.dart';
 import '../../../widgets/photo_upload_circle.dart';
+import '../add_customer_screen.dart';
 
 class CustomerGoatRegistrationScreen extends StatefulWidget {
-  final String customerId;
+  /// When opened from a customer's own profile (or anywhere else the
+  /// customer is already known), pass their id and the owner picker is
+  /// skipped. When opened generically (e.g. from the goat list "+ Add
+  /// Goat" action) leave this null and the form shows a customer
+  /// dropdown, just like the old standalone Check-In screen did.
+  final String? customerId;
 
   const CustomerGoatRegistrationScreen({
     super.key,
-    required this.customerId,
+    this.customerId,
   });
 
   @override
@@ -34,6 +42,7 @@ class _CustomerGoatRegistrationScreenState
   final _colorController = TextEditingController();
   final _weightController = TextEditingController();
   final _pricingController = TextEditingController();
+  final _checkInTransportController = TextEditingController();
   final _notesController = TextEditingController();
 
   final FirebaseFirestore _firestore =
@@ -42,6 +51,17 @@ class _CustomerGoatRegistrationScreenState
   String _gender = 'Male';
   String _healthStatus = 'Healthy';
   String _monthlyPackage = 'Basic Palai';
+
+  // ---------------------------------------------------------------------------
+  // CUSTOMER (OWNER) — only used when widget.customerId is null, i.e. this
+  // screen was opened generically rather than from a specific customer.
+  // ---------------------------------------------------------------------------
+
+  PalaiCustomer? _selectedCustomer;
+  String? _farmId;
+  bool _loadingFarm = true;
+
+  bool get _needsCustomerPicker => widget.customerId == null;
 
   // Date the goat actually arrived at the farm.
   // This is different from checkInDate, which is the Palai registration/check-in time.
@@ -101,6 +121,20 @@ class _CustomerGoatRegistrationScreenState
   void initState() {
     super.initState();
     _checkPalaiPermission();
+    _loadFarm();
+  }
+
+  // Needed for the customer picker's stream (when no customerId was
+  // passed in) and reused by _saveGoat() instead of a second lookup.
+  void _loadFarm() {
+    FirestoreService.instance.currentFarmId().then((id) {
+      if (mounted) {
+        setState(() {
+          _farmId = id;
+          _loadingFarm = false;
+        });
+      }
+    });
   }
 
   Future<void> _checkPalaiPermission() async {
@@ -201,6 +235,7 @@ class _CustomerGoatRegistrationScreenState
     _colorController.dispose();
     _weightController.dispose();
     _pricingController.dispose();
+    _checkInTransportController.dispose();
     _notesController.dispose();
 
     super.dispose();
@@ -301,6 +336,28 @@ class _CustomerGoatRegistrationScreenState
       return;
     }
 
+    // When opened without a preset customer, the picker's selection is
+    // the source of truth for the owner.
+    if (_needsCustomerPicker && _selectedCustomer == null) {
+      _showSnack(
+        'Please select a customer / owner.',
+        isError: true,
+      );
+      return;
+    }
+
+    final transportText = _checkInTransportController.text.trim();
+    final transportCharge =
+    transportText.isEmpty ? 0.0 : double.tryParse(transportText);
+
+    if (transportCharge == null || transportCharge < 0) {
+      _showSnack(
+        'Please enter a valid transport charge.',
+        isError: true,
+      );
+      return;
+    }
+
     setState(() {
       _saving = true;
     });
@@ -310,8 +367,8 @@ class _CustomerGoatRegistrationScreenState
       // GET CURRENT FARM
       // ---------------------------------------------------------------
 
-      final farmId =
-      await FirestoreService.instance.currentFarmId();
+      final farmId = _farmId ??
+          await FirestoreService.instance.currentFarmId();
 
       if (farmId == null || farmId.trim().isEmpty) {
         throw StateError(
@@ -323,10 +380,12 @@ class _CustomerGoatRegistrationScreenState
       // GET CUSTOMER
       // ---------------------------------------------------------------
 
+      final customerId = widget.customerId ?? _selectedCustomer!.id;
+
       final customer =
       await FirestoreService.instance.getCustomer(
         farmId,
-        widget.customerId,
+        customerId,
       );
 
       if (customer == null) {
@@ -347,7 +406,7 @@ class _CustomerGoatRegistrationScreenState
         id: '',
 
         customerId:
-        widget.customerId,
+        customerId,
 
         // Identity
         goatCode:
@@ -398,6 +457,9 @@ class _CustomerGoatRegistrationScreenState
         pricing:
         pricing,
 
+        checkInTransportCharge:
+        transportCharge,
+
         // Registration
         registrationDate:
         now,
@@ -440,9 +502,23 @@ class _CustomerGoatRegistrationScreenState
       final goatId =
       await FirestoreService.instance.checkInGoat(
         farmId,
-        widget.customerId,
+        customerId,
         goat,
       );
+
+      // Post the optional Check-In Transport charge to Finance ONCE,
+      // right now — Final Checkout later only ever reads this back, it
+      // never creates it again (avoids double-charging, per the Palai
+      // spec). Mirrors the old standalone Check-In screen's behavior.
+      if (goat.checkInTransportCharge > 0) {
+        await FirestoreService.instance.recordCheckInTransportCharge(
+          farmId: farmId,
+          customerId: customerId,
+          goatId: goatId,
+          goatCode: goat.goatCode,
+          amount: goat.checkInTransportCharge,
+        );
+      }
 
       // ---------------------------------------------------------------
       // ACTIVITY LOG
@@ -538,7 +614,21 @@ class _CustomerGoatRegistrationScreenState
         ),
       ),
 
-      body: Form(
+      body: (_needsCustomerPicker && _loadingFarm)
+          ? const Center(
+        child: CircularProgressIndicator(
+          color: AppColors.primaryGreen,
+        ),
+      )
+          : (_needsCustomerPicker && _farmId == null)
+          ? FarmNotLinkedState(
+        buttonColor: AppColors.primaryGreen,
+        onRetry: () {
+          setState(() => _loadingFarm = true);
+          _loadFarm();
+        },
+      )
+          : Form(
         key: _formKey,
 
         child: ListView(
@@ -559,6 +649,13 @@ class _CustomerGoatRegistrationScreenState
             _buildIntroCard(),
 
             const SizedBox(height: 22),
+
+            if (_needsCustomerPicker) ...[
+              _buildSectionTitle('Owner (Customer)'),
+              const SizedBox(height: 12),
+              _customerPicker(_farmId!),
+              const SizedBox(height: 28),
+            ],
 
             _buildPhotoSection(),
 
@@ -618,6 +715,10 @@ class _CustomerGoatRegistrationScreenState
 
             _buildPricingField(),
 
+            const SizedBox(height: 16),
+
+            _buildTransportChargeField(),
+
             const SizedBox(height: 28),
 
             _buildSectionTitle(
@@ -636,7 +737,9 @@ class _CustomerGoatRegistrationScreenState
       ),
 
       bottomNavigationBar:
-      SafeArea(
+      (_needsCustomerPicker && (_loadingFarm || _farmId == null))
+          ? null
+          : SafeArea(
         child: Padding(
           padding:
           const EdgeInsets.fromLTRB(
@@ -1039,6 +1142,110 @@ class _CustomerGoatRegistrationScreenState
         }
 
         return null;
+      },
+    );
+  }
+
+  // ===========================================================================
+  // CHECK-IN TRANSPORT CHARGE
+  // ===========================================================================
+
+  Widget _buildTransportChargeField() {
+    return _textField(
+      controller:
+      _checkInTransportController,
+      label:
+      'Check-In Transport (₹)',
+      hint:
+      'Leave blank if no transport charge',
+      icon:
+      Icons.local_shipping_outlined,
+      keyboardType:
+      const TextInputType.numberWithOptions(
+        decimal: true,
+      ),
+      optional:
+      true,
+      validator: (value) {
+        final text =
+            value?.trim() ?? '';
+
+        if (text.isEmpty) {
+          return null;
+        }
+
+        final amount =
+        double.tryParse(text);
+
+        if (amount == null) {
+          return 'Enter a valid amount';
+        }
+
+        if (amount < 0) {
+          return 'Amount cannot be negative';
+        }
+
+        return null;
+      },
+    );
+  }
+
+  // ===========================================================================
+  // OWNER (CUSTOMER) PICKER — only shown when no customerId was passed in.
+  // ===========================================================================
+
+  Widget _customerPicker(String farmId) {
+    return StreamBuilder<List<PalaiCustomer>>(
+      stream: FirestoreService.instance.customersStream(farmId),
+      builder: (context, snap) {
+        final customers = snap.data ?? [];
+        return Container(
+          decoration: AppTheme.card(radius: 12),
+          padding: const EdgeInsets.symmetric(horizontal: 12),
+          child: Row(
+            children: [
+              Expanded(
+                child: DropdownButtonHideUnderline(
+                  child: DropdownButton<PalaiCustomer>(
+                    value: _selectedCustomer,
+                    isExpanded: true,
+                    hint: Text(
+                      'Select customer',
+                      style: AppTheme.body(size: 13),
+                    ),
+                    items: customers
+                        .map(
+                          (c) => DropdownMenuItem(
+                        value: c,
+                        child: Text(
+                          c.name,
+                          style: AppTheme.body(
+                            size: 13,
+                            color: AppColors.textDark,
+                          ),
+                        ),
+                      ),
+                    )
+                        .toList(),
+                    onChanged: (v) => setState(() => _selectedCustomer = v),
+                  ),
+                ),
+              ),
+              TextButton(
+                onPressed: () => Navigator.of(context)
+                    .push(fastRoute(const AddCustomerScreen())),
+                child: Text(
+                  '+ New',
+                  style: AppTheme.body(
+                    size: 12,
+                    color: AppColors.primaryGreen,
+                    weight: FontWeight.w600,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        );
       },
     );
   }

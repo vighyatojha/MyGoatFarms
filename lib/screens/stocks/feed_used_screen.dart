@@ -22,6 +22,7 @@ class _FeedUsedScreenState extends State<FeedUsedScreen> {
   final _quantityController = TextEditingController();
   final _notesController = TextEditingController();
   bool _saving = false;
+  String _usageUnit = 'Kg';
 
   @override
   void initState() {
@@ -73,8 +74,21 @@ class _FeedUsedScreenState extends State<FeedUsedScreen> {
       return;
     }
 
-    if (quantity > item.quantity) {
-      _message('You only have ${item.quantity.toStringAsFixed(0)} ${item.unit} available.', error: true);
+    final usageIsBag = _usageUnit.trim().toLowerCase() == 'bag';
+    final availableInUsageUnit = item.isBagUnit && !item.needsBagWeight
+        ? (usageIsBag ? item.quantity : item.totalKg)
+        : item.quantity;
+
+    if (quantity > availableInUsageUnit + 0.000001) {
+      _message(
+        'You only have ${item.isBagUnit && !item.needsBagWeight ? (usageIsBag ? '${item.quantity.toStringAsFixed(item.quantity % 1 == 0 ? 0 : 1)} Bags' : '${item.totalKg.toStringAsFixed(item.totalKg % 1 == 0 ? 0 : 1)} KG') : item.quantityLabel} available.',
+        error: true,
+      );
+      return;
+    }
+
+    if (item.isBagUnit && item.needsBagWeight) {
+      _message('This feed needs a Weight per Bag before it can be used.', error: true);
       return;
     }
 
@@ -90,6 +104,7 @@ class _FeedUsedScreenState extends State<FeedUsedScreen> {
         itemName: item.name,
         quantity: quantity,
         unit: item.unit,
+        usageUnit: _usageUnit,
         notes: _notesController.text.trim(),
       );
 
@@ -99,7 +114,9 @@ class _FeedUsedScreenState extends State<FeedUsedScreen> {
           id: '',
           type: ActivityType.feedUsed,
           title: 'Feed Used Today',
-          subtitle: '${quantity.toStringAsFixed(0)} ${item.unit} of ${item.name} used'
+          subtitle: '${quantity.toStringAsFixed(quantity % 1 == 0 ? 0 : 1)} $_usageUnit'
+              '${item.isBagUnit && !item.needsBagWeight && _usageUnit.toLowerCase() == 'bag' ? ' (${(quantity * item.weightPerBag!).toStringAsFixed(0)} KG)' : ''}'
+              ' of ${item.name} used'
               '${_notesController.text.trim().isEmpty ? '' : ' — ${_notesController.text.trim()}'}',
           module: 'stock',
           timestamp: DateTime.now(),
@@ -119,77 +136,89 @@ class _FeedUsedScreenState extends State<FeedUsedScreen> {
   }
 
   Future<bool> _confirmUsage(StockItem item, double quantity) async {
-    final remaining = item.quantity - quantity;
+    final usedKg = item.isBagUnit && !item.needsBagWeight && _usageUnit.toLowerCase() == 'bag'
+        ? quantity * item.weightPerBag!
+        : quantity;
+    final remainingKg = item.isBagUnit && !item.needsBagWeight
+        ? (item.totalKg - usedKg).clamp(0, double.infinity)
+        : (item.quantity - quantity).clamp(0, double.infinity);
+    final remainingText = item.isBagUnit && !item.needsBagWeight
+        ? '${(remainingKg / item.weightPerBag!).toStringAsFixed((remainingKg / item.weightPerBag!) % 1 == 0 ? 0 : 1)} Bags (${remainingKg.toStringAsFixed(remainingKg % 1 == 0 ? 0 : 1)} KG)'
+        : '${remainingKg.toStringAsFixed(remainingKg % 1 == 0 ? 0 : 1)} ${item.unit}';
 
     return await showModalBottomSheet<bool>(
-          context: context,
-          backgroundColor: Colors.transparent,
-          isScrollControlled: true,
-          builder: (sheetContext) {
-            return Container(
-              padding: const EdgeInsets.fromLTRB(20, 12, 20, 22),
-              decoration: const BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.vertical(top: Radius.circular(26)),
-              ),
-              child: SafeArea(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
+      context: context,
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      builder: (sheetContext) {
+        return Container(
+          padding: const EdgeInsets.fromLTRB(20, 12, 20, 22),
+          decoration: const BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.vertical(top: Radius.circular(26)),
+          ),
+          child: SafeArea(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Container(
+                  width: 42,
+                  height: 5,
+                  decoration: BoxDecoration(
+                    color: Colors.grey.shade300,
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                ),
+                const SizedBox(height: 18),
+                const CircleAvatar(
+                  radius: 28,
+                  backgroundColor: AppColors.lightGreen,
+                  child: Icon(Icons.remove_circle_outline, color: AppColors.primaryGreen, size: 28),
+                ),
+                const SizedBox(height: 12),
+                Text('Confirm feed usage', style: AppTheme.heading(size: 17)),
+                const SizedBox(height: 5),
+                Text(
+                  '${quantity.toStringAsFixed(quantity % 1 == 0 ? 0 : 1)} $_usageUnit will be deducted from ${item.name}.',
+                  textAlign: TextAlign.center,
+                  style: AppTheme.body(size: 12),
+                ),
+                const SizedBox(height: 16),
+                _summaryRow('Current stock', item.quantityLabel),
+                _summaryRow(
+                  'Used now',
+                  '${quantity.toStringAsFixed(quantity % 1 == 0 ? 0 : 1)} $_usageUnit'
+                      '${item.isBagUnit && _usageUnit.toLowerCase() == 'bag' ? ' (${usedKg.toStringAsFixed(usedKg % 1 == 0 ? 0 : 1)} KG)' : ''}',
+                ),
+                _summaryRow('Remaining', remainingText, highlight: true),
+                const SizedBox(height: 18),
+                Row(
                   children: [
-                    Container(
-                      width: 42,
-                      height: 5,
-                      decoration: BoxDecoration(
-                        color: Colors.grey.shade300,
-                        borderRadius: BorderRadius.circular(10),
+                    Expanded(
+                      child: OutlinedButton(
+                        onPressed: () => Navigator.pop(sheetContext, false),
+                        child: const Text('Cancel'),
                       ),
                     ),
-                    const SizedBox(height: 18),
-                    const CircleAvatar(
-                      radius: 28,
-                      backgroundColor: AppColors.lightGreen,
-                      child: Icon(Icons.remove_circle_outline, color: AppColors.primaryGreen, size: 28),
-                    ),
-                    const SizedBox(height: 12),
-                    Text('Confirm feed usage', style: AppTheme.heading(size: 17)),
-                    const SizedBox(height: 5),
-                    Text(
-                      '${quantity.toStringAsFixed(0)} ${item.unit} will be deducted from ${item.name}.',
-                      textAlign: TextAlign.center,
-                      style: AppTheme.body(size: 12),
-                    ),
-                    const SizedBox(height: 16),
-                    _summaryRow('Current stock', '${item.quantity.toStringAsFixed(0)} ${item.unit}'),
-                    _summaryRow('Used now', '${quantity.toStringAsFixed(0)} ${item.unit}'),
-                    _summaryRow('Remaining', '${remaining.toStringAsFixed(0)} ${item.unit}', highlight: true),
-                    const SizedBox(height: 18),
-                    Row(
-                      children: [
-                        Expanded(
-                          child: OutlinedButton(
-                            onPressed: () => Navigator.pop(sheetContext, false),
-                            child: const Text('Cancel'),
-                          ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: ElevatedButton(
+                        onPressed: () => Navigator.pop(sheetContext, true),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: AppColors.primaryGreen,
+                          foregroundColor: Colors.white,
                         ),
-                        const SizedBox(width: 10),
-                        Expanded(
-                          child: ElevatedButton(
-                            onPressed: () => Navigator.pop(sheetContext, true),
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: AppColors.primaryGreen,
-                              foregroundColor: Colors.white,
-                            ),
-                            child: const Text('Confirm'),
-                          ),
-                        ),
-                      ],
+                        child: const Text('Confirm'),
+                      ),
                     ),
                   ],
                 ),
-              ),
-            );
-          },
-        ) ??
+              ],
+            ),
+          ),
+        );
+      },
+    ) ??
         false;
   }
 
@@ -238,50 +267,52 @@ class _FeedUsedScreenState extends State<FeedUsedScreen> {
           : _farmId == null
           ? _buildNotLinkedState()
           : StreamBuilder<List<StockItem>>(
-              stream: FirestoreService.instance.stockItemsStream(_farmId!, type: StockType.feed),
-              builder: (context, snap) {
-                if (snap.connectionState == ConnectionState.waiting && !snap.hasData) {
-                  return const Center(child: CircularProgressIndicator(color: AppColors.primaryGreen));
-                }
+        stream: FirestoreService.instance.stockItemsStream(_farmId!, type: StockType.feed),
+        builder: (context, snap) {
+          if (snap.connectionState == ConnectionState.waiting && !snap.hasData) {
+            return const Center(child: CircularProgressIndicator(color: AppColors.primaryGreen));
+          }
 
-                final items = snap.data ?? <StockItem>[];
+          final items = snap.data ?? <StockItem>[];
 
-                if (items.isEmpty) {
-                  return _emptyState();
-                }
+          if (items.isEmpty) {
+            return _emptyState();
+          }
 
-                StockItem? selected;
-                for (final item in items) {
-                  if (item.id == _selectedItem?.id) {
-                    selected = item;
-                    break;
-                  }
-                }
+          StockItem? selected;
+          for (final item in items) {
+            if (item.id == _selectedItem?.id) {
+              selected = item;
+              break;
+            }
+          }
 
-                if (selected != null && selected != _selectedItem) {
-                  WidgetsBinding.instance.addPostFrameCallback((_) {
-                    if (mounted) setState(() => _selectedItem = selected);
-                  });
-                }
+          if (selected != null && selected != _selectedItem) {
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              if (mounted) setState(() => _selectedItem = selected);
+            });
+          }
 
-                return ListView(
-                  padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
-                  children: [
-                    _hero(),
-                    const SizedBox(height: 16),
-                    _stockSelector(items, selected),
-                    const SizedBox(height: 14),
-                    if (selected != null) _availableCard(selected),
-                    const SizedBox(height: 14),
-                    _quantityField(selected),
-                    const SizedBox(height: 14),
-                    _notesField(),
-                    const SizedBox(height: 20),
-                    _saveButton(),
-                  ],
-                );
-              },
-            ),
+          return ListView(
+            padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
+            children: [
+              _hero(),
+              const SizedBox(height: 16),
+              _stockSelector(items, selected),
+              const SizedBox(height: 14),
+              if (selected != null) _availableCard(selected),
+              const SizedBox(height: 14),
+              if (selected != null) _usageUnitSelector(selected),
+              if (selected != null) const SizedBox(height: 14),
+              _quantityField(selected),
+              const SizedBox(height: 14),
+              _notesField(),
+              const SizedBox(height: 20),
+              _saveButton(),
+            ],
+          );
+        },
+      ),
     );
   }
 
@@ -352,7 +383,7 @@ class _FeedUsedScreenState extends State<FeedUsedScreen> {
                       child: Text(item.name, style: AppTheme.body(size: 13, color: AppColors.textDark, weight: FontWeight.w600)),
                     ),
                     Text(
-                      '${item.quantity.toStringAsFixed(0)} ${item.unit}',
+                      item.quantityLabel,
                       style: AppTheme.body(size: 11, color: low ? AppColors.error : AppColors.darkGreen, weight: FontWeight.w700),
                     ),
                   ],
@@ -365,6 +396,7 @@ class _FeedUsedScreenState extends State<FeedUsedScreen> {
                   setState(() {
                     _selectedItem = item;
                     _quantityController.clear();
+                    _usageUnit = item.isBagUnit ? 'Kg' : item.unit;
                   });
                   break;
                 }
@@ -377,7 +409,8 @@ class _FeedUsedScreenState extends State<FeedUsedScreen> {
   }
 
   Widget _availableCard(StockItem item) {
-    final progress = item.quantity <= 0 ? 0.0 : (item.quantity / (item.quantity + 50)).clamp(0.0, 1.0);
+    final available = item.isBagUnit && !item.needsBagWeight ? item.totalKg : item.quantity;
+    final progress = available <= 0 ? 0.0 : (available / (available + 50)).clamp(0.0, 1.0);
     final low = item.isLowStock;
 
     return Container(
@@ -395,7 +428,7 @@ class _FeedUsedScreenState extends State<FeedUsedScreen> {
               const SizedBox(width: 9),
               Expanded(child: Text('Available stock', style: AppTheme.body(size: 12, weight: FontWeight.w600))),
               Text(
-                '${item.quantity.toStringAsFixed(0)} ${item.unit}',
+                item.quantityLabel,
                 style: AppTheme.heading(size: 16, color: low ? AppColors.error : AppColors.darkGreen),
               ),
             ],
@@ -425,6 +458,56 @@ class _FeedUsedScreenState extends State<FeedUsedScreen> {
     );
   }
 
+  Widget _usageUnitSelector(StockItem item) {
+    final units = item.isBagUnit ? const ['Kg', 'Bag'] : <String>[item.unit];
+    return _card(
+      title: 'Usage unit',
+      icon: Icons.swap_horiz_rounded,
+      child: Container(
+        padding: const EdgeInsets.all(4),
+        decoration: BoxDecoration(
+          color: AppColors.lightGreen,
+          borderRadius: BorderRadius.circular(13),
+        ),
+        child: Row(
+          children: units.map((unit) {
+            final selected = _usageUnit.toLowerCase() == unit.toLowerCase();
+            return Expanded(
+              child: GestureDetector(
+                onTap: () {
+                  setState(() {
+                    _usageUnit = unit;
+                    _quantityController.clear();
+                  });
+                },
+                child: AnimatedContainer(
+                  duration: const Duration(milliseconds: 180),
+                  padding: const EdgeInsets.symmetric(vertical: 11),
+                  decoration: BoxDecoration(
+                    color: selected ? Colors.white : Colors.transparent,
+                    borderRadius: BorderRadius.circular(10),
+                    boxShadow: selected
+                        ? [BoxShadow(color: Colors.black.withOpacity(.06), blurRadius: 5)]
+                        : null,
+                  ),
+                  child: Text(
+                    unit,
+                    textAlign: TextAlign.center,
+                    style: AppTheme.body(
+                      size: 12,
+                      color: selected ? AppColors.darkGreen : AppColors.textGrey,
+                      weight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+              ),
+            );
+          }).toList(),
+        ),
+      ),
+    );
+  }
+
   Widget _quantityField(StockItem? item) {
     return _card(
       title: 'Usage quantity',
@@ -436,7 +519,7 @@ class _FeedUsedScreenState extends State<FeedUsedScreen> {
         style: AppTheme.body(size: 14, color: AppColors.textDark, weight: FontWeight.w600),
         decoration: InputDecoration(
           hintText: 'e.g. 15',
-          suffixText: item?.unit ?? 'unit',
+          suffixText: item?.isBagUnit == true ? _usageUnit : (item?.unit ?? 'unit'),
           prefixIcon: const Icon(Icons.scale_outlined, color: AppColors.primaryGreen),
           filled: true,
           fillColor: Colors.white,
