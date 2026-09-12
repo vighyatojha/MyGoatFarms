@@ -3,9 +3,11 @@ import 'package:flutter/material.dart';
 import '../../app_theme.dart';
 import '../../models/health_reminder_settings_model.dart';
 import '../../services/firestore_service.dart';
+import '../../widgets/reminder_date_selector.dart';
 
 /// Dedicated Health Reminder Settings editor — Hoof Cutting reminder
-/// cadence (in days).
+/// cadence (in days), plus Vaccination and Hair Trimming next-due
+/// dates.
 ///
 /// This is a FARM-LEVEL setting (Profile > Health Reminder Settings):
 /// once saved here it applies to every active goat in the farm,
@@ -13,16 +15,18 @@ import '../../services/firestore_service.dart';
 /// replaces the old per-customer "Health Settings" that used to live
 /// on each Customer Profile.
 ///
-/// Only Hoof Cutting uses a reminder cadence like this. Vaccination
-/// and Hair Trimming next-due dates are picked manually, per record,
-/// from a calendar on their own Add screens — there is no farm-wide
-/// cadence for them, so they have no editor here.
+/// All three record types are governed from here now:
+/// - Hoof Cutting uses a day-cadence — each new record's `nextDueDate`
+///   is `cuttingDate + hoofCuttingReminderDays`.
+/// - Vaccination and Hair Trimming each use a single farm-wide
+///   CALENDAR DATE instead of a cadence — every new record of that
+///   type, for every goat, gets that exact date as its `nextDueDate`.
 ///
-/// The Add Hoof Cutting screen reads this value live (via
-/// [FirestoreService.getHealthReminderSettings]) to compute each new
-/// record's `nextDueDate` — there is no separate per-goat or
-/// per-customer override anymore, so changing a goat's customer never
-/// changes its hoof-cutting reminder interval.
+/// The Add Hoof Cutting / Add Vaccination / Add Hair Trimming screens
+/// all read this value live (via
+/// [FirestoreService.getHealthReminderSettings]) — there is no separate
+/// per-goat or per-customer override anymore, so changing a goat's
+/// customer never changes any of its reminder settings.
 class HealthReminderSettingsScreen extends StatefulWidget {
   final String farmId;
   final HealthReminderSettings initialSettings;
@@ -40,22 +44,20 @@ class HealthReminderSettingsScreen extends StatefulWidget {
 
 class _HealthReminderSettingsScreenState
     extends State<HealthReminderSettingsScreen> {
-  // All three recurring health reminders share the same selectable
-  // cadence: 30 / 45 / 60 / 90 days. There is intentionally no 15-day
-  // option, matching the slider previously offered per-customer.
+  // Hoof Cutting's cadence: 30 / 45 / 60 / 90 days. There is
+  // intentionally no 15-day option, matching the slider previously
+  // offered per-customer.
   static const List<int> _reminderOptions = [30, 45, 60, 90];
 
   late int? _hoofCuttingDays = widget.initialSettings.hoofCuttingReminderDays;
 
-  // Vaccination and Hair Trimming no longer have a farm-level cadence
-  // to edit here — their next-due dates are picked manually per record
-  // instead. These are kept only so [_save] round-trips whatever was
-  // already stored for them without silently wiping it out; this
-  // screen never reads or displays them.
-  late final int? _vaccinationDaysUnused =
-      widget.initialSettings.vaccinationReminderDays;
-  late final int? _hairTrimmingDaysUnused =
-      widget.initialSettings.hairTrimmingReminderDays;
+  // Vaccination and Hair Trimming now each carry a single farm-wide
+  // CALENDAR DATE, edited directly on this screen via
+  // [ReminderDateSelector].
+  late DateTime? _vaccinationNextDueDate =
+      widget.initialSettings.vaccinationNextDueDate;
+  late DateTime? _hairTrimmingNextDueDate =
+      widget.initialSettings.hairTrimmingNextDueDate;
 
   bool _saving = false;
 
@@ -65,9 +67,9 @@ class _HealthReminderSettingsScreenState
     setState(() => _saving = true);
 
     final settings = HealthReminderSettings(
-      vaccinationReminderDays: _vaccinationDaysUnused,
       hoofCuttingReminderDays: _hoofCuttingDays,
-      hairTrimmingReminderDays: _hairTrimmingDaysUnused,
+      vaccinationNextDueDate: _vaccinationNextDueDate,
+      hairTrimmingNextDueDate: _hairTrimmingNextDueDate,
     );
 
     try {
@@ -110,11 +112,11 @@ class _HealthReminderSettingsScreenState
     }
   }
 
-  // Sliding selector for one health-reminder cadence: a discrete 4-stop
+  // Sliding selector for the Hoof Cutting cadence: a discrete 4-stop
   // slider across 30 / 45 / 60 / 90 days, plus a switch to turn the
-  // reminder off entirely ("None" — clears the setting for this record
-  // type across the WHOLE farm). This is what every Add Health screen,
-  // for every goat, reads.
+  // reminder off entirely ("None" — clears the setting across the
+  // WHOLE farm). This is what the Add Hoof Cutting screen, for every
+  // goat, reads.
   Widget _reminderPicker({
     required String title,
     required String subtitle,
@@ -213,6 +215,40 @@ class _HealthReminderSettingsScreenState
     );
   }
 
+  // Calendar-date pickers for Vaccination / Hair Trimming: one fixed
+  // date, shared by every goat in the farm, rather than a per-record
+  // cadence.
+  Widget _datePicker({
+    required String title,
+    required String subtitle,
+    required DateTime? selected,
+    required ValueChanged<DateTime?> onChanged,
+  }) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          title,
+          style: AppTheme.body(
+            size: 12,
+            color: AppColors.textDark,
+            weight: FontWeight.w700,
+          ),
+        ),
+        const SizedBox(height: 3),
+        Text(
+          subtitle,
+          style: AppTheme.body(size: 11, color: AppColors.textGrey),
+        ),
+        const SizedBox(height: 8),
+        ReminderDateSelector(
+          value: selected,
+          onChanged: onChanged,
+        ),
+      ],
+    );
+  }
+
   Widget _section({required String title, required IconData icon, required Widget child}) {
     return Container(
       width: double.infinity,
@@ -257,11 +293,13 @@ class _HealthReminderSettingsScreenState
           SizedBox(width: 10),
           Expanded(
             child: Text(
-              'This hoof cutting reminder schedule applies to every active '
-                  'goat in this farm, no matter which customer they belong to. '
-                  'Moving a goat to a different customer never changes its '
-                  'reminder interval. Vaccination and hair trimming due dates '
-                  'are set individually, per record, when you log them.',
+              'These reminder settings apply to every active goat in this '
+                  'farm, no matter which customer they belong to. Moving a '
+                  'goat to a different customer never changes any of its '
+                  'reminder settings. Hoof cutting repeats on a day cadence '
+                  'after each record; vaccination and hair trimming instead '
+                  'use one fixed due date that is applied to every new '
+                  'record you log for any goat.',
               style: TextStyle(fontSize: 11, color: AppColors.darkGreen),
             ),
           ),
@@ -323,18 +361,40 @@ class _HealthReminderSettingsScreenState
             _infoBanner(),
             const SizedBox(height: 16),
             _section(
-              title: 'Care Reminders',
+              title: 'Hoof Cutting',
               icon: Icons.health_and_safety_outlined,
-              child: Column(
-                children: [
-                  _reminderPicker(
-                    title: 'Hoof Cutting Reminder',
-                    subtitle: 'Remind again this many days after each hoof cutting.',
-                    options: _reminderOptions,
-                    selected: _hoofCuttingDays,
-                    onChanged: (v) => setState(() => _hoofCuttingDays = v),
-                  ),
-                ],
+              child: _reminderPicker(
+                title: 'Hoof Cutting Reminder',
+                subtitle: 'Remind again this many days after each hoof cutting.',
+                options: _reminderOptions,
+                selected: _hoofCuttingDays,
+                onChanged: (v) => setState(() => _hoofCuttingDays = v),
+              ),
+            ),
+            const SizedBox(height: 16),
+            _section(
+              title: 'Vaccination',
+              icon: Icons.vaccines_outlined,
+              child: _datePicker(
+                title: 'Vaccination Reminder',
+                subtitle:
+                'Every new vaccination record logged for any goat in the '
+                    'farm will show this date as its next-due date.',
+                selected: _vaccinationNextDueDate,
+                onChanged: (d) => setState(() => _vaccinationNextDueDate = d),
+              ),
+            ),
+            const SizedBox(height: 16),
+            _section(
+              title: 'Hair Trimming',
+              icon: Icons.content_cut_outlined,
+              child: _datePicker(
+                title: 'Hair Trimming Reminder',
+                subtitle:
+                'Every new hair trimming record logged for any goat in '
+                    'the farm will show this date as its next-due date.',
+                selected: _hairTrimmingNextDueDate,
+                onChanged: (d) => setState(() => _hairTrimmingNextDueDate = d),
               ),
             ),
           ],

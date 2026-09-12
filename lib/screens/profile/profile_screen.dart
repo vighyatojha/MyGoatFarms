@@ -1127,14 +1127,14 @@ class _ProfileScreenState extends State<ProfileScreen> {
       onTap: _isOwner ? _showBillSettings : null,
     );
   }
-  /// Vaccination / Hoof Cutting / Hair Trimming reminder days for the
-  /// whole farm — see [HealthReminderSettingsScreen]. Applies to every
-  /// active goat regardless of customer.
+  /// Vaccination / Hoof Cutting / Hair Trimming reminder schedules for
+  /// the whole farm — see [HealthReminderSettingsScreen]. Applies to
+  /// every active goat regardless of customer.
   Widget _buildHealthReminderSettingsCard(FarmModel? farm) {
     return _actionTile(
       icon: Icons.health_and_safety_outlined,
       title: 'Health Reminder Settings',
-      subtitle: 'Vaccination, hoof cutting & hair trimming reminder days',
+      subtitle: 'Vaccination, hoof cutting & hair trimming reminders',
       trailing: const Icon(Icons.chevron_right_rounded, size: 19),
       onTap: _isOwner ? _showHealthReminderSettings : null,
     );

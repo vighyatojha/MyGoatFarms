@@ -6,8 +6,9 @@ import '../app_theme.dart';
 /// many days after the record's date the next occurrence is due.
 ///
 /// Hoof Cutting is the only record type that uses a cadence like this
-/// — Vaccination and Hair Trimming next-due dates are now picked
-/// manually, per record, from a calendar on their own Add screens.
+/// — Vaccination and Hair Trimming next-due dates are a single
+/// farm-wide calendar date instead, picked from Profile → Health
+/// Reminder Settings and applied as-is via [ReminderDateSelector].
 ///
 /// The actual due date is computed by the caller as
 /// `recordDate.add(Duration(days: value))` — this widget only picks the

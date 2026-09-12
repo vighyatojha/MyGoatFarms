@@ -33,11 +33,11 @@ class _CustomerGoatHairScreenState
 
   // NOTE: this screen used to fetch a per-customer
   // `hairTrimmingReminderDays` override here and pass it down to
-  // AddHairTrimmingScreen. Per the client's updated requirement, Hair
-  // Trimming's next-due date is now picked manually via a calendar on
-  // AddHairTrimmingScreen itself — there is no farm or customer
-  // reminder-day setting for it anymore, so there is nothing to fetch
-  // or pass through here.
+  // AddHairTrimmingScreen. Health Reminder Settings are farm-level now
+  // (Profile > Health Reminder Settings) — AddHairTrimmingScreen reads
+  // the farm's fixed next-due date itself via
+  // FirestoreService.getHealthReminderSettings, so there is nothing to
+  // fetch or pass through here anymore.
 
   CollectionReference<Map<String, dynamic>>
   get _hairCollection {

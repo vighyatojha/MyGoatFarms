@@ -1,48 +1,64 @@
-/// Farm-level Health Reminder Day Settings.
+import 'package:cloud_firestore/cloud_firestore.dart';
+
+/// Farm-level Health Reminder Settings.
 ///
-/// Vaccination / Hoof Cutting / Hair Trimming reminder cadences (in
-/// days), configured ONCE per farm on Profile → Health Reminder
-/// Settings and applied to every active goat in the farm — regardless
-/// of which customer that goat is boarded under.
+/// Configured ONCE per farm on Profile → Health Reminder Settings and
+/// applied to every active goat in the farm — regardless of which
+/// customer that goat is boarded under. There is no per-goat or
+/// per-customer override for any of the three record types below.
+///
+/// - **Hoof Cutting** uses a reminder CADENCE, in days — see
+///   [hoofCuttingReminderDays]. Each new hoof-cutting record's
+///   `nextDueDate` is computed by the Add Hoof Cutting screen as
+///   `cuttingDate + hoofCuttingReminderDays`.
+/// - **Vaccination** and **Hair Trimming** each use a single farm-wide
+///   CALENDAR DATE instead — see [vaccinationNextDueDate] and
+///   [hairTrimmingNextDueDate]. Every new vaccination / hair-trimming
+///   record logged for ANY goat in the farm, no matter which customer,
+///   gets that exact date as its `nextDueDate`. It is NOT computed
+///   relative to the record's own date, unlike Hoof Cutting.
 ///
 /// This replaces the old per-customer "Health Settings" that used to
-/// live on [PalaiCustomer] (`vaccinationReminderDays`,
-/// `hoofCuttingReminderDays`, `hairTrimmingReminderDays`). Those fields
-/// are no longer read or written anywhere in the app; this model is now
-/// the single source of truth for all three cadences.
+/// live on `PalaiCustomer` (`vaccinationReminderDays`,
+/// `hoofCuttingReminderDays`, `hairTrimmingReminderDays`) and the
+/// short-lived variant of this model where Vaccination/Hair Trimming
+/// were picked manually per record with no farm setting at all. Those
+/// are no longer read or written anywhere in the app; this model is
+/// now the single source of truth for all three reminders.
 ///
 /// A null field means "no reminder" for that record type — the
-/// corresponding Add screen (Add Vaccination / Add Hoof Cutting / Add
-/// Hair Trimming) won't compute a `nextDueDate` for a new record, and
-/// no due-date reminder will be scheduled for it. Use
+/// corresponding Add screen won't compute a `nextDueDate` for a new
+/// record, and no due-date reminder will be scheduled for it. Use
 /// [HealthReminderSettings.defaults] for a farm that hasn't opened
-/// Health Reminder Settings yet — this is what every new goat gets
-/// automatically, with no per-goat/per-customer setup required.
+/// Health Reminder Settings yet.
 class HealthReminderSettings {
-  /// Days after a vaccination before the next one is due. Null = off.
-  final int? vaccinationReminderDays;
-
   /// Days after a hoof-cutting before the next one is due. Null = off.
   final int? hoofCuttingReminderDays;
 
-  /// Days after a hair-trimming before the next one is due. Null = off.
-  final int? hairTrimmingReminderDays;
+  /// The exact calendar date every new vaccination record (for every
+  /// goat, in every customer) should show as its next-due date. Null =
+  /// off — new records get no reminder.
+  final DateTime? vaccinationNextDueDate;
+
+  /// The exact calendar date every new hair-trimming record (for every
+  /// goat, in every customer) should show as its next-due date. Null =
+  /// off — new records get no reminder.
+  final DateTime? hairTrimmingNextDueDate;
 
   const HealthReminderSettings({
-    this.vaccinationReminderDays,
     this.hoofCuttingReminderDays,
-    this.hairTrimmingReminderDays,
+    this.vaccinationNextDueDate,
+    this.hairTrimmingNextDueDate,
   });
 
-  /// Starting cadence for a brand-new farm that hasn't configured
-  /// anything yet — matches the cadence the app used to suggest per
-  /// customer before this became one farm-wide setting. Every new goat
-  /// (and every customer) automatically gets these until the farm owner
-  /// changes them from Profile.
+  /// Starting values for a brand-new farm that hasn't configured
+  /// anything yet. Hoof Cutting keeps the old default cadence; there is
+  /// no sensible default *date* for Vaccination/Hair Trimming, so those
+  /// start off (null) until the farm owner picks one from Profile.
   static const HealthReminderSettings defaults = HealthReminderSettings(
-    vaccinationReminderDays: 30,
     hoofCuttingReminderDays: 45,
-    hairTrimmingReminderDays: 30,
+    vaccinationNextDueDate: null,
+    hairTrimmingNextDueDate: null,
   );
 
   /// Parses the `healthReminderSettings` map stored on the farm
@@ -59,39 +75,51 @@ class HealthReminderSettings {
       return int.tryParse(raw.toString());
     }
 
+    DateTime? readDate(dynamic raw) {
+      if (raw == null) return null;
+      if (raw is Timestamp) return raw.toDate();
+      if (raw is DateTime) return raw;
+      if (raw is String) return DateTime.tryParse(raw);
+      return null;
+    }
+
     return HealthReminderSettings(
-      vaccinationReminderDays: readDays(data['vaccinationReminderDays']),
       hoofCuttingReminderDays: readDays(data['hoofCuttingReminderDays']),
-      hairTrimmingReminderDays: readDays(data['hairTrimmingReminderDays']),
+      vaccinationNextDueDate: readDate(data['vaccinationNextDueDate']),
+      hairTrimmingNextDueDate: readDate(data['hairTrimmingNextDueDate']),
     );
   }
 
   Map<String, dynamic> toMap() {
     return {
-      'vaccinationReminderDays': vaccinationReminderDays,
       'hoofCuttingReminderDays': hoofCuttingReminderDays,
-      'hairTrimmingReminderDays': hairTrimmingReminderDays,
+      'vaccinationNextDueDate': vaccinationNextDueDate != null
+          ? Timestamp.fromDate(vaccinationNextDueDate!)
+          : null,
+      'hairTrimmingNextDueDate': hairTrimmingNextDueDate != null
+          ? Timestamp.fromDate(hairTrimmingNextDueDate!)
+          : null,
     };
   }
 
   HealthReminderSettings copyWith({
-    int? vaccinationReminderDays,
     int? hoofCuttingReminderDays,
-    int? hairTrimmingReminderDays,
-    bool clearVaccinationReminder = false,
+    DateTime? vaccinationNextDueDate,
+    DateTime? hairTrimmingNextDueDate,
     bool clearHoofCuttingReminder = false,
-    bool clearHairTrimmingReminder = false,
+    bool clearVaccinationNextDueDate = false,
+    bool clearHairTrimmingNextDueDate = false,
   }) {
     return HealthReminderSettings(
-      vaccinationReminderDays: clearVaccinationReminder
-          ? null
-          : (vaccinationReminderDays ?? this.vaccinationReminderDays),
       hoofCuttingReminderDays: clearHoofCuttingReminder
           ? null
           : (hoofCuttingReminderDays ?? this.hoofCuttingReminderDays),
-      hairTrimmingReminderDays: clearHairTrimmingReminder
+      vaccinationNextDueDate: clearVaccinationNextDueDate
           ? null
-          : (hairTrimmingReminderDays ?? this.hairTrimmingReminderDays),
+          : (vaccinationNextDueDate ?? this.vaccinationNextDueDate),
+      hairTrimmingNextDueDate: clearHairTrimmingNextDueDate
+          ? null
+          : (hairTrimmingNextDueDate ?? this.hairTrimmingNextDueDate),
     );
   }
 }
