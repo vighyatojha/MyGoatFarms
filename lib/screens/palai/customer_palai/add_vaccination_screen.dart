@@ -48,6 +48,7 @@ class _AddVaccinationScreenState extends State<AddVaccinationScreen> {
   // has switched this reminder off entirely.
   DateTime? _nextDueDate;
   bool _saving = false;
+  bool _loadingReminderSetting = true;
 
   @override
   void initState() {
@@ -69,6 +70,7 @@ class _AddVaccinationScreenState extends State<AddVaccinationScreen> {
 
     setState(() {
       _nextDueDate = settings.vaccinationNextDueDate;
+      _loadingReminderSetting = false;
     });
   }
 
@@ -114,6 +116,14 @@ class _AddVaccinationScreenState extends State<AddVaccinationScreen> {
 
   Future<void> _save() async {
     if (!(_formKey.currentState?.validate() ?? false)) {
+      return;
+    }
+
+    if (_loadingReminderSetting) {
+      // Farm reminder setting hasn't finished loading yet — the Save
+      // button should be disabled in this state, but guard here too
+      // so we never silently persist a null nextDueDate by racing the
+      // fetch.
       return;
     }
 
@@ -274,6 +284,32 @@ class _AddVaccinationScreenState extends State<AddVaccinationScreen> {
               ),
             ),
             const SizedBox(height: 14),
+            if (_loadingReminderSetting)
+              const Padding(
+                padding: EdgeInsets.only(bottom: 14),
+                child: LinearProgressIndicator(),
+              )
+            else ...[
+              _DateTile(
+                label: 'Next due',
+                date: _nextDueDate,
+                locked: true,
+                onTap: () {},
+              ),
+              const Padding(
+                padding: EdgeInsets.fromLTRB(4, 6, 4, 0),
+                child: Text(
+                  'This reminder date is set for the whole farm in '
+                      'Profile → Health Reminder Settings and applies to '
+                      'every goat, no matter which customer they belong to.',
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: AppColors.textMuted,
+                  ),
+                ),
+              ),
+              const SizedBox(height: 14),
+            ],
             TextFormField(
               controller: _batchController,
               decoration: const InputDecoration(
@@ -322,7 +358,7 @@ class _AddVaccinationScreenState extends State<AddVaccinationScreen> {
             width: double.infinity,
             height: 48,
             child: FilledButton(
-              onPressed: _saving ? null : _save,
+              onPressed: (_saving || _loadingReminderSetting) ? null : _save,
               style: FilledButton.styleFrom(
                 backgroundColor: AppColors.primaryGreen,
               ),
@@ -349,6 +385,7 @@ class _DateTile extends StatelessWidget {
   final DateTime? date;
   final bool optional;
   final bool showTime;
+  final bool locked;
   final VoidCallback onTap;
   final VoidCallback? onClear;
 
@@ -357,6 +394,7 @@ class _DateTile extends StatelessWidget {
     required this.date,
     this.optional = false,
     this.showTime = false,
+    this.locked = false,
     required this.onTap,
     this.onClear,
   });
@@ -364,11 +402,13 @@ class _DateTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return InkWell(
-      onTap: onTap,
+      onTap: locked ? null : onTap,
       child: InputDecorator(
         decoration: InputDecoration(
           labelText: optional ? '$label (optional)' : label,
           border: const OutlineInputBorder(),
+          filled: locked,
+          fillColor: locked ? AppColors.textMuted.withOpacity(0.06) : null,
           suffixIcon: onClear != null
               ? IconButton(
             icon: const Icon(
@@ -377,8 +417,10 @@ class _DateTile extends StatelessWidget {
             ),
             onPressed: onClear,
           )
-              : const Icon(
-            Icons.calendar_today_outlined,
+              : Icon(
+            locked
+                ? Icons.lock_outline
+                : Icons.calendar_today_outlined,
             size: 18,
           ),
         ),

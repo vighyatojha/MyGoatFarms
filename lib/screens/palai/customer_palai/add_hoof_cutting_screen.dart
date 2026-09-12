@@ -106,6 +106,14 @@ class _AddHoofCuttingScreenState extends State<AddHoofCuttingScreen> {
   }
 
   Future<void> _save() async {
+    if (_loadingReminderSetting) {
+      // Farm reminder setting hasn't finished loading yet — the Save
+      // button should be disabled in this state, but guard here too
+      // so we never silently persist a null nextDueDate by racing the
+      // fetch.
+      return;
+    }
+
     setState(() {
       _saving = true;
     });
@@ -284,7 +292,7 @@ class _AddHoofCuttingScreenState extends State<AddHoofCuttingScreen> {
             width: double.infinity,
             height: 48,
             child: FilledButton(
-              onPressed: _saving ? null : _save,
+              onPressed: (_saving || _loadingReminderSetting) ? null : _save,
               style: FilledButton.styleFrom(
                 backgroundColor: AppColors.primaryGreen,
               ),

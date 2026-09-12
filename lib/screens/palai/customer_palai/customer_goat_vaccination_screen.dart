@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 
+import '../../../models/health_reminder_settings_model.dart';
 import '../../../models/palai_models.dart';
 import '../../../models/vaccination_record.dart';
 import '../../../services/firestore_service.dart';
@@ -31,12 +32,35 @@ class _CustomerGoatVaccinationScreenState
   final FirebaseFirestore _firestore =
       FirebaseFirestore.instance;
 
+  // Farm-level Health Reminder Settings (Profile > Health Reminder
+  // Settings). Used as a fallback so the summary can show the
+  // farm-configured next-due date even when no individual vaccination
+  // record has its own nextDueDate set (e.g. records saved before the
+  // farm setting existed, or before this reminder was configured).
+  HealthReminderSettings? _farmSettings;
+
   // NOTE: this screen used to fetch a per-customer reminder-day
   // override here and pass it down to AddVaccinationScreen. Health
   // Reminder Settings are farm-level now (Profile > Health Reminder
   // Settings) — AddVaccinationScreen reads them itself via
-  // FirestoreService.getHealthReminderSettings, so there is nothing to
-  // fetch or pass through here anymore.
+  // FirestoreService.getHealthReminderSettings.
+
+  @override
+  void initState() {
+    super.initState();
+    _loadFarmSettings();
+  }
+
+  Future<void> _loadFarmSettings() async {
+    final settings =
+    await FirestoreService.instance.getHealthReminderSettings(widget.farmId);
+
+    if (!mounted) return;
+
+    setState(() {
+      _farmSettings = settings;
+    });
+  }
 
   CollectionReference<Map<String, dynamic>>
   get _vaccinationCollection {
@@ -172,6 +196,13 @@ class _CustomerGoatVaccinationScreenState
       }
     }
 
+    // Fall back to the farm's configured vaccination next-due date
+    // when no record carries one of its own.
+    final DateTime? effectiveNextDue =
+        next?.nextDueDate ?? _farmSettings?.vaccinationNextDueDate;
+    final bool isFallback =
+        next?.nextDueDate == null && effectiveNextDue != null;
+
     return Column(
       crossAxisAlignment:
       CrossAxisAlignment.start,
@@ -209,11 +240,12 @@ class _CustomerGoatVaccinationScreenState
                 icon:
                 Icons.event_available_outlined,
                 title: 'Next due',
-                value: next == null
+                value: effectiveNextDue == null
                     ? 'Not scheduled'
                     : _shortDate(
-                  next.nextDueDate!,
+                  effectiveNextDue,
                 ),
+                subtitle: isFallback ? 'Farm default' : null,
               ),
             ),
           ],
@@ -236,6 +268,7 @@ class _CustomerGoatVaccinationScreenState
         required IconData icon,
         required String title,
         required String value,
+        String? subtitle,
         bool fullWidth = false,
       }) {
     final theme = Theme.of(context);
@@ -290,6 +323,19 @@ class _CustomerGoatVaccinationScreenState
                       FontWeight.w800,
                     ),
                   ),
+                  if (subtitle != null) ...[
+                    const SizedBox(height: 2),
+                    Text(
+                      subtitle,
+                      style: theme
+                          .textTheme
+                          .labelSmall
+                          ?.copyWith(
+                        color: colors.onSurfaceVariant,
+                        fontStyle: FontStyle.italic,
+                      ),
+                    ),
+                  ],
                 ],
               ),
             ),
@@ -789,6 +835,7 @@ class _CustomerGoatVaccinationScreenState
   // ===========================================================================
 
   Future<void> _refresh() async {
+    await _loadFarmSettings();
     await Future<void>.delayed(
       const Duration(
         milliseconds: 300,

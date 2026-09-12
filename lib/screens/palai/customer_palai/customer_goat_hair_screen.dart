@@ -4,6 +4,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 
 import '../../../models/hair_trimming_record.dart';
+import '../../../models/health_reminder_settings_model.dart';
 import '../../../models/palai_models.dart';
 import '../../../services/firestore_service.dart';
 import '../../../services/health_reminder_scheduler.dart';
@@ -31,13 +32,37 @@ class _CustomerGoatHairScreenState
   final FirebaseFirestore _firestore =
       FirebaseFirestore.instance;
 
+  // Farm-level Health Reminder Settings (Profile > Health Reminder
+  // Settings). Used as a fallback so the summary can show the
+  // farm-configured next-due date even when no individual hair-
+  // trimming record has its own nextDueDate set (e.g. records saved
+  // before the farm setting existed, or before this reminder was
+  // configured).
+  HealthReminderSettings? _farmSettings;
+
   // NOTE: this screen used to fetch a per-customer
   // `hairTrimmingReminderDays` override here and pass it down to
   // AddHairTrimmingScreen. Health Reminder Settings are farm-level now
   // (Profile > Health Reminder Settings) — AddHairTrimmingScreen reads
   // the farm's fixed next-due date itself via
-  // FirestoreService.getHealthReminderSettings, so there is nothing to
-  // fetch or pass through here anymore.
+  // FirestoreService.getHealthReminderSettings.
+
+  @override
+  void initState() {
+    super.initState();
+    _loadFarmSettings();
+  }
+
+  Future<void> _loadFarmSettings() async {
+    final settings =
+    await FirestoreService.instance.getHealthReminderSettings(widget.farmId);
+
+    if (!mounted) return;
+
+    setState(() {
+      _farmSettings = settings;
+    });
+  }
 
   CollectionReference<Map<String, dynamic>>
   get _hairCollection {
@@ -173,6 +198,13 @@ class _CustomerGoatHairScreenState
       }
     }
 
+    // Fall back to the farm's configured hair-trimming next-due date
+    // when no record carries one of its own.
+    final DateTime? effectiveNextDue =
+        next?.nextDueDate ?? _farmSettings?.hairTrimmingNextDueDate;
+    final bool isFallback =
+        next?.nextDueDate == null && effectiveNextDue != null;
+
     return Column(
       crossAxisAlignment:
       CrossAxisAlignment.start,
@@ -210,11 +242,12 @@ class _CustomerGoatHairScreenState
                 icon:
                 Icons.event_available_outlined,
                 title: 'Next due',
-                value: next == null
+                value: effectiveNextDue == null
                     ? 'Not scheduled'
                     : _formatDate(
-                  next.nextDueDate!,
+                  effectiveNextDue,
                 ),
+                subtitle: isFallback ? 'Farm default' : null,
               ),
             ),
           ],
@@ -222,7 +255,8 @@ class _CustomerGoatHairScreenState
         const SizedBox(height: 10),
         _buildCurrentStatus(
           context,
-          next,
+          effectiveNextDue,
+          isFallback: isFallback,
         ),
         const SizedBox(height: 10),
         _summaryCard(
@@ -242,6 +276,7 @@ class _CustomerGoatHairScreenState
         required IconData icon,
         required String title,
         required String value,
+        String? subtitle,
         bool fullWidth = false,
       }) {
     final theme = Theme.of(context);
@@ -297,6 +332,19 @@ class _CustomerGoatHairScreenState
                       FontWeight.w800,
                     ),
                   ),
+                  if (subtitle != null) ...[
+                    const SizedBox(height: 2),
+                    Text(
+                      subtitle,
+                      style: theme
+                          .textTheme
+                          .labelSmall
+                          ?.copyWith(
+                        color: colors.onSurfaceVariant,
+                        fontStyle: FontStyle.italic,
+                      ),
+                    ),
+                  ],
                 ],
               ),
             ),
@@ -308,12 +356,13 @@ class _CustomerGoatHairScreenState
 
   Widget _buildCurrentStatus(
       BuildContext context,
-      HairTrimmingRecord? next,
-      ) {
+      DateTime? effectiveNextDue, {
+        bool isFallback = false,
+      }) {
     final theme = Theme.of(context);
     final colors = theme.colorScheme;
 
-    if (next == null) {
+    if (effectiveNextDue == null) {
       return Card(
         child: Padding(
           padding: const EdgeInsets.all(14),
@@ -339,14 +388,17 @@ class _CustomerGoatHairScreenState
       );
     }
 
+    final bool overdue = _isOverdue(effectiveNextDue);
+    final bool dueToday = _isDueToday(effectiveNextDue);
+
     final Color statusColor;
     final IconData statusIcon;
 
-    if (next.isOverdue) {
+    if (overdue) {
       statusColor = colors.error;
       statusIcon =
           Icons.warning_amber_rounded;
-    } else if (next.isDueToday) {
+    } else if (dueToday) {
       statusColor = colors.tertiary;
       statusIcon =
           Icons.notifications_active_outlined;
@@ -393,7 +445,7 @@ class _CustomerGoatHairScreenState
                   ),
                   const SizedBox(height: 3),
                   Text(
-                    next.dueStatus,
+                    _dueStatusText(effectiveNextDue),
                     style: theme
                         .textTheme
                         .titleMedium
@@ -403,6 +455,20 @@ class _CustomerGoatHairScreenState
                       FontWeight.w800,
                     ),
                   ),
+                  if (isFallback) ...[
+                    const SizedBox(height: 2),
+                    Text(
+                      'Based on the farm\'s default schedule — no '
+                          'reminder has been recorded for this goat yet.',
+                      style: theme
+                          .textTheme
+                          .labelSmall
+                          ?.copyWith(
+                        color: colors.onSurfaceVariant,
+                        fontStyle: FontStyle.italic,
+                      ),
+                    ),
+                  ],
                 ],
               ),
             ),
@@ -880,6 +946,7 @@ class _CustomerGoatHairScreenState
   // ===========================================================================
 
   Future<void> _refresh() async {
+    await _loadFarmSettings();
     await Future<void>.delayed(
       const Duration(
         milliseconds: 300,
@@ -958,6 +1025,40 @@ class _CustomerGoatHairScreenState
     );
 
     return '$day/$month/${date.year}';
+  }
+
+  // Mirrors HairTrimmingRecord's due-date logic, so a farm-default
+  // fallback date (which isn't attached to any record) can be shown
+  // with the same status wording and colors as a real record's date.
+  DateTime _dateOnly(DateTime date) {
+    return DateTime(date.year, date.month, date.day);
+  }
+
+  bool _isOverdue(DateTime dueDate) {
+    return _dateOnly(dueDate).isBefore(_dateOnly(DateTime.now()));
+  }
+
+  bool _isDueToday(DateTime dueDate) {
+    return _dateOnly(dueDate) == _dateOnly(DateTime.now());
+  }
+
+  String _dueStatusText(DateTime dueDate) {
+    final today = _dateOnly(DateTime.now());
+    final due = _dateOnly(dueDate);
+    final days = due.difference(today).inDays;
+
+    if (due.isBefore(today)) {
+      final overdueDays = days.abs();
+      return overdueDays == 1
+          ? '1 day overdue'
+          : '$overdueDays days overdue';
+    }
+
+    if (days == 0) {
+      return 'Due today';
+    }
+
+    return days == 1 ? 'Due in 1 day' : 'Due in $days days';
   }
 
   // ===========================================================================
