@@ -11,7 +11,6 @@ import '../../../models/vaccination_record.dart';
 import '../../../services/firestore_service.dart';
 import '../../../services/health_reminder_scheduler.dart';
 import '../../../services/notification_service.dart';
-import '../../../widgets/reminder_date_selector.dart';
 
 class AddVaccinationScreen extends StatefulWidget {
   final String farmId;
@@ -49,7 +48,6 @@ class _AddVaccinationScreenState extends State<AddVaccinationScreen> {
   // has switched this reminder off entirely.
   DateTime? _nextDueDate;
   bool _saving = false;
-  bool _loadingReminderSetting = true;
 
   @override
   void initState() {
@@ -71,7 +69,6 @@ class _AddVaccinationScreenState extends State<AddVaccinationScreen> {
 
     setState(() {
       _nextDueDate = settings.vaccinationNextDueDate;
-      _loadingReminderSetting = false;
     });
   }
 
@@ -276,31 +273,6 @@ class _AddVaccinationScreenState extends State<AddVaccinationScreen> {
                 },
               ),
             ),
-            const SizedBox(height: 14),
-            if (_loadingReminderSetting)
-              const Padding(
-                padding: EdgeInsets.only(bottom: 12),
-                child: LinearProgressIndicator(),
-              ),
-            // While the farm's setting is still loading, the
-            // LinearProgressIndicator above already signals that — the
-            // selector itself is withheld rather than briefly flashing a
-            // placeholder value.
-            if (!_loadingReminderSetting)
-              ReminderDateSelector(
-                value: _nextDueDate,
-                locked: true,
-                label: 'Next vaccination due',
-                lockedNote:
-                'This due date is set for the whole farm in Profile → '
-                    'Health Reminder Settings and applies to every goat, '
-                    'no matter which customer they belong to.',
-                onChanged: (d) {
-                  setState(() {
-                    _nextDueDate = d;
-                  });
-                },
-              ),
             const SizedBox(height: 14),
             TextFormField(
               controller: _batchController,

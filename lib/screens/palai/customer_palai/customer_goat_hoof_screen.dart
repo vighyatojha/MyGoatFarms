@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import '../../../models/hoof_cutting_record.dart';
 import '../../../models/palai_models.dart';
 import '../../../services/firestore_service.dart';
+import '../../../services/health_reminder_scheduler.dart';
 import 'add_hoof_cutting_screen.dart';
 
 class CustomerGoatHoofScreen extends StatefulWidget {
@@ -803,6 +804,13 @@ class _CustomerGoatHoofScreenState
     );
   }
 
+  /// Marks this hoof-cutting record completed AND clears its reminder —
+  /// call when the cutting is done and there's nothing further to remind
+  /// about. Matches Vaccination/Hair Trimming's `_markAsDone`: clears
+  /// `nextDueDate`, cancels the scheduled on-device notification, and
+  /// marks any "due"/"overdue" entry already sitting in the
+  /// Notifications feed as read, so a completed hoof cutting doesn't
+  /// keep nagging with reminders forever.
   Future<void> _markAsDone(
       HoofCuttingRecord record,
       ) async {
@@ -819,7 +827,24 @@ class _CustomerGoatHoofScreenState
           .update({
         'status': 'completed',
         'completedAt': FieldValue.serverTimestamp(),
+        'nextDueDate': null,
       });
+
+      unawaited(HealthReminderScheduler.instance.cancelForCustomerRecord(
+        customerId: widget.customerId,
+        goatId: widget.goat.id,
+        recordType: 'hoofCutting',
+        recordId: record.id,
+      ));
+
+      for (final suffix in ['due', 'overdue']) {
+        unawaited(FirestoreService.instance
+            .markNotificationRead(
+          widget.farmId,
+          'health_${widget.goat.id}_hoofCutting_${record.id}_$suffix',
+        )
+            .catchError((_) {}));
+      }
 
       if (!mounted) {
         return;
@@ -828,7 +853,7 @@ class _CustomerGoatHoofScreenState
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text(
-            'Hoof cutting marked as completed.',
+            'Hoof cutting marked as completed — reminder cleared.',
           ),
         ),
       );

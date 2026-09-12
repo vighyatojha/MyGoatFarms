@@ -6,6 +6,7 @@ import 'package:intl/intl.dart';
 
 import '../../../app_theme.dart';
 import '../../../models/hair_trimming_record.dart';
+import '../../../models/health_reminder_settings_model.dart';
 import '../../../models/palai_models.dart';
 import '../../../services/firestore_service.dart';
 import '../../../services/health_reminder_scheduler.dart';
@@ -33,16 +34,37 @@ class _AddHairTrimmingScreenState extends State<AddHairTrimmingScreen> {
 
   DateTime _trimmingDate = DateTime.now();
 
-  // Per the client's updated requirement, only Hoof Cutting uses the
-  // farm-level Health Reminder Settings cadence
-  // (Profile > Health Reminder Settings). Hair Trimming's next-due date
-  // is now picked manually per record, right here on this screen, via
-  // a calendar date picker. There is no farm or customer setting read
-  // anymore — the old per-customer `hairTrimmingReminderDays` lookup
-  // has been removed entirely. Null (left unset) means no reminder is
-  // scheduled for this record.
+  // Sourced from the FARM'S Health Reminder Settings (Profile > Health
+  // Reminder Settings) — single source of truth for every active goat
+  // in the farm, regardless of customer. This is the exact calendar
+  // date that will be saved as this new record's `nextDueDate` — it is
+  // NOT computed relative to [_trimmingDate]. Null means the farm has
+  // switched this reminder off entirely.
   DateTime? _nextDueDate;
   bool _saving = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadFarmReminderSetting();
+  }
+
+  // Reads the Hair Trimming next-due date from the FARM'S Health
+  // Reminder Settings — farms/{farmId}.healthReminderSettings — see
+  // FirestoreService.getHealthReminderSettings and
+  // HealthReminderSettingsScreen (Profile > Health Reminder Settings).
+  // This value always governs the reminder: it's shown locked/read-only
+  // here, since Farm Profile is now the single place to change it.
+  Future<void> _loadFarmReminderSetting() async {
+    final HealthReminderSettings settings =
+    await FirestoreService.instance.getHealthReminderSettings(widget.farmId);
+
+    if (!mounted) return;
+
+    setState(() {
+      _nextDueDate = settings.hairTrimmingNextDueDate;
+    });
+  }
 
   @override
   void dispose() {
@@ -200,32 +222,6 @@ class _AddHairTrimmingScreenState extends State<AddHairTrimmingScreen> {
                 });
               },
             ),
-          ),
-          const SizedBox(height: 14),
-          // Next due date is picked manually here, from a calendar,
-          // rather than being computed from a farm/customer reminder
-          // cadence. Optional — leave unset for no reminder.
-          _DateTile(
-            label: 'Next hair trimming due',
-            optional: true,
-            date: _nextDueDate,
-            onTap: () => _pickDate(
-              initial: _nextDueDate ?? _trimmingDate,
-              first: DateTime(2000),
-              last: DateTime(2100),
-              onPicked: (d) {
-                setState(() {
-                  _nextDueDate = d;
-                });
-              },
-            ),
-            onClear: _nextDueDate == null
-                ? null
-                : () {
-              setState(() {
-                _nextDueDate = null;
-              });
-            },
           ),
           const SizedBox(height: 14),
           TextFormField(
