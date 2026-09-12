@@ -127,6 +127,28 @@ class FinalCheckoutReportPdfService {
     return file.path;
   }
 
+  /// Shares PDF bytes that were already generated — use this instead of
+  /// [share] whenever the caller has already built the report once
+  /// (e.g. right after Generate PDF) so the same, potentially
+  /// photo-heavy report is never rebuilt from scratch a second time
+  /// just to share it. Mirrors PdfBillService.shareReportBytes, which
+  /// this replaces for the Final Checkout Report.
+  Future<void> shareBytes(Uint8List bytes, String filename) async {
+    await Printing.sharePdf(bytes: bytes, filename: filename);
+  }
+
+  /// Saves already-generated PDF bytes to device — the save-side
+  /// counterpart of [shareBytes], for the same reason: avoid
+  /// rebuilding a report that's already sitting in memory. Mirrors
+  /// PdfBillService.saveReportBytesToDevice, which this replaces for
+  /// the Final Checkout Report.
+  Future<String> saveBytes(Uint8List bytes, String filename) async {
+    final directory = await getApplicationDocumentsDirectory();
+    final file = File('${directory.path}/$filename');
+    await file.writeAsBytes(bytes, flush: true);
+    return file.path;
+  }
+
   // ==========================================================================
   // IMAGE LOADING — same "never crash the whole PDF over one bad photo"
   // rule as the Progress Report service.
@@ -949,7 +971,7 @@ class FinalCheckoutReportPdfService {
   // ==========================================================================
 
   String _currency(double value) {
-    final formatter = NumberFormat('#,##0.00', 'en_IN');  
+    final formatter = NumberFormat('#,##0.00', 'en_IN');
     return '\u20b9${formatter.format(value)}';
   }
 

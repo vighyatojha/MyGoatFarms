@@ -1,5 +1,7 @@
 import 'dart:typed_data';
 
+import 'bill_settings_model.dart';
+import 'goat_history_models.dart';
 import 'palai_models.dart';
 
 /// One month's activity counts for a single goat — the compressed
@@ -181,3 +183,193 @@ class FinalSettlementData {
   });
 }
 
+// ============================================================================
+// ON-SCREEN REVIEW DATA — final_checkout_report_screen.dart builds one
+// of these to drive its own preview widgets before Generate PDF is
+// pressed. Moved here (out of pdf_bill_service.dart, where they used
+// to live) because nothing in pdf_bill_service.dart has referenced
+// them since buildFinalCheckoutReport() was removed — the review
+// screen is their only remaining consumer, and it already imports
+// this file in full.
+// ============================================================================
+
+class FinalCheckoutReportData {
+  final String reportId;
+  final String customerName;
+  final String customerMobile;
+  final String customerAddress;
+  final String packageName;
+
+  final DateTime checkInDate;
+  final DateTime checkOutDate;
+  final String deliveryStatus;
+  final String finalHealthStatus;
+
+  final List<FinalGoatReportData> goats;
+  final List<MonthlyGoatReportData> months;
+
+  final double checkInTransport;
+  final double checkOutTransport;
+  final double previousBalance;
+  final double discount;
+  final double totalBill;
+  final double paidAmount;
+  final double pendingAmount;
+
+  final double advanceBefore;
+  final double advanceApplied;
+  final double advanceAfter;
+  final String paymentMethod;
+
+  final Uint8List? beforeImage;
+  final Uint8List? afterImage;
+  final Uint8List? signatureBytes;
+
+  final List<String> importantNotes;
+  final BillSettings billSettings;
+
+  /// Every payment received from this customer across the whole Palai
+  /// period, oldest first — sourced from
+  /// [FinanceService.getCustomerPaymentHistory]. Display-only; the
+  /// balance figures above (paidAmount/pendingAmount/advanceAfter)
+  /// are never recomputed from it.
+  final List<FinalPaymentHistoryRow> paymentHistory;
+
+  const FinalCheckoutReportData({
+    required this.reportId,
+    required this.customerName,
+    this.customerMobile = '',
+    this.customerAddress = '',
+    this.packageName = '',
+    required this.checkInDate,
+    required this.checkOutDate,
+    this.deliveryStatus = '',
+    this.finalHealthStatus = '',
+    this.goats = const [],
+    this.months = const [],
+    this.checkInTransport = 0,
+    this.checkOutTransport = 0,
+    this.previousBalance = 0,
+    this.discount = 0,
+    this.totalBill = 0,
+    this.paidAmount = 0,
+    this.pendingAmount = 0,
+    this.advanceBefore = 0,
+    this.advanceApplied = 0,
+    this.advanceAfter = 0,
+    this.paymentMethod = '',
+    this.beforeImage,
+    this.afterImage,
+    this.signatureBytes,
+    this.importantNotes = const [],
+    required this.billSettings,
+    this.paymentHistory = const [],
+  });
+
+  double get totalFinalWeight =>
+      goats.fold(0, (sum, goat) => sum + goat.finalWeight);
+
+  double get totalWeightGain =>
+      goats.fold(0, (sum, goat) => sum + goat.weightGain);
+}
+
+class FinalGoatReportData {
+  final String goatCode;
+  final String breed;
+  final String gender;
+  final String color;
+  final double checkInWeight;
+  final double finalWeight;
+  final String healthStatus;
+  final String deliveryStatus;
+  final double charges;
+
+  /// Every actual weight record for this goat across its whole Palai
+  /// period, oldest first — feeds the weight-progress chart, and the
+  /// per-month weight counts in [GoatFinalReportEntry.monthlyHistory].
+  final List<GoatWeightHistoryPoint> weightHistory;
+
+  /// Every health event for this goat, oldest first — vaccination,
+  /// deworming, hoof cutting, hair trimming, medicine, and general
+  /// health-update checkups, aggregated from their existing
+  /// collections (see MonthlyReportService.getGoatHealthHistory).
+  /// Vaccination entries here never carry a charge.
+  final List<GoatHealthHistoryEntry> healthHistory;
+
+  const FinalGoatReportData({
+    required this.goatCode,
+    required this.breed,
+    this.gender = '',
+    this.color = '',
+    required this.checkInWeight,
+    required this.finalWeight,
+    this.healthStatus = '',
+    this.deliveryStatus = '',
+    this.charges = 0,
+    this.weightHistory = const [],
+    this.healthHistory = const [],
+  });
+
+  double get weightGain => finalWeight - checkInWeight;
+}
+
+class MonthlyGoatReportData {
+  final String monthLabel;
+  final DateTime periodStart;
+  final DateTime periodEnd;
+  final DateTime reportDate;
+
+  final String goatCode;
+  final String breed;
+  final String gender;
+  final String color;
+  final DateTime checkInDate;
+
+  final double previousWeight;
+  final double currentWeight;
+  final double monthlyCharge;
+
+  final String packageName;
+  final String healthStatus;
+  final String vaccination;
+  final String deworming;
+  final String hoofCutting;
+  final String hairTrimming;
+  final String medicineGiven;
+  final String healthNotes;
+
+  final Uint8List? previousImage;
+  final Uint8List? currentImage;
+  final List<Uint8List> additionalImages;
+
+  final String notes;
+
+  const MonthlyGoatReportData({
+    required this.monthLabel,
+    required this.periodStart,
+    required this.periodEnd,
+    required this.reportDate,
+    required this.goatCode,
+    required this.breed,
+    this.gender = '',
+    this.color = '',
+    required this.checkInDate,
+    this.previousWeight = 0,
+    this.currentWeight = 0,
+    this.monthlyCharge = 0,
+    this.packageName = '',
+    this.healthStatus = 'Not recorded',
+    this.vaccination = '',
+    this.deworming = '',
+    this.hoofCutting = '',
+    this.hairTrimming = '',
+    this.medicineGiven = '',
+    this.healthNotes = '',
+    this.previousImage,
+    this.currentImage,
+    this.additionalImages = const [],
+    this.notes = '',
+  });
+
+  double get weightGain => currentWeight - previousWeight;
+}

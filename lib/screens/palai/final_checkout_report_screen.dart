@@ -9,8 +9,8 @@ import '../../models/final_checkout_report_model.dart';
 import '../../models/palai_models.dart';
 import '../../services/finance_service.dart';
 import '../../services/firestore_service.dart';
+import '../../services/final_checkout_report_pdf_service.dart';
 import '../../services/monthly_report_service.dart';
-import '../../services/pdf_bill_service.dart';
 import 'checkout_charges_payment_screen.dart' show GoatCheckoutDraft;
 
 /// Final stage of the Palai checkout flow.
@@ -249,8 +249,8 @@ class _FinalCheckoutReportScreenState
       // itself are already known-good by this point. On failure we log
       // and fall back to an empty list; the PDF's Payment History
       // section already handles empty gracefully (it simply omits the
-      // section — see `report.paymentHistory.isNotEmpty` in
-      // PdfBillService).
+      // section — see `s.paymentHistory.isNotEmpty` in
+      // FinalCheckoutReportPdfService).
 
       List<FinalPaymentHistoryRow> paymentHistory = const [];
       try {
@@ -361,6 +361,182 @@ class _FinalCheckoutReportScreenState
   }
 
   // ========================================================================
+  // ADAPTER — FinalCheckoutReportData (this screen's on-screen review
+  // shape) -> GoatFinalReportEntry / FinalSettlementData (the shape
+  // FinalCheckoutReportPdfService — "Engine B" — expects).
+  //
+  // Purely additive: nothing above builds/uses these two methods, and
+  // nothing else in this file (the on-screen review widgets,
+  // _generatePdf, etc.) is changed by adding them. They exist to feed
+  // Task 3's swap of the PDF call from PdfBillService to
+  // FinalCheckoutReportPdfService.
+  //
+  // KNOWN GAPS — flagged rather than silently guessed:
+  //   - FinalSettlementData.totalOtherCharges has no source anywhere
+  //     in this screen's data today. Left at 0.0.
+  //   - FinalSettlementData.totalDiscount has no source either: the
+  //     discount entered on the Payment screen is applied inside
+  //     FirestoreService.createMonthlyBill() but never returned on
+  //     MonthlyBillResult, and this screen's constructor doesn't take
+  //     a discount parameter. Left at 0.0 until that value is threaded
+  //     through from the Payment screen.
+  //   - totalMonthlyCharges/totalTransport below are scoped to THIS
+  //     checkout only, not "the whole Palai period" as the model's
+  //     doc comment describes — this screen has no historical,
+  //     all-time aggregation of a customer's charges/transport by
+  //     category. Using the current-checkout numbers is the accurate,
+  //     non-fabricated option available today.
+  //   - GoatMonthlyHistoryRow.photos is an approximation: the only
+  //     per-month photo data available here is MonthlyGoatReportData's
+  //     display images (currentImage/additionalImages), not a raw
+  //     per-event photo log. previousImage is excluded because it's a
+  //     carry-forward from the prior month, not a new photo taken in
+  //     this one.
+  // ========================================================================
+
+  List<GoatFinalReportEntry> _toGoatFinalReportEntries() {
+    final report = _report;
+    if (report == null) return const [];
+
+    final entries = <GoatFinalReportEntry>[];
+
+    for (var i = 0; i < widget.goats.length; i++) {
+      final draft = widget.goats[i];
+      final goat = draft.goat;
+      final goatData = report.goats[i];
+
+      final goatCheckIn = goat.farmArrivalDate ?? goat.checkInDate;
+
+      // Bucket this goat's real weight/health records into the same
+      // monthly rows MonthlyReportService already produced for it
+      // (report.months, filtered to this goat) — never a second,
+      // independently-invented set of month boundaries.
+      final goatMonths =
+      report.months.where((m) => m.goatCode == goat.goatCode).toList();
+
+      final monthlyHistory = <GoatMonthlyHistoryRow>[];
+      final representativePhotoByMonth = <String, Uint8List>{};
+
+      for (final month in goatMonths) {
+        final weightCount = goatData.weightHistory
+            .where((w) =>
+        !w.date.isBefore(month.periodStart) &&
+            !w.date.isAfter(month.periodEnd))
+            .length;
+
+        final healthInMonth = goatData.healthHistory.where((h) =>
+        !h.date.isBefore(month.periodStart) &&
+            !h.date.isAfter(month.periodEnd));
+
+        int vaccinationCount = 0;
+        int medicineCount = 0;
+        int hoofCount = 0;
+        int hairCount = 0;
+        int healthCount = 0; // catch-all: Health Update, Deworming, ...
+
+        for (final h in healthInMonth) {
+          final type = h.type.toLowerCase();
+          if (type.contains('vaccination')) {
+            vaccinationCount++;
+          } else if (type.contains('medicine')) {
+            medicineCount++;
+          } else if (type.contains('hoof')) {
+            hoofCount++;
+          } else if (type.contains('hair')) {
+            hairCount++;
+          } else {
+            healthCount++;
+          }
+        }
+
+        final photoCount =
+            (month.currentImage != null ? 1 : 0) +
+                month.additionalImages.length;
+
+        monthlyHistory.add(
+          GoatMonthlyHistoryRow(
+            monthStart: month.periodStart,
+            monthLabel: month.monthLabel,
+            weightRecords: weightCount,
+            health: healthCount,
+            vaccination: vaccinationCount,
+            medicine: medicineCount,
+            hoof: hoofCount,
+            hair: hairCount,
+            photos: photoCount,
+          ),
+        );
+
+        final representative = month.currentImage ?? month.previousImage;
+        if (representative != null) {
+          representativePhotoByMonth[month.monthLabel] = representative;
+        }
+      }
+
+      entries.add(
+        GoatFinalReportEntry(
+          goat: goat,
+          checkInDate: goatCheckIn,
+          checkOutDate: report.checkOutDate,
+          initialWeight: goatData.checkInWeight,
+          finalWeight: goatData.finalWeight,
+          beforeImage: goat.beforeImage,
+          afterImage: draft.afterImage,
+          monthlyHistory: monthlyHistory,
+          representativePhotoByMonth: representativePhotoByMonth,
+          healthStatus: goatData.healthStatus,
+          deliveryStatus: goatData.deliveryStatus,
+        ),
+      );
+    }
+
+    return entries;
+  }
+
+  Future<FinalSettlementData> _toFinalSettlementData() async {
+    final report = _report!;
+    final billResult = widget.billResult;
+
+    final totalMonthlyCharges =
+    report.goats.fold<double>(0, (sum, g) => sum + g.charges);
+    final totalTransport = report.checkInTransport + report.checkOutTransport;
+
+    // No source for these two in this screen's data today — see the
+    // KNOWN GAPS note above. Left explicit rather than guessed.
+    const totalOtherCharges = 0.0;
+    const totalDiscount = 0.0;
+
+    final grossCharges = totalMonthlyCharges +
+        totalTransport +
+        totalOtherCharges -
+        totalDiscount;
+
+    // report.paymentHistory was already fetched once, in
+    // _loadReportData, via FinanceService.instance
+    // .getCustomerPaymentHistory(farmId: ..., customerId: ...) —
+    // reused here rather than firing that same Firestore query again.
+    return FinalSettlementData(
+      customerName: report.customerName,
+      goatCount: report.goats.length,
+      periodStart: report.checkInDate,
+      periodEnd: report.checkOutDate,
+      totalMonthlyCharges: totalMonthlyCharges,
+      totalTransport: totalTransport,
+      totalOtherCharges: totalOtherCharges,
+      totalDiscount: totalDiscount,
+      grossCharges: grossCharges,
+      previousOutstanding: billResult.previousPending,
+      advanceBefore: billResult.advanceBefore,
+      advanceApplied: billResult.advanceApplied,
+      finalAmountDue: billResult.totalDue,
+      finalAmountPaid: billResult.paid,
+      finalOutstanding: billResult.pendingAfter,
+      finalAdvance: billResult.advanceAfter,
+      paymentHistory: report.paymentHistory,
+    );
+  }
+
+  // ========================================================================
   // GENERATE PDF
   // ========================================================================
 
@@ -379,8 +555,11 @@ class _FinalCheckoutReportScreenState
       //
       // We intentionally do not check out the goats here.
       // Checkout happens only after Download or Share and Done.
-      final bytes = await PdfBillService.instance.buildFinalCheckoutReport(
-        report: _report!,
+      final bytes = await FinalCheckoutReportPdfService.instance.generatePdf(
+        customer: _customer!,
+        goatEntries: _toGoatFinalReportEntries(),
+        settlement: await _toFinalSettlementData(),
+        billSettings: widget.billSettings,
       );
 
       if (!mounted) return;
@@ -417,9 +596,8 @@ class _FinalCheckoutReportScreenState
 
     try {
       final path =
-      await PdfBillService.instance.saveReportBytesToDevice(
-        bytes: _pdfBytes!,
-        filename:
+      await FinalCheckoutReportPdfService.instance.saveBytes(
+        _pdfBytes!,
         '${_safeFileName(_report!.customerName)}_${_safeFileName(_report!.reportId)}_final_report_${DateTime.now().millisecondsSinceEpoch}.pdf',
       );
 
@@ -464,9 +642,9 @@ class _FinalCheckoutReportScreenState
     });
 
     try {
-      await PdfBillService.instance.shareReportBytes(
-        bytes: _pdfBytes!,
-        filename: '${_safeFileName(_report!.customerName)}_${_safeFileName(_report!.reportId)}_final_report.pdf',
+      await FinalCheckoutReportPdfService.instance.shareBytes(
+        _pdfBytes!,
+        '${_safeFileName(_report!.customerName)}_${_safeFileName(_report!.reportId)}_final_report.pdf',
       );
 
       if (!mounted) return;
