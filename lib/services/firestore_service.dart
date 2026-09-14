@@ -8,8 +8,11 @@ import 'package:flutter/foundation.dart';
 
 import '../models/bill_settings_model.dart';
 import '../models/farm_model.dart';
+import '../models/hair_trimming_record.dart';
 import '../models/health_reminder_settings_model.dart';
+import '../models/hoof_cutting_record.dart';
 import '../models/palai_models.dart';
+import '../models/vaccination_record.dart';
 import '../models/report_models.dart';
 import '../models/stock_model.dart';
 import '../models/activity_model.dart';
@@ -34,6 +37,30 @@ class CustomerHealthReminder {
 
   CustomerHealthReminder({
     required this.goat,
+    required this.recordType,
+    required this.recordId,
+    required this.label,
+    required this.dueDate,
+  });
+}
+
+/// One reminder record seeded automatically for a newly-registered
+/// goat by [FirestoreService.seedHealthRemindersForNewGoat] — see that
+/// method for details. Returned so the caller (Customer Goat
+/// Registration screen) can hand each one to
+/// [HealthReminderScheduler.scheduleCustomerHealthReminder] exactly the
+/// way Add Vaccination / Add Hoof Cutting / Add Hair Trimming already
+/// do right after saving a record.
+class SeededHealthReminder {
+  /// 'vaccination' | 'hoofCutting' | 'hairTrimming'
+  final String recordType;
+  final String recordId;
+
+  /// Display label, e.g. 'Vaccination', 'Hoof cutting'.
+  final String label;
+  final DateTime dueDate;
+
+  SeededHealthReminder({
     required this.recordType,
     required this.recordId,
     required this.label,
@@ -3153,6 +3180,165 @@ class FirestoreService {
       'healthReminderSettings': settings.toMap(),
       'updatedAt': FieldValue.serverTimestamp(),
     }).timeout(timeout);
+  }
+
+  /// Applies the farm's Health Reminder Settings (Profile > Health
+  /// Reminder Settings) to a goat the moment it's registered, so a
+  /// newly checked-in goat starts out on exactly the same reminder
+  /// schedule as every other active goat in the farm — the farm owner
+  /// never has to remember to open Add Vaccination / Add Hoof Cutting /
+  /// Add Hair Trimming by hand just to get a brand new goat onto the
+  /// schedule.
+  ///
+  /// For each of the three record types this creates one seed record —
+  /// but ONLY for the types the farm has actually turned on:
+  ///   * **Hoof Cutting** — only when `hoofCuttingReminderDays` is set.
+  ///     The seed record's `nextDueDate` is
+  ///     `hoofCuttingBaselineDate + hoofCuttingReminderDays`. Hoof
+  ///     Cutting is a day-cadence rather than a fixed date, so it needs
+  ///     its own starting point — see [hoofCuttingBaselineDate].
+  ///   * **Vaccination** / **Hair Trimming** — only when the farm's
+  ///     fixed `vaccinationNextDueDate` / `hairTrimmingNextDueDate` is
+  ///     set. The seed record's `nextDueDate` is that exact farm-wide
+  ///     date, exactly like Add Vaccination / Add Hair Trimming apply
+  ///     it. [baselineDate] is only used here as the record's own
+  ///     "logged on" date — it never affects `nextDueDate` for these
+  ///     two.
+  ///
+  /// A reminder type the farm hasn't configured (null in
+  /// [HealthReminderSettings]) is skipped entirely — no seed record is
+  /// created for it, so a farm that hasn't opened Health Reminder
+  /// Settings yet doesn't get a goat full of reminders it never asked
+  /// for, and the Health Records screen never shows a record for
+  /// something that was never actually performed.
+  ///
+  /// Call this once, right after [checkInGoat] succeeds. It only writes
+  /// the Firestore seed records and returns them — it deliberately does
+  /// NOT schedule the local notifications itself, to avoid this service
+  /// depending on `HealthReminderScheduler` (which already depends on
+  /// this service). The caller should pass each returned
+  /// [SeededHealthReminder] to
+  /// `HealthReminderScheduler.scheduleCustomerHealthReminder`, the same
+  /// way the Add Hoof Cutting / Add Vaccination / Add Hair Trimming
+  /// screens do after saving a record.
+  Future<List<SeededHealthReminder>> seedHealthRemindersForNewGoat({
+    required String farmId,
+    required String customerId,
+    required String goatId,
+    required DateTime baselineDate,
+
+    /// The date hoof cutting's day-cadence is counted from. Pass this
+    /// separately from [baselineDate] when the person registering the
+    /// goat knows hoof cutting was already done — on some specific date
+    /// — before the goat arrived at the farm; using the real date here
+    /// instead of the arrival date keeps the reminder accurate instead
+    /// of inflating (or shrinking) the days remaining. Falls back to
+    /// [baselineDate] (the farm arrival / check-in date) when null,
+    /// which is the common case: nothing is known about hoof cutting
+    /// before arrival, so counting from arrival is the best available
+    /// estimate.
+    DateTime? hoofCuttingBaselineDate,
+  }) async {
+    final settings = await getHealthReminderSettings(farmId);
+
+    // Nothing configured at the farm level yet — nothing to seed.
+    if (!settings.hasAnyReminderEnabled) {
+      return const [];
+    }
+
+    final goatRef = _goats(farmId, customerId).doc(goatId);
+    final seeded = <SeededHealthReminder>[];
+
+    const autoNote =
+        'Auto-scheduled at registration from farm Health Reminder Settings.';
+
+    // ------------------------------------------------------------------
+    // Hoof Cutting — cadence relative to hoofCuttingBaselineDate (falls
+    // back to baselineDate, i.e. farm arrival, when not given).
+    // ------------------------------------------------------------------
+    final hoofCuttingReminderDays = settings.hoofCuttingReminderDays;
+    if (hoofCuttingReminderDays != null) {
+      final cuttingDate = hoofCuttingBaselineDate ?? baselineDate;
+      final nextDueDate =
+      cuttingDate.add(Duration(days: hoofCuttingReminderDays));
+      final reference = goatRef.collection('hoofCuttingRecords').doc();
+
+      final record = HoofCuttingRecord(
+        id: reference.id,
+        goatId: goatId,
+        cuttingDate: cuttingDate,
+        nextDueDate: nextDueDate,
+        note: autoNote,
+        recordedAt: DateTime.now(),
+      );
+
+      await reference
+          .set({...record.toCreateMap(), 'farmId': farmId}).timeout(timeout);
+
+      seeded.add(SeededHealthReminder(
+        recordType: 'hoofCutting',
+        recordId: reference.id,
+        label: 'Hoof cutting',
+        dueDate: nextDueDate,
+      ));
+    }
+
+    // ------------------------------------------------------------------
+    // Vaccination — fixed farm-wide date.
+    // ------------------------------------------------------------------
+    final vaccinationNextDueDate = settings.vaccinationNextDueDate;
+    if (vaccinationNextDueDate != null) {
+      final reference = goatRef.collection('vaccinationRecords').doc();
+
+      final record = VaccinationRecord(
+        id: reference.id,
+        goatId: goatId,
+        vaccineName: '',
+        vaccinationDate: baselineDate,
+        nextDueDate: vaccinationNextDueDate,
+        note: autoNote,
+        recordedAt: DateTime.now(),
+      );
+
+      await reference
+          .set({...record.toCreateMap(), 'farmId': farmId}).timeout(timeout);
+
+      seeded.add(SeededHealthReminder(
+        recordType: 'vaccination',
+        recordId: reference.id,
+        label: 'Vaccination',
+        dueDate: vaccinationNextDueDate,
+      ));
+    }
+
+    // ------------------------------------------------------------------
+    // Hair Trimming — fixed farm-wide date.
+    // ------------------------------------------------------------------
+    final hairTrimmingNextDueDate = settings.hairTrimmingNextDueDate;
+    if (hairTrimmingNextDueDate != null) {
+      final reference = goatRef.collection('hairTrimmingRecords').doc();
+
+      final record = HairTrimmingRecord(
+        id: reference.id,
+        goatId: goatId,
+        trimmingDate: baselineDate,
+        nextDueDate: hairTrimmingNextDueDate,
+        note: autoNote,
+        recordedAt: DateTime.now(),
+      );
+
+      await reference
+          .set({...record.toCreateMap(), 'farmId': farmId}).timeout(timeout);
+
+      seeded.add(SeededHealthReminder(
+        recordType: 'hairTrimming',
+        recordId: reference.id,
+        label: 'Hair trimming',
+        dueDate: hairTrimmingNextDueDate,
+      ));
+    }
+
+    return seeded;
   }
 
   // ---------------------------------------------------------------------

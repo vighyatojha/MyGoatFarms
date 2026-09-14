@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:typed_data';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -6,8 +7,10 @@ import 'package:flutter/material.dart';
 
 import '../../../app_theme.dart';
 import '../../../models/activity_model.dart';
+import '../../../models/health_reminder_settings_model.dart';
 import '../../../models/palai_models.dart';
 import '../../../services/firestore_service.dart';
+import '../../../services/health_reminder_scheduler.dart';
 import '../../../services/image_service.dart';
 import '../../../widgets/fast_route.dart';
 import '../../../widgets/farm_not_linked_state.dart';
@@ -61,11 +64,35 @@ class _CustomerGoatRegistrationScreenState
   String? _farmId;
   bool _loadingFarm = true;
 
+  // The farm's Health Reminder Settings (Profile > Health Reminder
+  // Settings), loaded once [_farmId] resolves. Used only to decide
+  // whether the "Hoof Cutting Reminder" toggle below is worth showing
+  // at all — if the farm hasn't turned Hoof Cutting reminders on,
+  // there's nothing for that toggle to affect, so it stays hidden
+  // instead of asking a question with no effect.
+  HealthReminderSettings? _healthReminderSettings;
+
   bool get _needsCustomerPicker => widget.customerId == null;
 
   // Date the goat actually arrived at the farm.
   // This is different from checkInDate, which is the Palai registration/check-in time.
   DateTime? _farmArrivalDate;
+
+  // ---------------------------------------------------------------------------
+  // HOOF CUTTING REMINDER BASELINE
+  // ---------------------------------------------------------------------------
+  //
+  // The farm's Hoof Cutting reminder (Profile > Health Reminder Settings)
+  // is a CADENCE in days, not a fixed date — so it needs a starting point
+  // to count from. By default that's the goat's farm arrival date, but a
+  // goat that already had its hoof cutting done somewhere else shortly
+  // before arriving would get an inflated "days remaining" if we counted
+  // from arrival instead of from when it was actually last done. This
+  // toggle lets the person registering the goat say so and pick that
+  // real date instead.
+
+  bool _hoofCuttingAlreadyDone = false;
+  DateTime? _lastHoofCuttingDate;
 
   bool _saving = false;
 
@@ -127,12 +154,34 @@ class _CustomerGoatRegistrationScreenState
   // Needed for the customer picker's stream (when no customerId was
   // passed in) and reused by _saveGoat() instead of a second lookup.
   void _loadFarm() {
-    FirestoreService.instance.currentFarmId().then((id) {
-      if (mounted) {
-        setState(() {
-          _farmId = id;
-          _loadingFarm = false;
-        });
+    FirestoreService.instance.currentFarmId().then((id) async {
+      if (!mounted) {
+        return;
+      }
+
+      setState(() {
+        _farmId = id;
+        _loadingFarm = false;
+      });
+
+      if (id == null) {
+        return;
+      }
+
+      // Best-effort: if this fails, the Hoof Cutting Reminder toggle
+      // just stays hidden (same as a farm with the reminder off) —
+      // it's not worth blocking the whole registration screen over.
+      try {
+        final settings =
+        await FirestoreService.instance.getHealthReminderSettings(id);
+
+        if (mounted) {
+          setState(() {
+            _healthReminderSettings = settings;
+          });
+        }
+      } catch (_) {
+        // Ignore — toggle stays hidden.
       }
     });
   }
@@ -506,6 +555,64 @@ class _CustomerGoatRegistrationScreenState
         goat,
       );
 
+      // ---------------------------------------------------------------
+      // APPLY FARM-LEVEL HEALTH REMINDER SETTINGS
+      // ---------------------------------------------------------------
+      //
+      // Whatever the farm has configured in Profile > Health Reminder
+      // Settings — right now, at this moment — should apply to this
+      // goat too, exactly like it applies to every other active goat
+      // in the farm. This does not wait for the farmer to manually
+      // open Add Vaccination / Add Hoof Cutting / Add Hair Trimming
+      // for the goat later; it seeds the first reminder of each
+      // enabled type immediately.
+      //
+      // Vaccination / Hair Trimming are dated from the goat's actual
+      // farm arrival date (falling back to its check-in date). Hoof
+      // Cutting is a day-cadence rather than a fixed date, so it needs
+      // its own starting point: normally that's also the arrival date,
+      // but if "Hoof Cutting Reminder" above says it was already done
+      // before arrival, the date picked there is used instead — see
+      // [hoofCuttingBaselineDate] below.
+      //
+      // Best-effort: the goat has already been saved above, so a
+      // failure here must never fail registration itself. Any reminder
+      // type the farm hasn't turned on is simply skipped — see
+      // FirestoreService.seedHealthRemindersForNewGoat.
+      try {
+        final seededReminders =
+        await FirestoreService.instance.seedHealthRemindersForNewGoat(
+          farmId: farmId,
+          customerId: customerId,
+          goatId: goatId,
+          baselineDate: goat.farmArrivalDate ?? goat.checkInDate,
+          hoofCuttingBaselineDate:
+          _hoofCuttingAlreadyDone ? _lastHoofCuttingDate : null,
+        );
+
+        for (final reminder in seededReminders) {
+          unawaited(
+            HealthReminderScheduler.instance.scheduleCustomerHealthReminder(
+              farmId: farmId,
+              customerId: customerId,
+              goatId: goatId,
+              goatCode: goat.goatCode,
+              recordType: reminder.recordType,
+              recordId: reminder.recordId,
+              label: reminder.label,
+              dueDate: reminder.dueDate,
+            ),
+          );
+        }
+      } catch (_) {
+        // Goat has already been saved.
+        // Do not fail registration only because seeding the farm's
+        // health reminders failed — the farmer can still add a
+        // vaccination / hoof-cutting / hair-trimming record by hand
+        // from the goat profile, which will pick up the same farm
+        // settings live.
+      }
+
       // Post the optional Check-In Transport charge to Finance ONCE,
       // right now — Final Checkout later only ever reads this back, it
       // never creates it again (avoids double-charging, per the Palai
@@ -718,6 +825,18 @@ class _CustomerGoatRegistrationScreenState
             const SizedBox(height: 16),
 
             _buildTransportChargeField(),
+
+            if (_healthReminderSettings?.hoofCuttingReminderDays != null) ...[
+              const SizedBox(height: 28),
+
+              _buildSectionTitle(
+                'Hoof Cutting Reminder',
+              ),
+
+              const SizedBox(height: 12),
+
+              _buildHoofCuttingReminderToggle(),
+            ],
 
             const SizedBox(height: 28),
 
@@ -1572,6 +1691,157 @@ class _CustomerGoatRegistrationScreenState
 
     setState(() {
       _farmArrivalDate = selectedDate;
+    });
+  }
+
+  // ===========================================================================
+  // HOOF CUTTING REMINDER TOGGLE
+  // ===========================================================================
+
+  Widget _buildHoofCuttingReminderToggle() {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(16),
+      decoration: AppTheme.card(radius: 14),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(
+                child: Text(
+                  'Was this goat\'s hoof cutting already done before it '
+                      'arrived at the farm?',
+                  style: AppTheme.body(
+                    size: 13,
+                    color: AppColors.textDark,
+                    weight: FontWeight.w600,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Switch(
+                value: _hoofCuttingAlreadyDone,
+                activeColor: AppColors.primaryGreen,
+                onChanged: (value) {
+                  setState(() {
+                    _hoofCuttingAlreadyDone = value;
+                    if (!value) {
+                      // Switching back to "No" — drop whatever date was
+                      // picked so a stale value can't sneak into a later
+                      // save if the toggle is flipped on again.
+                      _lastHoofCuttingDate = null;
+                    }
+                  });
+                },
+              ),
+            ],
+          ),
+          const SizedBox(height: 4),
+          Text(
+            _hoofCuttingAlreadyDone
+                ? 'Enter the date it was last done below — the next hoof '
+                'cutting reminder will be counted from that date instead '
+                'of the farm arrival date.'
+                : 'No — the next hoof cutting reminder will be counted '
+                'from the date this goat came into the farm.',
+            style: AppTheme.body(
+              size: 11,
+              color: AppColors.textGrey,
+            ),
+          ),
+          if (_hoofCuttingAlreadyDone) ...[
+            const SizedBox(height: 12),
+            _buildLastHoofCuttingDateField(),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildLastHoofCuttingDateField() {
+    final date = _lastHoofCuttingDate;
+
+    final dateText = date == null
+        ? 'Select date'
+        : '${date.day.toString().padLeft(2, '0')}/'
+        '${date.month.toString().padLeft(2, '0')}/'
+        '${date.year}';
+
+    return FormField<DateTime>(
+      validator: (_) {
+        if (_hoofCuttingAlreadyDone && _lastHoofCuttingDate == null) {
+          return 'Please select the last hoof cutting date';
+        }
+        return null;
+      },
+      builder: (field) {
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            InkWell(
+              onTap: () async {
+                await _selectLastHoofCuttingDate();
+                field.didChange(_lastHoofCuttingDate);
+              },
+              borderRadius: BorderRadius.circular(4),
+              child: InputDecorator(
+                decoration: InputDecoration(
+                  labelText: 'Last Hoof Cutting Date',
+                  hintText: 'Select date',
+                  prefixIcon: const Icon(
+                    Icons.content_cut_outlined,
+                  ),
+                  border: const OutlineInputBorder(),
+                  errorText: field.errorText,
+                ),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        dateText,
+                        style: TextStyle(
+                          color: date == null
+                              ? AppColors.textGrey
+                              : AppColors.textDark,
+                          fontSize: 16,
+                        ),
+                      ),
+                    ),
+                    const Icon(
+                      Icons.calendar_today_outlined,
+                      size: 20,
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Future<void> _selectLastHoofCuttingDate() async {
+    final now = DateTime.now();
+
+    final selectedDate = await showDatePicker(
+      context: context,
+      initialDate: _lastHoofCuttingDate ?? _farmArrivalDate ?? now,
+      firstDate: DateTime(2000),
+      lastDate: now,
+      helpText: 'Select Last Hoof Cutting Date',
+      cancelText: 'Cancel',
+      confirmText: 'Select',
+    );
+
+    if (selectedDate == null) {
+      return;
+    }
+
+    setState(() {
+      _lastHoofCuttingDate = selectedDate;
     });
   }
 

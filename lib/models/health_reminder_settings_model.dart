@@ -26,6 +26,15 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 /// are no longer read or written anywhere in the app; this model is
 /// now the single source of truth for all three reminders.
 ///
+/// Newly-registered goats are covered too: right after Customer Goat
+/// Registration saves a goat,
+/// `FirestoreService.seedHealthRemindersForNewGoat` reads whichever of
+/// these three fields are non-null and creates the goat's first
+/// hoof-cutting / vaccination / hair-trimming reminder from them
+/// immediately — the farm owner doesn't have to open Add Vaccination /
+/// Add Hoof Cutting / Add Hair Trimming by hand just to get a brand
+/// new goat onto the same schedule as every other goat in the farm.
+///
 /// A null field means "no reminder" for that record type — the
 /// corresponding Add screen won't compute a `nextDueDate` for a new
 /// record, and no due-date reminder will be scheduled for it. Use
@@ -50,6 +59,16 @@ class HealthReminderSettings {
     this.vaccinationNextDueDate,
     this.hairTrimmingNextDueDate,
   });
+
+  /// True when at least one of the three reminder types is turned on
+  /// for the farm. Used by
+  /// `FirestoreService.seedHealthRemindersForNewGoat` to skip the seed
+  /// step entirely for a farm that hasn't configured anything yet,
+  /// rather than doing three no-op reads for nothing.
+  bool get hasAnyReminderEnabled =>
+      hoofCuttingReminderDays != null ||
+          vaccinationNextDueDate != null ||
+          hairTrimmingNextDueDate != null;
 
   /// Starting values for a brand-new farm that hasn't configured
   /// anything yet. Hoof Cutting keeps the old default cadence; there is

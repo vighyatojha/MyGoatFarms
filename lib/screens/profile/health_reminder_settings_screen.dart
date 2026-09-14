@@ -27,6 +27,14 @@ import '../../widgets/reminder_date_selector.dart';
 /// [FirestoreService.getHealthReminderSettings]) — there is no separate
 /// per-goat or per-customer override anymore, so changing a goat's
 /// customer never changes any of its reminder settings.
+///
+/// Newly-registered goats pick these settings up immediately too:
+/// Customer Goat Registration calls
+/// [FirestoreService.seedHealthRemindersForNewGoat] right after saving
+/// a new goat, so it starts out on the same schedule as every other
+/// goat in the farm — whatever is saved here at the moment a goat is
+/// registered is what that goat gets, with no extra step required from
+/// the farm owner.
 class HealthReminderSettingsScreen extends StatefulWidget {
   final String farmId;
   final HealthReminderSettings initialSettings;
