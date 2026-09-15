@@ -559,27 +559,19 @@ class _ProfileScreenState extends State<ProfileScreen> {
     }
   }
 
-  // Home/Palai/Stock/Customers (indices 0-3) all live side-by-side inside
-  // MainShell's IndexedStack under ONE shared AppBottomNav. They were
-  // previously re-pushed here as brand-new, standalone screens, which is
-  // why the bottom nav disappeared after Profile -> Customer Management
-  // (and would have for Palai/Stock too): those screens have no
-  // bottomNavigationBar of their own, they rely entirely on MainShell for
-  // it. The fix is to pop back to the shell and tell it which tab to
-  // show, instead of pushing a second, nav-less copy of the screen.
+  // Home/Palai/Stock/Finance/Trading all live side-by-side inside
+  // MainShell's IndexedStack under ONE shared AppBottomNav. Profile itself
+  // is no longer one of those shell tabs — it's pushed on top of Home from
+  // the avatar there — so tapping a destination here just pops Profile off
+  // with that tab's index as the result; Home forwards it to MainShell
+  // (see HomeScreen.onNavigateToTab), which switches to it. This avoids
+  // pushing a second, nav-less copy of whichever screen was tapped.
   //
   // The unsaved-changes confirmation is handled once, centrally, by the
   // PopScope below (it intercepts this pop the same way it intercepts the
   // system back button), so this just requests the pop with the chosen
   // tab index as the result.
   void _onBottomNavTap(int index) {
-    // We are already showing Profile, so tapping Profile again should be a
-    // no-op — mirrors MainShell._navigateToTab's "already on this screen"
-    // guard. (This used to check `index == 4`, which is Finance's shell
-    // index, not Profile's — that was blocking Finance from ever being
-    // reachable from here, and it's what let currentIndex stay wrong too.)
-    if (index == 5) return;
-
     Navigator.of(context).pop(index);
   }
 
@@ -588,8 +580,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
     if (_loading) {
       return Scaffold(
         backgroundColor: AppColors.paleGreen,
+        // -1: Profile isn't a shell tab anymore, so nothing here should
+        // show as the active destination.
         bottomNavigationBar: AppBottomNav(
-          currentIndex: 5,
+          currentIndex: -1,
           onTap: _onBottomNavTap,
         ),
         body: const Center(
@@ -607,8 +601,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
     if (_farmId == null) {
       return Scaffold(
         backgroundColor: AppColors.paleGreen,
+        // -1: Profile isn't a shell tab anymore, so nothing here should
+        // show as the active destination.
         bottomNavigationBar: AppBottomNav(
-          currentIndex: 5,
+          currentIndex: -1,
           onTap: _onBottomNavTap,
         ),
         body: SafeArea(
@@ -651,8 +647,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
       },
       child: Scaffold(
         backgroundColor: AppColors.paleGreen,
+        // -1: Profile isn't a shell tab anymore, so nothing here should
+        // show as the active destination.
         bottomNavigationBar: AppBottomNav(
-          currentIndex: 5,
+          currentIndex: -1,
           onTap: _onBottomNavTap,
         ),
         body: SafeArea(

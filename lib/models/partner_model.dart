@@ -30,6 +30,10 @@ class PartnerPermissions {
   final bool financeLedgerView;
   final bool financeReportsView;
 
+  // --- Trading ---
+  final bool tradingView;
+  final bool tradingPurchaseCreate;
+
   const PartnerPermissions({
     this.palaiView = false,
     this.palaiCreate = false,
@@ -54,6 +58,8 @@ class PartnerPermissions {
     this.financeRevenueVoid = false,
     this.financeLedgerView = false,
     this.financeReportsView = false,
+    this.tradingView = false,
+    this.tradingPurchaseCreate = false,
   });
 
   factory PartnerPermissions.fromMap(
@@ -89,6 +95,9 @@ class PartnerPermissions {
       financeRevenueVoid: data['financeRevenueVoid'] == true,
       financeLedgerView: data['financeLedgerView'] == true,
       financeReportsView: data['financeReportsView'] == true,
+
+      tradingView: data['tradingView'] == true,
+      tradingPurchaseCreate: data['tradingPurchaseCreate'] == true,
     );
   }
 
@@ -125,6 +134,9 @@ class PartnerPermissions {
       'financeRevenueVoid': financeRevenueVoid,
       'financeLedgerView': financeLedgerView,
       'financeReportsView': financeReportsView,
+
+      'tradingView': tradingView,
+      'tradingPurchaseCreate': tradingPurchaseCreate,
     };
   }
 }

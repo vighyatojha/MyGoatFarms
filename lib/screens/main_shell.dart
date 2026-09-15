@@ -13,27 +13,26 @@ import 'palai/palai_screen.dart';
 import 'stocks/stock_screen.dart';
 import 'customers/customer_management_screen.dart';
 import 'finance/finance_overview_screen.dart';
-import 'profile/profile_screen.dart';
+import '../screens/trading/trading_dashboard_screen.dart';
 
 /// Main application shell.
 ///
 /// Bottom navigation:
 ///
-/// Home | Palai | Stock | Finance | Profile
+/// Home | Palai | Stock | Finance | Trading
 ///
 /// Customers remains available internally through the Palai module,
 /// but is not exposed as a bottom navigation destination.
+///
+/// Profile is no longer a bottom navigation destination — it's reached
+/// from the avatar on the Home screen (see HomeScreen's header), which
+/// pushes it as a plain route on top of the shell rather than through
+/// one of these tabs.
 ///
 /// Back-button behavior:
 ///
 /// Any main screen → Home
 /// Home → Exit application
-///
-/// Profile:
-///
-/// Any screen → Profile
-/// Profile → Home
-/// Home → Exit
 class MainShell extends StatefulWidget {
   const MainShell({super.key});
 
@@ -125,17 +124,25 @@ class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
   /// Customers remains available internally even though it is not exposed
   /// through the bottom navigation.
   ///
-  /// IMPORTANT:
-  ///
-  /// Profile is NOT placed in this list because Profile is opened as its
-  /// own route using _profileRoute().
-  static const List<Widget> _tabs = [
-    HomeScreen(),                   // 0
-    PalaiScreen(),                  // 1
-    StockScreen(),                  // 2
-    CustomerManagementScreen(),     // 3 - internal only
-    FinanceOverviewScreen(),        // 4
+  /// Not `static const` (unlike before) because HomeScreen needs a
+  /// callback back into this state — see _onHomeNavigateToTab.
+  late final List<Widget> _tabs = [
+    HomeScreen(onNavigateToTab: _onHomeNavigateToTab), // 0
+    const PalaiScreen(),                               // 1
+    const StockScreen(),                                // 2
+    const CustomerManagementScreen(),                   // 3 - internal only
+    const FinanceOverviewScreen(),                       // 4
+    const TradingDashboardScreen(),                      // 5
   ];
+
+  /// Forwards a tab index popped from inside Profile (see
+  /// ProfileScreen's own AppBottomNav / _onBottomNavTap) back into this
+  /// shell. Profile isn't one of MainShell's own routes — it's pushed on
+  /// top of Home — so this is how a tap on Profile's bottom nav actually
+  /// switches the shell's tab once Profile is popped off.
+  void _onHomeNavigateToTab(int index) {
+    _navigateToTab(index);
+  }
 
   // --------------------------------------------------------------------------
   // TAB NAVIGATION
@@ -164,122 +171,13 @@ class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
   /// 1 = Palai
   /// 2 = Stock
   /// 4 = Finance
-  /// 5 = Profile
-  ///
-  /// Profile is handled separately because it is a pushed route.
+  /// 5 = Trading
   bool _isValidBottomTab(int index) {
     return index == 0 ||
         index == 1 ||
         index == 2 ||
         index == 4 ||
         index == 5;
-  }
-
-  // --------------------------------------------------------------------------
-  // PROFILE
-  // --------------------------------------------------------------------------
-
-  Future<void> _openProfile() async {
-    // ------------------------------------------------------------------------
-    // IMPORTANT FIX
-    //
-    // Set the shell's selected index to Profile BEFORE pushing ProfileScreen.
-    //
-    // Previously the shell remained on Finance (index 4), so when Profile
-    // opened, the bottom navigation still highlighted Finance.
-    // ------------------------------------------------------------------------
-
-    if (mounted) {
-      setState(() {
-        _previousIndex = _index;
-
-        // Profile is index 5 in AppBottomNav.
-        _index = 5;
-
-        _isGoingBack = false;
-      });
-    }
-
-    final result = await Navigator.of(context).push<int>(
-      _profileRoute(),
-    );
-
-    if (!mounted) {
-      return;
-    }
-
-    // ------------------------------------------------------------------------
-    // Profile was closed with Android/system Back.
-    //
-    // Always return to Home according to the requested navigation behavior.
-    // ------------------------------------------------------------------------
-
-    if (result == null) {
-      if (_index != 0) {
-        setState(() {
-          _previousIndex = _index;
-          _index = 0;
-          _isGoingBack = true;
-        });
-      }
-
-      return;
-    }
-
-    // ------------------------------------------------------------------------
-    // Profile's bottom navigation selected another destination.
-    // ------------------------------------------------------------------------
-
-    if (_isValidBottomTab(result)) {
-      if (result == 5) {
-        // Already on Profile.
-        return;
-      }
-
-      _navigateToTab(result);
-    }
-  }
-
-  /// Profile screen transition.
-  ///
-  /// Existing animation intentionally preserved.
-  PageRoute<int> _profileRoute() {
-    return PageRouteBuilder<int>(
-      transitionDuration: const Duration(milliseconds: 320),
-      reverseTransitionDuration: const Duration(milliseconds: 260),
-
-      pageBuilder: (
-          context,
-          animation,
-          secondaryAnimation,
-          ) {
-        return const ProfileScreen();
-      },
-
-      transitionsBuilder: (
-          context,
-          animation,
-          secondaryAnimation,
-          child,
-          ) {
-        final curved = CurvedAnimation(
-          parent: animation,
-          curve: Curves.easeOutCubic,
-          reverseCurve: Curves.easeInCubic,
-        );
-
-        return FadeTransition(
-          opacity: curved,
-          child: SlideTransition(
-            position: Tween<Offset>(
-              begin: const Offset(0, 0.035),
-              end: Offset.zero,
-            ).animate(curved),
-            child: child,
-          ),
-        );
-      },
-    );
   }
 
   // --------------------------------------------------------------------------
@@ -318,15 +216,7 @@ class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
   // --------------------------------------------------------------------------
 
   Widget _buildTabTransition() {
-    // ------------------------------------------------------------------------
-    // Profile is a separate route.
-    //
-    // While Profile is open, this widget is underneath the Profile route,
-    // so _tabs[_index] must NOT be accessed when _index == 5.
-    // ------------------------------------------------------------------------
-
-    final tabIndex = _index == 5 ? 0 : _index;
-    final currentScreen = _tabs[tabIndex];
+    final currentScreen = _tabs[_index];
 
     final Offset beginOffset;
 
@@ -378,7 +268,7 @@ class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
       },
 
       child: KeyedSubtree(
-        key: ValueKey(tabIndex),
+        key: ValueKey(_index),
         child: currentScreen,
       ),
     );
@@ -401,19 +291,6 @@ class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
           return;
         }
 
-        // --------------------------------------------------------------
-        // IMPORTANT:
-        //
-        // If Profile is currently open, its own route should handle
-        // the Back button and return null to _openProfile().
-        //
-        // We therefore do not handle Profile Back here.
-        // --------------------------------------------------------------
-
-        if (_index == 5) {
-          return;
-        }
-
         final shouldExit = await _handleBack();
 
         if (shouldExit && mounted) {
@@ -429,14 +306,7 @@ class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
         bottomNavigationBar: _farmId == null
             ? AppBottomNav(
           currentIndex: _index,
-
-          onTap: (index) {
-            if (index == 5) {
-              _openProfile();
-              return;
-            }
-            _navigateToTab(index);
-          },
+          onTap: _navigateToTab,
         )
             : StreamBuilder<bool>(
           stream: FirestoreService.instance.hasUnreadNotificationsStream(_farmId!),
@@ -444,23 +314,7 @@ class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
             return AppBottomNav(
               currentIndex: _index,
               showHomeBadge: snap.data ?? false,
-
-              onTap: (index) {
-                // ------------------------------------------------------------
-                // Profile
-                // ------------------------------------------------------------
-
-                if (index == 5) {
-                  _openProfile();
-                  return;
-                }
-
-                // ------------------------------------------------------------
-                // Home / Palai / Stock / Finance
-                // ------------------------------------------------------------
-
-                _navigateToTab(index);
-              },
+              onTap: _navigateToTab,
             );
           },
         ),

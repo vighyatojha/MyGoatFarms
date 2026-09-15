@@ -31,7 +31,16 @@ import '../../widgets/goat_count_builder.dart';
 /// Home / dashboard screen. Quick, at-a-glance view of the whole farm —
 /// live totals, the four main modules, quick actions and recent activity.
 class HomeScreen extends StatefulWidget {
-  const HomeScreen({super.key});
+  /// Called when the user picks another bottom-nav destination from
+  /// inside Profile (see ProfileScreen's own AppBottomNav) and Profile
+  /// pops back off with that tab's index. Profile is pushed as a route
+  /// on top of Home rather than being a shell tab itself, so this is
+  /// how that pick makes it back to MainShell. Null when HomeScreen is
+  /// used outside MainShell (e.g. in a test) — the tap then just closes
+  /// Profile normally with no further navigation.
+  final ValueChanged<int>? onNavigateToTab;
+
+  const HomeScreen({super.key, this.onNavigateToTab});
 
   @override
   State<HomeScreen> createState() => _HomeScreenState();
@@ -115,9 +124,12 @@ class _HomeScreenState extends State<HomeScreen> {
         context,
         percent: percent,
         onCompleteNow: () {
-          Navigator.of(context).push(fastRoute(const ProfileScreen())).then((_) {
+          Navigator.of(context).push<int>(fastRoute<int>(const ProfileScreen())).then((tabIndex) {
             _popupPending = true;
             _maybeShowCompletionPopup();
+            if (tabIndex != null) {
+              widget.onNavigateToTab?.call(tabIndex);
+            }
           });
         },
         onLater: () {
@@ -590,9 +602,12 @@ class _HomeScreenState extends State<HomeScreen> {
     return Row(
       children: [
         GestureDetector(
-          onTap: () => Navigator.of(context).push(fastRoute(const ProfileScreen())).then((_) {
+          onTap: () => Navigator.of(context).push<int>(fastRoute<int>(const ProfileScreen())).then((tabIndex) {
             _popupPending = true;
             _maybeShowCompletionPopup();
+            if (tabIndex != null) {
+              widget.onNavigateToTab?.call(tabIndex);
+            }
           }),
           child: CircleAvatar(
             radius: 23,

@@ -45,9 +45,9 @@ class AppBottomNav extends StatelessWidget {
       shellIndex: 4,
     ),
     _NavItemData(
-      icon: Icons.person_outline_rounded,
-      activeIcon: Icons.person_rounded,
-      label: 'Profile',
+      icon: Icons.storefront_outlined,
+      activeIcon: Icons.storefront_rounded,
+      label: 'Trading',
       shellIndex: 5,
     ),
   ];
