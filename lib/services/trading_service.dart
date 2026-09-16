@@ -2,27 +2,42 @@ import 'dart:async';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 
+import '../models/activity_model.dart';
+import '../models/expense_categories.dart';
+import '../models/expense_model.dart';
 import '../models/trading_purchase_model.dart';
 import '../models/trading_summary_model.dart';
+import 'firestore_service.dart';
+import 'finance_service.dart';
 
-/// Handles the Trading module: wholesale purchases and the Trading
-/// Dashboard summary.
+/// Handles the Trading module:
 ///
-/// A separate service file rather than more additions to
-/// `firestore_service.dart`, following the same precedent
-/// [MonthlyBillingService] and `FinanceService` already set.
+/// - Wholesale goat purchases
+/// - Purchase numbering
+/// - Receiving status
+/// - Pending receiving records
+/// - Finance expense integration
+/// - Trading dashboard summary reads
 ///
-/// Collection layout (nested under the farm, matching every other
-/// module — see FinanceService's `_expenses`/`_transactions`/etc.):
-///   farms/{farmId}/tradingPurchases/{purchaseId}
-///   farms/{farmId}/tradingCounters/purchaseCounter   (single doc)
-///   farms/{farmId}/tradingSummary/dashboard           (single doc)
+/// Collection layout:
 ///
-/// `tradingSummary/dashboard` is written by a Cloud Function trigger on
-/// `tradingPurchases` writes (see functions/index.js), not by this
-/// service — Task 1.3 chose the trigger over a client-side batched
-/// update so the aggregate stays correct even if a client write fails
-/// partway or two clients write at once. This service only *reads* it.
+/// farms/{farmId}/tradingPurchases/{purchaseId}
+/// farms/{farmId}/tradingCounters/purchaseCounter
+/// farms/{farmId}/tradingSummary/dashboard
+///
+/// A purchase can be saved before receiving information is entered.
+/// In that case:
+///
+/// receivingStatus = "pending"
+///
+/// The Trading Dashboard can then show that purchase under
+/// Pending Receiving and allow the user to complete receiving later.
+///
+/// IMPORTANT:
+/// Trading payment methods are intentionally limited to:
+///
+/// Cash
+/// Online
 class TradingService {
   TradingService._();
 
@@ -32,165 +47,659 @@ class TradingService {
 
   static const Duration _timeout = Duration(seconds: 15);
 
-  // ---------------------------------------------------------------------
+  // -----------------------------------------------------------------------
   // COLLECTIONS
-  // ---------------------------------------------------------------------
+  // -----------------------------------------------------------------------
 
-  CollectionReference<Map<String, dynamic>> _farms() =>
-      _db.collection('farms');
+  CollectionReference<Map<String, dynamic>> _farms() {
+    return _db.collection('farms');
+  }
 
   CollectionReference<Map<String, dynamic>> _tradingPurchases(
       String farmId,
-      ) =>
-      _farms().doc(farmId).collection('tradingPurchases');
+      ) {
+    return _farms()
+        .doc(farmId)
+        .collection('tradingPurchases');
+  }
 
   DocumentReference<Map<String, dynamic>> _purchaseCounterDoc(
       String farmId,
-      ) =>
-      _farms()
-          .doc(farmId)
-          .collection('tradingCounters')
-          .doc('purchaseCounter');
-
-  DocumentReference<Map<String, dynamic>> _summaryDoc(String farmId) =>
-      _farms().doc(farmId).collection('tradingSummary').doc('dashboard');
-
-  // ---------------------------------------------------------------------
-  // DASHBOARD
-  // ---------------------------------------------------------------------
-
-  /// Streams the 7 dashboard numbers. Phase 1 only populates
-  /// wholesalePurchased/pendingRegistrations — the rest read as 0 until
-  /// later phases (Registration, Stock, Own Palai, Sale) start writing
-  /// them, rather than faking data in the meantime.
-  Stream<TradingSummary> dashboardSummaryStream(String farmId) {
-    return _summaryDoc(farmId)
-        .snapshots()
-        .map((doc) => TradingSummary.fromDoc(doc));
+      ) {
+    return _farms()
+        .doc(farmId)
+        .collection('tradingCounters')
+        .doc('purchaseCounter');
   }
 
-  // ---------------------------------------------------------------------
-  // PURCHASES
-  // ---------------------------------------------------------------------
+  DocumentReference<Map<String, dynamic>> _summaryDoc(
+      String farmId,
+      ) {
+    return _farms()
+        .doc(farmId)
+        .collection('tradingSummary')
+        .doc('dashboard');
+  }
 
-  Stream<List<TradingPurchase>> purchasesStream(String farmId) {
+  // -----------------------------------------------------------------------
+  // DASHBOARD SUMMARY
+  // -----------------------------------------------------------------------
+
+  Stream<TradingSummary> dashboardSummaryStream(
+      String farmId,
+      ) {
+    return _summaryDoc(farmId)
+        .snapshots()
+        .map(
+          (doc) => TradingSummary.fromDoc(doc),
+    );
+  }
+
+  // -----------------------------------------------------------------------
+  // ALL PURCHASES
+  // -----------------------------------------------------------------------
+
+  Stream<List<TradingPurchase>> purchasesStream(
+      String farmId,
+      ) {
     return _tradingPurchases(farmId)
         .orderBy('createdAt', descending: true)
         .snapshots()
         .map(
           (snapshot) => snapshot.docs
-          .map((doc) => TradingPurchase.fromDoc(doc))
+          .map(
+            (doc) => TradingPurchase.fromDoc(doc),
+      )
           .toList(),
     );
   }
 
-  Future<TradingPurchase?> getPurchase(String farmId, String purchaseId) async {
-    final doc = await _tradingPurchases(farmId).doc(purchaseId).get().timeout(_timeout);
-    if (!doc.exists) return null;
+  // -----------------------------------------------------------------------
+  // PENDING RECEIVING
+  // -----------------------------------------------------------------------
+
+  /// Streams only purchases where receiving has not yet been completed.
+  ///
+  /// This is used by the Trading Dashboard to show the
+  /// "Pending Receiving" section.
+  Stream<List<TradingPurchase>> pendingReceivingStream(
+      String farmId,
+      ) {
+    return _tradingPurchases(farmId)
+        .where(
+      'receivingStatus',
+      isEqualTo: 'pending',
+    )
+        .snapshots()
+        .map(
+          (snapshot) {
+        final purchases = snapshot.docs
+            .map(
+              (doc) => TradingPurchase.fromDoc(doc),
+        )
+            .toList();
+
+        purchases.sort(
+              (a, b) => (b.createdAt ?? DateTime(2000))
+              .compareTo(
+            a.createdAt ?? DateTime(2000),
+          ),
+        );
+
+        return purchases;
+      },
+    );
+  }
+
+  // -----------------------------------------------------------------------
+  // GET PURCHASE
+  // -----------------------------------------------------------------------
+
+  Future<TradingPurchase?> getPurchase(
+      String farmId,
+      String purchaseId,
+      ) async {
+    final doc = await _tradingPurchases(farmId)
+        .doc(purchaseId)
+        .get()
+        .timeout(_timeout);
+
+    if (!doc.exists) {
+      return null;
+    }
+
     return TradingPurchase.fromDoc(doc);
   }
 
-  /// Saves a new purchase, generating its sequential `PUR-0001`-style id
-  /// in the same transaction as the purchase write — this is what Task
-  /// 3.6 (Save Purchase) calls once the 4-step wizard's shared
-  /// `PurchaseDraft` is complete.
+  // -----------------------------------------------------------------------
+  // SAVE PURCHASE
+  // -----------------------------------------------------------------------
+
+  /// Saves a new Trading purchase.
   ///
-  /// A single Firestore transaction (not a plain read-then-write) is
-  /// required here: two purchases saved at nearly the same time must
-  /// never be able to read the same counter value and collide on the
-  /// same id.
+  /// Receiving information is optional.
   ///
-  /// `registeredCount` starts at 0 and `pendingCount` starts at
-  /// `totalGoats` — later phases (Goat Registration) will move goats
-  /// from pending to registered on this same doc.
+  /// If [receivingStatus] is "pending":
+  ///
+  /// - Purchase is saved immediately.
+  /// - No receiving fields are required.
+  /// - Dashboard can show the purchase as pending.
+  ///
+  /// If [receivingStatus] is "completed":
+  ///
+  /// - Receiving fields are saved with the purchase.
+  ///
+  /// A Finance expense is also created for the goat purchase amount.
+  ///
+  /// Payment method is restricted to:
+  ///
+  /// Cash
+  /// Online
   Future<TradingPurchase> savePurchase({
     required String farmId,
+
+    // Seller details
     required String sellerName,
     required String mobile,
     required String market,
     required String vehicleNumber,
     required DateTime purchaseDate,
-    required String breed,
+
+    // Purchase details
     required int totalGoats,
     required double totalWeightAtPurchase,
     required double pricePerKg,
-    required DateTime dateReceivedAtFarm,
-    required double totalWeightAfterArrival,
-    required int mortality,
-    required String remarks,
-    required double transportCost,
-    required double loadingCharges,
-    required double unloadingCharges,
-    required double otherExpenses,
-  }) async {
-    final purchaseAmount = totalWeightAtPurchase * pricePerKg;
-    final weightLoss = totalWeightAtPurchase - totalWeightAfterArrival;
-    final totalTransportExpenses =
-        transportCost + loadingCharges + unloadingCharges + otherExpenses;
-    final grandTotal = purchaseAmount + totalTransportExpenses;
 
-    // Guard against divide-by-zero (Section 5 note) if weight after
-    // arrival wasn't entered / arrived at zero.
+    // Payment
+    required String paymentMethod,
+
+    // Receiving
+    String receivingStatus = 'pending',
+    DateTime? dateReceivedAtFarm,
+    double? totalWeightAfterArrival,
+    int mortality = 0,
+    String remarks = '',
+
+    // Transport / additional costs
+    double transportCost = 0,
+    double loadingCharges = 0,
+    double unloadingCharges = 0,
+    double otherExpenses = 0,
+  }) async {
+    final normalizedPaymentMethod =
+    _normalizePaymentMethod(paymentMethod);
+
+    final normalizedReceivingStatus =
+    _normalizeReceivingStatus(receivingStatus);
+
+    if (sellerName.trim().isEmpty) {
+      throw ArgumentError('Seller name is required.');
+    }
+
+    if (totalGoats <= 0) {
+      throw ArgumentError('Total goats must be greater than zero.');
+    }
+
+    if (totalWeightAtPurchase <= 0) {
+      throw ArgumentError(
+        'Purchase weight must be greater than zero.',
+      );
+    }
+
+    if (pricePerKg <= 0) {
+      throw ArgumentError(
+        'Price per kg must be greater than zero.',
+      );
+    }
+
+    if (normalizedReceivingStatus == 'completed') {
+      if (dateReceivedAtFarm == null) {
+        throw ArgumentError(
+          'Receiving date is required when receiving is completed.',
+        );
+      }
+
+      if (totalWeightAfterArrival == null ||
+          totalWeightAfterArrival <= 0) {
+        throw ArgumentError(
+          'Arrival weight is required when receiving is completed.',
+        );
+      }
+    }
+
+    if (mortality < 0) {
+      throw ArgumentError(
+        'Mortality cannot be negative.',
+      );
+    }
+
+    if (mortality > totalGoats) {
+      throw ArgumentError(
+        'Mortality cannot be greater than total goats.',
+      );
+    }
+
+    // ---------------------------------------------------------------------
+    // CALCULATIONS
+    // ---------------------------------------------------------------------
+
+    final purchaseAmount =
+        totalWeightAtPurchase * pricePerKg;
+
+    final safeArrivalWeight =
+        totalWeightAfterArrival ?? 0;
+
+    final weightLoss =
+    normalizedReceivingStatus == 'completed'
+        ? totalWeightAtPurchase - safeArrivalWeight
+        : null;
+
+    final totalTransportExpenses =
+        transportCost +
+            loadingCharges +
+            unloadingCharges +
+            otherExpenses;
+
+    final grandTotal =
+        purchaseAmount + totalTransportExpenses;
+
     final effectiveCostPerKg =
-    totalWeightAfterArrival > 0 ? grandTotal / totalWeightAfterArrival : 0.0;
+    safeArrivalWeight > 0
+        ? grandTotal / safeArrivalWeight
+        : 0.0;
+
+    // ---------------------------------------------------------------------
+    // CREATE SEQUENTIAL PURCHASE ID
+    // ---------------------------------------------------------------------
 
     final counterRef = _purchaseCounterDoc(farmId);
 
-    final purchaseId = await _db.runTransaction<String>((transaction) async {
-      final counterSnap = await transaction.get(counterRef);
-      final lastValue = (counterSnap.data()?['lastValue'] as num?)?.toInt() ?? 0;
-      final nextValue = lastValue + 1;
-      final id = 'PUR-${nextValue.toString().padLeft(4, '0')}';
+    final purchaseId =
+    await _db.runTransaction<String>(
+          (transaction) async {
+        final counterSnap =
+        await transaction.get(counterRef);
 
-      transaction.set(
-        counterRef,
-        {'lastValue': nextValue},
-        SetOptions(merge: true),
+        final lastValue =
+            (counterSnap.data()?['lastValue'] as num?)
+                ?.toInt() ??
+                0;
+
+        final nextValue = lastValue + 1;
+
+        final id =
+            'PUR-${nextValue.toString().padLeft(4, '0')}';
+
+        transaction.set(
+          counterRef,
+          {
+            'lastValue': nextValue,
+          },
+          SetOptions(merge: true),
+        );
+
+        final purchase =
+        TradingPurchase(
+          id: id,
+
+          sellerName: sellerName.trim(),
+          mobile: mobile.trim(),
+          market: market.trim(),
+          vehicleNumber: vehicleNumber.trim(),
+          purchaseDate: purchaseDate,
+
+          totalGoats: totalGoats,
+          totalWeightAtPurchase:
+          totalWeightAtPurchase,
+          pricePerKg: pricePerKg,
+          purchaseAmount: purchaseAmount,
+
+          paymentMethod: normalizedPaymentMethod,
+
+          receivingStatus:
+          normalizedReceivingStatus,
+
+          dateReceivedAtFarm:
+          normalizedReceivingStatus == 'completed'
+              ? dateReceivedAtFarm
+              : null,
+
+          totalWeightAfterArrival:
+          normalizedReceivingStatus == 'completed'
+              ? safeArrivalWeight
+              : null,
+
+          weightLoss: weightLoss,
+
+          mortality: mortality,
+          remarks: remarks.trim(),
+
+          transportCost: transportCost,
+          loadingCharges: loadingCharges,
+          unloadingCharges: unloadingCharges,
+          otherExpenses: otherExpenses,
+
+          totalTransportExpenses:
+          totalTransportExpenses,
+
+          grandTotal: grandTotal,
+
+          effectiveCostPerKg:
+          effectiveCostPerKg,
+
+          registeredCount: 0,
+
+          pendingCount: totalGoats,
+        );
+
+        transaction.set(
+          _tradingPurchases(farmId).doc(id),
+          {
+            ...purchase.toMap(),
+            'createdAt':
+            FieldValue.serverTimestamp(),
+          },
+        );
+
+        return id;
+      },
+    ).timeout(_timeout);
+
+    // ---------------------------------------------------------------------
+    // READ SAVED PURCHASE
+    // ---------------------------------------------------------------------
+
+    final saved =
+    await getPurchase(
+      farmId,
+      purchaseId,
+    );
+
+    if (saved == null) {
+      throw StateError(
+        'Purchase $purchaseId was written but could not be read back.',
       );
+    }
 
-      final purchase = TradingPurchase(
-        id: id,
-        sellerName: sellerName.trim(),
-        mobile: mobile.trim(),
-        market: market.trim(),
-        vehicleNumber: vehicleNumber.trim(),
-        purchaseDate: purchaseDate,
-        breed: breed.trim(),
-        totalGoats: totalGoats,
-        totalWeightAtPurchase: totalWeightAtPurchase,
-        pricePerKg: pricePerKg,
-        purchaseAmount: purchaseAmount,
-        dateReceivedAtFarm: dateReceivedAtFarm,
-        totalWeightAfterArrival: totalWeightAfterArrival,
-        weightLoss: weightLoss,
-        mortality: mortality,
-        remarks: remarks.trim(),
-        transportCost: transportCost,
-        loadingCharges: loadingCharges,
-        unloadingCharges: unloadingCharges,
-        otherExpenses: otherExpenses,
-        totalTransportExpenses: totalTransportExpenses,
-        grandTotal: grandTotal,
-        effectiveCostPerKg: effectiveCostPerKg,
-        registeredCount: 0,
-        pendingCount: totalGoats,
+    // ---------------------------------------------------------------------
+    // FINANCE EXPENSE
+    // ---------------------------------------------------------------------
+    //
+    // Only the actual goat purchase amount is recorded as:
+    //
+    // Expense Category = Goat Purchase
+    //
+    // Transport/loading/unloading/other expenses remain part of the
+    // Trading purchase totals and can be separately handled later if
+    // the Finance design requires that.
+    //
+    // The referenceType/referenceId pair prevents the same purchase
+    // from creating duplicate Finance expenses.
+
+    await _ensurePurchaseFinanceExpense(
+      farmId: farmId,
+      purchase: saved,
+    );
+
+    return saved;
+  }
+
+  // -----------------------------------------------------------------------
+  // FINANCE INTEGRATION
+  // -----------------------------------------------------------------------
+
+  /// Creates the Finance expense associated with a Trading purchase.
+  ///
+  /// A purchase is linked through:
+  ///
+  /// referenceType = tradingPurchase
+  /// referenceId   = PUR-0001
+  ///
+  /// Before creating a new expense, existing expenses are checked so
+  /// repeated calls can never create duplicate goat-purchase expenses.
+  Future<void> _ensurePurchaseFinanceExpense({
+    required String farmId,
+    required TradingPurchase purchase,
+  }) async {
+    final existingSnapshot = await _db
+        .collection('farms')
+        .doc(farmId)
+        .collection('expenses')
+        .where(
+      'referenceType',
+      isEqualTo: 'tradingPurchase',
+    )
+        .where(
+      'referenceId',
+      isEqualTo: purchase.id,
+    )
+        .limit(1)
+        .get()
+        .timeout(_timeout);
+
+    if (existingSnapshot.docs.isNotEmpty) {
+      return;
+    }
+
+    final now = DateTime.now();
+
+    final expense = ExpenseModel(
+      id: '',
+      title: 'Goat Purchase',
+      category: ExpenseCategories.goatPurchase,
+      amount: purchase.purchaseAmount,
+      supplierName: purchase.sellerName,
+      paymentMethod:
+      _normalizePaymentMethod(
+        purchase.paymentMethod,
+      ),
+      note:
+      'Trading purchase ${purchase.id}',
+      date: purchase.purchaseDate,
+      createdAt: now,
+      updatedAt: now,
+      status: 'active',
+      referenceType: 'tradingPurchase',
+      referenceId: purchase.id,
+    );
+
+    await FinanceService.instance.addExpense(
+      farmId,
+      expense,
+    );
+  }
+
+  // -----------------------------------------------------------------------
+  // COMPLETE RECEIVING
+  // -----------------------------------------------------------------------
+
+  /// Completes receiving for a purchase that was originally saved with
+  /// "Later".
+  ///
+  /// This updates the existing purchase instead of creating a second
+  /// purchase.
+  Future<TradingPurchase> completeReceiving({
+    required String farmId,
+    required String purchaseId,
+    required DateTime dateReceivedAtFarm,
+    required double totalWeightAfterArrival,
+    required int mortality,
+    String remarks = '',
+  }) async {
+    if (totalWeightAfterArrival <= 0) {
+      throw ArgumentError(
+        'Arrival weight must be greater than zero.',
       );
+    }
 
-      transaction.set(_tradingPurchases(farmId).doc(id), {
-        ...purchase.toMap(),
-        'createdAt': FieldValue.serverTimestamp(),
-      });
+    if (mortality < 0) {
+      throw ArgumentError(
+        'Mortality cannot be negative.',
+      );
+    }
 
-      return id;
+    final purchase =
+    await getPurchase(
+      farmId,
+      purchaseId,
+    );
+
+    if (purchase == null) {
+      throw StateError(
+        'Purchase $purchaseId was not found.',
+      );
+    }
+
+    if (mortality > purchase.totalGoats) {
+      throw ArgumentError(
+        'Mortality cannot be greater than total goats.',
+      );
+    }
+
+    final weightLoss =
+        purchase.totalWeightAtPurchase -
+            totalWeightAfterArrival;
+
+    final effectiveCostPerKg =
+    totalWeightAfterArrival > 0
+        ? purchase.grandTotal /
+        totalWeightAfterArrival
+        : 0.0;
+
+    await _tradingPurchases(farmId)
+        .doc(purchaseId)
+        .update({
+      'receivingStatus': 'completed',
+      'dateReceivedAtFarm':
+      Timestamp.fromDate(
+        dateReceivedAtFarm,
+      ),
+      'totalWeightAfterArrival':
+      totalWeightAfterArrival,
+      'weightLoss': weightLoss,
+      'mortality': mortality,
+      'remarks': remarks.trim(),
+      'effectiveCostPerKg':
+      effectiveCostPerKg,
+      'updatedAt':
+      FieldValue.serverTimestamp(),
     }).timeout(_timeout);
 
-    // Re-read so the returned model carries the server-resolved
-    // createdAt timestamp (the transaction above only has the sentinel
-    // FieldValue, not an actual DateTime, at the point it returns).
-    final saved = await getPurchase(farmId, purchaseId);
-    if (saved == null) {
-      throw StateError('Purchase $purchaseId was written but could not be read back.');
+    final updated =
+    await getPurchase(
+      farmId,
+      purchaseId,
+    );
+
+    if (updated == null) {
+      throw StateError(
+        'Receiving was updated but the purchase could not be read back.',
+      );
     }
-    return saved;
+
+    return updated;
+  }
+
+  // -----------------------------------------------------------------------
+  // MARK RECEIVING AS PENDING
+  // -----------------------------------------------------------------------
+
+  /// Explicitly marks a purchase as pending receiving.
+  ///
+  /// This is useful if the user chooses "Later" before entering any
+  /// receiving information.
+  Future<void> markReceivingPending({
+    required String farmId,
+    required String purchaseId,
+  }) async {
+    await _tradingPurchases(farmId)
+        .doc(purchaseId)
+        .update({
+      'receivingStatus': 'pending',
+      'dateReceivedAtFarm':
+      FieldValue.delete(),
+      'totalWeightAfterArrival':
+      FieldValue.delete(),
+      'weightLoss':
+      FieldValue.delete(),
+      'updatedAt':
+      FieldValue.serverTimestamp(),
+    }).timeout(_timeout);
+  }
+
+  // -----------------------------------------------------------------------
+  // DELETE / VOID SAFETY
+  // -----------------------------------------------------------------------
+
+  /// Trading purchases are financial records.
+  ///
+  /// Do not hard-delete them from the application flow.
+  /// This method exists only as a safety guard for callers that might
+  /// otherwise try to delete a purchase.
+  Future<void> preventPurchaseDeletion({
+    required String farmId,
+    required String purchaseId,
+  }) async {
+    final purchase =
+    await getPurchase(
+      farmId,
+      purchaseId,
+    );
+
+    if (purchase == null) {
+      throw StateError(
+        'Purchase $purchaseId was not found.',
+      );
+    }
+
+    throw StateError(
+      'Trading purchases are financial records and cannot be deleted.',
+    );
+  }
+
+  // -----------------------------------------------------------------------
+  // PAYMENT METHOD
+  // -----------------------------------------------------------------------
+
+  /// Trading supports ONLY:
+  ///
+  /// Cash
+  /// Online
+  ///
+  /// No UPI
+  /// No Bank Transfer
+  /// No Cheque
+  /// No Other
+  /// No Credit
+  static String _normalizePaymentMethod(
+      String value,
+      ) {
+    final method =
+    value.trim().toLowerCase();
+
+    if (method == 'online') {
+      return 'Online';
+    }
+
+    if (method == 'cash') {
+      return 'Cash';
+    }
+
+    throw ArgumentError(
+      'Trading payment method must be Cash or Online.',
+    );
+  }
+
+  // -----------------------------------------------------------------------
+  // RECEIVING STATUS
+  // -----------------------------------------------------------------------
+
+  static String _normalizeReceivingStatus(
+      String value,
+      ) {
+    return value.trim().toLowerCase() ==
+        'completed'
+        ? 'completed'
+        : 'pending';
   }
 }

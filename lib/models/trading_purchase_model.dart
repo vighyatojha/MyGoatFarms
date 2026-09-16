@@ -1,165 +1,345 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 
-/// One wholesale goat purchase, saved at the end of the Purchase Goats
-/// wizard (see PurchaseDraft in trading_purchase_draft.dart, added in
-/// Task 3.1).
+/// A wholesale goat purchase in the Trading module.
 ///
-/// Lives at `farms/{farmId}/tradingPurchases/{purchaseId}` — nested
-/// under the farm, matching every other module's collection layout
-/// (expenses, transactions, bills, ... all live the same way under
-/// FinanceService/FirestoreService) rather than the flat top-level
-/// `trading_purchases/{purchaseId}` the phase-1 plan sketched, which
-/// would sit outside the farm-scoped security-rule pattern the rest of
-/// the app already uses.
+/// Stored at:
+/// farms/{farmId}/tradingPurchases/{purchaseId}
 ///
-/// The "(calculated)" fields called out in the phase-1 plan
-/// (purchaseAmount, weightLoss, totalTransportExpenses, grandTotal,
-/// effectiveCostPerKg) are computed once in the wizard and stored
-/// here as plain fields — not re-derived on every read — so the
-/// dashboard, purchase list, and success screen never need the raw
-/// inputs just to show a total.
+/// Receiving is intentionally optional when the purchase is first saved.
+/// A purchase can therefore exist in one of two states:
+///
+/// 1. receivingStatus == 'completed'
+///    Receiving information was entered during purchase.
+///
+/// 2. receivingStatus == 'pending'
+///    Purchase was saved without receiving details and must be completed
+///    later from the Trading Dashboard.
+///
+/// Payment methods for Trading purchases are intentionally limited to:
+/// Cash
+/// Online
 class TradingPurchase {
-  final String id; // e.g. 'PUR-0001'
+  final String id;
 
-  // --- Seller info ---
+  // -----------------------------------------------------------------------
+  // SELLER DETAILS
+  // -----------------------------------------------------------------------
+
   final String sellerName;
   final String mobile;
   final String market;
   final String vehicleNumber;
   final DateTime purchaseDate;
 
-  // --- Purchase details ---
-  final String breed;
+  // -----------------------------------------------------------------------
+  // PURCHASE DETAILS
+  // -----------------------------------------------------------------------
+
   final int totalGoats;
   final double totalWeightAtPurchase;
   final double pricePerKg;
-  final double purchaseAmount; // calculated: totalWeightAtPurchase * pricePerKg
+  final double purchaseAmount;
 
-  // --- Receiving ---
-  final DateTime dateReceivedAtFarm;
-  final double totalWeightAfterArrival;
-  final double weightLoss; // calculated: totalWeightAtPurchase - totalWeightAfterArrival
+  /// Trading purchase payment method.
+  ///
+  /// Only:
+  /// - Cash
+  /// - Online
+  final String paymentMethod;
+
+  // -----------------------------------------------------------------------
+  // RECEIVING DETAILS
+  // -----------------------------------------------------------------------
+
+  /// 'pending' or 'completed'
+  final String receivingStatus;
+
+  final DateTime? dateReceivedAtFarm;
+  final double? totalWeightAfterArrival;
+  final double? weightLoss;
   final int mortality;
   final String remarks;
 
-  // --- Transport ---
+  // -----------------------------------------------------------------------
+  // TRANSPORT / OTHER PURCHASE EXPENSES
+  // -----------------------------------------------------------------------
+
   final double transportCost;
   final double loadingCharges;
   final double unloadingCharges;
   final double otherExpenses;
-  final double totalTransportExpenses; // calculated: sum of the four above
 
-  // --- Derived totals ---
-  final double grandTotal; // calculated: purchaseAmount + totalTransportExpenses
-  final double effectiveCostPerKg; // calculated: grandTotal / totalWeightAfterArrival (0 if weight is 0)
+  final double totalTransportExpenses;
 
-  // --- Status tracking ---
+  // -----------------------------------------------------------------------
+  // TOTALS
+  // -----------------------------------------------------------------------
+
+  final double grandTotal;
+  final double effectiveCostPerKg;
+
+  // -----------------------------------------------------------------------
+  // GOAT REGISTRATION STATUS
+  // -----------------------------------------------------------------------
+
   final int registeredCount;
   final int pendingCount;
+
   final DateTime? createdAt;
 
   const TradingPurchase({
     required this.id,
+
     required this.sellerName,
     required this.mobile,
     required this.market,
     required this.vehicleNumber,
     required this.purchaseDate,
-    required this.breed,
+
     required this.totalGoats,
     required this.totalWeightAtPurchase,
     required this.pricePerKg,
     required this.purchaseAmount,
-    required this.dateReceivedAtFarm,
-    required this.totalWeightAfterArrival,
-    required this.weightLoss,
+    required this.paymentMethod,
+
+    required this.receivingStatus,
+    this.dateReceivedAtFarm,
+    this.totalWeightAfterArrival,
+    this.weightLoss,
     required this.mortality,
     required this.remarks,
+
     required this.transportCost,
     required this.loadingCharges,
     required this.unloadingCharges,
     required this.otherExpenses,
     required this.totalTransportExpenses,
+
     required this.grandTotal,
     required this.effectiveCostPerKg,
+
     required this.registeredCount,
     required this.pendingCount,
+
     this.createdAt,
   });
+
+  // -----------------------------------------------------------------------
+  // HELPERS
+  // -----------------------------------------------------------------------
+
+  bool get isReceivingPending =>
+      receivingStatus.trim().toLowerCase() == 'pending';
+
+  bool get isReceivingCompleted =>
+      receivingStatus.trim().toLowerCase() == 'completed';
+
+  // -----------------------------------------------------------------------
+  // FIRESTORE
+  // -----------------------------------------------------------------------
 
   factory TradingPurchase.fromDoc(
       DocumentSnapshot<Map<String, dynamic>> doc,
       ) {
     final data = doc.data() ?? {};
 
-    DateTime dateFrom(String key) {
+    DateTime? nullableDateFrom(String key) {
       final value = data[key];
-      if (value is Timestamp) return value.toDate();
-      return DateTime.now();
+
+      if (value is Timestamp) {
+        return value.toDate();
+      }
+
+      if (value is DateTime) {
+        return value;
+      }
+
+      return null;
     }
 
-    double numFrom(String key) => (data[key] as num?)?.toDouble() ?? 0;
-    int intFrom(String key) => (data[key] as num?)?.toInt() ?? 0;
+    DateTime dateFrom(String key) {
+      return nullableDateFrom(key) ?? DateTime.now();
+    }
+
+    double numFrom(String key) {
+      final value = data[key];
+
+      if (value is num) {
+        return value.toDouble();
+      }
+
+      return double.tryParse(value?.toString() ?? '') ?? 0.0;
+    }
+
+    double? nullableNumFrom(String key) {
+      final value = data[key];
+
+      if (value == null) {
+        return null;
+      }
+
+      if (value is num) {
+        return value.toDouble();
+      }
+
+      return double.tryParse(value.toString());
+    }
+
+    int intFrom(String key) {
+      final value = data[key];
+
+      if (value is num) {
+        return value.toInt();
+      }
+
+      return int.tryParse(value?.toString() ?? '') ?? 0;
+    }
 
     return TradingPurchase(
       id: doc.id,
-      sellerName: data['sellerName'] ?? '',
-      mobile: data['mobile'] ?? '',
-      market: data['market'] ?? '',
-      vehicleNumber: data['vehicleNumber'] ?? '',
+
+      sellerName: (data['sellerName'] ?? '').toString(),
+      mobile: (data['mobile'] ?? '').toString(),
+      market: (data['market'] ?? '').toString(),
+      vehicleNumber: (data['vehicleNumber'] ?? '').toString(),
       purchaseDate: dateFrom('purchaseDate'),
-      breed: data['breed'] ?? '',
+
       totalGoats: intFrom('totalGoats'),
       totalWeightAtPurchase: numFrom('totalWeightAtPurchase'),
       pricePerKg: numFrom('pricePerKg'),
       purchaseAmount: numFrom('purchaseAmount'),
-      dateReceivedAtFarm: dateFrom('dateReceivedAtFarm'),
-      totalWeightAfterArrival: numFrom('totalWeightAfterArrival'),
-      weightLoss: numFrom('weightLoss'),
+
+      // Backward-safe default.
+      paymentMethod: _normalisePaymentMethod(
+        (data['paymentMethod'] ?? 'Cash').toString(),
+      ),
+
+      // Old records did not have this field.
+      // Such records are treated as completed only if receiving data exists.
+      receivingStatus: _normaliseReceivingStatus(data),
+
+      dateReceivedAtFarm: nullableDateFrom('dateReceivedAtFarm'),
+      totalWeightAfterArrival:
+      nullableNumFrom('totalWeightAfterArrival'),
+      weightLoss: nullableNumFrom('weightLoss'),
+
       mortality: intFrom('mortality'),
-      remarks: data['remarks'] ?? '',
+      remarks: (data['remarks'] ?? '').toString(),
+
       transportCost: numFrom('transportCost'),
       loadingCharges: numFrom('loadingCharges'),
       unloadingCharges: numFrom('unloadingCharges'),
       otherExpenses: numFrom('otherExpenses'),
+
       totalTransportExpenses: numFrom('totalTransportExpenses'),
+
       grandTotal: numFrom('grandTotal'),
       effectiveCostPerKg: numFrom('effectiveCostPerKg'),
+
       registeredCount: intFrom('registeredCount'),
       pendingCount: intFrom('pendingCount'),
-      createdAt: (data['createdAt'] as Timestamp?)?.toDate(),
+
+      createdAt: nullableDateFrom('createdAt'),
     );
   }
 
-  /// Does NOT include `createdAt` — callers write that separately as
-  /// `FieldValue.serverTimestamp()` at save time (see stock/expense
-  /// models for the same split).
+  /// Does not write createdAt.
+  ///
+  /// The service adds:
+  /// FieldValue.serverTimestamp()
+  ///
+  /// This keeps server timestamps consistent with the rest of the app.
   Map<String, dynamic> toMap() {
-    return {
-      'sellerName': sellerName,
-      'mobile': mobile,
-      'market': market,
-      'vehicleNumber': vehicleNumber,
+    final map = <String, dynamic>{
+      'sellerName': sellerName.trim(),
+      'mobile': mobile.trim(),
+      'market': market.trim(),
+      'vehicleNumber': vehicleNumber.trim(),
       'purchaseDate': Timestamp.fromDate(purchaseDate),
-      'breed': breed,
+
       'totalGoats': totalGoats,
       'totalWeightAtPurchase': totalWeightAtPurchase,
       'pricePerKg': pricePerKg,
       'purchaseAmount': purchaseAmount,
-      'dateReceivedAtFarm': Timestamp.fromDate(dateReceivedAtFarm),
-      'totalWeightAfterArrival': totalWeightAfterArrival,
-      'weightLoss': weightLoss,
+
+      'paymentMethod': _normalisePaymentMethod(paymentMethod),
+
+      'receivingStatus': _normaliseReceivingStatusValue(receivingStatus),
+
       'mortality': mortality,
-      'remarks': remarks,
+      'remarks': remarks.trim(),
+
       'transportCost': transportCost,
       'loadingCharges': loadingCharges,
       'unloadingCharges': unloadingCharges,
       'otherExpenses': otherExpenses,
+
       'totalTransportExpenses': totalTransportExpenses,
+
       'grandTotal': grandTotal,
       'effectiveCostPerKg': effectiveCostPerKg,
+
       'registeredCount': registeredCount,
       'pendingCount': pendingCount,
     };
+
+    if (dateReceivedAtFarm != null) {
+      map['dateReceivedAtFarm'] =
+          Timestamp.fromDate(dateReceivedAtFarm!);
+    }
+
+    if (totalWeightAfterArrival != null) {
+      map['totalWeightAfterArrival'] = totalWeightAfterArrival;
+    }
+
+    if (weightLoss != null) {
+      map['weightLoss'] = weightLoss;
+    }
+
+    return map;
+  }
+
+  // -----------------------------------------------------------------------
+  // NORMALISATION
+  // -----------------------------------------------------------------------
+
+  static String _normalisePaymentMethod(String value) {
+    final method = value.trim().toLowerCase();
+
+    if (method == 'online') {
+      return 'Online';
+    }
+
+    // Trading purchases intentionally default to Cash.
+    //
+    // This also protects older / malformed records from introducing
+    // additional payment methods into the new Trading UI.
+    return 'Cash';
+  }
+
+  static String _normaliseReceivingStatus(Map<String, dynamic> data) {
+    final explicit = data['receivingStatus'];
+
+    if (explicit != null) {
+      return _normaliseReceivingStatusValue(explicit.toString());
+    }
+
+    // Backward compatibility for purchases created before receivingStatus
+    // existed.
+    final hasReceivingDate = data['dateReceivedAtFarm'] is Timestamp;
+    final hasReceivingWeight =
+        data['totalWeightAfterArrival'] != null;
+
+    if (hasReceivingDate || hasReceivingWeight) {
+      return 'completed';
+    }
+
+    return 'pending';
+  }
+
+  static String _normaliseReceivingStatusValue(String value) {
+    return value.trim().toLowerCase() == 'completed'
+        ? 'completed'
+        : 'pending';
   }
 }

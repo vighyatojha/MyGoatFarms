@@ -6,9 +6,18 @@
 class ExpenseCategories {
   ExpenseCategories._();
 
+  // -----------------------------------------------------------------------
+  // EXPENSE CATEGORIES
+  // -----------------------------------------------------------------------
+
   static const String feed = 'Feed';
   static const String medicine = 'Medicine';
   static const String healthcare = 'Healthcare';
+
+  /// Expenses created automatically when goats are purchased through
+  /// the Trading module.
+  static const String goatPurchase = 'Goat Purchase';
+
   static const String farmExpenses = 'Farm Expenses';
   static const String officeExpenses = 'Office Expenses';
   static const String hoofCuttingSelf = 'Hoof Cutting (Self)';
@@ -18,12 +27,14 @@ class ExpenseCategories {
     feed,
     medicine,
     healthcare,
+    goatPurchase,
     farmExpenses,
     officeExpenses,
     hoofCuttingSelf,
     other,
   ];
 }
+
 
 /// Revenue categories for manual (non-billing) income.
 ///
@@ -46,8 +57,20 @@ class RevenueCategories {
   ];
 }
 
-/// Payment methods — mirrors the exact set already used throughout the
-/// billing/payment screens. Do not introduce a second payment-method list.
+
+/// Payment methods used by the existing Finance module.
+///
+/// NOTE:
+/// The Trading Purchase flow does NOT use this complete list.
+///
+/// Trading Purchase intentionally has its own restricted selection:
+///
+///     Cash
+///     Online
+///
+/// The existing Finance module is left unchanged so existing expenses,
+/// stock purchases, billing and other finance functionality continue to
+/// work as before.
 class FinancePaymentMethods {
   FinancePaymentMethods._();
 
@@ -58,20 +81,29 @@ class FinancePaymentMethods {
   static const String other = 'Other';
 
   /// Not a real cash payment — used only when stock is purchased on
-  /// credit from a supplier (see AddFeedStockScreen / AddMedicineScreen's
-  /// "Buy on Credit" toggle). Deliberately excluded from [all] so it
-  /// never appears in payment pickers for money actually received/paid
-  /// in cash (Receive Payment, manual expenses, etc.).
+  /// credit from a supplier.
+  ///
+  /// Deliberately excluded from [all].
   static const String credit = 'Credit';
 
-  static const List<String> all = [cash, upi, bankTransfer, cheque, other];
+  static const List<String> all = [
+    cash,
+    upi,
+    bankTransfer,
+    cheque,
+    other,
+  ];
 
-  /// Buckets any payment method into the simple Cash / Online split used
-  /// by the Finance Overview's payment-mode tracker. Every method other
-  /// than exact "Cash" (UPI, Bank Transfer, Cheque, Other, ...) is
-  /// treated as an online payment.
-  static bool isCash(String method) => method.trim().toLowerCase() == 'cash';
+  /// Returns true when the payment was made using cash.
+  static bool isCash(String method) {
+    return method.trim().toLowerCase() == 'cash';
+  }
 
-  static bool isOnline(String method) =>
-      method.trim().isNotEmpty && !isCash(method);
+  /// Existing Finance helper.
+  ///
+  /// This remains compatible with the current Finance screens:
+  /// every non-empty method other than Cash is treated as online.
+  static bool isOnline(String method) {
+    return method.trim().isNotEmpty && !isCash(method);
+  }
 }
