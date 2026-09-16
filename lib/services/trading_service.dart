@@ -401,6 +401,44 @@ class TradingService {
           },
         );
 
+        // -------------------------------------------------------------
+        // DASHBOARD SUMMARY
+        // -------------------------------------------------------------
+        //
+        // Without this, farms/{farmId}/tradingSummary/dashboard never
+        // gets written to by a purchase, so the dashboard's stat grid
+        // (Total Stock, Wholesale Purchased, Pending Registrations,
+        // etc.) stays at whatever it was initialized to — even after
+        // saving new purchases.
+        //
+        // Wholesale Purchased counts every goat bought through
+        // Trading, regardless of receiving status. Total Stock and
+        // Pending Registrations only count goats once receiving is
+        // confirmed (mortality already subtracted), since goats still
+        // in transit aren't on-farm stock yet — see completeReceiving()
+        // for the equivalent update once "Later" receiving finishes.
+        final survivingGoatsAtCreation =
+        normalizedReceivingStatus == 'completed'
+            ? totalGoats - mortality
+            : 0;
+
+        transaction.set(
+          _summaryDoc(farmId),
+          {
+            'wholesalePurchased':
+            FieldValue.increment(totalGoats),
+            if (survivingGoatsAtCreation > 0) ...{
+              'totalStock': FieldValue.increment(
+                survivingGoatsAtCreation,
+              ),
+              'pendingRegistrations': FieldValue.increment(
+                survivingGoatsAtCreation,
+              ),
+            },
+          },
+          SetOptions(merge: true),
+        );
+
         return id;
       },
     ).timeout(_timeout);
@@ -566,24 +604,48 @@ class TradingService {
         totalWeightAfterArrival
         : 0.0;
 
-    await _tradingPurchases(farmId)
-        .doc(purchaseId)
-        .update({
-      'receivingStatus': 'completed',
-      'dateReceivedAtFarm':
-      Timestamp.fromDate(
-        dateReceivedAtFarm,
-      ),
-      'totalWeightAfterArrival':
-      totalWeightAfterArrival,
-      'weightLoss': weightLoss,
-      'mortality': mortality,
-      'remarks': remarks.trim(),
-      'effectiveCostPerKg':
-      effectiveCostPerKg,
-      'updatedAt':
-      FieldValue.serverTimestamp(),
-    }).timeout(_timeout);
+    final batch = _db.batch();
+
+    batch.update(
+      _tradingPurchases(farmId).doc(purchaseId),
+      {
+        'receivingStatus': 'completed',
+        'dateReceivedAtFarm':
+        Timestamp.fromDate(
+          dateReceivedAtFarm,
+        ),
+        'totalWeightAfterArrival':
+        totalWeightAfterArrival,
+        'weightLoss': weightLoss,
+        'mortality': mortality,
+        'remarks': remarks.trim(),
+        'effectiveCostPerKg':
+        effectiveCostPerKg,
+        'updatedAt':
+        FieldValue.serverTimestamp(),
+      },
+    );
+
+    // These goats were NOT counted in totalStock / pendingRegistrations
+    // when the purchase was first saved (see savePurchase()), because
+    // receiving was still pending then. Now that receiving is
+    // confirmed, add the surviving goats (mortality subtracted) to the
+    // dashboard summary.
+    final survivingGoats = purchase.totalGoats - mortality;
+
+    if (survivingGoats > 0) {
+      batch.set(
+        _summaryDoc(farmId),
+        {
+          'totalStock': FieldValue.increment(survivingGoats),
+          'pendingRegistrations':
+          FieldValue.increment(survivingGoats),
+        },
+        SetOptions(merge: true),
+      );
+    }
+
+    await batch.commit().timeout(_timeout);
 
     final updated =
     await getPurchase(
@@ -598,6 +660,63 @@ class TradingService {
     }
 
     return updated;
+  }
+
+  // -----------------------------------------------------------------------
+  // BACKFILL DASHBOARD SUMMARY
+  // -----------------------------------------------------------------------
+
+  /// Recomputes the purchase-derived dashboard summary fields
+  /// (wholesalePurchased, totalStock, pendingRegistrations) from every
+  /// existing purchase document, and overwrites them on
+  /// farms/{farmId}/tradingSummary/dashboard.
+  ///
+  /// This exists because savePurchase()/completeReceiving() only
+  /// started updating the summary doc once that logic was added — any
+  /// purchase saved BEFORE that fix never incremented the summary, so
+  /// the dashboard undercounts until this is run once per farm.
+  ///
+  /// Safe to call more than once: it always recomputes totals from
+  /// scratch (not incremental), so re-running it just gets the same
+  /// correct numbers rather than double-counting.
+  ///
+  /// Only sets wholesalePurchased/totalStock/pendingRegistrations —
+  /// totalSold, totalProfit, booking, and waitOnDelivery come from
+  /// other modules (sales/bookings) and are left untouched via merge.
+  Future<void> backfillDashboardSummary(String farmId) async {
+    final snapshot =
+    await _tradingPurchases(farmId).get().timeout(_timeout);
+
+    var wholesalePurchased = 0;
+    var totalStock = 0;
+
+    for (final doc in snapshot.docs) {
+      final purchase = TradingPurchase.fromDoc(doc);
+
+      wholesalePurchased += purchase.totalGoats;
+
+      if (purchase.isReceivingCompleted) {
+        final surviving =
+            purchase.totalGoats - purchase.mortality;
+
+        if (surviving > 0) {
+          totalStock += surviving;
+        }
+      }
+    }
+
+    await _summaryDoc(farmId).set(
+      {
+        'wholesalePurchased': wholesalePurchased,
+        'totalStock': totalStock,
+        // pendingRegistrations mirrors totalStock in this app: every
+        // surviving, received goat still needs registering, and
+        // nothing currently reduces this count (no registration flow
+        // wired up yet).
+        'pendingRegistrations': totalStock,
+      },
+      SetOptions(merge: true),
+    ).timeout(_timeout);
   }
 
   // -----------------------------------------------------------------------

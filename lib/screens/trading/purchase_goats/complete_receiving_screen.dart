@@ -238,6 +238,14 @@ class _CompleteReceivingScreenState
                 const TextInputType.numberWithOptions(
                   decimal: true,
                 ),
+                // Without this, typing a value updates the
+                // controller/text field itself (which manages its own
+                // rendering) but never calls setState, so
+                // _receivingSummary() below — which reads
+                // _arrivalWeight/_weightLoss/effective-cost-per-kg via
+                // getters — keeps rendering whatever it saw on the
+                // last rebuild (i.e. stays stuck on "—").
+                onChanged: (_) => setState(() {}),
                 validator: (value) {
                   final parsed = double.tryParse(
                     value?.trim() ?? '',
@@ -265,6 +273,11 @@ class _CompleteReceivingScreenState
                 suffix: 'Goats',
                 icon: Icons.pets_outlined,
                 keyboardType: TextInputType.number,
+                // Same reason as the arrival-weight field above: the
+                // Mortality row in the summary card reads _mortality
+                // via a getter, so it needs a setState to pick up the
+                // new value as the user types.
+                onChanged: (_) => setState(() {}),
                 validator: (value) {
                   final parsed = int.tryParse(
                     value?.trim() ?? '',
@@ -578,6 +591,7 @@ class _CompleteReceivingScreenState
     String? suffix,
     TextInputType? keyboardType,
     String? Function(String?)? validator,
+    ValueChanged<String>? onChanged,
     int maxLines = 1,
     TextCapitalization textCapitalization =
         TextCapitalization.none,
@@ -587,6 +601,7 @@ class _CompleteReceivingScreenState
       enabled: !_saving,
       keyboardType: keyboardType,
       validator: validator,
+      onChanged: onChanged,
       maxLines: maxLines,
       textCapitalization: textCapitalization,
       decoration: InputDecoration(

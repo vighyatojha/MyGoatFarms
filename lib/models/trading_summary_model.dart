@@ -1,14 +1,12 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 
-/// The Trading Dashboard's 7 summary numbers, persisted at
-/// `farms/{farmId}/tradingSummary/dashboard` and kept up to date by a
-/// Cloud Function trigger on `tradingPurchases` writes (see Task 1.3 —
-/// functions/index.js) rather than recomputed client-side on every
-/// dashboard load.
+/// Trading Dashboard summary.
 ///
-/// Phase 1 only ever writes [wholesalePurchased] and
-/// [pendingRegistrations] — the rest stay at 0 (never faked) until
-/// later phases (Registration, Stock, Own Palai, Sale) populate them.
+/// Stored at:
+/// farms/{farmId}/tradingSummary/dashboard
+///
+/// All numeric values are parsed defensively because Firestore data can
+/// contain int, double, or legacy/string values depending on older records.
 class TradingSummary {
   final int totalStock;
   final int wholesalePurchased;
@@ -28,22 +26,58 @@ class TradingSummary {
     this.waitOnDelivery = 0,
   });
 
-  static const empty = TradingSummary();
+  static const TradingSummary empty = TradingSummary();
 
   factory TradingSummary.fromDoc(
       DocumentSnapshot<Map<String, dynamic>> doc,
       ) {
     final data = doc.data();
-    if (data == null) return TradingSummary.empty;
 
-    int intFrom(String key) => (data[key] as num?)?.toInt() ?? 0;
-    double numFrom(String key) => (data[key] as num?)?.toDouble() ?? 0;
+    if (data == null || data.isEmpty) {
+      return TradingSummary.empty;
+    }
+
+    int intFrom(String key) {
+      final value = data[key];
+
+      if (value is int) {
+        return value;
+      }
+
+      if (value is num) {
+        return value.toInt();
+      }
+
+      if (value is String) {
+        return int.tryParse(value.trim()) ?? 0;
+      }
+
+      return 0;
+    }
+
+    double doubleFrom(String key) {
+      final value = data[key];
+
+      if (value is double) {
+        return value;
+      }
+
+      if (value is num) {
+        return value.toDouble();
+      }
+
+      if (value is String) {
+        return double.tryParse(value.trim()) ?? 0.0;
+      }
+
+      return 0.0;
+    }
 
     return TradingSummary(
       totalStock: intFrom('totalStock'),
       wholesalePurchased: intFrom('wholesalePurchased'),
       totalSold: intFrom('totalSold'),
-      totalProfit: numFrom('totalProfit'),
+      totalProfit: doubleFrom('totalProfit'),
       pendingRegistrations: intFrom('pendingRegistrations'),
       booking: intFrom('booking'),
       waitOnDelivery: intFrom('waitOnDelivery'),

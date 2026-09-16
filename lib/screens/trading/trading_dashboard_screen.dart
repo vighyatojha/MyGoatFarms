@@ -78,6 +78,41 @@ class _TradingDashboardScreenState
     }
   }
 
+  /// Used as [RefreshIndicator.onRefresh].
+  ///
+  /// Deliberately does NOT toggle [_loadingFarm]. Doing so would make
+  /// [_buildBody] swap the entire body — including the RefreshIndicator
+  /// itself — for the full-screen loading placeholder while
+  /// RefreshIndicator's own pull-to-refresh gesture/animation is still
+  /// actively laying out that same subtree. Ripping RefreshIndicator's
+  /// child out from under it mid-gesture is what caused the
+  /// framework-level "RenderBox was not laid out" / "Null check operator
+  /// used on a null value" crashes in RenderSliverList / RenderViewport.
+  ///
+  /// This only refreshes the farm id/error state; the ListView and
+  /// StreamBuilders underneath re-render themselves against the new
+  /// farmId without the RefreshIndicator subtree ever being discarded.
+  Future<void> _refreshFarm() async {
+    try {
+      final id =
+      await FirestoreService.instance.currentFarmId();
+
+      if (!mounted) return;
+
+      setState(() {
+        _farmId =
+        id == null || id.trim().isEmpty ? null : id.trim();
+        _farmLoadError = null;
+      });
+    } catch (e) {
+      if (!mounted) return;
+
+      setState(() {
+        _farmLoadError = e.toString();
+      });
+    }
+  }
+
   // ===========================================================================
   // HELPERS
   // ===========================================================================
@@ -190,7 +225,20 @@ class _TradingDashboardScreenState
 
     return RefreshIndicator(
       color: AppColors.primaryGreen,
-      onRefresh: _loadFarm,
+      onRefresh: _refreshFarm,
+      // NOTE: Deliberately a ListView, not SingleChildScrollView+Column.
+      //
+      // RefreshIndicator's Material 3 redesign wraps its child in an
+      // internal Stack + ClipRect + ImageFilter layer that expects a
+      // sliver-based viewport (RenderViewport), which ListView/
+      // CustomScrollView provide. SingleChildScrollView instead produces
+      // a _RenderSingleChildViewport, and when this child's content size
+      // changes across frames (e.g. StreamBuilder data arriving async),
+      // RefreshIndicator's filtered layer can be laid out before the
+      // child has a size, throwing:
+      // "RenderBox was not laid out ... hasSize" during performLayout.
+      //
+      // Switching to ListView avoids that layout-ordering bug.
       child: ListView(
         physics: const AlwaysScrollableScrollPhysics(),
         padding: const EdgeInsets.fromLTRB(
@@ -430,26 +478,43 @@ class _TradingDashboardScreenState
                 ? 12
                 : 0,
           ),
-          child: Row(
-            crossAxisAlignment:
-            CrossAxisAlignment.stretch,
-            children: [
-              Expanded(
-                child: _TradingStatCard(
-                  data: first,
-                  loading: loading,
+          // IntrinsicHeight is required here.
+          //
+          // Row uses crossAxisAlignment.stretch so the two stat cards
+          // match height. Stretch sizes the Row's height to whatever
+          // height constraint it receives from its parent — but this
+          // Row sits inside a Column that is itself an item inside a
+          // ListView/sliver list, which gives it a LOOSE, UNBOUNDED
+          // height constraint (0..Infinity). With an unbounded max
+          // height, stretch resolves the Row's height to Infinity and
+          // then forces that same infinite height onto both Expanded
+          // children ("BoxConstraints forces an infinite height").
+          //
+          // IntrinsicHeight measures the children's natural (finite)
+          // height first and passes that down as a tight constraint,
+          // so stretch has something real to stretch to.
+          child: IntrinsicHeight(
+            child: Row(
+              crossAxisAlignment:
+              CrossAxisAlignment.stretch,
+              children: [
+                Expanded(
+                  child: _TradingStatCard(
+                    data: first,
+                    loading: loading,
+                  ),
                 ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: second == null
-                    ? const SizedBox()
-                    : _TradingStatCard(
-                  data: second,
-                  loading: loading,
+                const SizedBox(width: 12),
+                Expanded(
+                  child: second == null
+                      ? const SizedBox()
+                      : _TradingStatCard(
+                    data: second,
+                    loading: loading,
+                  ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
         ),
       );
