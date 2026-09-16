@@ -1,6 +1,9 @@
+import 'dart:typed_data';
+
 import 'package:cloud_firestore/cloud_firestore.dart';
 
 import '../models/goat_model.dart';
+import '../models/trading_purchase_model.dart';
 
 /// Handles the Trading module's Goat Registration (Feature 3) and Goat
 /// Stock (Feature 4).
@@ -59,6 +62,18 @@ class GoatService {
     return _farms().doc(farmId).collection('tradingGoats');
   }
 
+  CollectionReference<Map<String, dynamic>> _tradingPurchases(
+      String farmId,
+      ) {
+    return _farms().doc(farmId).collection('tradingPurchases');
+  }
+
+  DocumentReference<Map<String, dynamic>> _summaryDoc(String farmId) {
+    return _farms().doc(farmId).collection('tradingSummary').doc(
+      'dashboard',
+    );
+  }
+
   DocumentReference<Map<String, dynamic>> _goatCounterDoc(String farmId) {
     return _farms().doc(farmId).collection('tradingCounters').doc(
       'goatCounter',
@@ -71,13 +86,9 @@ class GoatService {
 
   /// Reads and increments `tradingCounters/goatCounter` inside an
   /// already-open [transaction], returning the next goat ID (e.g.
-  /// "G-0001").
-  ///
-  /// Must be called from within the SAME transaction that writes the
-  /// goat document and updates the purchase's registeredCount/
-  /// pendingCount (Task 2.4), so a failure mid-way never leaves the
-  /// counter out of sync with the goats that actually exist. This will
-  /// be wired into GoatService.registerGoat() in the next task.
+  /// "G-0001"). Called from within registerGoat()'s transaction — see
+  /// that method's doc comment for why it must stay in the same
+  /// transaction as the goat write and purchase count update.
   Future<String> nextGoatIdInTransaction(
       Transaction transaction,
       String farmId,
@@ -112,5 +123,153 @@ class GoatService {
     }
 
     return Goat.fromDoc(doc);
+  }
+
+  // -----------------------------------------------------------------------
+  // REGISTER GOAT (Task 2.4)
+  // -----------------------------------------------------------------------
+
+  /// Registers a single goat against [purchase] (Feature 3).
+  ///
+  /// Everything happens in ONE Firestore transaction, per the phase 2
+  /// plan's explicit requirement:
+  ///
+  /// 1. Generate the next goat ID (tradingCounters/goatCounter).
+  /// 2. Write the tradingGoats/{goatId} doc — currentStatus: Available.
+  /// 3. Increment the purchase's registeredCount / decrement
+  ///    pendingCount.
+  /// 4. If that reaches totalGoats, mark the purchase
+  ///    registrationStatus: 'Completed'.
+  /// 5. Decrement the dashboard summary's `pendingRegistrations` (see
+  ///    note below).
+  ///
+  /// Doing all five in the same transaction is what the plan's "must
+  /// stay in sync" note is about — a dropped connection mid-way can
+  /// never leave the counter, the purchase's counts, and the goats that
+  /// actually exist out of sync with each other.
+  ///
+  /// The purchase is RE-READ inside the transaction (not trusted from
+  /// [purchase], which the caller may be holding onto across multiple
+  /// saves in the registration loop) so two concurrent registrations
+  /// against the same purchase — e.g. two devices — can't both push
+  /// pendingCount below zero.
+  ///
+  /// Also decrements `tradingSummary/dashboard`'s `pendingRegistrations`
+  /// by 1. That field has existed since Phase 1 but — per the comment
+  /// on TradingService.backfillDashboardSummary — nothing ever
+  /// decremented it, because no registration flow existed yet. This is
+  /// that flow, so it closes that gap. `totalStock` is deliberately
+  /// left untouched here: it represents on-farm surviving goats
+  /// (received, mortality already subtracted), which doesn't change
+  /// just because a goat that was already on the farm gets individually
+  /// registered.
+  Future<Goat> registerGoat({
+    required String farmId,
+    required TradingPurchase purchase,
+    required String breed,
+    required String age,
+    required double weight,
+    required String color,
+    required String healthStatus,
+    String notes = '',
+    Uint8List? photo,
+    String? photoContentType,
+  }) async {
+    if (breed.trim().isEmpty) {
+      throw ArgumentError('Breed is required.');
+    }
+
+    if (age.trim().isEmpty) {
+      throw ArgumentError('Age is required.');
+    }
+
+    if (weight <= 0) {
+      throw ArgumentError('Weight must be greater than zero.');
+    }
+
+    if (color.trim().isEmpty) {
+      throw ArgumentError('Color is required.');
+    }
+
+    final purchaseRef = _tradingPurchases(farmId).doc(purchase.id);
+    final summaryRef = _summaryDoc(farmId);
+
+    final goat = await _db.runTransaction<Goat>(
+          (transaction) async {
+        // ---------------------------------------------------------------
+        // READS (all reads must happen before any writes in a Firestore
+        // transaction, so both gets below come before anything is set).
+        // ---------------------------------------------------------------
+
+        final purchaseSnap = await transaction.get(purchaseRef);
+
+        if (!purchaseSnap.exists) {
+          throw StateError('Purchase ${purchase.id} was not found.');
+        }
+
+        final currentPurchase = TradingPurchase.fromDoc(purchaseSnap);
+
+        if (currentPurchase.pendingCount <= 0) {
+          throw StateError(
+            'This purchase has no goats left to register.',
+          );
+        }
+
+        final goatId = await nextGoatIdInTransaction(transaction, farmId);
+
+        // ---------------------------------------------------------------
+        // WRITES
+        // ---------------------------------------------------------------
+
+        final goat = Goat(
+          id: goatId,
+          breed: breed.trim(),
+          age: age.trim(),
+          weight: weight,
+          color: color.trim(),
+          healthStatus: healthStatus,
+          notes: notes.trim(),
+          purchaseId: currentPurchase.id,
+          purchaseDate: currentPurchase.purchaseDate,
+          currentStatus: Goat.statusAvailable,
+          photo: photo,
+          photoContentType: photoContentType,
+        );
+
+        transaction.set(
+          _goats(farmId).doc(goatId),
+          {
+            ...goat.toMap(),
+            'createdAt': FieldValue.serverTimestamp(),
+          },
+        );
+
+        final newRegisteredCount = currentPurchase.registeredCount + 1;
+        final newPendingCount = currentPurchase.pendingCount - 1;
+        final justCompleted = newRegisteredCount >= currentPurchase.totalGoats;
+
+        transaction.update(
+          purchaseRef,
+          {
+            'registeredCount': newRegisteredCount,
+            'pendingCount': newPendingCount,
+            if (justCompleted) 'registrationStatus': 'Completed',
+            'updatedAt': FieldValue.serverTimestamp(),
+          },
+        );
+
+        transaction.set(
+          summaryRef,
+          {
+            'pendingRegistrations': FieldValue.increment(-1),
+          },
+          SetOptions(merge: true),
+        );
+
+        return goat;
+      },
+    ).timeout(_timeout);
+
+    return goat;
   }
 }
