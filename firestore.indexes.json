@@ -47,6 +47,20 @@
       ]
     },
     {
+      "collectionGroup": "tradingPurchases",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "receivingStatus",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "pendingCount",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
       "collectionGroup": "healthEvents",
       "queryScope": "COLLECTION_GROUP",
       "fields": [

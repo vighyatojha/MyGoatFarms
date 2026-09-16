@@ -152,6 +152,53 @@ class TradingService {
   }
 
   // -----------------------------------------------------------------------
+  // PENDING REGISTRATION
+  // -----------------------------------------------------------------------
+
+  /// Streams purchases that still have goats waiting to be registered
+  /// (Feature 3 — Goat Registration).
+  ///
+  /// Deliberately restricted to `receivingStatus == 'completed'`: until
+  /// receiving is confirmed, mortality isn't known yet, so the surviving
+  /// goat count for that purchase isn't final. A purchase with receiving
+  /// still pending shows up under "Pending Receiving" instead — once
+  /// receiving is completed there, `pendingCount` becomes registerable
+  /// here.
+  ///
+  /// Used by the Select Purchase screen (Task 2.1).
+  Stream<List<TradingPurchase>> pendingRegistrationStream(
+      String farmId,
+      ) {
+    return _tradingPurchases(farmId)
+        .where(
+      'receivingStatus',
+      isEqualTo: 'completed',
+    )
+        .snapshots()
+        .map(
+          (snapshot) {
+        final purchases = snapshot.docs
+            .map(
+              (doc) => TradingPurchase.fromDoc(doc),
+        )
+            .where(
+              (purchase) => purchase.pendingCount > 0,
+        )
+            .toList();
+
+        purchases.sort(
+              (a, b) => (b.createdAt ?? DateTime(2000))
+              .compareTo(
+            a.createdAt ?? DateTime(2000),
+          ),
+        );
+
+        return purchases;
+      },
+    );
+  }
+
+  // -----------------------------------------------------------------------
   // GET PURCHASE
   // -----------------------------------------------------------------------
 
