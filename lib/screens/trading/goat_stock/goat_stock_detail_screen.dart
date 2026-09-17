@@ -9,18 +9,6 @@ import '../../../services/trading_service.dart';
 import '../../../widgets/fast_route.dart';
 import '../../palai/fullscreen_image_viewer.dart';
 
-/// Task 3.2 — Goat detail view.
-///
-/// Shows a goat's full record: Photo, Goat ID, Breed, Age, Weight,
-/// Purchase Date, Purchase ID, Current Status, per the phase 2 plan.
-/// Color, Health Status and Notes are also shown — they're already on
-/// the record from registration and there's no reason to hide them here.
-///
-/// Purchase ID is tappable, per the plan's traceability note: it opens
-/// a summary sheet of the originating `tradingPurchases` doc (fetched
-/// via TradingService — there's no dedicated purchase-detail screen in
-/// the app yet, so a bottom sheet keeps this self-contained rather than
-/// blocking Task 3.2 on building one).
 class GoatStockDetailScreen extends StatefulWidget {
   final String farmId;
   final Goat goat;
@@ -32,49 +20,86 @@ class GoatStockDetailScreen extends StatefulWidget {
   });
 
   @override
-  State<GoatStockDetailScreen> createState() => _GoatStockDetailScreenState();
+  State<GoatStockDetailScreen> createState() =>
+      _GoatStockDetailScreenState();
 }
 
-class _GoatStockDetailScreenState extends State<GoatStockDetailScreen> {
+class _GoatStockDetailScreenState
+    extends State<GoatStockDetailScreen> {
   bool _loadingPurchase = false;
 
   Color _statusColor(String status) {
     switch (status) {
       case Goat.statusAvailable:
         return AppColors.success;
+
       case Goat.statusBooked:
         return AppColors.warning;
+
       case Goat.statusSold:
         return AppColors.error;
+
       case Goat.statusInCustomerPalai:
         return AppColors.info;
+
+      case Goat.statusOwnPalai:
+        return AppColors.tradingBlue;
+
       default:
         return AppColors.textGrey;
     }
   }
 
-  void _showSnack(String message, {bool isError = false}) {
+  void _showSnack(
+      String message, {
+        bool isError = false,
+      }) {
     if (!mounted) return;
+
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text(message),
-        backgroundColor: isError ? AppColors.error : AppColors.primaryGreen,
+        content: Text(
+          message,
+          style: const TextStyle(
+            fontSize: 12,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+        backgroundColor:
+        isError
+            ? AppColors.error
+            : AppColors.primaryGreen,
+        behavior: SnackBarBehavior.floating,
+        margin: const EdgeInsets.all(14),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(12),
+        ),
       ),
     );
   }
+
+  // ===========================================================================
+  // PURCHASE
+  // ===========================================================================
 
   Future<void> _openPurchase() async {
     final purchaseId = widget.goat.purchaseId;
 
     if (purchaseId.trim().isEmpty) {
-      _showSnack('No linked purchase found for this goat.', isError: true);
+      _showSnack(
+        'No linked purchase found for this goat.',
+        isError: true,
+      );
       return;
     }
 
-    setState(() => _loadingPurchase = true);
+    setState(() {
+      _loadingPurchase = true;
+    });
 
     try {
-      final purchase = await TradingService.instance.getPurchase(
+      final purchase =
+      await TradingService.instance.getPurchase(
         widget.farmId,
         purchaseId,
       );
@@ -82,92 +107,223 @@ class _GoatStockDetailScreenState extends State<GoatStockDetailScreen> {
       if (!mounted) return;
 
       if (purchase == null) {
-        _showSnack('That purchase record could not be found.', isError: true);
+        _showSnack(
+          'That purchase record could not be found.',
+          isError: true,
+        );
         return;
       }
 
       _showPurchaseSheet(purchase);
     } catch (e) {
-      _showSnack(FirestoreService.instance.describeError(e), isError: true);
+      _showSnack(
+        FirestoreService.instance.describeError(e),
+        isError: true,
+      );
     } finally {
-      if (mounted) setState(() => _loadingPurchase = false);
+      if (mounted) {
+        setState(() {
+          _loadingPurchase = false;
+        });
+      }
     }
   }
 
-  void _showPurchaseSheet(TradingPurchase purchase) {
+  void _showPurchaseSheet(
+      TradingPurchase purchase,
+      ) {
     showModalBottomSheet(
       context: context,
       backgroundColor: Colors.transparent,
+      isScrollControlled: true,
       builder: (context) {
         return Container(
-          padding: const EdgeInsets.fromLTRB(20, 20, 20, 28),
+          padding: const EdgeInsets.fromLTRB(
+            20,
+            12,
+            20,
+            28,
+          ),
           decoration: const BoxDecoration(
             color: AppColors.cardWhite,
-            borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+            borderRadius: BorderRadius.vertical(
+              top: Radius.circular(20),
+            ),
           ),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Center(
-                child: Container(
-                  width: 40,
-                  height: 4,
-                  decoration: BoxDecoration(
-                    color: AppColors.divider,
-                    borderRadius: BorderRadius.circular(4),
+          child: SafeArea(
+            top: false,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment:
+              CrossAxisAlignment.start,
+              children: [
+                Center(
+                  child: Container(
+                    width: 38,
+                    height: 4,
+                    decoration: BoxDecoration(
+                      color: AppColors.divider,
+                      borderRadius:
+                      BorderRadius.circular(4),
+                    ),
                   ),
                 ),
-              ),
-              const SizedBox(height: 18),
-              Row(
-                children: [
-                  const Icon(Icons.shopping_cart_outlined, color: AppColors.tradingBlue),
-                  const SizedBox(width: 10),
-                  Text(purchase.id, style: AppTheme.heading(size: 17)),
-                ],
-              ),
-              const SizedBox(height: 16),
-              _sheetRow('Seller', purchase.sellerName),
-              _sheetRow('Mobile', purchase.mobile),
-              _sheetRow('Market', purchase.market),
-              _sheetRow(
-                'Purchase Date',
-                DateFormat('dd MMM yyyy').format(purchase.purchaseDate),
-              ),
-              _sheetRow('Total Goats', '${purchase.totalGoats}'),
-              _sheetRow(
-                'Registered',
-                '${purchase.registeredCount}/${purchase.totalGoats}',
-              ),
-              const SizedBox(height: 8),
-              SizedBox(
-                width: double.infinity,
-                child: TextButton(
-                  onPressed: () => Navigator.of(context).pop(),
-                  child: const Text('Close'),
+
+                const SizedBox(height: 16),
+
+                Row(
+                  children: [
+                    Container(
+                      width: 38,
+                      height: 38,
+                      decoration: BoxDecoration(
+                        color: AppColors.tradingBlue
+                            .withOpacity(0.10),
+                        borderRadius:
+                        BorderRadius.circular(10),
+                      ),
+                      child: const Icon(
+                        Icons.receipt_long_outlined,
+                        color:
+                        AppColors.tradingBlue,
+                        size: 19,
+                      ),
+                    ),
+
+                    const SizedBox(width: 10),
+
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment:
+                        CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'Purchase Details',
+                            style: AppTheme.heading(
+                              size: 14,
+                            ),
+                          ),
+                          const SizedBox(height: 2),
+                          Text(
+                            purchase.id,
+                            style: AppTheme.body(
+                              size: 10,
+                              color:
+                              AppColors.textGrey,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
                 ),
-              ),
-            ],
+
+                const SizedBox(height: 14),
+
+                Container(
+                  width: double.infinity,
+                  padding:
+                  const EdgeInsets.all(13),
+                  decoration: BoxDecoration(
+                    color:
+                    AppColors.paleGreen,
+                    borderRadius:
+                    BorderRadius.circular(12),
+                  ),
+                  child: Column(
+                    children: [
+                      _sheetRow(
+                        'Seller',
+                        purchase.sellerName,
+                      ),
+                      _sheetRow(
+                        'Mobile',
+                        purchase.mobile,
+                      ),
+                      _sheetRow(
+                        'Market',
+                        purchase.market,
+                      ),
+                      _sheetRow(
+                        'Purchase Date',
+                        DateFormat(
+                          'dd MMM yyyy',
+                        ).format(
+                          purchase.purchaseDate,
+                        ),
+                      ),
+                      _sheetRow(
+                        'Total Goats',
+                        '${purchase.totalGoats}',
+                      ),
+                      _sheetRow(
+                        'Registered',
+                        '${purchase.registeredCount}/${purchase.totalGoats}',
+                        isLast: true,
+                      ),
+                    ],
+                  ),
+                ),
+
+                const SizedBox(height: 10),
+
+                SizedBox(
+                  width: double.infinity,
+                  height: 44,
+                  child: TextButton(
+                    onPressed: () =>
+                        Navigator.of(context)
+                            .pop(),
+                    child: const Text(
+                      'Close',
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight:
+                        FontWeight.w700,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
           ),
         );
       },
     );
   }
 
-  Widget _sheetRow(String label, String value) {
+  Widget _sheetRow(
+      String label,
+      String value, {
+        bool isLast = false,
+      }) {
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 6),
+      padding: EdgeInsets.only(
+        top: 5,
+        bottom: isLast ? 0 : 5,
+      ),
       child: Row(
+        crossAxisAlignment:
+        CrossAxisAlignment.start,
         children: [
           SizedBox(
-            width: 110,
-            child: Text(label, style: AppTheme.body(size: 12)),
+            width: 95,
+            child: Text(
+              label,
+              style: AppTheme.body(
+                size: 10,
+                color: AppColors.textGrey,
+              ),
+            ),
           ),
           Expanded(
             child: Text(
-              value,
-              style: AppTheme.body(size: 13, color: AppColors.textDark, weight: FontWeight.w600),
+              value.isEmpty ? '—' : value,
+              style: AppTheme.body(
+                size: 11,
+                color: AppColors.textDark,
+                weight: FontWeight.w600,
+              ),
             ),
           ),
         ],
@@ -175,78 +331,136 @@ class _GoatStockDetailScreenState extends State<GoatStockDetailScreen> {
     );
   }
 
+  // ===========================================================================
+  // BUILD
+  // ===========================================================================
+
   @override
   Widget build(BuildContext context) {
     final goat = widget.goat;
-    final statusColor = _statusColor(goat.currentStatus);
+    final statusColor =
+    _statusColor(goat.currentStatus);
 
     return Scaffold(
       backgroundColor: AppColors.paleGreen,
+
       appBar: AppBar(
         backgroundColor: AppColors.paleGreen,
         elevation: 0,
         foregroundColor: AppColors.textDark,
-        title: Text(goat.id, style: AppTheme.heading(size: 17)),
+        titleSpacing: 20,
+        title: Text(
+          'Goat Details',
+          style: AppTheme.heading(
+            size: 17,
+          ),
+        ),
       ),
+
       body: SafeArea(
         child: SingleChildScrollView(
-          padding: const EdgeInsets.fromLTRB(20, 16, 20, 28),
+          padding: const EdgeInsets.fromLTRB(
+            20,
+            8,
+            20,
+            28,
+          ),
           child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
+            crossAxisAlignment:
+            CrossAxisAlignment.start,
             children: [
-              Center(child: _photo(goat)),
+              // ---------------------------------------------------------------
+              // PHOTO + ID
+              // ---------------------------------------------------------------
+
+              _profileHeader(
+                goat,
+                statusColor,
+              ),
+
               const SizedBox(height: 16),
-              Center(
-                child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
-                  decoration: BoxDecoration(
-                    color: statusColor.withOpacity(0.12),
-                    borderRadius: BorderRadius.circular(20),
-                  ),
-                  child: Text(
-                    goat.currentStatus,
-                    style: TextStyle(
-                      color: statusColor,
-                      fontSize: 12,
-                      fontWeight: FontWeight.w700,
+
+              // ---------------------------------------------------------------
+              // AGE + WEIGHT
+              // ---------------------------------------------------------------
+
+              Row(
+                children: [
+                  Expanded(
+                    child: _highlightCard(
+                      icon:
+                      Icons.calendar_month_outlined,
+                      label: 'Age',
+                      value: goat.age,
+                      color:
+                      AppColors.tradingBlue,
                     ),
                   ),
-                ),
-              ),
-              const SizedBox(height: 24),
 
-              _sectionCard(
-                title: 'Goat Details',
-                icon: Icons.pets_outlined,
-                children: [
-                  _detailRow('Goat ID', goat.id),
-                  _detailRow('Breed', goat.breed),
-                  _detailRow('Age', goat.age),
-                  _detailRow('Weight', '${goat.weight.toStringAsFixed(1)} kg'),
-                  _detailRow('Color', goat.color),
-                  _detailRow('Health Status', goat.healthStatus),
-                  if (goat.notes.trim().isNotEmpty)
-                    _detailRow('Notes', goat.notes, isLast: true),
+                  const SizedBox(width: 12),
+
+                  Expanded(
+                    child: _highlightCard(
+                      icon:
+                      Icons.monitor_weight_outlined,
+                      label: 'Weight',
+                      value:
+                      '${goat.weight.toStringAsFixed(1)} kg',
+                      color:
+                      AppColors.stockTeal,
+                    ),
+                  ),
                 ],
               ),
 
               const SizedBox(height: 16),
 
+              // ---------------------------------------------------------------
+              // GOAT INFORMATION
+              // ---------------------------------------------------------------
+
               _sectionCard(
-                title: 'Origin',
-                icon: Icons.receipt_long_outlined,
+                title: 'Goat Information',
+                icon: Icons.pets_outlined,
                 children: [
-                  _detailRow(
+                  _infoRow(
+                    'Breed',
+                    goat.breed,
+                  ),
+                  _infoRow(
+                    'Color',
+                    goat.color,
+                  ),
+                  _infoRow(
+                    'Health Status',
+                    goat.healthStatus,
+                  ),
+                  if (goat.notes.trim().isNotEmpty)
+                    _notesRow(goat.notes),
+                ],
+              ),
+
+              const SizedBox(height: 14),
+
+              // ---------------------------------------------------------------
+              // PURCHASE / ORIGIN
+              // ---------------------------------------------------------------
+
+              _sectionCard(
+                title: 'Purchase & Origin',
+                icon:
+                Icons.receipt_long_outlined,
+                children: [
+                  _infoRow(
                     'Purchase Date',
-                    DateFormat('dd MMM yyyy').format(goat.purchaseDate),
+                    DateFormat(
+                      'dd MMM yyyy',
+                    ).format(
+                      goat.purchaseDate,
+                    ),
                   ),
-                  _linkRow(
-                    'Purchase ID',
-                    goat.purchaseId.isEmpty ? '—' : goat.purchaseId,
-                    onTap: goat.purchaseId.isEmpty ? null : _openPurchase,
-                    loading: _loadingPurchase,
-                    isLast: true,
-                  ),
+
+                  _purchaseIdRow(),
                 ],
               ),
             ],
@@ -256,34 +470,216 @@ class _GoatStockDetailScreenState extends State<GoatStockDetailScreen> {
     );
   }
 
-  Widget _photo(Goat goat) {
+  // ===========================================================================
+  // PROFILE HEADER
+  // ===========================================================================
+
+  Widget _profileHeader(
+      Goat goat,
+      Color statusColor,
+      ) {
     final hasPhoto = goat.photo != null;
 
-    return GestureDetector(
-      onTap: hasPhoto
-          ? () => Navigator.of(context).push(
-        fastRoute(
-          FullscreenImageViewer(imageBytes: goat.photo!, title: goat.id),
-        ),
-      )
-          : null,
-      child: Container(
-        width: 132,
-        height: 132,
-        decoration: BoxDecoration(
-          shape: BoxShape.circle,
-          color: AppColors.stockTeal.withOpacity(0.14),
-          image: hasPhoto
-              ? DecorationImage(image: MemoryImage(goat.photo!), fit: BoxFit.cover)
-              : null,
-          border: Border.all(color: AppColors.stockTeal.withOpacity(0.3), width: 2),
-        ),
-        child: !hasPhoto
-            ? const Icon(Icons.pets, color: AppColors.stockTeal, size: 48)
-            : null,
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(14),
+      decoration: AppTheme.card(
+        radius: 16,
+      ),
+      child: Row(
+        children: [
+          GestureDetector(
+            onTap: hasPhoto
+                ? () {
+              Navigator.of(context).push(
+                fastRoute(
+                  FullscreenImageViewer(
+                    imageBytes: goat.photo!,
+                    title: goat.id,
+                  ),
+                ),
+              );
+            }
+                : null,
+            child: Container(
+              width: 82,
+              height: 82,
+              decoration: BoxDecoration(
+                color: AppColors.stockTeal
+                    .withOpacity(0.10),
+                borderRadius:
+                BorderRadius.circular(14),
+                border: Border.all(
+                  color: AppColors.stockTeal
+                      .withOpacity(0.18),
+                ),
+                image: hasPhoto
+                    ? DecorationImage(
+                  image: MemoryImage(
+                    goat.photo!,
+                  ),
+                  fit: BoxFit.cover,
+                )
+                    : null,
+              ),
+              child: hasPhoto
+                  ? null
+                  : const Icon(
+                Icons.pets_outlined,
+                color:
+                AppColors.stockTeal,
+                size: 32,
+              ),
+            ),
+          ),
+
+          const SizedBox(width: 13),
+
+          Expanded(
+            child: Column(
+              crossAxisAlignment:
+              CrossAxisAlignment.start,
+              children: [
+                Text(
+                  goat.id,
+                  maxLines: 1,
+                  overflow:
+                  TextOverflow.ellipsis,
+                  style: AppTheme.heading(
+                    size: 17,
+                  ),
+                ),
+
+                const SizedBox(height: 4),
+
+                Text(
+                  goat.breed.isEmpty
+                      ? 'Breed not specified'
+                      : goat.breed,
+                  maxLines: 1,
+                  overflow:
+                  TextOverflow.ellipsis,
+                  style: AppTheme.body(
+                    size: 11,
+                    color:
+                    AppColors.textGrey,
+                  ),
+                ),
+
+                const SizedBox(height: 9),
+
+                Container(
+                  padding:
+                  const EdgeInsets.symmetric(
+                    horizontal: 9,
+                    vertical: 5,
+                  ),
+                  decoration: BoxDecoration(
+                    color: statusColor
+                        .withOpacity(0.10),
+                    borderRadius:
+                    BorderRadius.circular(
+                      20,
+                    ),
+                  ),
+                  child: Text(
+                    goat.currentStatus,
+                    style: TextStyle(
+                      color: statusColor,
+                      fontSize: 9,
+                      fontWeight:
+                      FontWeight.w700,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
       ),
     );
   }
+
+  // ===========================================================================
+  // HIGHLIGHT CARD
+  // ===========================================================================
+
+  Widget _highlightCard({
+    required IconData icon,
+    required String label,
+    required String value,
+    required Color color,
+  }) {
+    return Container(
+      height: 86,
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: color.withOpacity(0.07),
+        borderRadius:
+        BorderRadius.circular(14),
+        border: Border.all(
+          color: color.withOpacity(0.14),
+        ),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 34,
+            height: 34,
+            decoration: BoxDecoration(
+              color: color.withOpacity(0.12),
+              borderRadius:
+              BorderRadius.circular(9),
+            ),
+            child: Icon(
+              icon,
+              size: 17,
+              color: color,
+            ),
+          ),
+
+          const SizedBox(width: 9),
+
+          Expanded(
+            child: Column(
+              mainAxisAlignment:
+              MainAxisAlignment.center,
+              crossAxisAlignment:
+              CrossAxisAlignment.start,
+              children: [
+                Text(
+                  label,
+                  style: AppTheme.body(
+                    size: 9,
+                    color:
+                    AppColors.textGrey,
+                  ),
+                ),
+
+                const SizedBox(height: 3),
+
+                Text(
+                  value,
+                  maxLines: 1,
+                  overflow:
+                  TextOverflow.ellipsis,
+                  style: AppTheme.heading(
+                    size: 13,
+                    color:
+                    AppColors.textDark,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ===========================================================================
+  // SECTION CARD
+  // ===========================================================================
 
   Widget _sectionCard({
     required String title,
@@ -292,41 +688,96 @@ class _GoatStockDetailScreenState extends State<GoatStockDetailScreen> {
   }) {
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.all(16),
-      decoration: AppTheme.card(radius: 16),
+      padding: const EdgeInsets.all(15),
+      decoration: AppTheme.card(
+        radius: 15,
+      ),
       child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+        crossAxisAlignment:
+        CrossAxisAlignment.start,
         children: [
           Row(
             children: [
-              Icon(icon, color: AppColors.stockTeal, size: 18),
-              const SizedBox(width: 8),
-              Text(title, style: AppTheme.heading(size: 14)),
+              Container(
+                width: 31,
+                height: 31,
+                decoration: BoxDecoration(
+                  color: AppColors.primaryGreen
+                      .withOpacity(0.09),
+                  borderRadius:
+                  BorderRadius.circular(9),
+                ),
+                child: Icon(
+                  icon,
+                  color:
+                  AppColors.primaryGreen,
+                  size: 16,
+                ),
+              ),
+
+              const SizedBox(width: 9),
+
+              Text(
+                title,
+                style: AppTheme.heading(
+                  size: 13,
+                ),
+              ),
             ],
           ),
-          const SizedBox(height: 10),
-          const Divider(height: 1),
-          const SizedBox(height: 4),
+
+          const SizedBox(height: 11),
+
+          Container(
+            height: 1,
+            color: AppColors.divider,
+          ),
+
+          const SizedBox(height: 2),
+
           ...children,
         ],
       ),
     );
   }
 
-  Widget _detailRow(String label, String value, {bool isLast = false}) {
+  // ===========================================================================
+  // INFO ROW
+  // ===========================================================================
+
+  Widget _infoRow(
+      String label,
+      String value,
+      ) {
     return Padding(
-      padding: EdgeInsets.only(top: 12, bottom: isLast ? 0 : 0),
+      padding: const EdgeInsets.symmetric(
+        vertical: 8,
+      ),
       child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
+        crossAxisAlignment:
+        CrossAxisAlignment.start,
         children: [
           SizedBox(
-            width: 120,
-            child: Text(label, style: AppTheme.body(size: 12)),
+            width: 112,
+            child: Text(
+              label,
+              style: AppTheme.body(
+                size: 10,
+                color: AppColors.textGrey,
+              ),
+            ),
           ),
+
           Expanded(
             child: Text(
-              value.isEmpty ? '—' : value,
-              style: AppTheme.body(size: 13, color: AppColors.textDark, weight: FontWeight.w600),
+              value.trim().isEmpty
+                  ? '—'
+                  : value,
+              style: AppTheme.body(
+                size: 11,
+                color: AppColors.textDark,
+                weight: FontWeight.w600,
+              ),
             ),
           ),
         ],
@@ -334,47 +785,133 @@ class _GoatStockDetailScreenState extends State<GoatStockDetailScreen> {
     );
   }
 
-  Widget _linkRow(
-      String label,
-      String value, {
-        VoidCallback? onTap,
-        bool loading = false,
-        bool isLast = false,
-      }) {
+  // ===========================================================================
+  // NOTES
+  // ===========================================================================
+
+  Widget _notesRow(String notes) {
     return Padding(
-      padding: EdgeInsets.only(top: 12, bottom: isLast ? 0 : 0),
+      padding: const EdgeInsets.only(
+        top: 8,
+        bottom: 3,
+      ),
+      child: Column(
+        crossAxisAlignment:
+        CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Notes',
+            style: AppTheme.body(
+              size: 10,
+              color: AppColors.textGrey,
+            ),
+          ),
+
+          const SizedBox(height: 5),
+
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(10),
+            decoration: BoxDecoration(
+              color: AppColors.paleGreen,
+              borderRadius:
+              BorderRadius.circular(10),
+            ),
+            child: Text(
+              notes,
+              style: AppTheme.body(
+                size: 11,
+                color: AppColors.textDark,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ===========================================================================
+  // PURCHASE ID
+  // ===========================================================================
+
+  Widget _purchaseIdRow() {
+    final purchaseId =
+        widget.goat.purchaseId;
+
+    return Padding(
+      padding: const EdgeInsets.only(
+        top: 8,
+        bottom: 3,
+      ),
       child: Row(
+        crossAxisAlignment:
+        CrossAxisAlignment.center,
         children: [
           SizedBox(
-            width: 120,
-            child: Text(label, style: AppTheme.body(size: 12)),
+            width: 112,
+            child: Text(
+              'Purchase ID',
+              style: AppTheme.body(
+                size: 10,
+                color: AppColors.textGrey,
+              ),
+            ),
           ),
+
           Expanded(
-            child: GestureDetector(
-              onTap: onTap,
+            child: purchaseId.trim().isEmpty
+                ? Text(
+              '—',
+              style: AppTheme.body(
+                size: 11,
+                color:
+                AppColors.textDark,
+              ),
+            )
+                : GestureDetector(
+              onTap: _openPurchase,
               child: Row(
                 children: [
                   Flexible(
                     child: Text(
-                      value,
-                      style: TextStyle(
-                        fontSize: 13,
-                        fontWeight: FontWeight.w700,
-                        color: onTap != null ? AppColors.tradingBlue : AppColors.textDark,
-                        decoration: onTap != null ? TextDecoration.underline : null,
+                      purchaseId,
+                      maxLines: 1,
+                      overflow:
+                      TextOverflow
+                          .ellipsis,
+                      style:
+                      const TextStyle(
+                        fontSize: 11,
+                        fontWeight:
+                        FontWeight.w700,
+                        color: AppColors
+                            .tradingBlue,
+                        decoration:
+                        TextDecoration
+                            .underline,
                       ),
                     ),
                   ),
-                  if (onTap != null) ...[
-                    const SizedBox(width: 6),
-                    loading
-                        ? const SizedBox(
-                      width: 12,
-                      height: 12,
-                      child: CircularProgressIndicator(strokeWidth: 2),
+
+                  const SizedBox(width: 5),
+
+                  if (_loadingPurchase)
+                    const SizedBox(
+                      width: 13,
+                      height: 13,
+                      child:
+                      CircularProgressIndicator(
+                        strokeWidth: 2,
+                      ),
                     )
-                        : const Icon(Icons.chevron_right, size: 16, color: AppColors.tradingBlue),
-                  ],
+                  else
+                    const Icon(
+                      Icons
+                          .chevron_right_rounded,
+                      size: 17,
+                      color: AppColors
+                          .tradingBlue,
+                    ),
                 ],
               ),
             ),

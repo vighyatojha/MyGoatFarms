@@ -14,38 +14,6 @@ import '../../palai/fullscreen_image_viewer.dart';
 import 'add_health_record_screen.dart';
 import 'add_weight_entry_screen.dart';
 
-/// Feature 6 — Own Palai Goat Profile.
-///
-/// The detail screen for a single Own Palai goat, built up section by
-/// section across the phase 3 plan's Pairs 3–6:
-///
-///   - Task 3.1 (done)       — Basic Details + Purchase History
-///   - Task 3.2 (done)       — Growth Tracking
-///   - Task 3.3 (this pair)  — Health Tracking
-///   - Task 3.4 (next pair)  — Reminder badges
-///
-/// Basic Details and Purchase History are both read-only — Basic
-/// Details comes straight off the `goat` this screen was opened with
-/// (the exact same `tradingGoats/{goatId}` doc Goat Stock shows —
-/// nothing is duplicated, per Task 2.3). Purchase History is fetched
-/// from the linked `tradingPurchases/{purchaseId}` doc via
-/// [TradingService].
-///
-/// Growth Tracking streams `weightHistory` via
-/// [GoatService.weightHistoryStream] and shows Current Weight vs
-/// Previous Weight, a Weight Gain figure, and the full history — plus
-/// a form (pushed as [AddWeightEntryScreen]) to log a new entry with
-/// an optional monthly photo. Per the plan's edge-case note, Weight
-/// Gain only ever shows with two or more entries; otherwise it shows
-/// "—" rather than a misleading 0 or a divide-by-nothing.
-///
-/// Health Tracking streams the single `healthRecords` subcollection
-/// via [GoatService.healthRecordsStream] and splits it client-side
-/// into its four [GoatHealthRecordType] sections (Vaccination, Hoof
-/// Cutting, Hair Trimming, Medicine), each showing its latest entry
-/// plus history and a button that opens [AddHealthRecordScreen] with
-/// that type preselected. Next-due-date badges (Task 3.4) are the
-/// next pair — dates are shown plainly here for now.
 class OwnPalaiGoatProfileScreen extends StatefulWidget {
   final String farmId;
   final Goat goat;
@@ -64,6 +32,13 @@ class OwnPalaiGoatProfileScreen extends StatefulWidget {
 class _OwnPalaiGoatProfileScreenState
     extends State<OwnPalaiGoatProfileScreen> {
   Future<TradingPurchase?>? _purchaseFuture;
+
+  static const List<GoatHealthRecordType> _healthTypes = [
+    GoatHealthRecordType.vaccination,
+    GoatHealthRecordType.hoofCutting,
+    GoatHealthRecordType.hairTrimming,
+    GoatHealthRecordType.medicine,
+  ];
 
   @override
   void initState() {
@@ -85,8 +60,8 @@ class _OwnPalaiGoatProfileScreenState
     );
   }
 
-  Color _healthColor(String healthStatus) {
-    switch (healthStatus) {
+  Color _healthColor(String status) {
+    switch (status) {
       case 'Healthy':
         return AppColors.success;
       case 'Under Treatment':
@@ -99,7 +74,6 @@ class _OwnPalaiGoatProfileScreenState
   @override
   Widget build(BuildContext context) {
     final goat = widget.goat;
-    final healthColor = _healthColor(goat.healthStatus);
 
     return Scaffold(
       backgroundColor: AppColors.paleGreen,
@@ -107,65 +81,31 @@ class _OwnPalaiGoatProfileScreenState
         backgroundColor: AppColors.paleGreen,
         elevation: 0,
         foregroundColor: AppColors.textDark,
-        title: Text(goat.id, style: AppTheme.heading(size: 17)),
+        titleSpacing: 20,
+        title: Text(
+          goat.id,
+          style: AppTheme.heading(size: 17),
+        ),
       ),
       body: SafeArea(
         child: SingleChildScrollView(
-          padding: const EdgeInsets.fromLTRB(20, 16, 20, 28),
+          padding: const EdgeInsets.fromLTRB(16, 6, 16, 28),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Center(child: _photo(goat)),
-              const SizedBox(height: 16),
-              Center(
-                child: Container(
-                  padding:
-                  const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
-                  decoration: BoxDecoration(
-                    color: AppColors.darkGreen.withOpacity(0.12),
-                    borderRadius: BorderRadius.circular(20),
-                  ),
-                  child: Text(
-                    goat.movedToOwnPalaiAt == null
-                        ? 'Own Palai'
-                        : 'Own Palai · since '
-                        '${DateFormat('d MMM yyyy').format(goat.movedToOwnPalaiAt!)}',
-                    style: const TextStyle(
-                      color: AppColors.darkGreen,
-                      fontSize: 12,
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                ),
-              ),
-              const SizedBox(height: 24),
+              _buildGoatHeader(goat),
+              const SizedBox(height: 14),
 
-              _sectionCard(
-                title: 'Basic Details',
-                icon: Icons.pets_outlined,
-                children: [
-                  _detailRow('Goat ID', goat.id),
-                  _detailRow('Breed', goat.breed),
-                  _detailRow('Age', goat.age),
-                  _detailRow('Weight', '${goat.weight.toStringAsFixed(1)} kg'),
-                  _detailRow('Color', goat.color),
-                  _statusRow('Health Status', goat.healthStatus, healthColor),
-                  if (goat.notes.trim().isNotEmpty)
-                    _detailRow('Notes', goat.notes, isLast: true),
-                ],
-              ),
+              _basicDetails(goat),
+              const SizedBox(height: 12),
 
-              const SizedBox(height: 16),
+              _purchaseHistory(goat),
+              const SizedBox(height: 12),
 
-              _purchaseHistorySection(goat),
+              _growthTracking(goat),
+              const SizedBox(height: 12),
 
-              const SizedBox(height: 16),
-
-              _growthTrackingSection(goat),
-
-              const SizedBox(height: 16),
-
-              _healthTrackingSection(goat),
+              _healthTracking(goat),
             ],
           ),
         ),
@@ -173,117 +113,373 @@ class _OwnPalaiGoatProfileScreenState
     );
   }
 
-  // ---------------------------------------------------------------------
-  // PURCHASE HISTORY (Task 3.1)
-  // ---------------------------------------------------------------------
+  // ---------------------------------------------------------------------------
+  // HEADER
+  // ---------------------------------------------------------------------------
 
-  Widget _purchaseHistorySection(Goat goat) {
-    return FutureBuilder<TradingPurchase?>(
-      future: _purchaseFuture,
-      builder: (context, snap) {
-        if (snap.connectionState == ConnectionState.waiting) {
-          return _sectionCard(
-            title: 'Purchase History',
-            icon: Icons.receipt_long_outlined,
-            children: const [
-              Padding(
-                padding: EdgeInsets.symmetric(vertical: 16),
-                child: Center(
-                  child: SizedBox(
-                    width: 20,
-                    height: 20,
-                    child: CircularProgressIndicator(
-                      strokeWidth: 2,
-                      color: AppColors.tradingBlue,
-                    ),
+  Widget _buildGoatHeader(Goat goat) {
+    final healthColor = _healthColor(goat.healthStatus);
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [
+            AppColors.cardWhite,
+            AppColors.stockTeal.withOpacity(0.06),
+          ],
+        ),
+        borderRadius: BorderRadius.circular(17),
+        border: Border.all(
+          color: AppColors.stockTeal.withOpacity(0.12),
+        ),
+      ),
+      child: Row(
+        children: [
+          _profilePhoto(goat),
+          const SizedBox(width: 13),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  goat.id,
+                  style: AppTheme.heading(size: 17),
+                ),
+                const SizedBox(height: 3),
+                Text(
+                  goat.breed.isEmpty ? 'Breed not specified' : goat.breed,
+                  style: AppTheme.body(
+                    size: 11.5,
+                    color: AppColors.textGrey,
                   ),
                 ),
-              ),
-            ],
-          );
-        }
+                const SizedBox(height: 8),
+                Row(
+                  children: [
+                    _smallBadge(
+                      Icons.pets_outlined,
+                      'Own Palai',
+                      AppColors.stockTeal,
+                    ),
+                    const SizedBox(width: 6),
+                    _smallBadge(
+                      Icons.favorite_outline,
+                      goat.healthStatus.isEmpty
+                          ? 'Unknown'
+                          : goat.healthStatus,
+                      healthColor,
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 
-        if (snap.hasError) {
-          return _sectionCard(
-            title: 'Purchase History',
-            icon: Icons.receipt_long_outlined,
+  Widget _profilePhoto(Goat goat) {
+    final hasPhoto = goat.photo != null;
+
+    return GestureDetector(
+      onTap: hasPhoto
+          ? () {
+        Navigator.of(context).push(
+          fastRoute(
+            FullscreenImageViewer(
+              imageBytes: goat.photo!,
+              title: goat.id,
+            ),
+          ),
+        );
+      }
+          : null,
+      child: Container(
+        width: 76,
+        height: 76,
+        decoration: BoxDecoration(
+          color: AppColors.stockTeal.withOpacity(0.12),
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(
+            color: AppColors.stockTeal.withOpacity(0.20),
+          ),
+          image: hasPhoto
+              ? DecorationImage(
+            image: MemoryImage(goat.photo!),
+            fit: BoxFit.cover,
+          )
+              : null,
+        ),
+        child: hasPhoto
+            ? null
+            : const Icon(
+          Icons.pets,
+          size: 32,
+          color: AppColors.stockTeal,
+        ),
+      ),
+    );
+  }
+
+  Widget _smallBadge(
+      IconData icon,
+      String text,
+      Color color,
+      ) {
+    return Flexible(
+      child: Container(
+        padding: const EdgeInsets.symmetric(
+          horizontal: 7,
+          vertical: 4,
+        ),
+        decoration: BoxDecoration(
+          color: color.withOpacity(0.10),
+          borderRadius: BorderRadius.circular(20),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              icon,
+              size: 12,
+              color: color,
+            ),
+            const SizedBox(width: 4),
+            Flexible(
+              child: Text(
+                text,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: color,
+                  fontSize: 9.5,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // ---------------------------------------------------------------------------
+  // BASIC DETAILS
+  // ---------------------------------------------------------------------------
+
+  Widget _basicDetails(Goat goat) {
+    return _sectionCard(
+      title: 'Basic Details',
+      icon: Icons.pets_outlined,
+      iconColor: AppColors.stockTeal,
+      child: Column(
+        children: [
+          Row(
             children: [
-              Padding(
-                padding: const EdgeInsets.only(top: 12),
-                child: Text(
-                  'Could not load purchase details: '
-                      '${FirestoreService.instance.describeError(snap.error!)}',
-                  style: AppTheme.body(size: 12, color: AppColors.error),
+              Expanded(
+                child: _statBox(
+                  'Age',
+                  goat.age,
+                  Icons.cake_outlined,
+                  AppColors.tradingBlue,
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: _statBox(
+                  'Weight',
+                  '${goat.weight.toStringAsFixed(1)} kg',
+                  Icons.monitor_weight_outlined,
+                  AppColors.stockTeal,
                 ),
               ),
             ],
+          ),
+          const SizedBox(height: 8),
+          _detailRow('Goat ID', goat.id),
+          _detailRow('Breed', goat.breed),
+          _detailRow('Color', goat.color),
+          _statusDetailRow(
+            'Health Status',
+            goat.healthStatus,
+            _healthColor(goat.healthStatus),
+          ),
+          if (goat.notes.trim().isNotEmpty)
+            _detailRow(
+              'Notes',
+              goat.notes,
+              isLast: true,
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _statBox(
+      String label,
+      String value,
+      IconData icon,
+      Color color,
+      ) {
+    return Container(
+      padding: const EdgeInsets.symmetric(
+        horizontal: 10,
+        vertical: 9,
+      ),
+      decoration: BoxDecoration(
+        color: color.withOpacity(0.08),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Row(
+        children: [
+          Icon(
+            icon,
+            size: 17,
+            color: color,
+          ),
+          const SizedBox(width: 7),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  label,
+                  style: AppTheme.body(
+                    size: 9.5,
+                    color: AppColors.textGrey,
+                  ),
+                ),
+                const SizedBox(height: 1),
+                Text(
+                  value.isEmpty ? '—' : value,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: AppTheme.heading(size: 12.5).copyWith(
+                    color: AppColors.textDark,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ---------------------------------------------------------------------------
+  // PURCHASE HISTORY
+  // ---------------------------------------------------------------------------
+
+  Widget _purchaseHistory(Goat goat) {
+    return FutureBuilder<TradingPurchase?>(
+      future: _purchaseFuture,
+      builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return _sectionCard(
+            title: 'Purchase History',
+            icon: Icons.receipt_long_outlined,
+            iconColor: AppColors.tradingBlue,
+            child: const _SectionSkeleton(),
           );
         }
 
-        final purchase = snap.data;
+        if (snapshot.hasError) {
+          return _sectionCard(
+            title: 'Purchase History',
+            icon: Icons.receipt_long_outlined,
+            iconColor: AppColors.tradingBlue,
+            child: Text(
+              'Could not load purchase details: '
+                  '${FirestoreService.instance.describeError(snapshot.error!)}',
+              style: AppTheme.body(
+                size: 11.5,
+                color: AppColors.error,
+              ),
+            ),
+          );
+        }
+
+        final purchase = snapshot.data;
 
         if (purchase == null) {
           return _sectionCard(
             title: 'Purchase History',
             icon: Icons.receipt_long_outlined,
-            children: [
-              _detailRow('Purchase ID',
-                  goat.purchaseId.isEmpty ? '—' : goat.purchaseId),
-              _detailRow(
-                'Purchase Date',
-                DateFormat('dd MMM yyyy').format(goat.purchaseDate),
-                isLast: true,
-              ),
-            ],
+            iconColor: AppColors.tradingBlue,
+            child: Column(
+              children: [
+                _detailRow(
+                  'Purchase ID',
+                  goat.purchaseId.isEmpty ? '—' : goat.purchaseId,
+                ),
+                _detailRow(
+                  'Purchase Date',
+                  DateFormat('dd MMM yyyy').format(goat.purchaseDate),
+                  isLast: true,
+                ),
+              ],
+            ),
           );
         }
 
         return _sectionCard(
           title: 'Purchase History',
           icon: Icons.receipt_long_outlined,
-          children: [
-            _detailRow('Purchase ID', purchase.id),
-            _detailRow('Seller', purchase.sellerName),
-            _detailRow(
-              'Purchase Date',
-              DateFormat('dd MMM yyyy').format(purchase.purchaseDate),
-            ),
-            _detailRow(
-              'Purchase Weight',
-              '${purchase.totalWeightAtPurchase.toStringAsFixed(1)} kg total',
-            ),
-            _detailRow(
-              'Price',
-              '₹${purchase.pricePerKg.toStringAsFixed(2)}/kg',
-            ),
-            _detailRow(
-              'Amount',
-              '₹${purchase.purchaseAmount.toStringAsFixed(0)}',
-            ),
-            _detailRow(
-              'Expenses',
-              '₹${purchase.totalTransportExpenses.toStringAsFixed(0)}',
-              isLast: true,
-            ),
-          ],
+          iconColor: AppColors.tradingBlue,
+          child: Column(
+            children: [
+              _detailRow('Purchase ID', purchase.id),
+              _detailRow('Seller', purchase.sellerName),
+              _detailRow(
+                'Purchase Date',
+                DateFormat('dd MMM yyyy').format(
+                  purchase.purchaseDate,
+                ),
+              ),
+              _detailRow(
+                'Purchase Weight',
+                '${purchase.totalWeightAtPurchase.toStringAsFixed(1)} kg',
+              ),
+              _detailRow(
+                'Price',
+                '₹${purchase.pricePerKg.toStringAsFixed(2)}/kg',
+              ),
+              _detailRow(
+                'Amount',
+                '₹${purchase.purchaseAmount.toStringAsFixed(0)}',
+              ),
+              _detailRow(
+                'Expenses',
+                '₹${purchase.totalTransportExpenses.toStringAsFixed(0)}',
+                isLast: true,
+              ),
+            ],
+          ),
         );
       },
     );
   }
 
-  // ---------------------------------------------------------------------
-  // GROWTH TRACKING (Task 3.2)
-  // ---------------------------------------------------------------------
+  // ---------------------------------------------------------------------------
+  // GROWTH TRACKING
+  // ---------------------------------------------------------------------------
 
-  Future<void> _openAddWeightEntry(Goat goat) async {
+  Future<void> _openAddWeightEntry() async {
     final saved = await Navigator.of(context).push<bool>(
       fastRoute(
-        AddWeightEntryScreen(farmId: widget.farmId, goatId: goat.id),
+        AddWeightEntryScreen(
+          farmId: widget.farmId,
+          goatId: widget.goat.id,
+        ),
       ),
     );
+
     if (saved == true && mounted) {
-      // The weightHistoryStream below picks the new entry up on its
-      // own — this snack is just confirmation.
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text('Weight entry logged.'),
@@ -293,178 +489,177 @@ class _OwnPalaiGoatProfileScreenState
     }
   }
 
-  Widget _growthTrackingSection(Goat goat) {
+  Widget _growthTracking(Goat goat) {
+    return _sectionCard(
+      title: 'Growth Tracking',
+      icon: Icons.trending_up,
+      iconColor: AppColors.stockTeal,
+      trailing: TextButton.icon(
+        onPressed: _openAddWeightEntry,
+        icon: const Icon(Icons.add, size: 15),
+        label: const Text('Log'),
+        style: TextButton.styleFrom(
+          foregroundColor: AppColors.stockTeal,
+          padding: const EdgeInsets.symmetric(
+            horizontal: 5,
+            vertical: 3,
+          ),
+          visualDensity: VisualDensity.compact,
+        ),
+      ),
+      child: StreamBuilder<List<GoatWeightEntry>>(
+        stream: GoatService.instance.weightHistoryStream(
+          farmId: widget.farmId,
+          goatId: goat.id,
+        ),
+        builder: (context, snapshot) {
+          if (snapshot.connectionState == ConnectionState.waiting) {
+            return const _SectionSkeleton();
+          }
+
+          if (snapshot.hasError) {
+            return Text(
+              'Could not load weight history: '
+                  '${FirestoreService.instance.describeError(snapshot.error!)}',
+              style: AppTheme.body(
+                size: 11.5,
+                color: AppColors.error,
+              ),
+            );
+          }
+
+          final entries =
+              snapshot.data ?? const <GoatWeightEntry>[];
+
+          if (entries.isEmpty) {
+            return Text(
+              'No weight entries yet. Log the first weight check.',
+              style: AppTheme.body(
+                size: 11.5,
+                color: AppColors.textGrey,
+              ),
+            );
+          }
+
+          final current = entries.last;
+          final previous =
+          entries.length > 1 ? entries[entries.length - 2] : null;
+
+          final gain = previous != null
+              ? current.weight - previous.weight
+              : null;
+
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Expanded(
+                    child: _growthStat(
+                      'Current',
+                      '${current.weight.toStringAsFixed(1)} kg',
+                    ),
+                  ),
+                  const SizedBox(width: 7),
+                  Expanded(
+                    child: _growthStat(
+                      'Previous',
+                      previous == null
+                          ? '—'
+                          : '${previous.weight.toStringAsFixed(1)} kg',
+                    ),
+                  ),
+                  const SizedBox(width: 7),
+                  Expanded(
+                    child: _growthStat(
+                      'Gain',
+                      gain == null
+                          ? '—'
+                          : '${gain >= 0 ? '+' : ''}'
+                          '${gain.toStringAsFixed(1)} kg',
+                      valueColor: gain == null
+                          ? AppColors.textDark
+                          : gain >= 0
+                          ? AppColors.success
+                          : AppColors.error,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 14),
+              Text(
+                'Weight History',
+                style: AppTheme.body(
+                  size: 11,
+                  color: AppColors.textGrey,
+                  weight: FontWeight.w700,
+                ),
+              ),
+              const SizedBox(height: 8),
+              for (int i = entries.length - 1; i >= 0; i--)
+                _weightEntryTile(
+                  entries[i],
+                  i > 0 ? entries[i - 1] : null,
+                  isLast: i == 0,
+                ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+
+  Widget _growthStat(
+      String label,
+      String value, {
+        Color? valueColor,
+      }) {
     return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(16),
-      decoration: AppTheme.card(radius: 16),
+      padding: const EdgeInsets.symmetric(
+        horizontal: 8,
+        vertical: 9,
+      ),
+      decoration: BoxDecoration(
+        color: AppColors.paleGreen,
+        borderRadius: BorderRadius.circular(10),
+      ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
-            children: [
-              const Icon(Icons.trending_up,
-                  color: AppColors.stockTeal, size: 18),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Text('Growth Tracking',
-                    style: AppTheme.heading(size: 14)),
-              ),
-              TextButton.icon(
-                onPressed: () => _openAddWeightEntry(goat),
-                icon: const Icon(Icons.add, size: 16),
-                label: const Text('Log Weight'),
-                style: TextButton.styleFrom(
-                  foregroundColor: AppColors.stockTeal,
-                  padding:
-                  const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
-                  visualDensity: VisualDensity.compact,
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 6),
-          const Divider(height: 1),
-          const SizedBox(height: 12),
-          StreamBuilder<List<GoatWeightEntry>>(
-            stream: GoatService.instance.weightHistoryStream(
-              farmId: widget.farmId,
-              goatId: goat.id,
+          Text(
+            label,
+            style: AppTheme.body(
+              size: 9,
+              color: AppColors.textGrey,
             ),
-            builder: (context, snap) {
-              if (snap.connectionState == ConnectionState.waiting) {
-                return const Padding(
-                  padding: EdgeInsets.symmetric(vertical: 16),
-                  child: Center(
-                    child: SizedBox(
-                      width: 20,
-                      height: 20,
-                      child: CircularProgressIndicator(
-                        strokeWidth: 2,
-                        color: AppColors.stockTeal,
-                      ),
-                    ),
-                  ),
-                );
-              }
-
-              if (snap.hasError) {
-                return Text(
-                  'Could not load weight history: '
-                      '${FirestoreService.instance.describeError(snap.error!)}',
-                  style: AppTheme.body(size: 12, color: AppColors.error),
-                );
-              }
-
-              // Oldest-first, per weightHistoryStream's doc comment —
-              // kept that way for the gain math, reversed only for
-              // display so the newest entry appears at the top.
-              final entries = snap.data ?? const <GoatWeightEntry>[];
-
-              if (entries.isEmpty) {
-                return Text(
-                  'No weight entries yet. Log the first weight check '
-                      'using the button above.',
-                  style: AppTheme.body(size: 12, color: AppColors.textGrey),
-                );
-              }
-
-              final current = entries.last;
-              final previous =
-              entries.length >= 2 ? entries[entries.length - 2] : null;
-              final gain =
-              previous != null ? current.weight - previous.weight : null;
-
-              return Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      Expanded(
-                        child: _growthStat(
-                          'Current',
-                          '${current.weight.toStringAsFixed(1)} kg',
-                        ),
-                      ),
-                      Container(
-                          width: 1, height: 30, color: AppColors.divider),
-                      const SizedBox(width: 10),
-                      Expanded(
-                        child: _growthStat(
-                          'Previous',
-                          previous != null
-                              ? '${previous.weight.toStringAsFixed(1)} kg'
-                              : '—',
-                        ),
-                      ),
-                      Container(
-                          width: 1, height: 30, color: AppColors.divider),
-                      const SizedBox(width: 10),
-                      Expanded(
-                        child: _growthStat(
-                          'Gain',
-                          gain != null
-                              ? '${gain >= 0 ? '+' : ''}${gain.toStringAsFixed(1)} kg'
-                              : '—',
-                          valueColor: gain == null
-                              ? null
-                              : (gain >= 0
-                              ? AppColors.success
-                              : AppColors.error),
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 16),
-                  Text(
-                    'History (${entries.length} '
-                        'record${entries.length == 1 ? '' : 's'})',
-                    style: AppTheme.body(
-                        size: 11.5,
-                        color: AppColors.textMuted,
-                        weight: FontWeight.w600),
-                  ),
-                  const SizedBox(height: 8),
-                  for (int i = entries.length - 1; i >= 0; i--)
-                    _weightTile(
-                      entries[i],
-                      i > 0 ? entries[i - 1] : null,
-                      isLast: i == 0,
-                    ),
-                ],
-              );
-            },
+          ),
+          const SizedBox(height: 2),
+          Text(
+            value,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: AppTheme.heading(size: 12).copyWith(
+              color: valueColor ?? AppColors.textDark,
+            ),
           ),
         ],
       ),
     );
   }
 
-  Widget _growthStat(String label, String value, {Color? valueColor}) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(label, style: AppTheme.body(size: 10, color: AppColors.textMuted)),
-        const SizedBox(height: 2),
-        Text(
-          value,
-          style: AppTheme.heading(size: 14).copyWith(
-            color: valueColor ?? AppColors.textDark,
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _weightTile(
+  Widget _weightEntryTile(
       GoatWeightEntry entry,
       GoatWeightEntry? previous, {
         required bool isLast,
       }) {
-    final gain = previous != null ? entry.weight - previous.weight : null;
+    final gain =
+    previous != null ? entry.weight - previous.weight : null;
+
     final dotColor = gain == null
-        ? AppColors.textMuted
-        : (gain >= 0 ? AppColors.success : AppColors.error);
+        ? AppColors.textGrey
+        : gain >= 0
+        ? AppColors.success
+        : AppColors.error;
 
     return IntrinsicHeight(
       child: Row(
@@ -473,36 +668,44 @@ class _OwnPalaiGoatProfileScreenState
           Column(
             children: [
               Container(
-                width: 9,
-                height: 9,
-                decoration:
-                BoxDecoration(color: dotColor, shape: BoxShape.circle),
+                width: 8,
+                height: 8,
+                decoration: BoxDecoration(
+                  color: dotColor,
+                  shape: BoxShape.circle,
+                ),
               ),
               if (!isLast)
                 Expanded(
-                  child: Container(width: 2, color: AppColors.divider),
+                  child: Container(
+                    width: 1.5,
+                    color: AppColors.divider,
+                  ),
                 ),
             ],
           ),
-          const SizedBox(width: 10),
+          const SizedBox(width: 9),
           Expanded(
             child: Padding(
-              padding: const EdgeInsets.only(bottom: 14),
+              padding: const EdgeInsets.only(bottom: 11),
               child: Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   if (entry.hasPhoto) ...[
                     GestureDetector(
-                      onTap: () => Navigator.of(context).push(
-                        fastRoute(
-                          FullscreenImageViewer(
-                            imageBytes: entry.photo!,
-                            title: DateFormat('d MMM yyyy').format(entry.date),
+                      onTap: () {
+                        Navigator.of(context).push(
+                          fastRoute(
+                            FullscreenImageViewer(
+                              imageBytes: entry.photo!,
+                              title: DateFormat(
+                                'd MMM yyyy',
+                              ).format(entry.date),
+                            ),
                           ),
-                        ),
-                      ),
+                        );
+                      },
                       child: ClipRRect(
-                        borderRadius: BorderRadius.circular(8),
+                        borderRadius: BorderRadius.circular(7),
                         child: Image.memory(
                           entry.photo!,
                           width: 36,
@@ -511,7 +714,7 @@ class _OwnPalaiGoatProfileScreenState
                         ),
                       ),
                     ),
-                    const SizedBox(width: 10),
+                    const SizedBox(width: 9),
                   ],
                   Expanded(
                     child: Column(
@@ -520,29 +723,36 @@ class _OwnPalaiGoatProfileScreenState
                         Text(
                           DateFormat('d MMM yyyy').format(entry.date),
                           style: AppTheme.body(
-                              size: 10.5, color: AppColors.textMuted),
+                            size: 10.5,
+                            color: AppColors.textGrey,
+                          ),
                         ),
                         if (entry.notes.trim().isNotEmpty)
                           Text(
                             entry.notes,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
                             style: AppTheme.body(
-                                size: 10.5, color: AppColors.textMuted),
+                              size: 10,
+                              color: AppColors.textGrey,
+                            ),
                           ),
                       ],
                     ),
                   ),
                   Text(
                     '${entry.weight.toStringAsFixed(1)} kg',
-                    style: AppTheme.heading(size: 13),
+                    style: AppTheme.heading(size: 12.5),
                   ),
                   if (gain != null) ...[
-                    const SizedBox(width: 8),
+                    const SizedBox(width: 7),
                     Text(
-                      '${gain >= 0 ? '+' : ''}${gain.toStringAsFixed(1)}',
+                      '${gain >= 0 ? '+' : ''}'
+                          '${gain.toStringAsFixed(1)}',
                       style: AppTheme.body(
-                        size: 11,
+                        size: 10,
                         color: dotColor,
-                        weight: FontWeight.w600,
+                        weight: FontWeight.w700,
                       ),
                     ),
                   ],
@@ -555,18 +765,11 @@ class _OwnPalaiGoatProfileScreenState
     );
   }
 
-  // ---------------------------------------------------------------------
-  // HEALTH TRACKING (Task 3.3)
-  // ---------------------------------------------------------------------
+  // ---------------------------------------------------------------------------
+  // HEALTH TRACKING
+  // ---------------------------------------------------------------------------
 
-  static const List<GoatHealthRecordType> _healthTypes = [
-    GoatHealthRecordType.vaccination,
-    GoatHealthRecordType.hoofCutting,
-    GoatHealthRecordType.hairTrimming,
-    GoatHealthRecordType.medicine,
-  ];
-
-  IconData _healthTypeIcon(GoatHealthRecordType type) {
+  IconData _healthIcon(GoatHealthRecordType type) {
     switch (type) {
       case GoatHealthRecordType.vaccination:
         return Icons.vaccines_outlined;
@@ -579,16 +782,19 @@ class _OwnPalaiGoatProfileScreenState
     }
   }
 
-  Future<void> _openAddHealthRecord(Goat goat, GoatHealthRecordType type) async {
+  Future<void> _openAddHealthRecord(
+      GoatHealthRecordType type,
+      ) async {
     final saved = await Navigator.of(context).push<bool>(
       fastRoute(
         AddHealthRecordScreen(
           farmId: widget.farmId,
-          goatId: goat.id,
+          goatId: widget.goat.id,
           type: type,
         ),
       ),
     );
+
     if (saved == true && mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
@@ -599,88 +805,60 @@ class _OwnPalaiGoatProfileScreenState
     }
   }
 
-  Widget _healthTrackingSection(Goat goat) {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(16),
-      decoration: AppTheme.card(radius: 16),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
+  Widget _healthTracking(Goat goat) {
+    return _sectionCard(
+      title: 'Health Tracking',
+      icon: Icons.health_and_safety_outlined,
+      iconColor: AppColors.stockTeal,
+      child: StreamBuilder<List<GoatHealthRecord>>(
+        stream: GoatService.instance.healthRecordsStream(
+          farmId: widget.farmId,
+          goatId: goat.id,
+        ),
+        builder: (context, snapshot) {
+          if (snapshot.connectionState == ConnectionState.waiting) {
+            return const _SectionSkeleton();
+          }
+
+          if (snapshot.hasError) {
+            return Text(
+              'Could not load health records: '
+                  '${FirestoreService.instance.describeError(snapshot.error!)}',
+              style: AppTheme.body(
+                size: 11.5,
+                color: AppColors.error,
+              ),
+            );
+          }
+
+          final all =
+              snapshot.data ?? const <GoatHealthRecord>[];
+
+          return Column(
             children: [
-              const Icon(Icons.health_and_safety_outlined,
-                  color: AppColors.stockTeal, size: 18),
-              const SizedBox(width: 8),
-              Text('Health Tracking', style: AppTheme.heading(size: 14)),
+              for (int i = 0; i < _healthTypes.length; i++) ...[
+                if (i > 0)
+                  const Padding(
+                    padding: EdgeInsets.symmetric(vertical: 10),
+                    child: Divider(height: 1),
+                  ),
+                _healthType(
+                  goat,
+                  _healthTypes[i],
+                  all
+                      .where((record) =>
+                  record.type == _healthTypes[i])
+                      .toList(),
+                ),
+              ],
             ],
-          ),
-          const SizedBox(height: 10),
-          const Divider(height: 1),
-          const SizedBox(height: 8),
-          StreamBuilder<List<GoatHealthRecord>>(
-            stream: GoatService.instance.healthRecordsStream(
-              farmId: widget.farmId,
-              goatId: goat.id,
-            ),
-            builder: (context, snap) {
-              if (snap.connectionState == ConnectionState.waiting) {
-                return const Padding(
-                  padding: EdgeInsets.symmetric(vertical: 16),
-                  child: Center(
-                    child: SizedBox(
-                      width: 20,
-                      height: 20,
-                      child: CircularProgressIndicator(
-                        strokeWidth: 2,
-                        color: AppColors.stockTeal,
-                      ),
-                    ),
-                  ),
-                );
-              }
-
-              if (snap.hasError) {
-                return Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 8),
-                  child: Text(
-                    'Could not load health records: '
-                        '${FirestoreService.instance.describeError(snap.error!)}',
-                    style: AppTheme.body(size: 12, color: AppColors.error),
-                  ),
-                );
-              }
-
-              // Newest-first (matches healthRecordsStream) — split
-              // client-side by type, per that stream's doc comment,
-              // rather than four separate composite-indexed queries.
-              final all = snap.data ?? const <GoatHealthRecord>[];
-
-              return Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  for (int i = 0; i < _healthTypes.length; i++) ...[
-                    if (i > 0) ...[
-                      const SizedBox(height: 14),
-                      const Divider(height: 1),
-                      const SizedBox(height: 14),
-                    ],
-                    _healthTypeSection(
-                      goat,
-                      _healthTypes[i],
-                      all.where((r) => r.type == _healthTypes[i]).toList(),
-                    ),
-                  ],
-                ],
-              );
-            },
-          ),
-        ],
+          );
+        },
       ),
     );
   }
 
-  Widget _healthTypeSection(
+  Widget _healthType(
       Goat goat,
       GoatHealthRecordType type,
       List<GoatHealthRecord> records,
@@ -692,179 +870,206 @@ class _OwnPalaiGoatProfileScreenState
       children: [
         Row(
           children: [
-            Icon(_healthTypeIcon(type), size: 16, color: AppColors.textDark),
+            Container(
+              width: 29,
+              height: 29,
+              decoration: BoxDecoration(
+                color: AppColors.stockTeal.withOpacity(0.09),
+                borderRadius: BorderRadius.circular(9),
+              ),
+              child: Icon(
+                _healthIcon(type),
+                size: 15,
+                color: AppColors.stockTeal,
+              ),
+            ),
             const SizedBox(width: 8),
             Expanded(
-              child: Text(type.label, style: AppTheme.heading(size: 13)),
+              child: Text(
+                type.label,
+                style: AppTheme.heading(size: 12.5),
+              ),
             ),
-            if (latest != null) _dueBadge(latest),
+            _dueBadge(latest),
             TextButton.icon(
-              onPressed: () => _openAddHealthRecord(goat, type),
-              icon: const Icon(Icons.add, size: 15),
+              onPressed: () => _openAddHealthRecord(type),
+              icon: const Icon(Icons.add, size: 14),
               label: const Text('Log'),
               style: TextButton.styleFrom(
                 foregroundColor: AppColors.stockTeal,
-                padding:
-                const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 4,
+                  vertical: 2,
+                ),
                 visualDensity: VisualDensity.compact,
               ),
             ),
           ],
         ),
-        const SizedBox(height: 6),
-        if (latest == null)
-          Padding(
-            padding: const EdgeInsets.only(left: 24),
-            child: Text(
-              'No ${type.label.toLowerCase()} records yet.',
-              style: AppTheme.body(size: 11.5, color: AppColors.textGrey),
+        const SizedBox(height: 5),
+        Padding(
+          padding: const EdgeInsets.only(left: 37),
+          child: latest == null
+              ? Text(
+            'No records yet.',
+            style: AppTheme.body(
+              size: 10.5,
+              color: AppColors.textGrey,
             ),
           )
-        else ...[
-          Padding(
-            padding: const EdgeInsets.only(left: 24),
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Expanded(
-                  child: Text(
-                    'Last: ${DateFormat('d MMM yyyy').format(latest.date)}'
-                        '${latest.nextDueDate != null ? ' · Next due: ${DateFormat('d MMM yyyy').format(latest.nextDueDate!)}' : ''}',
-                    style: AppTheme.body(size: 11.5, color: AppColors.textDark),
+              : Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Last: ${DateFormat('d MMM yyyy').format(latest.date)}',
+                style: AppTheme.body(
+                  size: 10.5,
+                  color: AppColors.textDark,
+                ),
+              ),
+              if (latest.nextDueDate != null)
+                Text(
+                  'Next due: ${DateFormat('d MMM yyyy').format(latest.nextDueDate!)}',
+                  style: AppTheme.body(
+                    size: 10,
+                    color: AppColors.textGrey,
                   ),
                 ),
-              ],
-            ),
+              if (records.length > 1)
+                Padding(
+                  padding: const EdgeInsets.only(top: 4),
+                  child: _HealthHistoryExpander(
+                    records: records,
+                  ),
+                ),
+            ],
           ),
-          if (records.length > 1) ...[
-            const SizedBox(height: 4),
-            Padding(
-              padding: const EdgeInsets.only(left: 24),
-              child: _HealthHistoryExpander(
-                type: type,
-                records: records,
-              ),
-            ),
-          ],
-        ],
+        ),
       ],
     );
   }
 
-  /// Task 3.4 — "due" / "overdue" badge for one health type's latest
-  /// entry. Reuses [GoatHealthRecord.isOverdue] / [isDueWithin] (Task
-  /// 1.3) and the same [kHealthRecordPendingWindowDays] window the
-  /// Customer Palai Health tab already uses for its own due-soon
-  /// badges, rather than inventing a separate threshold here. Returns
-  /// nothing when the latest entry has no due date, or its due date is
-  /// further out than that window.
-  Widget _dueBadge(GoatHealthRecord latest) {
-    if (latest.nextDueDate == null) return const SizedBox.shrink();
+  Widget _dueBadge(GoatHealthRecord? latest) {
+    if (latest == null || latest.nextDueDate == null) {
+      return const SizedBox.shrink();
+    }
 
     final overdue = latest.isOverdue;
     final dueSoon = !overdue &&
-        latest.isDueWithin(const Duration(days: kHealthRecordPendingWindowDays));
+        latest.isDueWithin(
+          const Duration(
+            days: kHealthRecordPendingWindowDays,
+          ),
+        );
 
-    if (!overdue && !dueSoon) return const SizedBox.shrink();
+    if (!overdue && !dueSoon) {
+      return const SizedBox.shrink();
+    }
 
-    final color = overdue ? AppColors.error : AppColors.warning;
-    final text = overdue ? 'Overdue' : 'Due soon';
+    final color =
+    overdue ? AppColors.error : AppColors.warning;
 
     return Container(
-      margin: const EdgeInsets.only(right: 6),
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+      margin: const EdgeInsets.only(right: 3),
+      padding: const EdgeInsets.symmetric(
+        horizontal: 6,
+        vertical: 3,
+      ),
       decoration: BoxDecoration(
-        color: color.withOpacity(0.12),
+        color: color.withOpacity(0.11),
         borderRadius: BorderRadius.circular(20),
       ),
       child: Text(
-        text,
-        style: AppTheme.body(size: 10, color: color, weight: FontWeight.w700),
+        overdue ? 'Overdue' : 'Due soon',
+        style: AppTheme.body(
+          size: 8.5,
+          color: color,
+          weight: FontWeight.w700,
+        ),
       ),
     );
   }
 
-  // ---------------------------------------------------------------------
-  // WIDGETS
-  // ---------------------------------------------------------------------
-
-  Widget _photo(Goat goat) {
-    final hasPhoto = goat.photo != null;
-
-    return GestureDetector(
-      onTap: hasPhoto
-          ? () => Navigator.of(context).push(
-        fastRoute(
-          FullscreenImageViewer(
-            imageBytes: goat.photo!,
-            title: goat.id,
-          ),
-        ),
-      )
-          : null,
-      child: Container(
-        width: 132,
-        height: 132,
-        decoration: BoxDecoration(
-          shape: BoxShape.circle,
-          color: AppColors.stockTeal.withOpacity(0.14),
-          image: hasPhoto
-              ? DecorationImage(
-              image: MemoryImage(goat.photo!), fit: BoxFit.cover)
-              : null,
-          border:
-          Border.all(color: AppColors.stockTeal.withOpacity(0.3), width: 2),
-        ),
-        child: !hasPhoto
-            ? const Icon(Icons.pets, color: AppColors.stockTeal, size: 48)
-            : null,
-      ),
-    );
-  }
+  // ---------------------------------------------------------------------------
+  // SHARED UI
+  // ---------------------------------------------------------------------------
 
   Widget _sectionCard({
     required String title,
     required IconData icon,
-    required List<Widget> children,
+    required Color iconColor,
+    required Widget child,
+    Widget? trailing,
   }) {
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.all(16),
-      decoration: AppTheme.card(radius: 16),
+      padding: const EdgeInsets.all(13),
+      decoration: AppTheme.card(radius: 15),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
             children: [
-              Icon(icon, color: AppColors.stockTeal, size: 18),
+              Container(
+                width: 30,
+                height: 30,
+                decoration: BoxDecoration(
+                  color: iconColor.withOpacity(0.09),
+                  borderRadius: BorderRadius.circular(9),
+                ),
+                child: Icon(
+                  icon,
+                  size: 16,
+                  color: iconColor,
+                ),
+              ),
               const SizedBox(width: 8),
-              Text(title, style: AppTheme.heading(size: 14)),
+              Expanded(
+                child: Text(
+                  title,
+                  style: AppTheme.heading(size: 13.5),
+                ),
+              ),
+              if (trailing != null) trailing,
             ],
           ),
-          const SizedBox(height: 10),
+          const SizedBox(height: 9),
           const Divider(height: 1),
-          const SizedBox(height: 4),
-          ...children,
+          const SizedBox(height: 3),
+          child,
         ],
       ),
     );
   }
 
-  Widget _detailRow(String label, String value, {bool isLast = false}) {
+  Widget _detailRow(
+      String label,
+      String value, {
+        bool isLast = false,
+      }) {
     return Padding(
-      padding: EdgeInsets.only(top: 12, bottom: isLast ? 0 : 0),
+      padding: EdgeInsets.only(
+        top: 9,
+        bottom: isLast ? 0 : 1,
+      ),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           SizedBox(
-            width: 120,
-            child: Text(label, style: AppTheme.body(size: 12)),
+            width: 100,
+            child: Text(
+              label,
+              style: AppTheme.body(
+                size: 10.5,
+                color: AppColors.textGrey,
+              ),
+            ),
           ),
           Expanded(
             child: Text(
               value.isEmpty ? '—' : value,
               style: AppTheme.body(
-                size: 13,
+                size: 11.5,
                 color: AppColors.textDark,
                 weight: FontWeight.w600,
               ),
@@ -875,30 +1080,45 @@ class _OwnPalaiGoatProfileScreenState
     );
   }
 
-  Widget _statusRow(String label, String value, Color color) {
+  Widget _statusDetailRow(
+      String label,
+      String value,
+      Color color,
+      ) {
     return Padding(
-      padding: const EdgeInsets.only(top: 12),
+      padding: const EdgeInsets.only(top: 9),
       child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
+        crossAxisAlignment: CrossAxisAlignment.center,
         children: [
           SizedBox(
-            width: 120,
-            child: Text(label, style: AppTheme.body(size: 12)),
+            width: 100,
+            child: Text(
+              label,
+              style: AppTheme.body(
+                size: 10.5,
+                color: AppColors.textGrey,
+              ),
+            ),
           ),
           Expanded(
-            child: Container(
-              padding:
-              const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
-              decoration: BoxDecoration(
-                color: color.withOpacity(0.12),
-                borderRadius: BorderRadius.circular(20),
-              ),
-              child: Text(
-                value.isEmpty ? '—' : value,
-                style: TextStyle(
-                  color: color,
-                  fontSize: 11.5,
-                  fontWeight: FontWeight.w700,
+            child: Align(
+              alignment: Alignment.centerLeft,
+              child: Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 8,
+                  vertical: 4,
+                ),
+                decoration: BoxDecoration(
+                  color: color.withOpacity(0.10),
+                  borderRadius: BorderRadius.circular(20),
+                ),
+                child: Text(
+                  value.isEmpty ? '—' : value,
+                  style: TextStyle(
+                    color: color,
+                    fontSize: 10,
+                    fontWeight: FontWeight.w700,
+                  ),
                 ),
               ),
             ),
@@ -910,19 +1130,91 @@ class _OwnPalaiGoatProfileScreenState
 }
 
 // ============================================================================
-// HEALTH HISTORY EXPANDER
+// SKELETON
 // ============================================================================
 
-/// Collapsible "N more records" list for one health-tracking type —
-/// the latest entry is always shown inline by [_healthTypeSection];
-/// this covers everything older than that, collapsed by default so
-/// four types' worth of history doesn't overwhelm the profile screen.
+class _SectionSkeleton extends StatefulWidget {
+  const _SectionSkeleton();
+
+  @override
+  State<_SectionSkeleton> createState() => _SectionSkeletonState();
+}
+
+class _SectionSkeletonState extends State<_SectionSkeleton>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller;
+
+  @override
+  void initState() {
+    super.initState();
+
+    _controller = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 850),
+    )..repeat(reverse: true);
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  Widget _box(
+      double width,
+      double height, {
+        double radius = 6,
+      }) {
+    return Opacity(
+      opacity: 0.4 + (_controller.value * 0.35),
+      child: Container(
+        width: width,
+        height: height,
+        decoration: BoxDecoration(
+          color: AppColors.divider,
+          borderRadius: BorderRadius.circular(radius),
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: _controller,
+      builder: (_, __) {
+        return Padding(
+          padding: const EdgeInsets.symmetric(vertical: 9),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  _box(90, 11),
+                  const Spacer(),
+                  _box(50, 18, radius: 10),
+                ],
+              ),
+              const SizedBox(height: 10),
+              _box(double.infinity, 11),
+              const SizedBox(height: 8),
+              _box(180, 11),
+            ],
+          ),
+        );
+      },
+    );
+  }
+}
+
+// ============================================================================
+// HEALTH HISTORY
+// ============================================================================
+
 class _HealthHistoryExpander extends StatefulWidget {
-  final GoatHealthRecordType type;
   final List<GoatHealthRecord> records;
 
   const _HealthHistoryExpander({
-    required this.type,
     required this.records,
   });
 
@@ -931,7 +1223,8 @@ class _HealthHistoryExpander extends StatefulWidget {
       _HealthHistoryExpanderState();
 }
 
-class _HealthHistoryExpanderState extends State<_HealthHistoryExpander> {
+class _HealthHistoryExpanderState
+    extends State<_HealthHistoryExpander> {
   bool _expanded = false;
 
   @override
@@ -942,28 +1235,49 @@ class _HealthHistoryExpanderState extends State<_HealthHistoryExpander> {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         GestureDetector(
-          onTap: () => setState(() => _expanded = !_expanded),
-          child: Text(
-            _expanded
-                ? 'Hide history'
-                : '${older.length} earlier record${older.length == 1 ? '' : 's'}',
-            style: AppTheme.body(
-              size: 11,
-              color: AppColors.tradingBlue,
-              weight: FontWeight.w600,
-            ),
+          onTap: () {
+            setState(() {
+              _expanded = !_expanded;
+            });
+          },
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                _expanded
+                    ? 'Hide history'
+                    : '${older.length} earlier '
+                    'record${older.length == 1 ? '' : 's'}',
+                style: AppTheme.body(
+                  size: 10,
+                  color: AppColors.tradingBlue,
+                  weight: FontWeight.w600,
+                ),
+              ),
+              const SizedBox(width: 2),
+              Icon(
+                _expanded
+                    ? Icons.keyboard_arrow_up
+                    : Icons.keyboard_arrow_down,
+                size: 14,
+                color: AppColors.tradingBlue,
+              ),
+            ],
           ),
         ),
         if (_expanded) ...[
           const SizedBox(height: 6),
           for (final record in older)
             Padding(
-              padding: const EdgeInsets.only(bottom: 6),
+              padding: const EdgeInsets.only(bottom: 5),
               child: Text(
                 '${DateFormat('d MMM yyyy').format(record.date)}'
-                    '${record.nextDueDate != null ? ' · Next due: ${DateFormat('d MMM yyyy').format(record.nextDueDate!)}' : ''}'
-                    '${record.notes.trim().isNotEmpty ? ' — ${record.notes.trim()}' : ''}',
-                style: AppTheme.body(size: 11, color: AppColors.textGrey),
+                    '${record.nextDueDate != null ? ' · Due: ${DateFormat('d MMM yyyy').format(record.nextDueDate!)}' : ''}'
+                    '${record.notes.trim().isNotEmpty ? ' · ${record.notes.trim()}' : ''}',
+                style: AppTheme.body(
+                  size: 10,
+                  color: AppColors.textGrey,
+                ),
               ),
             ),
         ],

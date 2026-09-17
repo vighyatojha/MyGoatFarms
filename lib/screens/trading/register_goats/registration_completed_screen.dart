@@ -4,15 +4,20 @@ import 'package:intl/intl.dart';
 import '../../../app_theme.dart';
 import '../../../models/trading_purchase_model.dart';
 import '../../../widgets/fast_route.dart';
+import '../goat_stock/goat_stock_list_screen.dart';
 import '../own_palai/move_to_own_palai_screen.dart';
 
-/// Task 2.6 — Registration Completed screen.
+/// Registration completed screen.
 ///
-/// Shown once a purchase's `pendingCount` reaches zero (every goat from
-/// that purchase has been registered). Per the plan: shows Purchase ID,
-/// Date, Total/Registered counts, registration date, and 4 exit
-/// options — View Goat Stock, Move to Own Palai (Task 2.1, phase 3),
-/// Sell Goat (stub for phase 3), Back to Trading.
+/// Shown when all goats belonging to a purchase have been registered.
+///
+/// UX goals:
+/// - Compact success confirmation.
+/// - Clear purchase summary.
+/// - Symmetrical statistics.
+/// - One clear primary action.
+/// - Secondary actions kept visually lighter.
+/// - Uses the app's default AppTheme/AppColors.
 class RegistrationCompletedScreen extends StatelessWidget {
   final String farmId;
   final TradingPurchase purchase;
@@ -23,245 +28,197 @@ class RegistrationCompletedScreen extends StatelessWidget {
     required this.purchase,
   });
 
-  void _phase3Stub(BuildContext context, String feature) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('$feature is coming in a later phase.'),
-        backgroundColor: AppColors.darkGreen,
-      ),
-    );
-  }
+  // ===========================================================================
+  // ACTIONS
+  // ===========================================================================
 
   void _viewGoatStock(BuildContext context) {
-    // Wired up once the Goat Stock screen exists (Task 3.1, next pair).
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('Goat Stock screen is coming next.'),
-        backgroundColor: AppColors.darkGreen,
+    Navigator.of(context).push(
+      fastRoute(
+        const GoatStockListScreen(),
       ),
     );
   }
 
   void _moveToOwnPalai(BuildContext context) {
     Navigator.of(context).push(
-      fastRoute(MoveToOwnPalaiScreen(farmId: farmId)),
+      fastRoute(
+        MoveToOwnPalaiScreen(
+          farmId: farmId,
+        ),
+      ),
+    );
+  }
+
+  void _sellGoat(BuildContext context) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: const Text(
+          'Sell Goat will be available in the next Trading phase.',
+        ),
+        backgroundColor: AppColors.darkGreen,
+        behavior: SnackBarBehavior.floating,
+        margin: const EdgeInsets.all(14),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(12),
+        ),
+      ),
     );
   }
 
   void _backToTrading(BuildContext context) {
-    // Matches PurchaseSuccessScreen's "Go to Trading" — returns to the
-    // root of the Trading tab's navigation stack.
-    Navigator.of(context).popUntil((route) => route.isFirst);
+    Navigator.of(context).popUntil(
+          (route) => route.isFirst,
+    );
   }
+
+  // ===========================================================================
+  // BUILD
+  // ===========================================================================
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-
     return Scaffold(
+      backgroundColor: AppColors.paleGreen,
+
       appBar: AppBar(
-        title: const Text('Registration Completed'),
+        backgroundColor: AppColors.paleGreen,
+        foregroundColor: AppColors.textDark,
+        elevation: 0,
         automaticallyImplyLeading: false,
+        title: Text(
+          'Registration Completed',
+          style: AppTheme.heading(
+            size: 17,
+          ),
+        ),
       ),
+
       body: SafeArea(
         child: SingleChildScrollView(
-          padding: const EdgeInsets.fromLTRB(20, 32, 20, 32),
+          padding: const EdgeInsets.fromLTRB(
+            20,
+            8,
+            20,
+            24,
+          ),
           child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const SizedBox(height: 12),
+              // ----------------------------------------------------------------
+              // SUCCESS HEADER
+              // ----------------------------------------------------------------
 
-              Container(
-                width: 92,
-                height: 92,
-                decoration: BoxDecoration(
-                  color: AppColors.primaryGreen.withOpacity(0.12),
-                  shape: BoxShape.circle,
-                ),
-                child: const Icon(
-                  Icons.check_circle_rounded,
-                  size: 64,
-                  color: AppColors.primaryGreen,
-                ),
-              ),
+              _successHeader(),
 
-              const SizedBox(height: 24),
+              const SizedBox(height: 18),
 
-              Text(
-                'Registration Completed',
-                textAlign: TextAlign.center,
-                style: theme.textTheme.headlineSmall?.copyWith(
-                  fontWeight: FontWeight.w800,
-                ),
-              ),
+              // ----------------------------------------------------------------
+              // PURCHASE SUMMARY
+              // ----------------------------------------------------------------
 
-              const SizedBox(height: 10),
+              _purchaseSummary(),
 
-              Text(
-                'All goats from this purchase have been registered and '
-                    'added to your Goat Stock.',
-                textAlign: TextAlign.center,
-                style: theme.textTheme.bodyMedium?.copyWith(
-                  color: Colors.black54,
-                  height: 1.45,
-                ),
-              ),
+              const SizedBox(height: 18),
 
-              const SizedBox(height: 28),
+              // ----------------------------------------------------------------
+              // PRIMARY ACTION
+              // ----------------------------------------------------------------
 
-              // Purchase summary card
-              Container(
-                width: double.infinity,
-                padding: const EdgeInsets.all(18),
-                decoration: BoxDecoration(
-                  color: AppColors.primaryGreen.withOpacity(0.06),
-                  borderRadius: BorderRadius.circular(18),
-                  border: Border.all(
-                    color: AppColors.primaryGreen.withOpacity(0.18),
-                  ),
-                ),
-                child: Column(
-                  children: [
-                    const Text(
-                      'Purchase ID',
-                      style: TextStyle(fontSize: 12, color: Colors.black54),
-                    ),
-                    const SizedBox(height: 6),
-                    Text(
-                      purchase.id,
-                      textAlign: TextAlign.center,
-                      style: const TextStyle(
-                        fontSize: 20,
-                        fontWeight: FontWeight.w800,
-                        color: AppColors.primaryGreen,
-                        letterSpacing: 0.5,
-                      ),
-                    ),
-                    const SizedBox(height: 18),
-                    const Divider(height: 1),
-                    const SizedBox(height: 16),
-                    Row(
-                      children: [
-                        Expanded(
-                          child: _summaryStat(
-                            'Purchase Date',
-                            DateFormat('dd MMM yyyy').format(
-                              purchase.purchaseDate,
-                            ),
-                          ),
-                        ),
-                        Expanded(
-                          child: _summaryStat(
-                            'Registered On',
-                            DateFormat('dd MMM yyyy').format(DateTime.now()),
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 14),
-                    Row(
-                      children: [
-                        Expanded(
-                          child: _summaryStat(
-                            'Total Goats',
-                            '${purchase.totalGoats}',
-                          ),
-                        ),
-                        Expanded(
-                          child: _summaryStat(
-                            'Registered',
-                            '${purchase.registeredCount}',
-                          ),
-                        ),
-                      ],
-                    ),
-                  ],
-                ),
-              ),
-
-              const SizedBox(height: 32),
-
-              // View Goat Stock
-              SizedBox(
-                width: double.infinity,
-                height: 52,
-                child: ElevatedButton.icon(
-                  onPressed: () => _viewGoatStock(context),
-                  icon: const Icon(Icons.inventory_2_outlined),
-                  label: const Text(
-                    'View Goat Stock',
-                    style: TextStyle(fontWeight: FontWeight.w700),
-                  ),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: AppColors.primaryGreen,
-                    foregroundColor: Colors.white,
-                    elevation: 0,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(15),
-                    ),
-                  ),
-                ),
+              _primaryAction(
+                icon: Icons.inventory_2_outlined,
+                title: 'View Goat Stock',
+                subtitle:
+                'View all registered goats',
+                onTap: () =>
+                    _viewGoatStock(context),
               ),
 
               const SizedBox(height: 12),
 
-              // Move to Own Palai (phase 3 stub)
-              SizedBox(
-                width: double.infinity,
-                height: 50,
-                child: OutlinedButton.icon(
-                  onPressed: () => _moveToOwnPalai(context),
-                  icon: const Icon(Icons.holiday_village_outlined),
-                  label: const Text(
-                    'Move to Own Palai',
-                    style: TextStyle(fontWeight: FontWeight.w700),
-                  ),
-                  style: OutlinedButton.styleFrom(
-                    foregroundColor: AppColors.tradingBlue,
-                    side: const BorderSide(color: AppColors.tradingBlue),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(15),
+              // ----------------------------------------------------------------
+              // SECONDARY ACTIONS
+              // ----------------------------------------------------------------
+
+              Row(
+                children: [
+                  Expanded(
+                    child: _actionCard(
+                      icon:
+                      Icons.holiday_village_outlined,
+                      title: 'Own Palai',
+                      subtitle:
+                      'Move goat',
+                      iconColor:
+                      AppColors.tradingBlue,
+                      backgroundColor:
+                      AppColors.tradingBlue
+                          .withOpacity(0.07),
+                      onTap: () =>
+                          _moveToOwnPalai(context),
                     ),
                   ),
-                ),
+
+                  const SizedBox(width: 12),
+
+                  Expanded(
+                    child: _actionCard(
+                      icon: Icons.sell_outlined,
+                      title: 'Sell Goat',
+                      subtitle:
+                      'Start selling',
+                      iconColor:
+                      AppColors.warning,
+                      backgroundColor:
+                      AppColors.warning
+                          .withOpacity(0.08),
+                      onTap: () =>
+                          _sellGoat(context),
+                    ),
+                  ),
+                ],
               ),
 
               const SizedBox(height: 12),
 
-              // Sell Goat (phase 3 stub)
+              // ----------------------------------------------------------------
+              // BACK TO TRADING
+              // ----------------------------------------------------------------
+
               SizedBox(
                 width: double.infinity,
-                height: 50,
-                child: OutlinedButton.icon(
-                  onPressed: () => _phase3Stub(context, 'Sell Goat'),
-                  icon: const Icon(Icons.sell_outlined),
-                  label: const Text(
-                    'Sell Goat',
-                    style: TextStyle(fontWeight: FontWeight.w700),
-                  ),
-                  style: OutlinedButton.styleFrom(
-                    foregroundColor: AppColors.tradingBlue,
-                    side: const BorderSide(color: AppColors.tradingBlue),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(15),
-                    ),
-                  ),
-                ),
-              ),
-
-              const SizedBox(height: 12),
-
-              // Back to Trading
-              SizedBox(
-                width: double.infinity,
-                height: 50,
+                height: 48,
                 child: TextButton(
-                  onPressed: () => _backToTrading(context),
+                  onPressed: () =>
+                      _backToTrading(context),
                   style: TextButton.styleFrom(
-                    foregroundColor: AppColors.textGrey,
+                    foregroundColor:
+                    AppColors.textGrey,
+                    shape:
+                    RoundedRectangleBorder(
+                      borderRadius:
+                      BorderRadius.circular(13),
+                    ),
                   ),
-                  child: const Text(
-                    'Back to Trading',
-                    style: TextStyle(fontWeight: FontWeight.w700),
+                  child: Row(
+                    mainAxisAlignment:
+                    MainAxisAlignment.center,
+                    children: const [
+                      Icon(
+                        Icons
+                            .arrow_back_rounded,
+                        size: 17,
+                      ),
+                      SizedBox(width: 7),
+                      Text(
+                        'Back to Trading',
+                        style: TextStyle(
+                          fontSize: 13,
+                          fontWeight:
+                          FontWeight.w700,
+                        ),
+                      ),
+                    ],
                   ),
                 ),
               ),
@@ -272,24 +229,502 @@ class RegistrationCompletedScreen extends StatelessWidget {
     );
   }
 
-  Widget _summaryStat(String label, String value) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.center,
-      children: [
-        Text(
-          label,
-          style: const TextStyle(fontSize: 11, color: Colors.black54),
+  // ===========================================================================
+  // SUCCESS HEADER
+  // ===========================================================================
+
+  Widget _successHeader() {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(
+        horizontal: 16,
+        vertical: 16,
+      ),
+      decoration: BoxDecoration(
+        color: AppColors.success.withOpacity(0.08),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+          color: AppColors.success.withOpacity(0.18),
         ),
-        const SizedBox(height: 4),
-        Text(
-          value,
-          style: const TextStyle(
-            fontSize: 15,
-            fontWeight: FontWeight.w700,
-            color: AppColors.textDark,
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 50,
+            height: 50,
+            decoration: BoxDecoration(
+              color:
+              AppColors.success.withOpacity(0.14),
+              shape: BoxShape.circle,
+            ),
+            child: const Icon(
+              Icons.check_rounded,
+              color: AppColors.success,
+              size: 28,
+            ),
+          ),
+
+          const SizedBox(width: 13),
+
+          Expanded(
+            child: Column(
+              crossAxisAlignment:
+              CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Registration Completed',
+                  style: AppTheme.heading(
+                    size: 15,
+                    color: AppColors.textDark,
+                  ),
+                ),
+
+                const SizedBox(height: 3),
+
+                Text(
+                  'All ${purchase.totalGoats} goats have been '
+                      'successfully added to Goat Stock.',
+                  style: AppTheme.body(
+                    size: 10,
+                    color: AppColors.textGrey,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ===========================================================================
+  // PURCHASE SUMMARY
+  // ===========================================================================
+
+  Widget _purchaseSummary() {
+    final formattedPurchaseDate =
+    DateFormat('dd MMM yyyy').format(
+      purchase.purchaseDate,
+    );
+
+    final registrationDate =
+    DateFormat('dd MMM yyyy').format(
+      DateTime.now(),
+    );
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(15),
+      decoration: AppTheme.card(
+        radius: 15,
+      ),
+      child: Column(
+        crossAxisAlignment:
+        CrossAxisAlignment.start,
+        children: [
+          // ---------------------------------------------------------------
+          // PURCHASE ID
+          // ---------------------------------------------------------------
+
+          Row(
+            children: [
+              Container(
+                width: 36,
+                height: 36,
+                decoration: BoxDecoration(
+                  color:
+                  AppColors.primaryGreen
+                      .withOpacity(0.10),
+                  borderRadius:
+                  BorderRadius.circular(10),
+                ),
+                child: const Icon(
+                  Icons.receipt_long_outlined,
+                  color:
+                  AppColors.primaryGreen,
+                  size: 19,
+                ),
+              ),
+
+              const SizedBox(width: 10),
+
+              Expanded(
+                child: Column(
+                  crossAxisAlignment:
+                  CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Purchase',
+                      style: AppTheme.body(
+                        size: 9,
+                        color:
+                        AppColors.textGrey,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      purchase.id,
+                      style: AppTheme.heading(
+                        size: 14,
+                        color:
+                        AppColors
+                            .primaryGreen,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+
+              Container(
+                padding:
+                const EdgeInsets.symmetric(
+                  horizontal: 9,
+                  vertical: 5,
+                ),
+                decoration: BoxDecoration(
+                  color:
+                  AppColors.success
+                      .withOpacity(0.10),
+                  borderRadius:
+                  BorderRadius.circular(20),
+                ),
+                child: Text(
+                  'Completed',
+                  style: AppTheme.body(
+                    size: 9,
+                    color:
+                    AppColors.success,
+                    weight:
+                    FontWeight.w700,
+                  ),
+                ),
+              ),
+            ],
+          ),
+
+          const SizedBox(height: 14),
+
+          Container(
+            height: 1,
+            color: AppColors.divider,
+          ),
+
+          const SizedBox(height: 14),
+
+          // ---------------------------------------------------------------
+          // STATS
+          // ---------------------------------------------------------------
+
+          Row(
+            children: [
+              Expanded(
+                child: _summaryStat(
+                  icon:
+                  Icons.calendar_today_outlined,
+                  label: 'Purchase Date',
+                  value:
+                  formattedPurchaseDate,
+                ),
+              ),
+
+              _verticalDivider(),
+
+              Expanded(
+                child: _summaryStat(
+                  icon:
+                  Icons.event_available_outlined,
+                  label: 'Registered On',
+                  value:
+                  registrationDate,
+                ),
+              ),
+            ],
+          ),
+
+          const SizedBox(height: 14),
+
+          Row(
+            children: [
+              Expanded(
+                child: _summaryStat(
+                  icon:
+                  Icons.pets_outlined,
+                  label: 'Total Goats',
+                  value:
+                  '${purchase.totalGoats}',
+                ),
+              ),
+
+              _verticalDivider(),
+
+              Expanded(
+                child: _summaryStat(
+                  icon:
+                  Icons.check_circle_outline,
+                  label: 'Registered',
+                  value:
+                  '${purchase.registeredCount}',
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ===========================================================================
+  // SUMMARY STAT
+  // ===========================================================================
+
+  Widget _summaryStat({
+    required IconData icon,
+    required String label,
+    required String value,
+  }) {
+    return Row(
+      children: [
+        Container(
+          width: 30,
+          height: 30,
+          decoration: BoxDecoration(
+            color:
+            AppColors.primaryGreen
+                .withOpacity(0.08),
+            borderRadius:
+            BorderRadius.circular(8),
+          ),
+          child: Icon(
+            icon,
+            size: 15,
+            color:
+            AppColors.primaryGreen,
+          ),
+        ),
+
+        const SizedBox(width: 8),
+
+        Expanded(
+          child: Column(
+            crossAxisAlignment:
+            CrossAxisAlignment.start,
+            children: [
+              Text(
+                label,
+                maxLines: 1,
+                overflow:
+                TextOverflow.ellipsis,
+                style: AppTheme.body(
+                  size: 9,
+                  color:
+                  AppColors.textGrey,
+                ),
+              ),
+
+              const SizedBox(height: 2),
+
+              Text(
+                value,
+                maxLines: 1,
+                overflow:
+                TextOverflow.ellipsis,
+                style: AppTheme.heading(
+                  size: 11,
+                  color:
+                  AppColors.textDark,
+                ),
+              ),
+            ],
           ),
         ),
       ],
+    );
+  }
+
+  // ===========================================================================
+  // VERTICAL DIVIDER
+  // ===========================================================================
+
+  Widget _verticalDivider() {
+    return Container(
+      width: 1,
+      height: 36,
+      margin: const EdgeInsets.symmetric(
+        horizontal: 10,
+      ),
+      color: AppColors.divider,
+    );
+  }
+
+  // ===========================================================================
+  // PRIMARY ACTION
+  // ===========================================================================
+
+  Widget _primaryAction({
+    required IconData icon,
+    required String title,
+    required String subtitle,
+    required VoidCallback onTap,
+  }) {
+    return SizedBox(
+      width: double.infinity,
+      height: 66,
+      child: ElevatedButton(
+        onPressed: onTap,
+        style: ElevatedButton.styleFrom(
+          backgroundColor:
+          AppColors.primaryGreen,
+          foregroundColor: Colors.white,
+          elevation: 0,
+          padding:
+          const EdgeInsets.symmetric(
+            horizontal: 16,
+          ),
+          shape:
+          RoundedRectangleBorder(
+            borderRadius:
+            BorderRadius.circular(14),
+          ),
+        ),
+        child: Row(
+          children: [
+            Container(
+              width: 38,
+              height: 38,
+              decoration: BoxDecoration(
+                color: Colors.white
+                    .withOpacity(0.15),
+                borderRadius:
+                BorderRadius.circular(10),
+              ),
+              child: Icon(
+                icon,
+                size: 20,
+                color: Colors.white,
+              ),
+            ),
+
+            const SizedBox(width: 11),
+
+            Expanded(
+              child: Column(
+                mainAxisAlignment:
+                MainAxisAlignment.center,
+                crossAxisAlignment:
+                CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    title,
+                    style:
+                    const TextStyle(
+                      fontSize: 13,
+                      fontWeight:
+                      FontWeight.w700,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    subtitle,
+                    style:
+                    TextStyle(
+                      fontSize: 10,
+                      color: Colors.white
+                          .withOpacity(0.78),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+
+            const Icon(
+              Icons
+                  .arrow_forward_rounded,
+              size: 20,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // ===========================================================================
+  // SECONDARY ACTION CARD
+  // ===========================================================================
+
+  Widget _actionCard({
+    required IconData icon,
+    required String title,
+    required String subtitle,
+    required Color iconColor,
+    required Color backgroundColor,
+    required VoidCallback onTap,
+  }) {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius:
+        BorderRadius.circular(14),
+        child: Container(
+          height: 96,
+          padding:
+          const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            color: backgroundColor,
+            borderRadius:
+            BorderRadius.circular(14),
+            border: Border.all(
+              color:
+              iconColor.withOpacity(0.14),
+            ),
+          ),
+          child: Column(
+            crossAxisAlignment:
+            CrossAxisAlignment.start,
+            children: [
+              Container(
+                width: 32,
+                height: 32,
+                decoration: BoxDecoration(
+                  color:
+                  iconColor.withOpacity(
+                    0.12,
+                  ),
+                  borderRadius:
+                  BorderRadius.circular(9),
+                ),
+                child: Icon(
+                  icon,
+                  size: 17,
+                  color: iconColor,
+                ),
+              ),
+
+              const Spacer(),
+
+              Text(
+                title,
+                style: AppTheme.heading(
+                  size: 11,
+                  color:
+                  AppColors.textDark,
+                ),
+              ),
+
+              const SizedBox(height: 1),
+
+              Text(
+                subtitle,
+                style: AppTheme.body(
+                  size: 9,
+                  color:
+                  AppColors.textGrey,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 }
