@@ -11,9 +11,8 @@ import 'goat_registration_form_screen.dart';
 
 /// Task 2.1 — Select Purchase screen.
 ///
-/// Lists purchases that still have goats waiting to be registered
-/// (`pendingCount > 0`, receiving already completed). Tapping one opens
-/// the goat registration form for that purchase.
+/// Shows purchases that have completed receiving but still have goats
+/// waiting to be registered.
 class SelectPurchaseScreen extends StatefulWidget {
   const SelectPurchaseScreen({super.key});
 
@@ -38,19 +37,29 @@ class _SelectPurchaseScreenState extends State<SelectPurchaseScreen> {
       });
     }
 
-    final id = await FirestoreService.instance.currentFarmId();
+    try {
+      final id = await FirestoreService.instance.currentFarmId();
 
-    if (!mounted) return;
+      if (!mounted) return;
 
-    setState(() {
-      _farmId = id == null || id.trim().isEmpty ? null : id.trim();
-      _loadingFarm = false;
-    });
+      setState(() {
+        _farmId = id == null || id.trim().isEmpty ? null : id.trim();
+        _loadingFarm = false;
+      });
+    } catch (_) {
+      if (!mounted) return;
+
+      setState(() {
+        _farmId = null;
+        _loadingFarm = false;
+      });
+    }
   }
 
   void _openGoatForm(TradingPurchase purchase) {
     final farmId = _farmId;
-    if (farmId == null) return;
+
+    if (farmId == null || farmId.isEmpty) return;
 
     Navigator.of(context).push(
       fastRoute(
@@ -70,22 +79,26 @@ class _SelectPurchaseScreenState extends State<SelectPurchaseScreen> {
         backgroundColor: AppColors.paleGreen,
         elevation: 0,
         foregroundColor: AppColors.textDark,
-        title: Text('Select Purchase', style: AppTheme.heading(size: 17)),
+        titleSpacing: 16,
+        title: Text(
+          'Select Purchase',
+          style: AppTheme.heading(size: 17),
+        ),
       ),
-      body: SafeArea(child: _buildBody()),
+      body: SafeArea(
+        child: _buildBody(),
+      ),
     );
   }
 
   Widget _buildBody() {
     if (_loadingFarm) {
-      return const Center(
-        child: CircularProgressIndicator(color: AppColors.primaryGreen),
-      );
+      return const _PurchaseSkeletonList();
     }
 
     final farmId = _farmId;
 
-    if (farmId == null) {
+    if (farmId == null || farmId.isEmpty) {
       return FarmNotLinkedState(
         buttonColor: AppColors.primaryGreen,
         onRetry: _loadFarm,
@@ -106,33 +119,42 @@ class _SelectPurchaseScreenState extends State<SelectPurchaseScreen> {
 
         if (snapshot.connectionState == ConnectionState.waiting &&
             !snapshot.hasData) {
-          return const Center(
-            child: CircularProgressIndicator(color: AppColors.primaryGreen),
-          );
+          return const _PurchaseSkeletonList();
         }
 
-        final purchases = snapshot.data ?? [];
+        final purchases = snapshot.data ?? <TradingPurchase>[];
 
         if (purchases.isEmpty) {
           return _message(
             icon: Icons.check_circle_outline,
             iconColor: AppColors.primaryGreen,
             title: 'Nothing to Register',
-            subtitle:
-            'All received goats have already been registered.',
+            subtitle: 'All received goats have already been registered.',
           );
         }
 
-        return ListView.separated(
-          padding: const EdgeInsets.all(16),
-          itemCount: purchases.length,
-          separatorBuilder: (_, __) => const SizedBox(height: 12),
-          itemBuilder: (context, index) {
-            return _PurchaseCard(
-              purchase: purchases[index],
-              onTap: () => _openGoatForm(purchases[index]),
+        return RefreshIndicator(
+          color: AppColors.primaryGreen,
+          onRefresh: () async {
+            setState(() {});
+            await Future<void>.delayed(
+              const Duration(milliseconds: 350),
             );
           },
+          child: ListView.separated(
+            physics: const AlwaysScrollableScrollPhysics(),
+            padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
+            itemCount: purchases.length,
+            separatorBuilder: (_, __) => const SizedBox(height: 10),
+            itemBuilder: (context, index) {
+              final purchase = purchases[index];
+
+              return _PurchaseCard(
+                purchase: purchase,
+                onTap: () => _openGoatForm(purchase),
+              );
+            },
+          ),
         );
       },
     );
@@ -147,143 +169,441 @@ class _SelectPurchaseScreenState extends State<SelectPurchaseScreen> {
     return Center(
       child: Padding(
         padding: const EdgeInsets.all(24),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Container(
-              width: 56,
-              height: 56,
-              decoration: BoxDecoration(
-                color: iconColor.withOpacity(0.10),
-                shape: BoxShape.circle,
+        child: Container(
+          width: double.infinity,
+          padding: const EdgeInsets.symmetric(
+            horizontal: 20,
+            vertical: 24,
+          ),
+          decoration: AppTheme.card(radius: 18),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: 52,
+                height: 52,
+                decoration: BoxDecoration(
+                  color: iconColor.withOpacity(0.10),
+                  shape: BoxShape.circle,
+                ),
+                child: Icon(
+                  icon,
+                  color: iconColor,
+                  size: 26,
+                ),
               ),
-              child: Icon(icon, color: iconColor, size: 28),
-            ),
-            const SizedBox(height: 14),
-            Text(title, style: AppTheme.heading(size: 15)),
-            const SizedBox(height: 6),
-            Text(
-              subtitle,
-              textAlign: TextAlign.center,
-              style: AppTheme.body(size: 12),
-            ),
-          ],
+              const SizedBox(height: 12),
+              Text(
+                title,
+                textAlign: TextAlign.center,
+                style: AppTheme.heading(size: 15),
+              ),
+              const SizedBox(height: 5),
+              Text(
+                subtitle,
+                textAlign: TextAlign.center,
+                style: AppTheme.body(size: 12),
+              ),
+            ],
+          ),
         ),
       ),
     );
   }
 }
 
+// ============================================================================
+// PURCHASE CARD
+// ============================================================================
+
 class _PurchaseCard extends StatelessWidget {
   final TradingPurchase purchase;
   final VoidCallback onTap;
 
-  const _PurchaseCard({required this.purchase, required this.onTap});
+  const _PurchaseCard({
+    required this.purchase,
+    required this.onTap,
+  });
 
   @override
   Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        width: double.infinity,
-        padding: const EdgeInsets.all(16),
-        decoration: AppTheme.card(radius: 16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Container(
-                  width: 42,
-                  height: 42,
-                  decoration: BoxDecoration(
-                    color: AppColors.tradingBlue.withOpacity(0.14),
-                    shape: BoxShape.circle,
+    final pending = purchase.pendingCount;
+
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(16),
+        child: Container(
+          width: double.infinity,
+          padding: const EdgeInsets.all(13),
+          decoration: AppTheme.card(radius: 16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // ----------------------------------------------------------------
+              // TOP
+              // ----------------------------------------------------------------
+              Row(
+                children: [
+                  Container(
+                    width: 40,
+                    height: 40,
+                    decoration: BoxDecoration(
+                      color: AppColors.tradingBlue.withOpacity(0.11),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: const Icon(
+                      Icons.how_to_reg_outlined,
+                      color: AppColors.tradingBlue,
+                      size: 21,
+                    ),
                   ),
-                  child: const Icon(
-                    Icons.how_to_reg_outlined,
-                    color: AppColors.tradingBlue,
-                    size: 21,
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          purchase.id,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: AppTheme.heading(size: 14),
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          purchase.sellerName,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: AppTheme.body(size: 11),
+                        ),
+                      ],
+                    ),
                   ),
-                ),
-                const SizedBox(width: 11),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(purchase.id, style: AppTheme.heading(size: 16)),
-                      const SizedBox(height: 2),
-                      Text(
-                        purchase.sellerName,
-                        style: AppTheme.body(size: 12),
+                  const SizedBox(width: 8),
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 9,
+                      vertical: 5,
+                    ),
+                    decoration: BoxDecoration(
+                      color: AppColors.warning.withOpacity(0.11),
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                    child: Text(
+                      '$pending Pending',
+                      style: const TextStyle(
+                        color: AppColors.warning,
+                        fontSize: 10,
+                        fontWeight: FontWeight.w700,
                       ),
-                    ],
+                    ),
                   ),
-                ),
-                Icon(
-                  Icons.chevron_right,
-                  color: AppColors.textGrey.withOpacity(0.6),
-                ),
-              ],
-            ),
-            const SizedBox(height: 14),
-            const Divider(height: 1),
-            const SizedBox(height: 12),
-            Row(
-              children: [
-                Expanded(
-                  child: _stat(
-                    '${purchase.totalGoats} Goats',
-                    Icons.pets_outlined,
+                ],
+              ),
+
+              const SizedBox(height: 12),
+
+              // ----------------------------------------------------------------
+              // INFO
+              // ----------------------------------------------------------------
+              Row(
+                children: [
+                  Expanded(
+                    child: _InfoItem(
+                      icon: Icons.pets_outlined,
+                      label: 'Goats',
+                      value: '${purchase.totalGoats}',
+                      color: AppColors.primaryGreen,
+                    ),
                   ),
-                ),
-                Expanded(
-                  child: _stat(
-                    DateFormat('dd MMM yyyy').format(purchase.purchaseDate),
-                    Icons.calendar_today_outlined,
+                  Expanded(
+                    child: _InfoItem(
+                      icon: Icons.calendar_today_outlined,
+                      label: 'Purchase',
+                      value: DateFormat('dd MMM yyyy')
+                          .format(purchase.purchaseDate),
+                      color: AppColors.tradingBlue,
+                    ),
                   ),
+                ],
+              ),
+
+              const SizedBox(height: 10),
+
+              // ----------------------------------------------------------------
+              // REGISTRATION PROGRESS
+              // ----------------------------------------------------------------
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 9,
                 ),
-              ],
-            ),
-            const SizedBox(height: 10),
-            Container(
-              padding: const EdgeInsets.symmetric(
-                horizontal: 10,
-                vertical: 6,
-              ),
-              decoration: BoxDecoration(
-                color: AppColors.warning.withOpacity(0.10),
-                borderRadius: BorderRadius.circular(20),
-              ),
-              child: Text(
-                '${purchase.registeredCount}/${purchase.totalGoats} Registered — '
-                    '${purchase.pendingCount} Pending Registration',
-                style: const TextStyle(
-                  color: AppColors.warning,
-                  fontSize: 11,
-                  fontWeight: FontWeight.w700,
+                decoration: BoxDecoration(
+                  color: AppColors.paleGreen,
+                  borderRadius: BorderRadius.circular(11),
+                ),
+                child: Row(
+                  children: [
+                    const Icon(
+                      Icons.fact_check_outlined,
+                      color: AppColors.primaryGreen,
+                      size: 17,
+                    ),
+                    const SizedBox(width: 7),
+                    Expanded(
+                      child: Text(
+                        '${purchase.registeredCount}/${purchase.totalGoats} registered',
+                        style: AppTheme.body(
+                          size: 11,
+                          color: AppColors.textDark,
+                          weight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                    Text(
+                      'Register now',
+                      style: AppTheme.body(
+                        size: 10,
+                        color: AppColors.primaryGreen,
+                        weight: FontWeight.w700,
+                      ),
+                    ),
+                    const SizedBox(width: 2),
+                    const Icon(
+                      Icons.chevron_right,
+                      color: AppColors.primaryGreen,
+                      size: 17,
+                    ),
+                  ],
                 ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );
   }
+}
 
-  Widget _stat(String value, IconData icon) {
+// ============================================================================
+// INFO ITEM
+// ============================================================================
+
+class _InfoItem extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final String value;
+  final Color color;
+
+  const _InfoItem({
+    required this.icon,
+    required this.label,
+    required this.value,
+    required this.color,
+  });
+
+  @override
+  Widget build(BuildContext context) {
     return Row(
       children: [
-        Icon(icon, size: 15, color: AppColors.primaryGreen),
-        const SizedBox(width: 6),
-        Flexible(
-          child: Text(
-            value,
-            overflow: TextOverflow.ellipsis,
-            style: AppTheme.body(size: 12, color: AppColors.textDark),
+        Container(
+          width: 30,
+          height: 30,
+          decoration: BoxDecoration(
+            color: color.withOpacity(0.10),
+            borderRadius: BorderRadius.circular(9),
+          ),
+          child: Icon(
+            icon,
+            color: color,
+            size: 16,
+          ),
+        ),
+        const SizedBox(width: 7),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                label,
+                style: AppTheme.body(size: 9),
+              ),
+              const SizedBox(height: 1),
+              Text(
+                value,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: AppTheme.body(
+                  size: 11,
+                  color: AppColors.textDark,
+                  weight: FontWeight.w600,
+                ),
+              ),
+            ],
           ),
         ),
       ],
+    );
+  }
+}
+
+// ============================================================================
+// SKELETON LOADING
+// ============================================================================
+
+class _PurchaseSkeletonList extends StatelessWidget {
+  const _PurchaseSkeletonList();
+
+  @override
+  Widget build(BuildContext context) {
+    return ListView.separated(
+      physics: const NeverScrollableScrollPhysics(),
+      padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
+      itemCount: 4,
+      separatorBuilder: (_, __) => const SizedBox(height: 10),
+      itemBuilder: (_, __) => const _PurchaseSkeletonCard(),
+    );
+  }
+}
+
+class _PurchaseSkeletonCard extends StatelessWidget {
+  const _PurchaseSkeletonCard();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(13),
+      decoration: AppTheme.card(radius: 16),
+      child: Column(
+        children: [
+          Row(
+            children: [
+              _SkeletonBox(
+                width: 40,
+                height: 40,
+                radius: 12,
+              ),
+              const SizedBox(width: 10),
+              const Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    _SkeletonBox(
+                      width: 110,
+                      height: 13,
+                      radius: 5,
+                    ),
+                    SizedBox(height: 6),
+                    _SkeletonBox(
+                      width: 75,
+                      height: 9,
+                      radius: 4,
+                    ),
+                  ],
+                ),
+              ),
+              _SkeletonBox(
+                width: 65,
+                height: 23,
+                radius: 20,
+              ),
+            ],
+          ),
+          const SizedBox(height: 14),
+          const Row(
+            children: [
+              Expanded(
+                child: Row(
+                  children: [
+                    _SkeletonBox(
+                      width: 30,
+                      height: 30,
+                      radius: 9,
+                    ),
+                    SizedBox(width: 7),
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        _SkeletonBox(
+                          width: 35,
+                          height: 8,
+                          radius: 4,
+                        ),
+                        SizedBox(height: 4),
+                        _SkeletonBox(
+                          width: 50,
+                          height: 10,
+                          radius: 4,
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+              Expanded(
+                child: Row(
+                  children: [
+                    _SkeletonBox(
+                      width: 30,
+                      height: 30,
+                      radius: 9,
+                    ),
+                    SizedBox(width: 7),
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        _SkeletonBox(
+                          width: 45,
+                          height: 8,
+                          radius: 4,
+                        ),
+                        SizedBox(height: 4),
+                        _SkeletonBox(
+                          width: 75,
+                          height: 10,
+                          radius: 4,
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          const _SkeletonBox(
+            width: double.infinity,
+            height: 38,
+            radius: 11,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _SkeletonBox extends StatelessWidget {
+  final double width;
+  final double height;
+  final double radius;
+
+  const _SkeletonBox({
+    required this.width,
+    required this.height,
+    required this.radius,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: width,
+      height: height,
+      decoration: BoxDecoration(
+        color: AppColors.divider.withOpacity(0.55),
+        borderRadius: BorderRadius.circular(radius),
+      ),
     );
   }
 }
