@@ -8,6 +8,17 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 /// All numeric values are parsed defensively because Firestore data can
 /// contain int, double, or legacy/string values depending on older records.
 class TradingSummary {
+  /// Goats currently alive on the farm (surviving count = totalGoats -
+  /// mortality), set as soon as a purchase's receiving is completed —
+  /// see TradingService.completeReceiving() /
+  /// backfillDashboardSummary().
+  ///
+  /// This is NOT a count of `tradingGoats` documents (individually
+  /// registered goats). It intentionally stays correct through partial
+  /// registration: a goat is "in stock" the moment it's received alive,
+  /// whether or not it has been through Feature 3 (Goat Registration)
+  /// yet. See GoatService.registerGoat()'s doc comment for why
+  /// registration never touches this field.
   final int totalStock;
   final int wholesalePurchased;
   final int totalSold;
@@ -77,8 +88,18 @@ class TradingSummary {
       totalStock: intFrom('totalStock'),
       wholesalePurchased: intFrom('wholesalePurchased'),
       totalSold: intFrom('totalSold'),
-      totalProfit: doubleFrom('totalProfit'),
-      pendingRegistrations: intFrom('pendingRegistrations'),
+      // Floored at 0 for display: GoatService.registerGoat() now floors
+      // this itself going forward, but any value already written to
+      // Firestore before that fix (e.g. the -2 from registering against
+      // a purchase that predates dashboard-summary tracking) should
+      // never be shown to the user as a negative "count". Running
+      // TradingService.backfillDashboardSummary() once corrects the
+      // stored value properly; this clamp is just a display-side safety
+      // net in the meantime.
+      pendingRegistrations:
+      intFrom('pendingRegistrations') < 0
+          ? 0
+          : intFrom('pendingRegistrations'),
       booking: intFrom('booking'),
       waitOnDelivery: intFrom('waitOnDelivery'),
     );

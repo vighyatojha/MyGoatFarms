@@ -99,6 +99,30 @@
           "order": "ASCENDING"
         }
       ]
+    },
+    {
+      "collectionGroup": "healthRecords",
+      "queryScope": "COLLECTION_GROUP",
+      "fields": [
+        {
+          "fieldPath": "nextDueDate",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "tradingGoats",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "currentStatus",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "movedToOwnPalaiAt",
+          "order": "DESCENDING"
+        }
+      ]
     }
   ],
   "fieldOverrides": []

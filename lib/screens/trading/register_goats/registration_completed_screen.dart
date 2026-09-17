@@ -3,13 +3,15 @@ import 'package:intl/intl.dart';
 
 import '../../../app_theme.dart';
 import '../../../models/trading_purchase_model.dart';
+import '../../../widgets/fast_route.dart';
+import '../own_palai/move_to_own_palai_screen.dart';
 
 /// Task 2.6 — Registration Completed screen.
 ///
 /// Shown once a purchase's `pendingCount` reaches zero (every goat from
 /// that purchase has been registered). Per the plan: shows Purchase ID,
 /// Date, Total/Registered counts, registration date, and 4 exit
-/// options — View Goat Stock, Move to Own Palai (stub for phase 3),
+/// options — View Goat Stock, Move to Own Palai (Task 2.1, phase 3),
 /// Sell Goat (stub for phase 3), Back to Trading.
 class RegistrationCompletedScreen extends StatelessWidget {
   final String farmId;
@@ -37,6 +39,12 @@ class RegistrationCompletedScreen extends StatelessWidget {
         content: Text('Goat Stock screen is coming next.'),
         backgroundColor: AppColors.darkGreen,
       ),
+    );
+  }
+
+  void _moveToOwnPalai(BuildContext context) {
+    Navigator.of(context).push(
+      fastRoute(MoveToOwnPalaiScreen(farmId: farmId)),
     );
   }
 
@@ -201,7 +209,7 @@ class RegistrationCompletedScreen extends StatelessWidget {
                 width: double.infinity,
                 height: 50,
                 child: OutlinedButton.icon(
-                  onPressed: () => _phase3Stub(context, 'Move to Own Palai'),
+                  onPressed: () => _moveToOwnPalai(context),
                   icon: const Icon(Icons.holiday_village_outlined),
                   label: const Text(
                     'Move to Own Palai',

@@ -74,6 +74,22 @@ class Goat {
 
   final DateTime? createdAt;
 
+  // ---------------------------------------------------------------------
+  // OWN PALAI (Phase 3, Feature 5)
+  // ---------------------------------------------------------------------
+  //
+  // `currentStatus` is the single source of truth for whether a goat is
+  // in Own Palai — there is deliberately no separate `ownPalai` boolean,
+  // per the phase 3 plan's warning against tracking the same fact two
+  // ways ("pick one, don't do both or they'll drift"). Moving a goat to
+  // Own Palai only ever sets `currentStatus: statusOwnPalai` and
+  // `movedToOwnPalaiAt` on this same document — see GoatService and the
+  // "No duplicate Goat IDs" note below.
+
+  /// Set the moment a goat's [currentStatus] becomes [statusOwnPalai].
+  /// Null for goats that have never been moved to Own Palai.
+  final DateTime? movedToOwnPalaiAt;
+
   const Goat({
     required this.id,
     required this.breed,
@@ -88,6 +104,7 @@ class Goat {
     this.photo,
     this.photoContentType,
     this.createdAt,
+    this.movedToOwnPalaiAt,
   });
 
   // ---------------------------------------------------------------------
@@ -95,12 +112,18 @@ class Goat {
   // ---------------------------------------------------------------------
 
   static const String statusAvailable = 'Available';
+  static const String statusOwnPalai = 'Own Palai';
   static const String statusSold = 'Sold';
   static const String statusBooked = 'Booked';
   static const String statusInCustomerPalai = 'In Customer Palai';
 
+  /// Centrally-defined status enum (phase 3 plan, Section 5): kept here
+  /// so Phase 4 (Sale) doesn't have to guess what strings this phase
+  /// used when it builds the "Available for Sale" list from Own Palai
+  /// goats.
   static const List<String> statusValues = [
     statusAvailable,
+    statusOwnPalai,
     statusSold,
     statusBooked,
     statusInCustomerPalai,
@@ -119,6 +142,9 @@ class Goat {
 
   bool get isAvailable =>
       currentStatus.trim().toLowerCase() == statusAvailable.toLowerCase();
+
+  bool get isOwnPalai =>
+      currentStatus.trim().toLowerCase() == statusOwnPalai.toLowerCase();
 
   @override
   bool operator ==(Object other) => other is Goat && other.id == id;
@@ -162,6 +188,9 @@ class Goat {
       photoContentType: data['photoContentType'] as String?,
       createdAt: data['createdAt'] is Timestamp
           ? (data['createdAt'] as Timestamp).toDate()
+          : null,
+      movedToOwnPalaiAt: data['movedToOwnPalaiAt'] is Timestamp
+          ? (data['movedToOwnPalaiAt'] as Timestamp).toDate()
           : null,
     );
   }

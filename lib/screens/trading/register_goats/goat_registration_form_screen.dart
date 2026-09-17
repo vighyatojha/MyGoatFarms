@@ -237,10 +237,23 @@ class _GoatRegistrationFormScreenState
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              _label('Age'),
+                              _label('Age (months)'),
                               _textField(
                                 _ageController,
-                                hint: 'e.g. 8-10 months',
+                                hint: 'e.g. 9',
+                                keyboardType: const TextInputType.numberWithOptions(
+                                  decimal: false,
+                                ),
+                                validator: (v) {
+                                  if (v == null || v.trim().isEmpty) {
+                                    return 'Required';
+                                  }
+                                  final months = int.tryParse(v.trim());
+                                  if (months == null || months <= 0) {
+                                    return 'Enter age in whole months';
+                                  }
+                                  return null;
+                                },
                               ),
                             ],
                           ),
@@ -447,6 +460,7 @@ class _GoatRegistrationFormScreenState
         TextInputType? keyboardType,
         int maxLines = 1,
         bool optional = false,
+        String? Function(String?)? validator,
       }) {
     return Container(
       decoration: AppTheme.card(radius: 12),
@@ -454,8 +468,10 @@ class _GoatRegistrationFormScreenState
         controller: controller,
         keyboardType: keyboardType,
         maxLines: maxLines,
-        validator: (v) =>
-        (!optional && (v == null || v.trim().isEmpty)) ? 'Required' : null,
+        validator: validator ??
+                (v) => (!optional && (v == null || v.trim().isEmpty))
+                ? 'Required'
+                : null,
         decoration: InputDecoration(
           hintText: hint,
           hintStyle: AppTheme.body(size: 12),

@@ -11,6 +11,7 @@ import '../../widgets/farm_not_linked_state.dart';
 import 'purchase_goats/complete_receiving_screen.dart';
 import 'purchase_goats/purchase_goats_wizard_screen.dart';
 import 'register_goats/select_purchase_screen.dart';
+import 'own_palai/own_palai_list_screen.dart';
 
 /// Trading Dashboard.
 ///
@@ -957,6 +958,21 @@ class _TradingDashboardScreenState
             onTap: () {
               _comingSoon(
                 'Goat Stock',
+              );
+            },
+          ),
+
+          const SizedBox(width: 18),
+
+          _TradingQuickAction(
+            icon:
+            Icons.holiday_village_outlined,
+            label: 'Own\nPalai',
+            onTap: () {
+              Navigator.of(context).push(
+                fastRoute(
+                  const OwnPalaiListScreen(),
+                ),
               );
             },
           ),

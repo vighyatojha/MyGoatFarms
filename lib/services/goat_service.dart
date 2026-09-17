@@ -3,6 +3,8 @@ import 'dart:typed_data';
 import 'package:cloud_firestore/cloud_firestore.dart';
 
 import '../models/goat_model.dart';
+import '../models/trading_goat_health_record.dart';
+import '../models/trading_goat_weight_entry.dart';
 import '../models/trading_purchase_model.dart';
 
 /// Handles the Trading module's Goat Registration (Feature 3) and Goat
@@ -60,6 +62,22 @@ class GoatService {
 
   CollectionReference<Map<String, dynamic>> _goats(String farmId) {
     return _farms().doc(farmId).collection('tradingGoats');
+  }
+
+  /// farms/{farmId}/tradingGoats/{goatId}/weightHistory (Task 1.2).
+  CollectionReference<Map<String, dynamic>> _weightHistory(
+      String farmId,
+      String goatId,
+      ) {
+    return _goats(farmId).doc(goatId).collection('weightHistory');
+  }
+
+  /// farms/{farmId}/tradingGoats/{goatId}/healthRecords (Task 1.2).
+  CollectionReference<Map<String, dynamic>> _healthRecords(
+      String farmId,
+      String goatId,
+      ) {
+    return _goats(farmId).doc(goatId).collection('healthRecords');
   }
 
   CollectionReference<Map<String, dynamic>> _tradingPurchases(
@@ -123,6 +141,142 @@ class GoatService {
     }
 
     return Goat.fromDoc(doc);
+  }
+
+  /// All trading goats for [farmId], newest first. Used by Task 2.1's
+  /// "Move to Own Palai" goat picker (filtered to Available goats by
+  /// the caller) and can double as the Goat Stock list's data source
+  /// once that Phase 2 screen exists.
+  Stream<List<Goat>> goatsStream(String farmId) {
+    return _goats(farmId)
+        .orderBy('createdAt', descending: true)
+        .snapshots()
+        .map((snap) => snap.docs.map(Goat.fromDoc).toList());
+  }
+
+  /// Own Palai goats only (Task 2.2's list screen), newest-moved first.
+  Stream<List<Goat>> ownPalaiGoatsStream(String farmId) {
+    return _goats(farmId)
+        .where('currentStatus', isEqualTo: Goat.statusOwnPalai)
+        .orderBy('movedToOwnPalaiAt', descending: true)
+        .snapshots()
+        .map((snap) => snap.docs.map(Goat.fromDoc).toList());
+  }
+
+  // -----------------------------------------------------------------------
+  // MOVE TO OWN PALAI (Task 2.1, Feature 5)
+  // -----------------------------------------------------------------------
+
+  /// Moves an existing goat into Own Palai by updating its
+  /// `currentStatus` and `movedToOwnPalaiAt` fields in place.
+  ///
+  /// Deliberately just an update on `tradingGoats/{goatId}` — no new
+  /// document, no new goat ID. See the "No duplicate Goat IDs" note on
+  /// this class and in the phase 3 plan (Section 5): this is exactly
+  /// the operation that note warns against getting wrong.
+  ///
+  /// Only goats currently [Goat.statusAvailable] can be moved — a goat
+  /// that's Sold, Booked, or already in Own Palai/Customer Palai isn't
+  /// a valid source state, so this throws rather than silently
+  /// overwriting a status transition that doesn't make sense.
+  Future<void> moveToOwnPalai({
+    required String farmId,
+    required String goatId,
+  }) async {
+    final ref = _goats(farmId).doc(goatId);
+
+    await _db.runTransaction<void>((transaction) async {
+      final snap = await transaction.get(ref);
+
+      if (!snap.exists) {
+        throw StateError('Goat $goatId was not found.');
+      }
+
+      final goat = Goat.fromDoc(snap);
+
+      if (!goat.isAvailable) {
+        throw StateError(
+          'Only goats with status "${Goat.statusAvailable}" can be '
+              'moved to Own Palai (this goat is "${goat.currentStatus}").',
+        );
+      }
+
+      transaction.update(ref, {
+        'currentStatus': Goat.statusOwnPalai,
+        'movedToOwnPalaiAt': FieldValue.serverTimestamp(),
+      });
+    }).timeout(_timeout);
+  }
+
+  // -----------------------------------------------------------------------
+  // WEIGHT HISTORY (Task 1.2 / 3.2 — Growth Tracking)
+  // -----------------------------------------------------------------------
+
+  /// Logs one weight-check entry (+ optional monthly photo). Task 3.2's
+  /// "log a new weight entry" form writes here; nothing else on the
+  /// `tradingGoats/{goatId}` doc changes.
+  Future<String> addWeightEntry({
+    required String farmId,
+    required String goatId,
+    required GoatWeightEntry entry,
+  }) async {
+    final ref = await _weightHistory(farmId, goatId)
+        .add({
+      ...entry.toMap(),
+      'createdAt': FieldValue.serverTimestamp(),
+    })
+        .timeout(_timeout);
+
+    return ref.id;
+  }
+
+  /// Oldest-first, so the Growth Tracking chart/gain calculation can
+  /// walk the list in chronological order without re-sorting.
+  Stream<List<GoatWeightEntry>> weightHistoryStream({
+    required String farmId,
+    required String goatId,
+  }) {
+    return _weightHistory(farmId, goatId)
+        .orderBy('date', descending: false)
+        .snapshots()
+        .map((snap) => snap.docs.map(GoatWeightEntry.fromDoc).toList());
+  }
+
+  // -----------------------------------------------------------------------
+  // HEALTH RECORDS (Task 1.2 / 3.3 — Health Tracking)
+  // -----------------------------------------------------------------------
+
+  /// Logs one health entry — vaccination, hoof cutting, hair trimming,
+  /// or medicine, per [GoatHealthRecord.type]. Task 3.3's "log a new
+  /// entry per type" form writes here.
+  Future<String> addHealthRecord({
+    required String farmId,
+    required String goatId,
+    required GoatHealthRecord record,
+  }) async {
+    final ref = await _healthRecords(farmId, goatId)
+        .add({
+      ...record.toMap(),
+      'createdAt': FieldValue.serverTimestamp(),
+    })
+        .timeout(_timeout);
+
+    return ref.id;
+  }
+
+  /// All health records for one goat, newest first. Deliberately not
+  /// filtered by type server-side (that would need a composite index
+  /// per type) — Task 3.3's four sections filter this single stream by
+  /// [GoatHealthRecord.type] client-side instead, matching the plan's
+  /// "all in one place" design for this subcollection.
+  Stream<List<GoatHealthRecord>> healthRecordsStream({
+    required String farmId,
+    required String goatId,
+  }) {
+    return _healthRecords(farmId, goatId)
+        .orderBy('date', descending: true)
+        .snapshots()
+        .map((snap) => snap.docs.map(GoatHealthRecord.fromDoc).toList());
   }
 
   // -----------------------------------------------------------------------

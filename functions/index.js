@@ -33,7 +33,9 @@
  *     upcomingHealthReminders / upcomingCustomerHealthReminders), and
  *     writes a notification doc the first time a record crosses into
  *     that window — which then triggers function #1 above to fan it out
- *     to every device.
+ *     to every device. Covers three sources: Own Farm `healthEvents`,
+ *     Customer Palai's three `*Records` collections, and (Phase 3)
+ *     Trading's single `healthRecords` collection for Own Palai goats.
  *
  * IDEMPOTENCY
  * -----------
@@ -270,6 +272,51 @@ exports.scheduledHealthReminderSweep = onSchedule('every 30 minutes', async () =
     }
   }
 
+  // -- Own Palai (Trading): farms/{farmId}/tradingGoats/{goatId}/healthRecords/{recordId}
+  //
+  // Phase 3, Task 1.3. Unlike Customer Palai above, Trading keeps all
+  // four health types (vaccination, hoofCutting, hairTrimming,
+  // medicine) in ONE `healthRecords` collection per goat, distinguished
+  // by a `type` field — see the phase 3 plan (Section 1) and
+  // GoatHealthRecord in the Flutter app. So this is a single
+  // collectionGroup query rather than one per type, matching the
+  // Own Farm block above (`healthEvents`) which uses the same
+  // one-collection-many-types shape and sits at the same path depth
+  // (goat doc → farm doc), just with a different collection name.
+  //
+  // Trading goat docs have no separate `goatCode` field — the document
+  // ID itself IS the display code (e.g. "G-0001"), so this skips the
+  // extra goat-doc read the other two blocks need.
+  const ownPalaiHealthSnap = await db.collectionGroup('healthRecords')
+      .where('nextDueDate', '<=', horizon)
+      .get();
+
+  for (const doc of ownPalaiHealthSnap.docs) {
+    const data = doc.data();
+    const dueDate = data.nextDueDate;
+    if (!dueDate) continue;
+
+    // Path: farms/{farmId}/tradingGoats/{goatId}/healthRecords/{recordId}
+    const goatRef = doc.ref.parent.parent;
+    const farmId = goatRef.parent.parent.id;
+    const goatCode = goatRef.id;
+    const label = String(data.type || 'health').replace(/([A-Z])/g, ' $1').trim();
+    const labelTitled = label.charAt(0).toUpperCase() + label.slice(1);
+
+    for (const stage of STAGE_WINDOWS) {
+      if (!isInStageWindow(dueDate, stage.daysBefore)) continue;
+
+      await writeAdvanceReminder({
+        farmId,
+        docKey: `ownpalai_health_${goatRef.id}_${doc.id}_${stage.suffix}`,
+        type: `ownPalai_${data.type}_${stage.suffix}`,
+        title: stage.label(labelTitled),
+        message: stage.body(goatCode, labelTitled),
+        reference: {goatId: goatRef.id, recordId: doc.id},
+      });
+    }
+  }
+
   logger.info('scheduledHealthReminderSweep complete.');
 });
 
@@ -318,4 +365,3 @@ exports.deleteNotification = onCall(async (request) => {
   await notifRef.delete();
   return {success: true};
 });
-

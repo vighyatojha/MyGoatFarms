@@ -730,12 +730,38 @@ class TradingService {
   /// Only sets wholesalePurchased/totalStock/pendingRegistrations —
   /// totalSold, totalProfit, booking, and waitOnDelivery come from
   /// other modules (sales/bookings) and are left untouched via merge.
+  ///
+  /// --- totalStock vs. pendingRegistrations (Phase 2 note) ---
+  ///
+  /// `totalStock` means "goats physically on the farm, alive" —
+  /// surviving count (totalGoats - mortality) as of receiving. Feature
+  /// 3 (Goat Registration, see GoatService) deliberately never touches
+  /// this: registering a goat doesn't move it onto or off the farm, it
+  /// just creates its individual record, so totalStock stays correct
+  /// through partial registration without any extra wiring. This is
+  /// also why Task 3.3 in the phase 2 plan doesn't redefine totalStock
+  /// as "count of tradingGoats with currentStatus == Available" — doing
+  /// that would make the number dip during partial registration (e.g.
+  /// 12/20 registered would show 12 instead of the 20 goats actually on
+  /// the farm), which contradicts the plan's own requirement that
+  /// partial registration must "work correctly everywhere."
+  ///
+  /// `pendingRegistrations`, on the other hand, DOES change as
+  /// registration happens — GoatService.registerGoat() decrements it by
+  /// 1 per goat, inside the same transaction as the goat write and the
+  /// purchase's registeredCount/pendingCount update. So unlike
+  /// totalStock, this backfill must NOT reset pendingRegistrations to
+  /// the full surviving-goat count; it has to sum each purchase's
+  /// current `pendingCount` (which already reflects registrations to
+  /// date), or re-running backfill after registration has started would
+  /// silently undo it.
   Future<void> backfillDashboardSummary(String farmId) async {
     final snapshot =
     await _tradingPurchases(farmId).get().timeout(_timeout);
 
     var wholesalePurchased = 0;
     var totalStock = 0;
+    var pendingRegistrations = 0;
 
     for (final doc in snapshot.docs) {
       final purchase = TradingPurchase.fromDoc(doc);
@@ -749,6 +775,15 @@ class TradingService {
         if (surviving > 0) {
           totalStock += surviving;
         }
+
+        // Reflects goats from this purchase still awaiting individual
+        // registration — kept in sync by GoatService.registerGoat() as
+        // each goat is saved. Not the same as `surviving`: a partially
+        // (or fully) registered purchase has a smaller pendingCount
+        // than its surviving-goat count.
+        if (purchase.pendingCount > 0) {
+          pendingRegistrations += purchase.pendingCount;
+        }
       }
     }
 
@@ -756,11 +791,7 @@ class TradingService {
       {
         'wholesalePurchased': wholesalePurchased,
         'totalStock': totalStock,
-        // pendingRegistrations mirrors totalStock in this app: every
-        // surviving, received goat still needs registering, and
-        // nothing currently reduces this count (no registration flow
-        // wired up yet).
-        'pendingRegistrations': totalStock,
+        'pendingRegistrations': pendingRegistrations,
       },
       SetOptions(merge: true),
     ).timeout(_timeout);
