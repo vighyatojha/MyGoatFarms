@@ -7,6 +7,7 @@ import '../../../services/goat_service.dart';
 import '../../../widgets/fast_route.dart';
 import '../../../widgets/farm_not_linked_state.dart';
 import 'move_to_own_palai_screen.dart';
+import 'own_palai_goat_profile_screen.dart';
 
 /// Task 2.2 — Own Palai list screen.
 ///
@@ -76,12 +77,10 @@ class _OwnPalaiListScreenState extends State<OwnPalaiListScreen> {
   }
 
   void _openProfile(Goat goat) {
-    // Feature 6 (Own Palai Goat Profile) is the next pair — wire this
-    // up to the real profile screen once it exists.
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('${goat.id} profile is coming next.'),
-        backgroundColor: AppColors.darkGreen,
+    if (_farmId == null) return;
+    Navigator.of(context).push(
+      fastRoute(
+        OwnPalaiGoatProfileScreen(farmId: _farmId!, goat: goat),
       ),
     );
   }
