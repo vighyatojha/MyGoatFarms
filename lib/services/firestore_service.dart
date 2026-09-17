@@ -20,6 +20,8 @@ import '../models/partner_model.dart';
 import '../models/own_farm_models.dart';
 import '../models/notification_model.dart';
 import '../models/supplier_model.dart';
+import '../models/goat_model.dart';
+import '../models/trading_goat_health_record.dart';
 
 /// One upcoming/due health reminder for a Customer-Palai goat —
 /// vaccination, hoof cutting, or hair trimming. See
@@ -40,6 +42,23 @@ class CustomerHealthReminder {
     required this.recordType,
     required this.recordId,
     required this.label,
+    required this.dueDate,
+  });
+}
+
+/// One upcoming/due health reminder for a Trading-module Own Palai
+/// goat — vaccination, hoof cutting, hair trimming, or medicine. See
+/// [FirestoreService.upcomingTradingHealthReminders].
+class TradingHealthReminder {
+  final Goat goat;
+  final GoatHealthRecordType recordType;
+  final String recordId;
+  final DateTime dueDate;
+
+  TradingHealthReminder({
+    required this.goat,
+    required this.recordType,
+    required this.recordId,
     required this.dueDate,
   });
 }
@@ -3705,6 +3724,72 @@ class FirestoreService {
               dueDate: dueDate,
             ));
           }
+        }
+      }
+    }
+
+    results.sort((a, b) => a.dueDate.compareTo(b.dueDate));
+    return results;
+  }
+
+  // ---------------------------------------------------------------------
+  // Trading — Own Palai goats
+  // ---------------------------------------------------------------------
+
+  CollectionReference<Map<String, dynamic>> _tradingGoats(String farmId) =>
+      _farms.doc(farmId).collection('tradingGoats');
+
+  CollectionReference<Map<String, dynamic>> _tradingHealthRecords(
+      String farmId,
+      String goatId,
+      ) =>
+      _tradingGoats(farmId).doc(goatId).collection('healthRecords');
+
+  /// Every Own-Palai (Trading module) goat with a vaccination /
+  /// hoof-cutting / hair-trimming / medicine `nextDueDate` due within
+  /// [withinDays] days (default 45) or already overdue.
+  ///
+  /// This is the Trading-module counterpart to
+  /// [upcomingCustomerHealthReminders] and [upcomingHealthReminders] —
+  /// Trading keeps all four record types in one `healthRecords`
+  /// subcollection distinguished by a `type` field (see
+  /// GoatHealthRecord) instead of four separate per-type
+  /// subcollections, so this only needs one subcollection read per
+  /// goat rather than four. Used by HealthReminderScheduler to
+  /// schedule on-device reminders and populate the same farm-wide
+  /// notification feed it already uses for Own Farm and Customer
+  /// Palai — deliberately reusing that mechanism rather than building
+  /// a separate one for Trading (see the phase 3 plan's Task 1.3).
+  Future<List<TradingHealthReminder>> upcomingTradingHealthReminders(
+      String farmId, {
+        int withinDays = 45,
+      }) async {
+    final goatsSnap = await _tradingGoats(farmId)
+        .where('currentStatus', isEqualTo: Goat.statusOwnPalai)
+        .get()
+        .timeout(timeout);
+
+    final cutoff = DateTime.now().add(Duration(days: withinDays));
+    final results = <TradingHealthReminder>[];
+
+    for (final goatDoc in goatsSnap.docs) {
+      final goat = Goat.fromDoc(goatDoc);
+      final recordsSnap = await _tradingHealthRecords(farmId, goat.id)
+          .orderBy('date', descending: true)
+          .limit(20)
+          .get()
+          .timeout(timeout);
+
+      for (final doc in recordsSnap.docs) {
+        final record = GoatHealthRecord.fromDoc(doc);
+        final due = record.nextDueDate;
+        if (due != null && due.isBefore(cutoff)) {
+          results.add(TradingHealthReminder(
+            goat: goat,
+            recordType: record.type,
+            recordId: record.id,
+            dueDate: due,
+          ));
         }
       }
     }

@@ -697,6 +697,7 @@ class _OwnPalaiGoatProfileScreenState
             Expanded(
               child: Text(type.label, style: AppTheme.heading(size: 13)),
             ),
+            if (latest != null) _dueBadge(latest),
             TextButton.icon(
               onPressed: () => _openAddHealthRecord(goat, type),
               icon: const Icon(Icons.add, size: 15),
@@ -747,6 +748,39 @@ class _OwnPalaiGoatProfileScreenState
           ],
         ],
       ],
+    );
+  }
+
+  /// Task 3.4 — "due" / "overdue" badge for one health type's latest
+  /// entry. Reuses [GoatHealthRecord.isOverdue] / [isDueWithin] (Task
+  /// 1.3) and the same [kHealthRecordPendingWindowDays] window the
+  /// Customer Palai Health tab already uses for its own due-soon
+  /// badges, rather than inventing a separate threshold here. Returns
+  /// nothing when the latest entry has no due date, or its due date is
+  /// further out than that window.
+  Widget _dueBadge(GoatHealthRecord latest) {
+    if (latest.nextDueDate == null) return const SizedBox.shrink();
+
+    final overdue = latest.isOverdue;
+    final dueSoon = !overdue &&
+        latest.isDueWithin(const Duration(days: kHealthRecordPendingWindowDays));
+
+    if (!overdue && !dueSoon) return const SizedBox.shrink();
+
+    final color = overdue ? AppColors.error : AppColors.warning;
+    final text = overdue ? 'Overdue' : 'Due soon';
+
+    return Container(
+      margin: const EdgeInsets.only(right: 6),
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+      decoration: BoxDecoration(
+        color: color.withOpacity(0.12),
+        borderRadius: BorderRadius.circular(20),
+      ),
+      child: Text(
+        text,
+        style: AppTheme.body(size: 10, color: color, weight: FontWeight.w700),
+      ),
     );
   }
 

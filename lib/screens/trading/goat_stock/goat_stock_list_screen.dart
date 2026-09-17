@@ -12,14 +12,12 @@ import 'goat_stock_detail_screen.dart';
 ///
 /// Streams the `tradingGoats` collection — the same records Feature 3
 /// (Goat Registration) wrote — and shows each as a row: Photo, Goat ID,
-/// Breed, Age, Weight, Status, per the phase 2 plan. No new writes
-/// happen here, this is a read-only list/detail view.
+/// Breed, Age, Weight, Status.
 ///
-/// A status filter chip row is included so this screen keeps working
-/// once later phases (Own Palai, Sale) start moving goats out of
-/// "Available" — phase 2 itself only ever writes that one status, so by
-/// default "Available" is selected, matching the plan's suggestion to
-/// filter on `currentStatus: 'Available'`. "All" is one tap away.
+/// This screen is read-only. It does not create or modify goats.
+///
+/// Status filtering is performed client-side because GoatService.goatsStream()
+/// currently exposes only the farmId parameter.
 class GoatStockListScreen extends StatefulWidget {
   const GoatStockListScreen({super.key});
 
@@ -44,7 +42,9 @@ class _GoatStockListScreenState extends State<GoatStockListScreen> {
   }
 
   Future<void> _loadFarm() async {
-    if (mounted) setState(() => _loadingFarm = true);
+    if (mounted) {
+      setState(() => _loadingFarm = true);
+    }
 
     final id = await FirestoreService.instance.currentFarmId();
 
@@ -68,7 +68,10 @@ class _GoatStockListScreenState extends State<GoatStockListScreen> {
 
     Navigator.of(context).push(
       fastRoute(
-        GoatStockDetailScreen(farmId: farmId, goat: goat),
+        GoatStockDetailScreen(
+          farmId: farmId,
+          goat: goat,
+        ),
       ),
     );
   }
@@ -81,16 +84,23 @@ class _GoatStockListScreenState extends State<GoatStockListScreen> {
         backgroundColor: AppColors.paleGreen,
         elevation: 0,
         foregroundColor: AppColors.textDark,
-        title: Text('Goat Stock', style: AppTheme.heading(size: 17)),
+        title: Text(
+          'Goat Stock',
+          style: AppTheme.heading(size: 17),
+        ),
       ),
-      body: SafeArea(child: _buildBody()),
+      body: SafeArea(
+        child: _buildBody(),
+      ),
     );
   }
 
   Widget _buildBody() {
     if (_loadingFarm) {
       return const Center(
-        child: CircularProgressIndicator(color: AppColors.primaryGreen),
+        child: CircularProgressIndicator(
+          color: AppColors.primaryGreen,
+        ),
       );
     }
 
@@ -111,18 +121,31 @@ class _GoatStockListScreenState extends State<GoatStockListScreen> {
             decoration: AppTheme.card(radius: 12),
             child: TextField(
               controller: _searchController,
-              onChanged: (v) => setState(() => _search = v.trim().toLowerCase()),
+              onChanged: (v) {
+                setState(() {
+                  _search = v.trim().toLowerCase();
+                });
+              },
               decoration: InputDecoration(
                 hintText: 'Search by Goat ID or breed',
                 hintStyle: AppTheme.body(size: 12),
-                prefixIcon: const Icon(Icons.search, size: 18),
+                prefixIcon: const Icon(
+                  Icons.search,
+                  size: 18,
+                ),
                 border: InputBorder.none,
-                contentPadding: const EdgeInsets.symmetric(vertical: 12),
+                contentPadding: const EdgeInsets.symmetric(
+                  vertical: 12,
+                ),
               ),
-              style: AppTheme.body(size: 13, color: AppColors.textDark),
+              style: AppTheme.body(
+                size: 13,
+                color: AppColors.textDark,
+              ),
             ),
           ),
         ),
+
         Padding(
           padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
           child: SizedBox(
@@ -140,12 +163,10 @@ class _GoatStockListScreenState extends State<GoatStockListScreen> {
             ),
           ),
         ),
+
         Expanded(
           child: StreamBuilder<List<Goat>>(
-            stream: GoatService.instance.goatsStream(
-              farmId,
-              currentStatus: _statusFilter,
-            ),
+            stream: GoatService.instance.goatsStream(farmId),
             builder: (context, snapshot) {
               if (snapshot.hasError) {
                 return _message(
@@ -159,18 +180,42 @@ class _GoatStockListScreenState extends State<GoatStockListScreen> {
               if (snapshot.connectionState == ConnectionState.waiting &&
                   !snapshot.hasData) {
                 return const Center(
-                  child: CircularProgressIndicator(color: AppColors.primaryGreen),
+                  child: CircularProgressIndicator(
+                    color: AppColors.primaryGreen,
+                  ),
                 );
               }
 
               var goats = snapshot.data ?? [];
 
+              // ----------------------------------------------------------
+              // STATUS FILTER
+              // ----------------------------------------------------------
+              //
+              // GoatService.goatsStream() returns all goats for the farm.
+              // Filter the selected status here instead of passing
+              // currentStatus to goatsStream(), because that named
+              // parameter does not exist in GoatService.
+              //
+              // null means "All".
+              if (_statusFilter != null) {
+                goats = goats
+                    .where(
+                      (goat) => goat.currentStatus == _statusFilter,
+                )
+                    .toList();
+              }
+
+              // ----------------------------------------------------------
+              // SEARCH FILTER
+              // ----------------------------------------------------------
+
               if (_search.isNotEmpty) {
                 goats = goats
                     .where(
-                      (g) =>
-                  g.id.toLowerCase().contains(_search) ||
-                      g.breed.toLowerCase().contains(_search),
+                      (goat) =>
+                  goat.id.toLowerCase().contains(_search) ||
+                      goat.breed.toLowerCase().contains(_search),
                 )
                     .toList();
               }
@@ -187,11 +232,17 @@ class _GoatStockListScreenState extends State<GoatStockListScreen> {
               }
 
               return ListView.separated(
-                padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
+                padding: const EdgeInsets.fromLTRB(
+                  16,
+                  12,
+                  16,
+                  24,
+                ),
                 itemCount: goats.length,
                 separatorBuilder: (_, __) => const SizedBox(height: 10),
                 itemBuilder: (context, index) {
                   final goat = goats[index];
+
                   return _GoatStockCard(
                     goat: goat,
                     onTap: () => _openDetail(goat),
@@ -211,7 +262,11 @@ class _GoatStockListScreenState extends State<GoatStockListScreen> {
     return ChoiceChip(
       label: Text(label),
       selected: selected,
-      onSelected: (_) => setState(() => _statusFilter = status),
+      onSelected: (_) {
+        setState(() {
+          _statusFilter = status;
+        });
+      },
       showCheckmark: false,
       labelStyle: AppTheme.body(
         size: 12,
@@ -221,9 +276,13 @@ class _GoatStockListScreenState extends State<GoatStockListScreen> {
       selectedColor: AppColors.stockTeal,
       backgroundColor: AppColors.cardWhite,
       side: BorderSide(
-        color: selected ? AppColors.stockTeal : AppColors.divider,
+        color: selected
+            ? AppColors.stockTeal
+            : AppColors.divider,
       ),
-      padding: const EdgeInsets.symmetric(horizontal: 4),
+      padding: const EdgeInsets.symmetric(
+        horizontal: 4,
+      ),
     );
   }
 
@@ -246,10 +305,17 @@ class _GoatStockListScreenState extends State<GoatStockListScreen> {
                 color: iconColor.withOpacity(0.10),
                 shape: BoxShape.circle,
               ),
-              child: Icon(icon, color: iconColor, size: 28),
+              child: Icon(
+                icon,
+                color: iconColor,
+                size: 28,
+              ),
             ),
             const SizedBox(height: 14),
-            Text(title, style: AppTheme.heading(size: 15)),
+            Text(
+              title,
+              style: AppTheme.heading(size: 15),
+            ),
             const SizedBox(height: 6),
             Text(
               subtitle,
@@ -271,18 +337,25 @@ class _GoatStockCard extends StatelessWidget {
   final Goat goat;
   final VoidCallback onTap;
 
-  const _GoatStockCard({required this.goat, required this.onTap});
+  const _GoatStockCard({
+    required this.goat,
+    required this.onTap,
+  });
 
   Color _statusColor() {
     switch (goat.currentStatus) {
       case Goat.statusAvailable:
         return AppColors.success;
+
       case Goat.statusBooked:
         return AppColors.warning;
+
       case Goat.statusSold:
         return AppColors.error;
+
       case Goat.statusInCustomerPalai:
         return AppColors.info;
+
       default:
         return AppColors.textGrey;
     }
@@ -301,38 +374,61 @@ class _GoatStockCard extends StatelessWidget {
           children: [
             CircleAvatar(
               radius: 28,
-              backgroundColor: AppColors.stockTeal.withOpacity(0.14),
-              backgroundImage: goat.photo != null ? MemoryImage(goat.photo!) : null,
+              backgroundColor:
+              AppColors.stockTeal.withOpacity(0.14),
+              backgroundImage:
+              goat.photo != null
+                  ? MemoryImage(goat.photo!)
+                  : null,
               child: goat.photo == null
-                  ? const Icon(Icons.pets, color: AppColors.stockTeal)
+                  ? const Icon(
+                Icons.pets,
+                color: AppColors.stockTeal,
+              )
                   : null,
             ),
+
             const SizedBox(width: 12),
+
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(goat.id, style: AppTheme.heading(size: 15)),
+                  Text(
+                    goat.id,
+                    style: AppTheme.heading(size: 15),
+                  ),
+
                   const SizedBox(height: 3),
+
                   Text(
                     '${goat.breed} · ${goat.age}',
                     style: AppTheme.body(size: 12),
                     overflow: TextOverflow.ellipsis,
                   ),
+
                   const SizedBox(height: 4),
+
                   Text(
                     '${goat.weight.toStringAsFixed(1)} kg',
-                    style: AppTheme.body(size: 12, color: AppColors.textDark),
+                    style: AppTheme.body(
+                      size: 12,
+                      color: AppColors.textDark,
+                    ),
                   ),
                 ],
               ),
             ),
+
             Column(
               crossAxisAlignment: CrossAxisAlignment.end,
               mainAxisSize: MainAxisSize.min,
               children: [
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 5,
+                  ),
                   decoration: BoxDecoration(
                     color: statusColor.withOpacity(0.12),
                     borderRadius: BorderRadius.circular(20),
@@ -346,7 +442,9 @@ class _GoatStockCard extends StatelessWidget {
                     ),
                   ),
                 ),
+
                 const SizedBox(height: 8),
+
                 Icon(
                   Icons.chevron_right,
                   color: AppColors.textGrey.withOpacity(0.6),

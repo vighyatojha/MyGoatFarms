@@ -12,6 +12,7 @@ import 'purchase_goats/complete_receiving_screen.dart';
 import 'purchase_goats/purchase_goats_wizard_screen.dart';
 import 'register_goats/select_purchase_screen.dart';
 import 'own_palai/own_palai_list_screen.dart';
+import 'goat_stock/goat_stock_list_screen.dart';
 
 /// Trading Dashboard.
 ///
@@ -952,12 +953,13 @@ class _TradingDashboardScreenState
           const SizedBox(width: 18),
 
           _TradingQuickAction(
-            icon:
-            Icons.inventory_2_outlined,
+            icon: Icons.inventory_2_outlined,
             label: 'Goat\nStock',
             onTap: () {
-              _comingSoon(
-                'Goat Stock',
+              Navigator.of(context).push(
+                fastRoute(
+                  const GoatStockListScreen(),
+                ),
               );
             },
           ),
