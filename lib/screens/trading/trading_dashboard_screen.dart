@@ -13,6 +13,7 @@ import 'own_palai/own_palai_list_screen.dart';
 import 'purchase_goats/complete_receiving_screen.dart';
 import 'purchase_goats/purchase_goats_wizard_screen.dart';
 import 'register_goats/select_purchase_screen.dart';
+import 'sell_goat/sell_goat_wizard_screen.dart';
 
 /// Trading Dashboard.
 ///
@@ -112,30 +113,6 @@ class _TradingDashboardScreenState
       symbol: '₹',
       decimalDigits: 0,
     ).format(value);
-  }
-
-  void _comingSoon(String feature) {
-    if (!mounted) return;
-
-    ScaffoldMessenger.of(context)
-      ..hideCurrentSnackBar()
-      ..showSnackBar(
-        SnackBar(
-          content: Text(
-            '$feature module coming soon',
-            style: AppTheme.body(
-              size: 12,
-              color: Colors.white,
-            ),
-          ),
-          backgroundColor: AppColors.darkGreen,
-          behavior: SnackBarBehavior.floating,
-          margin: const EdgeInsets.all(16),
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(12),
-          ),
-        ),
-      );
   }
 
   // ===========================================================================
@@ -1052,8 +1029,10 @@ class _TradingDashboardScreenState
         subtitle: 'Goat',
         color: AppColors.error,
         onTap: () {
-          _comingSoon(
-            'Sell Goat',
+          Navigator.of(context).push(
+            fastRoute(
+              const SellGoatWizardScreen(),
+            ),
           );
         },
       ),

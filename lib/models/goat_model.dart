@@ -64,6 +64,15 @@ class Goat {
 
   final DateTime? movedToOwnPalaiAt;
 
+  // ---------------------------------------------------------------------
+  // SALE (Phase 4)
+  // ---------------------------------------------------------------------
+
+  /// Links back to farms/{farmId}/sales/{saleId} once this goat has been
+  /// included in a sale (any delivery branch, including Transfer to
+  /// Palai). Null for goats that have never been sold.
+  final String? saleId;
+
   const Goat({
     required this.id,
     required this.breed,
@@ -80,6 +89,7 @@ class Goat {
     this.photoContentType,
     this.createdAt,
     this.movedToOwnPalaiAt,
+    this.saleId,
   });
 
   // ---------------------------------------------------------------------
@@ -90,6 +100,13 @@ class Goat {
   static const String statusOwnPalai = 'Own Palai';
   static const String statusSold = 'Sold';
   static const String statusBooked = 'Booked';
+
+  /// Branch C (Wait for Delivery) of the Sale flow. This was missing
+  /// from the original enum even though the Trading dashboard already
+  /// had a "Wait on Delivery" summary card wired up — see
+  /// TradingSummary.waitOnDelivery.
+  static const String statusWaitOnDelivery = 'Wait on Delivery';
+
   static const String statusInCustomerPalai = 'In Customer Palai';
 
   static const List<String> statusValues = [
@@ -97,6 +114,7 @@ class Goat {
     statusOwnPalai,
     statusSold,
     statusBooked,
+    statusWaitOnDelivery,
     statusInCustomerPalai,
   ];
 
@@ -257,6 +275,28 @@ class Goat {
       currentStatus.trim().toLowerCase() ==
           statusOwnPalai.toLowerCase();
 
+  bool get isSold =>
+      currentStatus.trim().toLowerCase() ==
+          statusSold.toLowerCase();
+
+  bool get isBooked =>
+      currentStatus.trim().toLowerCase() ==
+          statusBooked.toLowerCase();
+
+  bool get isWaitOnDelivery =>
+      currentStatus.trim().toLowerCase() ==
+          statusWaitOnDelivery.toLowerCase();
+
+  bool get isInCustomerPalai =>
+      currentStatus.trim().toLowerCase() ==
+          statusInCustomerPalai.toLowerCase();
+
+  /// True for goats Step 1 of the Sale wizard (Task 2.1) should list:
+  /// plain farm stock, or a goat already living in Own Palai. This is
+  /// the "Own Palai -> Sell" tie-in from PDF section 13 — one query,
+  /// two source statuses.
+  bool get isSellable => isAvailable || isOwnPalai;
+
   @override
   bool operator ==(Object other) =>
       other is Goat && other.id == id;
@@ -388,6 +428,9 @@ class Goat {
 
       movedToOwnPalaiAt:
       dateFrom('movedToOwnPalaiAt'),
+
+      saleId:
+      data['saleId'] as String?,
     );
   }
 

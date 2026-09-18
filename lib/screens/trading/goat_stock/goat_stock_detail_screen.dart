@@ -36,6 +36,9 @@ class _GoatStockDetailScreenState
       case Goat.statusBooked:
         return AppColors.warning;
 
+      case Goat.statusWaitOnDelivery:
+        return AppColors.warning;
+
       case Goat.statusSold:
         return AppColors.error;
 

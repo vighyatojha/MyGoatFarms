@@ -571,6 +571,9 @@ class _GoatStockListScreenState
       case Goat.statusBooked:
         return AppColors.warning;
 
+      case Goat.statusWaitOnDelivery:
+        return AppColors.warning;
+
       case Goat.statusSold:
         return AppColors.error;
 
@@ -727,6 +730,9 @@ class _GoatStockCard extends StatelessWidget {
         return AppColors.success;
 
       case Goat.statusBooked:
+        return AppColors.warning;
+
+      case Goat.statusWaitOnDelivery:
         return AppColors.warning;
 
       case Goat.statusSold:
