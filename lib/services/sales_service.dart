@@ -276,6 +276,287 @@ class SalesService {
   }
 
   // -----------------------------------------------------------------------
+  // BRANCH B — BOOKING / HOLDING (Task 3.2)
+  // -----------------------------------------------------------------------
+
+  /// Saves a "Booking / Holding" sale: goat(s) kept here after an initial
+  /// payment, picked up later. Only the creation form (Pair 5 of the
+  /// plan's build order) — the "Complete Delivery" action that later
+  /// recomputes `Goat Sale Amount + Holding Charges - Amount Already Paid`
+  /// is out of scope for this phase (Pair 7 / Phase 5).
+  ///
+  /// Same re-check-then-write-in-one-transaction shape as
+  /// [saveDeliverNow], for the same status-consistency reason.
+  Future<String> saveBooking({
+    required String farmId,
+    required SaleDraft draft,
+  }) async {
+    if (draft.selectedGoats.isEmpty) {
+      throw StateError('Select at least one goat before saving.');
+    }
+
+    late final String saleId;
+
+    await _db.runTransaction((transaction) async {
+      // ---------------------------------------------------------------
+      // 1. Re-check every goat is still sellable.
+      // ---------------------------------------------------------------
+
+      for (final goat in draft.selectedGoats) {
+        final snap = await transaction.get(_goats(farmId).doc(goat.id));
+
+        if (!snap.exists) {
+          throw StateError(
+            'Goat ${goat.id} no longer exists.',
+          );
+        }
+
+        final fresh = Goat.fromDoc(snap);
+
+        if (!fresh.isSellable) {
+          throw StateError(
+            'Goat ${goat.id} is no longer available '
+                '(now "${fresh.currentStatus}").',
+          );
+        }
+      }
+
+      // ---------------------------------------------------------------
+      // 2. Resolve the customer. Same three-way rule as saveDeliverNow.
+      // ---------------------------------------------------------------
+
+      String customerId = draft.customerId;
+
+      if (draft.customerSource == null) {
+        final customerRef = _customers(farmId).doc();
+
+        final newCustomer = Customer(
+          id: customerRef.id,
+          name: draft.customerName.trim(),
+          mobile: draft.mobile.trim(),
+          address: draft.address.trim(),
+          totalPurchases: 1,
+        );
+
+        transaction.set(customerRef, {
+          ...newCustomer.toMap(),
+          'createdAt': FieldValue.serverTimestamp(),
+          'updatedAt': FieldValue.serverTimestamp(),
+        });
+
+        customerId = customerRef.id;
+      } else if (draft.customerSource == CustomerMatchSource.sale) {
+        transaction.update(_customers(farmId).doc(draft.customerId), {
+          'name': draft.customerName.trim(),
+          'address': draft.address.trim(),
+          'totalPurchases': FieldValue.increment(1),
+          'updatedAt': FieldValue.serverTimestamp(),
+        });
+      }
+
+      // ---------------------------------------------------------------
+      // 3. Create the sale doc.
+      // ---------------------------------------------------------------
+
+      saleId = await nextSaleIdInTransaction(transaction, farmId);
+
+      final sale = Sale(
+        id: saleId,
+        goatIds: draft.goatIds,
+        customerId: customerId,
+        customerName: draft.customerName.trim(),
+        mobile: draft.mobile.trim(),
+        address: draft.address.trim(),
+        sellingPricePerKg: draft.sellingPricePerKg,
+        sellingWeight: draft.totalSellingWeight,
+        totalSaleAmount: draft.totalSaleAmount,
+        deliveryType: Sale.deliveryTypeBooking,
+        status: Sale.statusBooked,
+        bookingAmount: draft.bookingAmount,
+        expectedDeliveryDate: draft.expectedDeliveryDate,
+        holdingDays: draft.holdingDays,
+        holdingChargePerDay: draft.holdingChargePerDay,
+        totalHoldingCharges: draft.totalHoldingCharges,
+      );
+
+      transaction.set(_sales(farmId).doc(saleId), {
+        ...sale.toMap(),
+        'createdAt': FieldValue.serverTimestamp(),
+      });
+
+      // ---------------------------------------------------------------
+      // 4. Flip every goat to Booked.
+      // ---------------------------------------------------------------
+
+      for (final goat in draft.selectedGoats) {
+        final gender = draft.genderFor(goat);
+
+        transaction.update(_goats(farmId).doc(goat.id), {
+          'currentStatus': Goat.statusBooked,
+          'saleId': saleId,
+          'weight': draft.weightFor(goat),
+          if (gender.isNotEmpty) 'gender': gender,
+        });
+      }
+
+      // ---------------------------------------------------------------
+      // 5. Dashboard aggregate. Booked goats haven't left the farm yet,
+      //    so totalStock is untouched — only `booking` moves. totalSold
+      //    likewise doesn't move until the eventual Complete Delivery.
+      // ---------------------------------------------------------------
+
+      transaction.set(
+        _summaryDoc(farmId),
+        {
+          'booking': FieldValue.increment(draft.selectedGoats.length),
+        },
+        SetOptions(merge: true),
+      );
+    }).timeout(_timeout * 2);
+
+    return saleId;
+  }
+
+  // -----------------------------------------------------------------------
+  // BRANCH C — WAIT FOR DELIVERY (Task 3.3)
+  // -----------------------------------------------------------------------
+
+  /// Saves a "Wait for Delivery" sale: price/kg and an advance are fixed
+  /// now, at today's weight; the goat is weighed again and handed over
+  /// later. Only the creation form — the "Complete Delivery" action
+  /// (`Final Price = Current Weight x Booking Price/KG - advance`, always
+  /// using [Sale.bookingPricePerKg], never the market rate on pickup day)
+  /// is out of scope for this phase, same as Branch B.
+  Future<String> saveWaitForDelivery({
+    required String farmId,
+    required SaleDraft draft,
+  }) async {
+    if (draft.selectedGoats.isEmpty) {
+      throw StateError('Select at least one goat before saving.');
+    }
+
+    late final String saleId;
+
+    await _db.runTransaction((transaction) async {
+      // ---------------------------------------------------------------
+      // 1. Re-check every goat is still sellable.
+      // ---------------------------------------------------------------
+
+      for (final goat in draft.selectedGoats) {
+        final snap = await transaction.get(_goats(farmId).doc(goat.id));
+
+        if (!snap.exists) {
+          throw StateError(
+            'Goat ${goat.id} no longer exists.',
+          );
+        }
+
+        final fresh = Goat.fromDoc(snap);
+
+        if (!fresh.isSellable) {
+          throw StateError(
+            'Goat ${goat.id} is no longer available '
+                '(now "${fresh.currentStatus}").',
+          );
+        }
+      }
+
+      // ---------------------------------------------------------------
+      // 2. Resolve the customer. Same three-way rule as saveDeliverNow.
+      // ---------------------------------------------------------------
+
+      String customerId = draft.customerId;
+
+      if (draft.customerSource == null) {
+        final customerRef = _customers(farmId).doc();
+
+        final newCustomer = Customer(
+          id: customerRef.id,
+          name: draft.customerName.trim(),
+          mobile: draft.mobile.trim(),
+          address: draft.address.trim(),
+          totalPurchases: 1,
+        );
+
+        transaction.set(customerRef, {
+          ...newCustomer.toMap(),
+          'createdAt': FieldValue.serverTimestamp(),
+          'updatedAt': FieldValue.serverTimestamp(),
+        });
+
+        customerId = customerRef.id;
+      } else if (draft.customerSource == CustomerMatchSource.sale) {
+        transaction.update(_customers(farmId).doc(draft.customerId), {
+          'name': draft.customerName.trim(),
+          'address': draft.address.trim(),
+          'totalPurchases': FieldValue.increment(1),
+          'updatedAt': FieldValue.serverTimestamp(),
+        });
+      }
+
+      // ---------------------------------------------------------------
+      // 3. Create the sale doc.
+      // ---------------------------------------------------------------
+
+      saleId = await nextSaleIdInTransaction(transaction, farmId);
+
+      final sale = Sale(
+        id: saleId,
+        goatIds: draft.goatIds,
+        customerId: customerId,
+        customerName: draft.customerName.trim(),
+        mobile: draft.mobile.trim(),
+        address: draft.address.trim(),
+        sellingPricePerKg: draft.sellingPricePerKg,
+        sellingWeight: draft.totalSellingWeight,
+        totalSaleAmount: draft.totalSaleAmount,
+        deliveryType: Sale.deliveryTypeWaitForDelivery,
+        status: Sale.statusWaitForDelivery,
+        bookingPricePerKg: draft.bookingPricePerKg,
+        bookingAdvanceAmount: draft.bookingAdvanceAmount,
+        bookingWeight: draft.bookingWeightTotal,
+      );
+
+      transaction.set(_sales(farmId).doc(saleId), {
+        ...sale.toMap(),
+        'createdAt': FieldValue.serverTimestamp(),
+      });
+
+      // ---------------------------------------------------------------
+      // 4. Flip every goat to Wait on Delivery.
+      // ---------------------------------------------------------------
+
+      for (final goat in draft.selectedGoats) {
+        final gender = draft.genderFor(goat);
+
+        transaction.update(_goats(farmId).doc(goat.id), {
+          'currentStatus': Goat.statusWaitOnDelivery,
+          'saleId': saleId,
+          'weight': draft.weightFor(goat),
+          if (gender.isNotEmpty) 'gender': gender,
+        });
+      }
+
+      // ---------------------------------------------------------------
+      // 5. Dashboard aggregate. Same reasoning as Branch B: the goat is
+      //    still on the farm, so totalStock stays put — only
+      //    `waitOnDelivery` moves.
+      // ---------------------------------------------------------------
+
+      transaction.set(
+        _summaryDoc(farmId),
+        {
+          'waitOnDelivery':
+          FieldValue.increment(draft.selectedGoats.length),
+        },
+        SetOptions(merge: true),
+      );
+    }).timeout(_timeout * 2);
+
+    return saleId;
+  }
+
+  // -----------------------------------------------------------------------
   // BRANCH D — TRANSFER TO PALAI (Task 3.4)
   // -----------------------------------------------------------------------
 
@@ -444,6 +725,155 @@ class SalesService {
     }
 
     return saleId;
+  }
+
+  // -----------------------------------------------------------------------
+  // SALE LOOKUP (Phase 5 groundwork — Complete Delivery needs the sale
+  // doc a Booked/Wait-for-Delivery goat is linked to via Goat.saleId)
+  // -----------------------------------------------------------------------
+
+  Future<Sale?> getSale(String farmId, String saleId) async {
+    final doc =
+    await _sales(farmId).doc(saleId).get().timeout(_timeout);
+
+    if (!doc.exists) {
+      return null;
+    }
+
+    return Sale.fromDoc(doc);
+  }
+
+  // -----------------------------------------------------------------------
+  // COMPLETE DELIVERY — BOOKING (Phase 5, Section 1)
+  // -----------------------------------------------------------------------
+
+  /// Finishes a Branch B (Booking/Holding) sale once the customer
+  /// actually picks the goat up.
+  ///
+  /// Recomputes the final settlement using the *actual* elapsed holding
+  /// days the caller supplies — never the original estimate made at
+  /// booking time — per the plan's Task 1.2 note that a customer may
+  /// pick up later or earlier than first expected:
+  ///
+  ///   Final Amount = Goat Sale Amount + (actualHoldingDays x Daily
+  ///                  Charge) - Booking Amount already paid
+  ///
+  /// Same reads-then-writes transaction shape as the Phase 4 branch
+  /// save methods, extended to also verify the sale is still in the
+  /// state this action expects before touching anything.
+  Future<void> completeBookingDelivery({
+    required String farmId,
+    required String saleId,
+    required int actualHoldingDays,
+  }) async {
+    if (actualHoldingDays < 0) {
+      throw StateError('Holding days cannot be negative.');
+    }
+
+    await _db.runTransaction((transaction) async {
+      // ---------------------------------------------------------------
+      // 1. Reads first — a Firestore transaction requires every read
+      //    to happen before any write.
+      // ---------------------------------------------------------------
+
+      final saleRef = _sales(farmId).doc(saleId);
+      final saleSnap = await transaction.get(saleRef);
+
+      if (!saleSnap.exists) {
+        throw StateError('Sale $saleId no longer exists.');
+      }
+
+      final sale = Sale.fromDoc(saleSnap);
+
+      if (!sale.isBooking) {
+        throw StateError('Sale $saleId is not a Booking sale.');
+      }
+
+      if (sale.status != Sale.statusBooked) {
+        throw StateError(
+          'Sale $saleId has already been completed or is in an '
+              'unexpected state ("${sale.status}").',
+        );
+      }
+
+      final goatSnaps = <DocumentSnapshot<Map<String, dynamic>>>[];
+
+      for (final goatId in sale.goatIds) {
+        goatSnaps.add(
+          await transaction.get(_goats(farmId).doc(goatId)),
+        );
+      }
+
+      // ---------------------------------------------------------------
+      // 2. Compute the final settlement.
+      // ---------------------------------------------------------------
+
+      final holdingChargePerDay = sale.holdingChargePerDay ?? 0;
+      final bookingAmount = sale.bookingAmount ?? 0;
+      final actualHoldingCharges =
+          actualHoldingDays * holdingChargePerDay;
+
+      final rawFinalAmount = sale.totalSaleAmount +
+          actualHoldingCharges -
+          bookingAmount;
+      final finalAmount = rawFinalAmount < 0 ? 0.0 : rawFinalAmount;
+
+      // ---------------------------------------------------------------
+      // 3. Update the sale doc.
+      // ---------------------------------------------------------------
+
+      transaction.update(saleRef, {
+        'status': Sale.statusDeliveryCompleted,
+        'actualHoldingDays': actualHoldingDays,
+        'totalHoldingCharges': actualHoldingCharges,
+        'finalAmountAfterHolding': finalAmount,
+        'deliveryCompletedAt': FieldValue.serverTimestamp(),
+      });
+
+      // ---------------------------------------------------------------
+      // 4. Flip every still-Booked goat in this sale to Sold — it has
+      //    now actually left the farm. Skip any goat that's already
+      //    moved on (defensive; shouldn't normally happen) rather than
+      //    clobbering it.
+      // ---------------------------------------------------------------
+
+      var movedGoats = 0;
+
+      for (final snap in goatSnaps) {
+        if (!snap.exists) continue;
+
+        final goat = Goat.fromDoc(snap);
+
+        if (goat.currentStatus != Goat.statusBooked ||
+            goat.saleId != saleId) {
+          continue;
+        }
+
+        transaction.update(snap.reference, {
+          'currentStatus': Goat.statusSold,
+        });
+
+        movedGoats++;
+      }
+
+      // ---------------------------------------------------------------
+      // 5. Dashboard aggregate: Booking count decreases, Total Sold
+      //    increases. totalStock also decreases here — Phase 4
+      //    deliberately left it untouched when the booking was first
+      //    created (the goat hadn't left the farm yet), so this
+      //    deferred decrement lands now that it actually has.
+      // ---------------------------------------------------------------
+
+      transaction.set(
+        _summaryDoc(farmId),
+        {
+          'booking': FieldValue.increment(-movedGoats),
+          'totalSold': FieldValue.increment(movedGoats),
+          'totalStock': FieldValue.increment(-movedGoats),
+        },
+        SetOptions(merge: true),
+      );
+    }).timeout(_timeout * 2);
   }
 
   // -----------------------------------------------------------------------

@@ -8,6 +8,7 @@ import '../../../services/firestore_service.dart';
 import '../../../services/trading_service.dart';
 import '../../../widgets/fast_route.dart';
 import '../../palai/fullscreen_image_viewer.dart';
+import 'complete_booking_delivery_screen.dart';
 
 class GoatStockDetailScreen extends StatefulWidget {
   final String farmId;
@@ -79,6 +80,29 @@ class _GoatStockDetailScreenState
         ),
       ),
     );
+  }
+
+  // ===========================================================================
+  // COMPLETE DELIVERY
+  // ===========================================================================
+
+  Future<void> _openCompleteBookingDelivery() async {
+    final completed = await Navigator.of(context).push<bool>(
+      fastRoute(
+        CompleteBookingDeliveryScreen(
+          farmId: widget.farmId,
+          goat: widget.goat,
+        ),
+      ),
+    );
+
+    // The Goat instance this screen was built with is a static snapshot
+    // (not a stream), so once the delivery is completed we pop back to
+    // the goat list, which streams live and will already show the goat
+    // as Sold — rather than showing a stale "Booked" status here.
+    if (completed == true && mounted) {
+      Navigator.of(context).pop();
+    }
   }
 
   // ===========================================================================
@@ -466,6 +490,62 @@ class _GoatStockDetailScreenState
                   _purchaseIdRow(),
                 ],
               ),
+
+              // ---------------------------------------------------------------
+              // SALE INFORMATION / COMPLETE DELIVERY
+              //
+              // Booked goats get a "Complete Delivery" action here per
+              // the Phase 5 plan's Task 1.1 ("wherever Booked goats are
+              // visible"). Wait for Delivery's equivalent action lands
+              // in the next Phase 5 task.
+              // ---------------------------------------------------------------
+
+              if (goat.currentStatus == Goat.statusBooked) ...[
+                const SizedBox(height: 14),
+                _sectionCard(
+                  title: 'Sale Information',
+                  icon: Icons.receipt_long_outlined,
+                  children: [
+                    _infoRow(
+                      'Sale ID',
+                      goat.saleId ?? '—',
+                    ),
+                    _infoRow(
+                      'Status',
+                      'Booked — awaiting pickup',
+                    ),
+                  ],
+                ),
+
+                const SizedBox(height: 14),
+
+                SizedBox(
+                  width: double.infinity,
+                  height: 50,
+                  child: ElevatedButton.icon(
+                    onPressed: _openCompleteBookingDelivery,
+                    icon: const Icon(
+                      Icons.check_circle_outline_rounded,
+                      size: 19,
+                    ),
+                    label: const Text(
+                      'Complete Delivery',
+                      style: TextStyle(
+                        fontWeight: FontWeight.w700,
+                        fontSize: 13,
+                      ),
+                    ),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: AppColors.primaryGreen,
+                      foregroundColor: Colors.white,
+                      elevation: 1,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(14),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
             ],
           ),
         ),

@@ -8,9 +8,10 @@ import 'sale_model.dart';
 /// through all wizard steps. Nothing is written to Firestore until the
 /// sale is saved (Step 5's branch-specific save action).
 ///
-/// Branch B (Booking) and Branch C (Wait for Delivery) fields are not
-/// included yet — per the plan's build order, Branch A (Deliver Now)
-/// and Branch D (Transfer to Palai) are built first.
+/// All four Section-3 branches (Deliver Now, Booking/Holding,
+/// Wait for Delivery, Transfer to Palai) have their creation-time
+/// fields here. Each branch's "Complete Delivery" follow-up action
+/// (Pair 7 / Phase 5) is out of scope for this phase.
 class SaleDraft {
   // ---------------------------------------------------------------------------
   // STEP 1 — SELECT GOAT(S)  (Task 2.1)
@@ -124,6 +125,12 @@ class SaleDraft {
   bool get isDeliverNow =>
       deliveryType == Sale.deliveryTypeDeliverNow;
 
+  bool get isBooking =>
+      deliveryType == Sale.deliveryTypeBooking;
+
+  bool get isWaitForDelivery =>
+      deliveryType == Sale.deliveryTypeWaitForDelivery;
+
   bool get isPalaiTransfer =>
       deliveryType == Sale.deliveryTypePalai;
 
@@ -141,6 +148,49 @@ class SaleDraft {
     if (amountReceived <= 0) return Sale.paymentStatusPending;
     if (amountReceived >= totalSaleAmount) return Sale.paymentStatusPaid;
     return Sale.paymentStatusPartial;
+  }
+
+  // --- Branch B: Booking / Holding (Task 3.2) ---------------------------------
+
+  double bookingAmount = 0;
+  DateTime? expectedDeliveryDate;
+  int holdingDays = 0;
+  double holdingChargePerDay = 0;
+
+  /// Auto-calculated: Holding Days x Daily Charge — never entered
+  /// directly, same "derived field" rule as totalSaleAmount.
+  double get totalHoldingCharges => holdingDays * holdingChargePerDay;
+
+  /// What's left to collect once holding charges are added on top of
+  /// the sale amount and the booking amount already paid is deducted.
+  /// The actual "Complete Delivery" recompute (Task 3.2's follow-up,
+  /// out of scope this phase) does this same sum again later using
+  /// whatever holding days actually elapse — this is just the
+  /// creation-time estimate shown on Step 5.
+  double get remainingBalanceBooking {
+    final remaining =
+        totalSaleAmount + totalHoldingCharges - bookingAmount;
+    return remaining < 0 ? 0 : remaining;
+  }
+
+  // --- Branch C: Wait for Delivery (Task 3.3) --------------------------------
+
+  /// Price/kg is fixed at booking time, using whatever was set on
+  /// Step 4 — never re-entered separately, and never re-priced at the
+  /// market rate on pickup day. The eventual "Complete Delivery" action
+  /// (out of scope this phase) must use this same value, not whatever
+  /// the market rate is on that day.
+  double get bookingPricePerKg => sellingPricePerKg;
+
+  /// Weight at booking time, same total Step 3 already collected —
+  /// re-weighing happens later, at pickup, as part of Complete Delivery.
+  double get bookingWeightTotal => totalSellingWeight;
+
+  double bookingAdvanceAmount = 0;
+
+  double get remainingAdvanceBalanceWaitForDelivery {
+    final remaining = totalSaleAmount - bookingAdvanceAmount;
+    return remaining < 0 ? 0 : remaining;
   }
 
   // --- Branch D: Transfer to Palai (Task 3.4) --------------------------------

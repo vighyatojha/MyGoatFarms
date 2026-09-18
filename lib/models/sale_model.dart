@@ -69,6 +69,14 @@ class Sale {
   /// Auto-calculated: holdingDays * holdingChargePerDay.
   final double? totalHoldingCharges;
 
+  /// Actual elapsed holding days, recorded by the Complete Delivery
+  /// action (Phase 5, Section 1). Kept separate from [holdingDays] (the
+  /// original estimate made at booking time in Step 5) because the
+  /// customer may pick up later or earlier than expected — the plan's
+  /// Task 1.2 requires the final settlement to use real elapsed time,
+  /// not the original quote.
+  final int? actualHoldingDays;
+
   /// Set by the (future, Task "Complete Delivery" for Branch B) action:
   /// Goat Sale Amount + Holding Charges - Amount Already Paid.
   final double? finalAmountAfterHolding;
@@ -137,6 +145,7 @@ class Sale {
     this.holdingDays,
     this.holdingChargePerDay,
     this.totalHoldingCharges,
+    this.actualHoldingDays,
     this.finalAmountAfterHolding,
     this.deliveryCompletedAt,
     this.bookingPricePerKg,
@@ -310,6 +319,7 @@ class Sale {
       holdingDays: nullableIntFrom('holdingDays'),
       holdingChargePerDay: nullableNumFrom('holdingChargePerDay'),
       totalHoldingCharges: nullableNumFrom('totalHoldingCharges'),
+      actualHoldingDays: nullableIntFrom('actualHoldingDays'),
       finalAmountAfterHolding:
       nullableNumFrom('finalAmountAfterHolding'),
       deliveryCompletedAt: dateFrom('deliveryCompletedAt'),
@@ -363,6 +373,7 @@ class Sale {
     putIfNotNull('holdingDays', holdingDays);
     putIfNotNull('holdingChargePerDay', holdingChargePerDay);
     putIfNotNull('totalHoldingCharges', totalHoldingCharges);
+    putIfNotNull('actualHoldingDays', actualHoldingDays);
     putIfNotNull(
       'finalAmountAfterHolding',
       finalAmountAfterHolding,

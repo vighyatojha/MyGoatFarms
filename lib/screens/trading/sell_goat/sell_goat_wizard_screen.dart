@@ -20,10 +20,11 @@ import '../steps/step5_delivery_options.dart';
 /// Step 2 -> Customer Mobile Lookup     [Task 2.2]
 /// Step 3 -> Selected Goat Details      [Task 2.3]
 /// Step 4 -> Sale Details               [Task 2.4]
-/// Step 5 -> Delivery Options (branch)  [Section 3 — Branch A + D only]
+/// Step 5 -> Delivery Options (branch)  [Section 3 — all four branches]
 ///
-/// Branch B (Booking) and Branch C (Wait for Delivery) aren't built yet
-/// — Step 5 shows them as "coming soon" and blocks selecting them.
+/// Each branch's "Complete Delivery" follow-up action (Booking and
+/// Wait for Delivery only) is out of scope for this phase — see the
+/// plan's Pair 7 note.
 class SellGoatWizardScreen extends StatefulWidget {
   const SellGoatWizardScreen({super.key});
 
@@ -204,6 +205,16 @@ class _SellGoatWizardScreenState extends State<SellGoatWizardScreen> {
           farmId: farmId,
           draft: _draft,
         );
+      } else if (_draft.isBooking) {
+        saleId = await SalesService.instance.saveBooking(
+          farmId: farmId,
+          draft: _draft,
+        );
+      } else if (_draft.isWaitForDelivery) {
+        saleId = await SalesService.instance.saveWaitForDelivery(
+          farmId: farmId,
+          draft: _draft,
+        );
       } else if (_draft.isPalaiTransfer) {
         saleId = await SalesService.instance.saveTransferToPalai(
           farmId: farmId,
@@ -226,6 +237,10 @@ class _SellGoatWizardScreenState extends State<SellGoatWizardScreen> {
           content: Text(
             _draft.isPalaiTransfer
                 ? 'Sale $saleId saved — goat transferred to Palai.'
+                : _draft.isBooking
+                ? 'Sale $saleId saved — goat booked.'
+                : _draft.isWaitForDelivery
+                ? 'Sale $saleId saved — goat marked wait for delivery.'
                 : 'Sale $saleId saved.',
           ),
           backgroundColor: AppColors.darkGreen,
