@@ -63,4 +63,47 @@ class SaleDraft {
     customerSource = null;
     customerId = '';
   }
+
+  // ---------------------------------------------------------------------------
+  // STEP 3 — SELECTED GOAT DETAILS  (Task 2.3)
+  // ---------------------------------------------------------------------------
+
+  /// Selling weight per goat, keyed by goat ID. Selling weight can
+  /// differ slightly from the goat's last recorded weight, so this
+  /// starts out equal to `goat.weight` and becomes editable on Step 3.
+  Map<String, double> sellingWeights = {};
+
+  /// Optional gender per goat, keyed by goat ID, entered on Step 3.
+  ///
+  /// Trading's Goat model (lib/models/goat_model.dart) has no `gender`
+  /// field — it's tracked for Own Farm and Palai goats but was never
+  /// added when Trading's Goat Registration was built. Backfilling it
+  /// there means touching Registration end-to-end and leaves every
+  /// already-registered goat blank until re-edited, which is scope
+  /// Phase 4 doesn't own. So gender here is captured just for this
+  /// sale: it lives only in the draft, shown on the Step 3 goat card
+  /// for the seller's own record, and is not written back to the goat
+  /// doc.
+  Map<String, String> genderOverrides = {};
+
+  double sellingWeightFor(Goat goat) =>
+      sellingWeights[goat.id] ?? goat.weight;
+
+  double get totalSellingWeight => selectedGoats.fold(
+    0.0,
+        (sum, goat) => sum + sellingWeightFor(goat),
+  );
+
+  // ---------------------------------------------------------------------------
+  // STEP 4 — SALE DETAILS  (Task 2.4)
+  // ---------------------------------------------------------------------------
+
+  /// Single price/KG applied across every selected goat — matches the
+  /// plan's "Selling Price/KG × Selling Weight, summed across goats"
+  /// rule rather than a per-goat price.
+  double sellingPricePerKg = 0;
+
+  /// Derived field, never manually overridden — same rule as Phase 1's
+  /// Purchase Amount.
+  double get totalSaleAmount => sellingPricePerKg * totalSellingWeight;
 }

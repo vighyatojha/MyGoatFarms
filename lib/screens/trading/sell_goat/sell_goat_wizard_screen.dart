@@ -7,20 +7,22 @@ import '../../../widgets/farm_not_linked_state.dart';
 import '../purchase_goats/purchase_wizard_widgets.dart';
 import '../steps/step1_select_goats.dart';
 import '../steps/step2_customer_lookup.dart';
+import '../steps/step3_selected_goat_details.dart';
+import '../steps/step4_sale_details.dart';
 
 /// Sell Goat wizard (Phase 4: Feature 7 + 8).
 ///
 /// Flow (per the Phase 4 plan):
 /// Step 1 -> Select Goat(s)             [Task 2.1 — done]
 /// Step 2 -> Customer Mobile Lookup     [Task 2.2 — done]
-/// Step 3 -> Selected Goat Details      [Task 2.3 — not yet built]
-/// Step 4 -> Sale Details               [Task 2.4 — not yet built]
+/// Step 3 -> Selected Goat Details      [Task 2.3 — done]
+/// Step 4 -> Sale Details               [Task 2.4 — done]
 /// Step 5 -> Delivery Options (branch)  [Section 3 — not yet built]
 ///
-/// Only Steps 1-2 are wired up so far. This screen is intentionally
-/// built to grow: `_stepLabels` and `_buildPage` are the two places a
-/// later task extends when its step is ready, following the same
-/// PageView + step-indicator shape as PurchaseGoatsWizardScreen.
+/// Steps 1-4 are wired up so far. This screen is intentionally built
+/// to grow: `_stepLabels` and `_buildPage` are the two places a later
+/// task extends when its step is ready, following the same PageView +
+/// step-indicator shape as PurchaseGoatsWizardScreen.
 class SellGoatWizardScreen extends StatefulWidget {
   const SellGoatWizardScreen({super.key});
 
@@ -35,6 +37,9 @@ class _SellGoatWizardScreenState extends State<SellGoatWizardScreen> {
   final GlobalKey<Step2CustomerLookupState> _customerKey =
   GlobalKey<Step2CustomerLookupState>();
 
+  final GlobalKey<FormState> _goatDetailsFormKey = GlobalKey<FormState>();
+  final GlobalKey<FormState> _saleDetailsFormKey = GlobalKey<FormState>();
+
   final SaleDraft _draft = SaleDraft();
 
   String? _farmId;
@@ -46,6 +51,8 @@ class _SellGoatWizardScreenState extends State<SellGoatWizardScreen> {
   static const List<String> _stepLabels = [
     'Goats',
     'Customer',
+    'Details',
+    'Sale',
   ];
 
   @override
@@ -87,6 +94,10 @@ class _SellGoatWizardScreenState extends State<SellGoatWizardScreen> {
         return 'Select Goat(s)';
       case 1:
         return 'Customer Details';
+      case 2:
+        return 'Selected Goat Details';
+      case 3:
+        return 'Sale Details';
       default:
         return 'Sell Goat';
     }
@@ -128,14 +139,43 @@ class _SellGoatWizardScreenState extends State<SellGoatWizardScreen> {
 
       if (!valid) return;
 
-      // Steps 3-5 (Task 2.3 onward) are not built yet. Rather than
-      // silently doing nothing once a customer is confirmed, say so —
-      // this flow continues to grow task-by-task.
+      await _goToStep(2);
+      return;
+    }
+
+    // -------------------------------------------------------------------------
+    // STEP 3 — SELECTED GOAT DETAILS
+    // -------------------------------------------------------------------------
+
+    if (_currentStep == 2) {
+      final valid =
+          _goatDetailsFormKey.currentState?.validate() ?? false;
+
+      if (!valid) return;
+
+      await _goToStep(3);
+      return;
+    }
+
+    // -------------------------------------------------------------------------
+    // STEP 4 — SALE DETAILS
+    // -------------------------------------------------------------------------
+
+    if (_currentStep == 3) {
+      final valid =
+          _saleDetailsFormKey.currentState?.validate() ?? false;
+
+      if (!valid) return;
+
+      // Step 5 (Delivery Options — the four-way branch) is not built
+      // yet. Rather than silently doing nothing once the sale amount
+      // is confirmed, say so — this flow continues to grow
+      // task-by-task per Section 4's build order.
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text(
-            'Goats and customer captured. '
-                'Selected Goat Details (Step 3) is coming in the next task.',
+            'Sale details captured. '
+                'Delivery Options (Step 5) is coming in a later task.',
           ),
         ),
       );
@@ -261,6 +301,18 @@ class _SellGoatWizardScreenState extends State<SellGoatWizardScreen> {
         return Step2CustomerLookup(
           key: _customerKey,
           farmId: farmId,
+          draft: _draft,
+        );
+
+      case 2:
+        return Step3SelectedGoatDetails(
+          formKey: _goatDetailsFormKey,
+          draft: _draft,
+        );
+
+      case 3:
+        return Step4SaleDetails(
+          formKey: _saleDetailsFormKey,
           draft: _draft,
         );
 
