@@ -73,6 +73,20 @@ class Goat {
   /// Palai). Null for goats that have never been sold.
   final String? saleId;
 
+  // ---------------------------------------------------------------------
+  // GENDER (Phase 4)
+  // ---------------------------------------------------------------------
+
+  /// One of [genderValues], or '' when never recorded.
+  ///
+  /// Trading's Goat Registration (Phase 3) never captured gender, unlike
+  /// the Own Farm and Customer Palai goat models. Rather than reopening
+  /// Registration, this is deliberately optional and only ever edited
+  /// from the Sell Goat wizard's Step 3 (Selected Goat Details) — see
+  /// SaleDraft.genderFor()/setGender(). Once set there it's written back
+  /// onto this doc so it isn't asked again next time.
+  final String gender;
+
   const Goat({
     required this.id,
     required this.breed,
@@ -90,6 +104,7 @@ class Goat {
     this.createdAt,
     this.movedToOwnPalaiAt,
     this.saleId,
+    this.gender = '',
   });
 
   // ---------------------------------------------------------------------
@@ -116,6 +131,11 @@ class Goat {
     statusBooked,
     statusWaitOnDelivery,
     statusInCustomerPalai,
+  ];
+
+  static const List<String> genderValues = [
+    'Male',
+    'Female',
   ];
 
   static const List<String> healthStatusValues = [
@@ -431,6 +451,9 @@ class Goat {
 
       saleId:
       data['saleId'] as String?,
+
+      gender:
+      (data['gender'] ?? '').toString(),
     );
   }
 

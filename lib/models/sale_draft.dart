@@ -1,5 +1,6 @@
 import '../models/goat_model.dart';
 import '../services/sales_service.dart';
+import 'sale_model.dart';
 
 /// Shared in-memory state for the Sell Goat wizard.
 ///
@@ -7,9 +8,9 @@ import '../services/sales_service.dart';
 /// through all wizard steps. Nothing is written to Firestore until the
 /// sale is saved (Step 5's branch-specific save action).
 ///
-/// Fields are added to this draft task-by-task, following the Phase 4
-/// build order: Steps 1-2 today, Steps 3-4 and the four delivery
-/// branches (Section 3) land on top of this in later tasks.
+/// Branch B (Booking) and Branch C (Wait for Delivery) fields are not
+/// included yet — per the plan's build order, Branch A (Deliver Now)
+/// and Branch D (Transfer to Palai) are built first.
 class SaleDraft {
   // ---------------------------------------------------------------------------
   // STEP 1 — SELECT GOAT(S)  (Task 2.1)
@@ -68,71 +69,81 @@ class SaleDraft {
   // STEP 3 — SELECTED GOAT DETAILS  (Task 2.3)
   // ---------------------------------------------------------------------------
 
-  /// Selling weight per goat, keyed by goat ID. Selling weight can
-  /// differ slightly from the goat's last recorded weight, so this
-  /// starts out equal to `goat.weight` and becomes editable on Step 3.
-  Map<String, double> sellingWeights = {};
+  /// Selling weight per goat, keyed by goat ID. Selling weight may
+  /// differ slightly from the goat's last recorded weight, so this is
+  /// edited independently rather than reusing Goat.weight directly.
+  /// Falls back to the goat's recorded weight until edited.
+  final Map<String, double> _sellingWeights = {};
 
-  /// Optional gender per goat, keyed by goat ID, entered on Step 3.
-  ///
-  /// Trading's Goat model (lib/models/goat_model.dart) has no `gender`
-  /// field — it's tracked for Own Farm and Palai goats but was never
-  /// added when Trading's Goat Registration was built. Backfilling it
-  /// there means touching Registration end-to-end and leaves every
-  /// already-registered goat blank until re-edited, which is scope
-  /// Phase 4 doesn't own. So gender here is captured just for this
-  /// sale: it lives only in the draft, shown on the Step 3 goat card
-  /// for the seller's own record, and is not written back to the goat
-  /// doc.
-  Map<String, String> genderOverrides = {};
+  double weightFor(Goat goat) => _sellingWeights[goat.id] ?? goat.weight;
 
-  double sellingWeightFor(Goat goat) =>
-      sellingWeights[goat.id] ?? goat.weight;
+  void setWeight(Goat goat, double weight) {
+    _sellingWeights[goat.id] = weight;
+  }
 
+  /// Gender per goat, keyed by goat ID. Trading's Goat Registration
+  /// never captured gender (see Goat.gender's doc comment) — this is
+  /// the one place it's ever asked, and it's written back onto the goat
+  /// doc when the sale saves so it isn't asked again next time. Falls
+  /// back to whatever's already on the goat record, if anything.
+  final Map<String, String> _genders = {};
+
+  String genderFor(Goat goat) => _genders[goat.id] ?? goat.gender;
+
+  void setGender(Goat goat, String gender) {
+    _genders[goat.id] = gender;
+  }
+
+  /// Sum of every selected goat's selling weight — this is what Step 4
+  /// treats as the sale's total Selling Weight. It is deliberately
+  /// derived from Step 3's per-goat entries rather than re-entered as
+  /// an independent value in Step 4, so the two steps can never
+  /// disagree about how much is being sold.
   double get totalSellingWeight => selectedGoats.fold(
     0.0,
-        (sum, goat) => sum + sellingWeightFor(goat),
+        (sum, g) => sum + weightFor(g),
   );
 
   // ---------------------------------------------------------------------------
   // STEP 4 — SALE DETAILS  (Task 2.4)
   // ---------------------------------------------------------------------------
 
-  /// Single price/KG applied across every selected goat — matches the
-  /// plan's "Selling Price/KG × Selling Weight, summed across goats"
-  /// rule rather than a per-goat price.
   double sellingPricePerKg = 0;
 
-  /// Derived field, never manually overridden — same rule as Phase 1's
-  /// Purchase Amount.
-  double get totalSaleAmount => sellingPricePerKg * totalSellingWeight;
+  /// Derived: never manually overridden, same rule as the Purchase
+  /// wizard's Purchase Amount.
+  double get totalSaleAmount => totalSellingWeight * sellingPricePerKg;
 
   // ---------------------------------------------------------------------------
-  // STEP 5 — BRANCH A: DELIVER NOW  (Task 3.1)
+  // STEP 5 — DELIVERY OPTIONS  (Section 3)
   // ---------------------------------------------------------------------------
 
-  /// Optional — a farm-side cost, not added to what the customer owes.
-  double? transportCost;
+  /// One of Sale.deliveryTypeValues, or '' until a branch is picked.
+  String deliveryType = '';
 
+  bool get isDeliverNow =>
+      deliveryType == Sale.deliveryTypeDeliverNow;
+
+  bool get isPalaiTransfer =>
+      deliveryType == Sale.deliveryTypePalai;
+
+  // --- Branch A: Deliver Now (Task 3.1) --------------------------------------
+
+  double transportCost = 0;
   double amountReceived = 0;
 
-  /// totalSaleAmount minus what's been received so far. Transport cost
-  /// is deliberately excluded — it's the farm's own cost, not part of
-  /// the customer's payable amount.
-  double get remainingBalanceDeliverNow =>
-      totalSaleAmount - amountReceived;
-
-  /// One of Sale.paymentStatusValues, derived the same way Step 4
-  /// derives totalSaleAmount — never set directly by the UI.
-  String get paymentStatusDeliverNow {
-    if (amountReceived <= 0) return 'Pending';
-    if (amountReceived >= totalSaleAmount) return 'Paid';
-    return 'Partial';
+  double get remainingBalanceDeliverNow {
+    final remaining = totalSaleAmount - amountReceived;
+    return remaining < 0 ? 0 : remaining;
   }
 
-  // ---------------------------------------------------------------------------
-  // STEP 5 — BRANCH D: TRANSFER TO PALAI  (Task 3.4)
-  // ---------------------------------------------------------------------------
+  String get paymentStatusDeliverNow {
+    if (amountReceived <= 0) return Sale.paymentStatusPending;
+    if (amountReceived >= totalSaleAmount) return Sale.paymentStatusPaid;
+    return Sale.paymentStatusPartial;
+  }
+
+  // --- Branch D: Transfer to Palai (Task 3.4) --------------------------------
 
   DateTime? transferDate;
   String palaiPackage = '';

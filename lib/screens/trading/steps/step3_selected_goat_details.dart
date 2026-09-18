@@ -5,60 +5,45 @@ import '../../../../app_theme.dart';
 import '../../../../models/goat_model.dart';
 import '../../../../models/sale_draft.dart';
 
-/// Step 3 — Selected Goat Details (Task 2.3).
+/// Step 3 — Selected Goat Details.
 ///
-/// Shows Photo / ID / Breed / Gender / Age / Current Weight for every
-/// goat picked on Step 1, with Selling Weight editable per goat — the
-/// selling weight may differ slightly from the last recorded weight.
+/// For each selected goat: Photo/ID/Breed/Gender/Age/Current Weight,
+/// with weight editable (selling weight may differ slightly from last
+/// recorded weight) — Task 2.3.
 ///
-/// Gender note: Trading's Goat model has no `gender` field (see
-/// lib/models/goat_model.dart) — it's tracked for Own Farm and Palai
-/// goats but was never added when Trading's Goat Registration was
-/// built. Backfilling it there means touching Registration end-to-end
-/// and leaves every already-registered goat blank until re-edited —
-/// real scope creep for this phase. So Gender here is a per-sale,
-/// optional field: it lives only in SaleDraft.genderOverrides, shown
-/// on this card for the seller's own record-keeping, and is never
-/// written back to the goat doc.
+/// Gender is also editable here even though it isn't part of the plan's
+/// literal field list: Trading's Goat model never captured it (see
+/// Goat.gender's doc comment), so this is the one place it can be
+/// filled in, and it's written back onto the goat record on save.
+///
+/// Exposes [validate] via its State, same pattern as Step2, so the
+/// wizard can block advancing until every goat has a valid weight.
 class Step3SelectedGoatDetails extends StatefulWidget {
-  final GlobalKey<FormState> formKey;
   final SaleDraft draft;
 
   const Step3SelectedGoatDetails({
     super.key,
-    required this.formKey,
     required this.draft,
   });
 
   @override
   State<Step3SelectedGoatDetails> createState() =>
-      _Step3SelectedGoatDetailsState();
+      Step3SelectedGoatDetailsState();
 }
 
-class _Step3SelectedGoatDetailsState
+class Step3SelectedGoatDetailsState
     extends State<Step3SelectedGoatDetails> {
-  late final Map<String, TextEditingController> _weightControllers;
-
-  static const List<String> _genderOptions = ['Male', 'Female'];
+  final GlobalKey<FormState> _formKey = GlobalKey<FormState>();
+  final Map<String, TextEditingController> _weightControllers = {};
 
   @override
   void initState() {
     super.initState();
 
-    final draft = widget.draft;
-
-    _weightControllers = {
-      for (final goat in draft.selectedGoats)
-        goat.id: TextEditingController(
-          text: _trimZero(draft.sellingWeightFor(goat)),
-        ),
-    };
-
-    // Seed the draft with the current weight for any goat that hasn't
-    // had a selling weight set yet, so totalSellingWeight is correct
-    // even before the person touches a field.
-    for (final goat in draft.selectedGoats) {
-      draft.sellingWeights.putIfAbsent(goat.id, () => goat.weight);
+    for (final goat in widget.draft.selectedGoats) {
+      _weightControllers[goat.id] = TextEditingController(
+        text: _trimZero(widget.draft.weightFor(goat)),
+      );
     }
   }
 
@@ -76,92 +61,80 @@ class _Step3SelectedGoatDetailsState
     super.dispose();
   }
 
-  void _setGender(String goatId, String? gender) {
-    setState(() {
-      if (gender == null || gender.isEmpty) {
-        widget.draft.genderOverrides.remove(goatId);
-      } else {
-        widget.draft.genderOverrides[goatId] = gender;
+  bool validate() {
+    final valid = _formKey.currentState?.validate() ?? false;
+
+    if (!valid) return false;
+
+    for (final goat in widget.draft.selectedGoats) {
+      final weight = double.tryParse(
+        _weightControllers[goat.id]?.text.trim() ?? '',
+      );
+
+      if (weight != null) {
+        widget.draft.setWeight(goat, weight);
       }
-    });
+    }
+
+    return true;
   }
 
   @override
   Widget build(BuildContext context) {
-    final draft = widget.draft;
-
     return Form(
-      key: widget.formKey,
-      child: ListView(
+      key: _formKey,
+      child: ListView.separated(
         padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
-        children: [
-          Text(
-            'Confirm each goat\'s selling weight below — it can differ '
-                'slightly from the last recorded weight.',
-            style: AppTheme.body(size: 11, color: AppColors.textGrey),
-          ),
-          const SizedBox(height: 14),
-          for (final goat in draft.selectedGoats) ...[
-            _GoatDetailCard(
-              goat: goat,
-              weightController: _weightControllers[goat.id]!,
-              gender: draft.genderOverrides[goat.id],
-              genderOptions: _genderOptions,
-              onGenderChanged: (value) => _setGender(goat.id, value),
-              onWeightChanged: (value) {
-                final parsed = double.tryParse(value.trim());
-                draft.sellingWeights[goat.id] = parsed ?? goat.weight;
-              },
-            ),
-            const SizedBox(height: 12),
-          ],
-        ],
+        itemCount: widget.draft.selectedGoats.length,
+        separatorBuilder: (_, __) => const SizedBox(height: 12),
+        itemBuilder: (context, index) {
+          final goat = widget.draft.selectedGoats[index];
+
+          return _GoatDetailCard(
+            goat: goat,
+            weightController: _weightControllers[goat.id]!,
+            gender: widget.draft.genderFor(goat),
+            onGenderChanged: (value) {
+              setState(() {
+                widget.draft.setGender(goat, value);
+              });
+            },
+          );
+        },
       ),
     );
   }
 }
 
+// ============================================================================
+// GOAT DETAIL CARD
+// ============================================================================
+
 class _GoatDetailCard extends StatelessWidget {
   final Goat goat;
   final TextEditingController weightController;
-  final String? gender;
-  final List<String> genderOptions;
-  final ValueChanged<String?> onGenderChanged;
-  final ValueChanged<String> onWeightChanged;
+  final String gender;
+  final ValueChanged<String> onGenderChanged;
 
   const _GoatDetailCard({
     required this.goat,
     required this.weightController,
     required this.gender,
-    required this.genderOptions,
     required this.onGenderChanged,
-    required this.onWeightChanged,
   });
 
   @override
   Widget build(BuildContext context) {
-    final resolvedGender =
-    gender != null && genderOptions.contains(gender) ? gender : null;
-
     return Container(
       padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.04),
-            blurRadius: 8,
-            offset: const Offset(0, 2),
-          ),
-        ],
-      ),
+      decoration: AppTheme.card(radius: 16),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // -------------------------------------------------------------
-          // PHOTO + ID + BREED
-          // -------------------------------------------------------------
+          // ---------------------------------------------------------------
+          // HEADER — PHOTO / ID / BREED
+          // ---------------------------------------------------------------
+
           Row(
             children: [
               Container(
@@ -187,8 +160,6 @@ class _GoatDetailCard extends StatelessWidget {
                   children: [
                     Text(
                       goat.id,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
                       style: AppTheme.heading(
                         size: 14,
                         color: AppColors.textDark,
@@ -199,175 +170,147 @@ class _GoatDetailCard extends StatelessWidget {
                       goat.breed.isEmpty
                           ? 'Breed not specified'
                           : goat.breed,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
                       style: AppTheme.body(
                         size: 11,
                         color: AppColors.textGrey,
                       ),
                     ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-
-          const SizedBox(height: 12),
-
-          // -------------------------------------------------------------
-          // AGE + RECORDED WEIGHT (read-only)
-          // -------------------------------------------------------------
-          Row(
-            children: [
-              Expanded(
-                child: _readOnlyStat(
-                  icon: Icons.calendar_month_outlined,
-                  label: 'Age',
-                  value: goat.age,
-                ),
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: _readOnlyStat(
-                  icon: Icons.monitor_weight_outlined,
-                  label: 'Recorded Weight',
-                  value: '${goat.weight.toStringAsFixed(1)} kg',
-                ),
-              ),
-            ],
-          ),
-
-          const SizedBox(height: 12),
-
-          // -------------------------------------------------------------
-          // GENDER (optional, draft-only) + SELLING WEIGHT (editable)
-          // -------------------------------------------------------------
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Expanded(
-                child: DropdownButtonFormField<String>(
-                  value: resolvedGender,
-                  decoration: _fieldDecoration(
-                    label: 'Gender (optional)',
-                  ),
-                  items: [
-                    const DropdownMenuItem<String>(
-                      value: null,
-                      child: Text('Not specified'),
-                    ),
-                    for (final option in genderOptions)
-                      DropdownMenuItem<String>(
-                        value: option,
-                        child: Text(option),
-                      ),
-                  ],
-                  onChanged: onGenderChanged,
-                ),
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: TextFormField(
-                  controller: weightController,
-                  keyboardType: const TextInputType.numberWithOptions(
-                    decimal: true,
-                  ),
-                  inputFormatters: [
-                    FilteringTextInputFormatter.allow(
-                      RegExp(r'^\d*\.?\d{0,2}'),
+                    const SizedBox(height: 2),
+                    Row(
+                      children: [
+                        Icon(
+                          Icons.calendar_month_outlined,
+                          size: 12,
+                          color: AppColors.textGrey,
+                        ),
+                        const SizedBox(width: 3),
+                        Text(
+                          goat.age,
+                          style: AppTheme.body(
+                            size: 10,
+                            color: AppColors.textGrey,
+                          ),
+                        ),
+                      ],
                     ),
                   ],
-                  onChanged: onWeightChanged,
-                  validator: (value) {
-                    final number = double.tryParse(value?.trim() ?? '');
-
-                    if (number == null || number <= 0) {
-                      return 'Enter weight';
-                    }
-
-                    return null;
-                  },
-                  decoration: _fieldDecoration(
-                    label: 'Selling Weight',
-                    suffix: 'KG',
-                  ),
                 ),
               ),
             ],
           ),
-        ],
-      ),
-    );
-  }
 
-  InputDecoration _fieldDecoration({
-    required String label,
-    String? suffix,
-  }) {
-    return InputDecoration(
-      labelText: label,
-      suffixText: suffix,
-      filled: true,
-      fillColor: Colors.white,
-      contentPadding: const EdgeInsets.symmetric(
-        horizontal: 12,
-        vertical: 10,
-      ),
-      border: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(12),
-      ),
-      enabledBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(12),
-        borderSide: const BorderSide(color: AppColors.divider),
-      ),
-      focusedBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(12),
-        borderSide: const BorderSide(
-          color: AppColors.primaryGreen,
-          width: 1.4,
-        ),
-      ),
-      errorBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(12),
-        borderSide: const BorderSide(color: AppColors.error),
-      ),
-    );
-  }
+          const SizedBox(height: 14),
+          Divider(color: AppColors.divider, height: 1),
+          const SizedBox(height: 14),
 
-  Widget _readOnlyStat({
-    required IconData icon,
-    required String label,
-    required String value,
-  }) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-      decoration: BoxDecoration(
-        color: AppColors.paleGreen,
-        borderRadius: BorderRadius.circular(10),
-      ),
-      child: Row(
-        children: [
-          Icon(icon, size: 14, color: AppColors.textGrey),
-          const SizedBox(width: 6),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  label,
-                  style: AppTheme.body(size: 9, color: AppColors.textGrey),
-                ),
-                Text(
-                  value,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: AppTheme.heading(
-                    size: 11,
-                    color: AppColors.textDark,
-                  ),
-                ),
-              ],
+          // ---------------------------------------------------------------
+          // GENDER
+          // ---------------------------------------------------------------
+
+          Text(
+            'Gender',
+            style: AppTheme.body(
+              size: 11,
+              color: AppColors.textGrey,
+              weight: FontWeight.w600,
             ),
+          ),
+          const SizedBox(height: 8),
+          Row(
+            children: Goat.genderValues.map((value) {
+              final selected = gender == value;
+
+              return Padding(
+                padding: const EdgeInsets.only(right: 8),
+                child: InkWell(
+                  onTap: () => onGenderChanged(value),
+                  borderRadius: BorderRadius.circular(20),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 16,
+                      vertical: 8,
+                    ),
+                    decoration: BoxDecoration(
+                      color: selected
+                          ? AppColors.primaryGreen
+                          : Colors.white,
+                      borderRadius: BorderRadius.circular(20),
+                      border: Border.all(
+                        color: selected
+                            ? AppColors.primaryGreen
+                            : AppColors.divider,
+                      ),
+                    ),
+                    child: Text(
+                      value,
+                      style: AppTheme.body(
+                        size: 11,
+                        color: selected
+                            ? Colors.white
+                            : AppColors.textGrey,
+                        weight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
+                ),
+              );
+            }).toList(),
+          ),
+
+          const SizedBox(height: 14),
+
+          // ---------------------------------------------------------------
+          // SELLING WEIGHT
+          // ---------------------------------------------------------------
+
+          Text(
+            'Selling Weight',
+            style: AppTheme.body(
+              size: 11,
+              color: AppColors.textGrey,
+              weight: FontWeight.w600,
+            ),
+          ),
+          const SizedBox(height: 8),
+          TextFormField(
+            controller: weightController,
+            keyboardType: const TextInputType.numberWithOptions(
+              decimal: true,
+            ),
+            inputFormatters: [
+              FilteringTextInputFormatter.allow(
+                RegExp(r'^\d*\.?\d{0,2}'),
+              ),
+            ],
+            style: AppTheme.body(size: 13, color: AppColors.textDark),
+            decoration: InputDecoration(
+              hintText: '0.00',
+              suffixText: 'KG',
+              prefixIcon: const Icon(
+                Icons.monitor_weight_outlined,
+                color: AppColors.primaryGreen,
+                size: 20,
+              ),
+              filled: true,
+              fillColor: AppColors.paleGreen,
+              contentPadding: const EdgeInsets.symmetric(
+                horizontal: 14,
+                vertical: 12,
+              ),
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(12),
+                borderSide: BorderSide.none,
+              ),
+            ),
+            validator: (value) {
+              final number = double.tryParse(value?.trim() ?? '');
+
+              if (number == null || number <= 0) {
+                return 'Enter a valid weight';
+              }
+
+              return null;
+            },
           ),
         ],
       ),

@@ -6,12 +6,12 @@ import '../../../../app_theme.dart';
 import '../../../../models/sale_draft.dart';
 import '../purchase_goats/purchase_wizard_widgets.dart';
 
-/// Step 4 — Sale Details (Task 2.4).
+/// Step 4 — Sale Details.
 ///
-/// Selling Price/KG (editable) × Total Selling Weight (from Step 3,
-/// summed across every selected goat) = Total Sale Amount. Same
-/// "derived field, never manually overridden" rule as Phase 1's
-/// Purchase Amount.
+/// Selling Price/KG (editable) x Total Selling Weight (derived from
+/// Step 3) = Total Sale Amount, auto-calculated live and summed across
+/// every selected goat — Task 2.4. Same "derived field, never manually
+/// overridden" rule as the Purchase wizard's Purchase Amount.
 class Step4SaleDetails extends StatefulWidget {
   final GlobalKey<FormState> formKey;
   final SaleDraft draft;
@@ -29,17 +29,12 @@ class Step4SaleDetails extends StatefulWidget {
 class _Step4SaleDetailsState extends State<Step4SaleDetails> {
   late final TextEditingController _priceController;
 
-  @override
-  void initState() {
-    super.initState();
-
-    final draft = widget.draft;
-
-    _priceController = TextEditingController(
-      text: draft.sellingPricePerKg == 0
-          ? ''
-          : _trimZero(draft.sellingPricePerKg),
-    );
+  String _currency(num value) {
+    return NumberFormat.currency(
+      locale: 'en_IN',
+      symbol: '₹',
+      decimalDigits: 2,
+    ).format(value);
   }
 
   String _trimZero(double value) {
@@ -48,12 +43,15 @@ class _Step4SaleDetailsState extends State<Step4SaleDetails> {
         : value.toString();
   }
 
-  String _currency(num value) {
-    return NumberFormat.currency(
-      locale: 'en_IN',
-      symbol: '₹',
-      decimalDigits: 2,
-    ).format(value);
+  @override
+  void initState() {
+    super.initState();
+
+    _priceController = TextEditingController(
+      text: widget.draft.sellingPricePerKg == 0
+          ? ''
+          : _trimZero(widget.draft.sellingPricePerKg),
+    );
   }
 
   @override
@@ -82,22 +80,32 @@ class _Step4SaleDetailsState extends State<Step4SaleDetails> {
             title: 'Sale Details',
             icon: Icons.sell_outlined,
             children: [
-              WizardComputedRow(
-                label: draft.isMultiGoat
-                    ? 'Total Selling Weight (${draft.selectedGoats.length} goats)'
-                    : 'Selling Weight',
-                value: '${draft.totalSellingWeight.toStringAsFixed(1)} kg',
+              _ReadOnlyRow(
+                icon: Icons.pets_outlined,
+                label: 'Goats in this Sale',
+                value: '${draft.selectedGoats.length}',
               ),
-
-              const SizedBox(height: 8),
-
-              _buildField(
+              const SizedBox(height: 12),
+              _ReadOnlyRow(
+                icon: Icons.scale_outlined,
+                label: 'Total Selling Weight',
+                value: '${_trimZero(draft.totalSellingWeight)} KG',
+              ),
+              const SizedBox(height: 14),
+              wizardField(
                 controller: _priceController,
                 label: 'Selling Price per KG',
                 hint: '0.00',
                 icon: Icons.currency_rupee_rounded,
-                prefix: '₹ ',
                 suffix: '/ KG',
+                keyboardType: const TextInputType.numberWithOptions(
+                  decimal: true,
+                ),
+                inputFormatters: [
+                  FilteringTextInputFormatter.allow(
+                    RegExp(r'^\d*\.?\d{0,2}'),
+                  ),
+                ],
                 onChanged: (_) => _recalculate(),
                 validator: (value) {
                   final number = double.tryParse(value?.trim() ?? '');
@@ -120,8 +128,6 @@ class _Step4SaleDetailsState extends State<Step4SaleDetails> {
     );
   }
 
-  // Mirrors Step2PurchaseDetails._buildPurchaseAmountCard so the two
-  // wizards read the same way.
   Widget _buildTotalCard(double amount) {
     return Container(
       width: double.infinity,
@@ -191,51 +197,46 @@ class _Step4SaleDetailsState extends State<Step4SaleDetails> {
       ),
     );
   }
+}
 
-  Widget _buildField({
-    required TextEditingController controller,
-    required String label,
-    required String hint,
-    required IconData icon,
-    required ValueChanged<String> onChanged,
-    FormFieldValidator<String>? validator,
-    String? prefix,
-    String? suffix,
-  }) {
-    return TextFormField(
-      controller: controller,
-      keyboardType: const TextInputType.numberWithOptions(decimal: true),
-      inputFormatters: [
-        FilteringTextInputFormatter.allow(RegExp(r'^\d*\.?\d{0,2}')),
-      ],
-      onChanged: onChanged,
-      validator: validator,
-      decoration: InputDecoration(
-        labelText: label,
-        hintText: hint,
-        prefixIcon: Icon(icon),
-        prefixText: prefix,
-        suffixText: suffix,
-        filled: true,
-        fillColor: Colors.white,
-        border: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(14),
-        ),
-        enabledBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(14),
-          borderSide: const BorderSide(color: AppColors.divider),
-        ),
-        focusedBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(14),
-          borderSide: const BorderSide(
-            color: AppColors.primaryGreen,
-            width: 1.4,
+// ============================================================================
+// READ-ONLY ROW
+// ============================================================================
+
+class _ReadOnlyRow extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final String value;
+
+  const _ReadOnlyRow({
+    required this.icon,
+    required this.label,
+    required this.value,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 11),
+      decoration: BoxDecoration(
+        color: AppColors.paleGreen,
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Row(
+        children: [
+          Icon(icon, size: 18, color: AppColors.primaryGreen),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              label,
+              style: AppTheme.body(size: 12, color: AppColors.textGrey),
+            ),
           ),
-        ),
-        errorBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(14),
-          borderSide: const BorderSide(color: AppColors.error),
-        ),
+          Text(
+            value,
+            style: AppTheme.heading(size: 13, color: AppColors.textDark),
+          ),
+        ],
       ),
     );
   }
