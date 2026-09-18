@@ -190,6 +190,39 @@ class GoatService {
     );
   }
 
+  /// Goats currently in [Goat.statusWaitOnDelivery] that originated
+  /// from Own Palai (Phase 5, Section 4 / Task 4.2).
+  ///
+  /// [Goat.movedToOwnPalaiAt] is stamped once, by [moveToOwnPalai], and
+  /// nothing in the Sell Goat flow ever clears it when the goat is
+  /// later sold — so it doubles as a reliable "did this goat pass
+  /// through Own Palai" marker even after `currentStatus` has moved on
+  /// to Wait on Delivery. `orderBy` on that field is what does the
+  /// actual filtering: Firestore excludes documents missing the
+  /// ordered-on field, so a Wait-on-Delivery goat that was sold
+  /// straight from Stock (never Own Palai) is never included here.
+  /// Same composite index as [ownPalaiGoatsStream] above covers this
+  /// query too, since only the equality value on `currentStatus`
+  /// differs.
+  Stream<List<Goat>> ownPalaiWaitOnDeliveryGoatsStream(
+      String farmId,
+      ) {
+    return _goats(farmId)
+        .where(
+      'currentStatus',
+      isEqualTo: Goat.statusWaitOnDelivery,
+    )
+        .orderBy(
+      'movedToOwnPalaiAt',
+      descending: true,
+    )
+        .snapshots()
+        .map(
+          (snap) =>
+          snap.docs.map(Goat.fromDoc).toList(),
+    );
+  }
+
   // -----------------------------------------------------------------------
   // MOVE TO OWN PALAI
   // -----------------------------------------------------------------------

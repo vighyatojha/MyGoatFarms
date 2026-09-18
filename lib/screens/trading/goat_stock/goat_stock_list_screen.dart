@@ -6,6 +6,8 @@ import '../../../services/firestore_service.dart';
 import '../../../services/goat_service.dart';
 import '../../../widgets/fast_route.dart';
 import '../../../widgets/farm_not_linked_state.dart';
+import 'complete_booking_delivery_screen.dart';
+import 'complete_wait_for_delivery_screen.dart';
 import 'goat_stock_detail_screen.dart';
 
 /// Goat Stock list.
@@ -84,6 +86,30 @@ class _GoatStockListScreenState
     Navigator.of(context).push(
       fastRoute(
         GoatStockDetailScreen(
+          farmId: farmId,
+          goat: goat,
+        ),
+      ),
+    );
+  }
+
+  /// Card-level shortcut so a Booked / Wait-on-Delivery goat's
+  /// "Complete Delivery" action doesn't require going through the
+  /// detail screen first — added on top of Phase 5's original wiring
+  /// (detail screen only) since it was easy to miss there.
+  void _openCompleteDelivery(Goat goat) {
+    final farmId = _farmId;
+
+    if (farmId == null) return;
+
+    Navigator.of(context).push(
+      fastRoute(
+        goat.currentStatus == Goat.statusBooked
+            ? CompleteBookingDeliveryScreen(
+          farmId: farmId,
+          goat: goat,
+        )
+            : CompleteWaitForDeliveryScreen(
           farmId: farmId,
           goat: goat,
         ),
@@ -286,6 +312,12 @@ class _GoatStockListScreenState
                 goat: goat,
                 onTap: () =>
                     _openDetail(goat),
+                onCompleteDelivery:
+                (goat.currentStatus == Goat.statusBooked ||
+                    goat.currentStatus ==
+                        Goat.statusWaitOnDelivery)
+                    ? () => _openCompleteDelivery(goat)
+                    : null,
               );
             },
           ),
@@ -719,9 +751,14 @@ class _GoatStockCard extends StatelessWidget {
   final Goat goat;
   final VoidCallback onTap;
 
+  /// Non-null only for Booked / Wait-on-Delivery goats — renders a
+  /// "Complete Delivery" shortcut directly on the card when set.
+  final VoidCallback? onCompleteDelivery;
+
   const _GoatStockCard({
     required this.goat,
     required this.onTap,
+    this.onCompleteDelivery,
   });
 
   Color _statusColor() {
@@ -764,149 +801,199 @@ class _GoatStockCard extends StatelessWidget {
           decoration: AppTheme.card(
             radius: 14,
           ),
-          child: Row(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              // --------------------------------------------------------------
-              // PHOTO
-              // --------------------------------------------------------------
+              _cardRow(statusColor),
+              if (onCompleteDelivery != null) ...[
+                const SizedBox(height: 9),
+                _completeDeliveryButton(),
+              ],
+            ],
+          ),
+        ),
+      ),
+    );
+  }
 
-              Container(
-                width: 58,
-                height: 58,
-                decoration: BoxDecoration(
-                  color: AppColors.stockTeal
-                      .withOpacity(0.10),
-                  borderRadius:
-                  BorderRadius.circular(12),
-                ),
-                clipBehavior:
-                Clip.antiAlias,
-                child: goat.photo != null
-                    ? Image.memory(
-                  goat.photo!,
-                  fit: BoxFit.cover,
-                )
-                    : const Icon(
-                  Icons.pets_outlined,
-                  color:
-                  AppColors.stockTeal,
-                  size: 25,
-                ),
-              ),
+  Widget _cardRow(Color statusColor) {
+    return Row(
+      children: [
+        // --------------------------------------------------------------
+        // PHOTO
+        // --------------------------------------------------------------
 
-              const SizedBox(width: 11),
+        Container(
+          width: 58,
+          height: 58,
+          decoration: BoxDecoration(
+            color: AppColors.stockTeal
+                .withOpacity(0.10),
+            borderRadius:
+            BorderRadius.circular(12),
+          ),
+          clipBehavior:
+          Clip.antiAlias,
+          child: goat.photo != null
+              ? Image.memory(
+            goat.photo!,
+            fit: BoxFit.cover,
+          )
+              : const Icon(
+            Icons.pets_outlined,
+            color:
+            AppColors.stockTeal,
+            size: 25,
+          ),
+        ),
 
-              // --------------------------------------------------------------
-              // DETAILS
-              // --------------------------------------------------------------
+        const SizedBox(width: 11),
 
-              Expanded(
-                child: Column(
-                  crossAxisAlignment:
-                  CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        Expanded(
-                          child: Text(
-                            goat.id,
-                            maxLines: 1,
-                            overflow:
-                            TextOverflow
-                                .ellipsis,
-                            style:
-                            AppTheme.heading(
-                              size: 13,
-                              color:
-                              AppColors
-                                  .textDark,
-                            ),
-                          ),
-                        ),
+        // --------------------------------------------------------------
+        // DETAILS
+        // --------------------------------------------------------------
 
-                        const SizedBox(width: 6),
-
-                        Container(
-                          padding:
-                          const EdgeInsets
-                              .symmetric(
-                            horizontal: 7,
-                            vertical: 3,
-                          ),
-                          decoration:
-                          BoxDecoration(
-                            color: statusColor
-                                .withOpacity(
-                              0.10,
-                            ),
-                            borderRadius:
-                            BorderRadius
-                                .circular(
-                              20,
-                            ),
-                          ),
-                          child: Text(
-                            goat.currentStatus,
-                            maxLines: 1,
-                            overflow:
-                            TextOverflow
-                                .ellipsis,
-                            style: TextStyle(
-                              color: statusColor,
-                              fontSize: 8,
-                              fontWeight:
-                              FontWeight.w700,
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-
-                    const SizedBox(height: 4),
-
-                    Text(
-                      goat.breed.isEmpty
-                          ? 'Breed not specified'
-                          : goat.breed,
+        Expanded(
+          child: Column(
+            crossAxisAlignment:
+            CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      goat.id,
                       maxLines: 1,
                       overflow:
-                      TextOverflow.ellipsis,
-                      style: AppTheme.body(
-                        size: 10,
+                      TextOverflow
+                          .ellipsis,
+                      style:
+                      AppTheme.heading(
+                        size: 13,
                         color:
-                        AppColors.textGrey,
+                        AppColors
+                            .textDark,
                       ),
                     ),
+                  ),
 
-                    const SizedBox(height: 7),
+                  const SizedBox(width: 6),
 
-                    Row(
-                      children: [
-                        _detail(
-                          Icons
-                              .calendar_month_outlined,
-                          goat.age,
-                        ),
-
-                        const SizedBox(width: 12),
-
-                        _detail(
-                          Icons
-                              .monitor_weight_outlined,
-                          '${goat.weight.toStringAsFixed(1)} kg',
-                        ),
-                      ],
+                  Container(
+                    padding:
+                    const EdgeInsets
+                        .symmetric(
+                      horizontal: 7,
+                      vertical: 3,
                     ),
-                  ],
+                    decoration:
+                    BoxDecoration(
+                      color: statusColor
+                          .withOpacity(
+                        0.10,
+                      ),
+                      borderRadius:
+                      BorderRadius
+                          .circular(
+                        20,
+                      ),
+                    ),
+                    child: Text(
+                      goat.currentStatus,
+                      maxLines: 1,
+                      overflow:
+                      TextOverflow
+                          .ellipsis,
+                      style: TextStyle(
+                        color: statusColor,
+                        fontSize: 8,
+                        fontWeight:
+                        FontWeight.w700,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+
+              const SizedBox(height: 4),
+
+              Text(
+                goat.breed.isEmpty
+                    ? 'Breed not specified'
+                    : goat.breed,
+                maxLines: 1,
+                overflow:
+                TextOverflow.ellipsis,
+                style: AppTheme.body(
+                  size: 10,
+                  color:
+                  AppColors.textGrey,
                 ),
               ),
 
-              const SizedBox(width: 7),
+              const SizedBox(height: 7),
 
+              Row(
+                children: [
+                  _detail(
+                    Icons
+                        .calendar_month_outlined,
+                    goat.age,
+                  ),
+
+                  const SizedBox(width: 12),
+
+                  _detail(
+                    Icons
+                        .monitor_weight_outlined,
+                    '${goat.weight.toStringAsFixed(1)} kg',
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+
+        const SizedBox(width: 7),
+
+        const Icon(
+          Icons.chevron_right_rounded,
+          size: 20,
+          color: AppColors.textGrey,
+        ),
+      ],
+    );
+  }
+
+  Widget _completeDeliveryButton() {
+    return Material(
+      color: AppColors.primaryGreen.withOpacity(0.10),
+      borderRadius: BorderRadius.circular(10),
+      child: InkWell(
+        onTap: onCompleteDelivery,
+        borderRadius: BorderRadius.circular(10),
+        child: Container(
+          padding: const EdgeInsets.symmetric(
+            vertical: 8,
+          ),
+          alignment: Alignment.center,
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
               const Icon(
-                Icons.chevron_right_rounded,
-                size: 20,
-                color: AppColors.textGrey,
+                Icons.check_circle_outline_rounded,
+                size: 15,
+                color: AppColors.primaryGreen,
+              ),
+              const SizedBox(width: 6),
+              Text(
+                'Complete Delivery',
+                style: AppTheme.body(
+                  size: 11,
+                  color: AppColors.primaryGreen,
+                  weight: FontWeight.w700,
+                ),
               ),
             ],
           ),

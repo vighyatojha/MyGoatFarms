@@ -877,6 +877,137 @@ class SalesService {
   }
 
   // -----------------------------------------------------------------------
+  // COMPLETE DELIVERY — WAIT FOR DELIVERY (Phase 5, Section 2)
+  // -----------------------------------------------------------------------
+
+  /// Finishes a Branch C (Wait for Delivery) sale once the customer
+  /// actually picks the goat up.
+  ///
+  /// The rate is always the one fixed at booking time
+  /// ([Sale.bookingPricePerKg]) — this method never reads
+  /// [Sale.sellingPricePerKg] (today's rate) for the settlement, per
+  /// the plan's explicit warning in Section 5 that re-pricing at the
+  /// current market rate is the easiest mistake to make here. Only
+  /// the weight is taken fresh, at pickup:
+  ///
+  ///   Final Price = Pickup Weight x Booking Price/Kg - Advance Paid
+  ///
+  /// Worked example from the plan (Section 2, Task 2.2): 34kg booked,
+  /// 38kg at delivery, ₹520/kg fixed, ₹5,000 advance -> ₹14,760
+  /// remaining. 38 x 520 = 19,760; 19,760 - 5,000 = 14,760. ✓
+  Future<void> completeWaitForDeliveryPickup({
+    required String farmId,
+    required String saleId,
+    required double pickupWeight,
+  }) async {
+    if (pickupWeight <= 0) {
+      throw StateError('Pickup weight must be greater than zero.');
+    }
+
+    await _db.runTransaction((transaction) async {
+      // ---------------------------------------------------------------
+      // 1. Reads first — a Firestore transaction requires every read
+      //    to happen before any write.
+      // ---------------------------------------------------------------
+
+      final saleRef = _sales(farmId).doc(saleId);
+      final saleSnap = await transaction.get(saleRef);
+
+      if (!saleSnap.exists) {
+        throw StateError('Sale $saleId no longer exists.');
+      }
+
+      final sale = Sale.fromDoc(saleSnap);
+
+      if (!sale.isWaitForDelivery) {
+        throw StateError('Sale $saleId is not a Wait for Delivery sale.');
+      }
+
+      if (sale.status != Sale.statusWaitForDelivery) {
+        throw StateError(
+          'Sale $saleId has already been completed or is in an '
+              'unexpected state ("${sale.status}").',
+        );
+      }
+
+      final goatSnaps = <DocumentSnapshot<Map<String, dynamic>>>[];
+
+      for (final goatId in sale.goatIds) {
+        goatSnaps.add(
+          await transaction.get(_goats(farmId).doc(goatId)),
+        );
+      }
+
+      // ---------------------------------------------------------------
+      // 2. Compute the final settlement — booking-time rate, pickup
+      //    weight, never today's rate.
+      // ---------------------------------------------------------------
+
+      final bookingPricePerKg = sale.bookingPricePerKg ?? 0;
+      final bookingAdvanceAmount = sale.bookingAdvanceAmount ?? 0;
+
+      final rawFinalPrice =
+          pickupWeight * bookingPricePerKg - bookingAdvanceAmount;
+      final finalPrice = rawFinalPrice < 0 ? 0.0 : rawFinalPrice;
+
+      // ---------------------------------------------------------------
+      // 3. Update the sale doc.
+      // ---------------------------------------------------------------
+
+      transaction.update(saleRef, {
+        'status': Sale.statusPickupCompleted,
+        'pickupWeight': pickupWeight,
+        'finalPriceAfterPickup': finalPrice,
+        'deliveryCompletedAt': FieldValue.serverTimestamp(),
+      });
+
+      // ---------------------------------------------------------------
+      // 4. Flip every still-Wait-on-Delivery goat in this sale to
+      //    Sold — it has now actually left the farm. Skip any goat
+      //    that's already moved on (defensive; shouldn't normally
+      //    happen) rather than clobbering it.
+      // ---------------------------------------------------------------
+
+      var movedGoats = 0;
+
+      for (final snap in goatSnaps) {
+        if (!snap.exists) continue;
+
+        final goat = Goat.fromDoc(snap);
+
+        if (goat.currentStatus != Goat.statusWaitOnDelivery ||
+            goat.saleId != saleId) {
+          continue;
+        }
+
+        transaction.update(snap.reference, {
+          'currentStatus': Goat.statusSold,
+        });
+
+        movedGoats++;
+      }
+
+      // ---------------------------------------------------------------
+      // 5. Dashboard aggregate: Wait on Delivery count decreases,
+      //    Total Sold increases. totalStock also decreases here —
+      //    same deferred-decrement reasoning as the Booking branch,
+      //    since Branch C never touched totalStock when the sale was
+      //    first created (the goat hadn't left the farm yet).
+      // ---------------------------------------------------------------
+
+      transaction.set(
+        _summaryDoc(farmId),
+        {
+          'waitOnDelivery': FieldValue.increment(-movedGoats),
+          'totalSold': FieldValue.increment(movedGoats),
+          'totalStock': FieldValue.increment(-movedGoats),
+        },
+        SetOptions(merge: true),
+      );
+    }).timeout(_timeout * 2);
+  }
+
+  // -----------------------------------------------------------------------
   // CUSTOMERS (Task 2.2 groundwork)
   // -----------------------------------------------------------------------
 

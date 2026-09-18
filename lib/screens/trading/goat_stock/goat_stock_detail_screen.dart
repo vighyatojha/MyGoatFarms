@@ -9,6 +9,7 @@ import '../../../services/trading_service.dart';
 import '../../../widgets/fast_route.dart';
 import '../../palai/fullscreen_image_viewer.dart';
 import 'complete_booking_delivery_screen.dart';
+import 'complete_wait_for_delivery_screen.dart';
 
 class GoatStockDetailScreen extends StatefulWidget {
   final String farmId;
@@ -100,6 +101,24 @@ class _GoatStockDetailScreenState
     // (not a stream), so once the delivery is completed we pop back to
     // the goat list, which streams live and will already show the goat
     // as Sold — rather than showing a stale "Booked" status here.
+    if (completed == true && mounted) {
+      Navigator.of(context).pop();
+    }
+  }
+
+  Future<void> _openCompleteWaitForDelivery() async {
+    final completed = await Navigator.of(context).push<bool>(
+      fastRoute(
+        CompleteWaitForDeliveryScreen(
+          farmId: widget.farmId,
+          goat: widget.goat,
+        ),
+      ),
+    );
+
+    // Same reasoning as _openCompleteBookingDelivery above: this
+    // screen's Goat is a static snapshot, so pop back to the
+    // live-streamed list rather than show a stale status here.
     if (completed == true && mounted) {
       Navigator.of(context).pop();
     }
@@ -496,11 +515,12 @@ class _GoatStockDetailScreenState
               //
               // Booked goats get a "Complete Delivery" action here per
               // the Phase 5 plan's Task 1.1 ("wherever Booked goats are
-              // visible"). Wait for Delivery's equivalent action lands
-              // in the next Phase 5 task.
+              // visible"). Wait-on-Delivery goats get the equivalent
+              // action per Task 2.1, same entry-point pattern.
               // ---------------------------------------------------------------
 
-              if (goat.currentStatus == Goat.statusBooked) ...[
+              if (goat.currentStatus == Goat.statusBooked ||
+                  goat.currentStatus == Goat.statusWaitOnDelivery) ...[
                 const SizedBox(height: 14),
                 _sectionCard(
                   title: 'Sale Information',
@@ -512,7 +532,9 @@ class _GoatStockDetailScreenState
                     ),
                     _infoRow(
                       'Status',
-                      'Booked — awaiting pickup',
+                      goat.currentStatus == Goat.statusBooked
+                          ? 'Booked — awaiting pickup'
+                          : 'Wait for Delivery — awaiting pickup',
                     ),
                   ],
                 ),
@@ -523,7 +545,10 @@ class _GoatStockDetailScreenState
                   width: double.infinity,
                   height: 50,
                   child: ElevatedButton.icon(
-                    onPressed: _openCompleteBookingDelivery,
+                    onPressed:
+                    goat.currentStatus == Goat.statusBooked
+                        ? _openCompleteBookingDelivery
+                        : _openCompleteWaitForDelivery,
                     icon: const Icon(
                       Icons.check_circle_outline_rounded,
                       size: 19,
