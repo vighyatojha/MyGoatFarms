@@ -106,4 +106,35 @@ class SaleDraft {
   /// Derived field, never manually overridden — same rule as Phase 1's
   /// Purchase Amount.
   double get totalSaleAmount => sellingPricePerKg * totalSellingWeight;
+
+  // ---------------------------------------------------------------------------
+  // STEP 5 — BRANCH A: DELIVER NOW  (Task 3.1)
+  // ---------------------------------------------------------------------------
+
+  /// Optional — a farm-side cost, not added to what the customer owes.
+  double? transportCost;
+
+  double amountReceived = 0;
+
+  /// totalSaleAmount minus what's been received so far. Transport cost
+  /// is deliberately excluded — it's the farm's own cost, not part of
+  /// the customer's payable amount.
+  double get remainingBalanceDeliverNow =>
+      totalSaleAmount - amountReceived;
+
+  /// One of Sale.paymentStatusValues, derived the same way Step 4
+  /// derives totalSaleAmount — never set directly by the UI.
+  String get paymentStatusDeliverNow {
+    if (amountReceived <= 0) return 'Pending';
+    if (amountReceived >= totalSaleAmount) return 'Paid';
+    return 'Partial';
+  }
+
+  // ---------------------------------------------------------------------------
+  // STEP 5 — BRANCH D: TRANSFER TO PALAI  (Task 3.4)
+  // ---------------------------------------------------------------------------
+
+  DateTime? transferDate;
+  String palaiPackage = '';
+  double monthlyPalaiCharge = 0;
 }

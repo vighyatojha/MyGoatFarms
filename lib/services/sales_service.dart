@@ -3,7 +3,11 @@ import 'dart:async';
 import 'package:cloud_firestore/cloud_firestore.dart';
 
 import '../models/customer_model.dart';
-import '../models/palai_customer.dart';
+import '../models/goat_model.dart';
+import '../models/palai_models.dart';
+import '../models/sale_draft.dart';
+import '../models/sale_model.dart';
+import 'firestore_service.dart';
 
 /// Handles the Trading module's Sell Goat flow (Phase 4: Feature 7 + 8).
 ///
@@ -67,6 +71,30 @@ class SalesService {
         .doc(farmId)
         .collection('tradingCounters')
         .doc('saleCounter');
+  }
+
+  /// Owned by GoatService (Feature 3 / Goat Registration) — Branches A
+  /// and D both need to flip a goat's `currentStatus` once the sale is
+  /// saved, so this points at the same collection GoatService writes
+  /// to rather than duplicating goat data under `sales`.
+  CollectionReference<Map<String, dynamic>> _tradingGoats(
+      String farmId,
+      ) {
+    return _farms().doc(farmId).collection('tradingGoats');
+  }
+
+  /// Same dashboard doc GoatService/TradingService already write to
+  /// (farms/{farmId}/tradingSummary/dashboard) — see TradingSummary's
+  /// doc comment for what each field means. Branches A and D each
+  /// update a different subset of it (see saveDeliverNow /
+  /// saveTransferToPalai).
+  DocumentReference<Map<String, dynamic>> _summaryDoc(
+      String farmId,
+      ) {
+    return _farms()
+        .doc(farmId)
+        .collection('tradingSummary')
+        .doc('dashboard');
   }
 
   // -----------------------------------------------------------------------
@@ -181,6 +209,423 @@ class SalesService {
       SetOptions(merge: true),
     )
         .timeout(_timeout);
+  }
+
+  // -----------------------------------------------------------------------
+  // SHARED VALIDATION (Steps 1-4, common to every Step 5 branch)
+  // -----------------------------------------------------------------------
+
+  void _validateSharedFields(SaleDraft draft) {
+    if (draft.selectedGoats.isEmpty) {
+      throw ArgumentError(
+        'Select at least one goat to continue.',
+      );
+    }
+
+    if (draft.customerName.trim().isEmpty) {
+      throw ArgumentError(
+        'Customer name is required.',
+      );
+    }
+
+    if (draft.mobile.trim().isEmpty) {
+      throw ArgumentError(
+        'Customer mobile number is required.',
+      );
+    }
+
+    if (draft.sellingPricePerKg <= 0) {
+      throw ArgumentError(
+        'Selling Price/KG must be greater than zero.',
+      );
+    }
+
+    if (draft.totalSellingWeight <= 0) {
+      throw ArgumentError(
+        'Selling weight must be greater than zero.',
+      );
+    }
+  }
+
+  /// Resolves who this sale's `customers` link points at, per
+  /// CustomerMatch.source:
+  ///
+  /// - source == sale: an existing Sale-flow buyer. Re-save their
+  ///   Step 2 details (name/address may have been edited) and reuse
+  ///   the same id.
+  /// - source == palai: an existing Palai boarding customer buying a
+  ///   goat directly. There is no separate Sale `customers` doc for
+  ///   them — the sale links straight to their `palaiCustomers` id
+  ///   instead, and no `customers` doc is touched, so [isSaleCustomer]
+  ///   comes back false (see saveDeliverNow's totalPurchases comment).
+  /// - null: a brand-new buyer never seen before in either collection
+  ///   — create a `customers` doc for them now.
+  Future<({String customerId, bool isSaleCustomer})>
+  _resolveSaleCustomerId(
+      String farmId,
+      SaleDraft draft,
+      ) async {
+    if (draft.customerSource == CustomerMatchSource.palai &&
+        draft.customerId.isNotEmpty) {
+      return (customerId: draft.customerId, isSaleCustomer: false);
+    }
+
+    if (draft.customerSource == CustomerMatchSource.sale &&
+        draft.customerId.isNotEmpty) {
+      await updateCustomer(
+        farmId,
+        Customer(
+          id: draft.customerId,
+          name: draft.customerName,
+          mobile: draft.mobile,
+          address: draft.address,
+        ),
+      );
+
+      return (customerId: draft.customerId, isSaleCustomer: true);
+    }
+
+    final newId = await addCustomer(
+      farmId,
+      Customer(
+        id: '',
+        name: draft.customerName,
+        mobile: draft.mobile,
+        address: draft.address,
+      ),
+    );
+
+    return (customerId: newId, isSaleCustomer: true);
+  }
+
+  // -----------------------------------------------------------------------
+  // BRANCH A: DELIVER NOW  (Task 3.1)
+  // -----------------------------------------------------------------------
+
+  /// Saves a Deliver Now sale: every selected goat leaves the farm
+  /// today, `currentStatus -> Sold`, done — no further action needed
+  /// (unlike Branches B/C, which need a later "Complete Delivery"
+  /// step).
+  ///
+  /// Returns the new sale's id.
+  Future<String> saveDeliverNow({
+    required String farmId,
+    required SaleDraft draft,
+  }) async {
+    _validateSharedFields(draft);
+
+    final resolved = await _resolveSaleCustomerId(farmId, draft);
+
+    final goatRefs = draft.selectedGoats
+        .map((goat) => _tradingGoats(farmId).doc(goat.id))
+        .toList();
+
+    final paymentStatus = draft.paymentStatusDeliverNow;
+
+    final saleId = await _db.runTransaction<String>(
+          (transaction) async {
+        // -----------------------------------------------------------
+        // PRECONDITION: every goat must still be sellable.
+        // -----------------------------------------------------------
+        //
+        // Re-read each goat inside the transaction rather than trusting
+        // the copies already sitting in `draft.selectedGoats` — those
+        // were fetched back on Step 1 and another sale could have
+        // claimed one of them since. A single-goat conflict must fail
+        // the whole sale, not silently sell only some of the goats
+        // (see the plan's "Status consistency" note in Section 5).
+        for (final ref in goatRefs) {
+          final snap = await transaction.get(ref);
+
+          if (!snap.exists) {
+            throw StateError(
+              'Goat ${ref.id} was not found.',
+            );
+          }
+
+          final goat = Goat.fromDoc(snap);
+
+          if (!goat.isSellable) {
+            throw StateError(
+              'Goat ${ref.id} is no longer available for sale '
+                  '(current status: "${goat.currentStatus}"). '
+                  'It may already be part of another sale.',
+            );
+          }
+        }
+
+        final saleId = await nextSaleIdInTransaction(
+          transaction,
+          farmId,
+        );
+
+        final sale = Sale(
+          id: saleId,
+          goatIds: draft.goatIds,
+          customerId: resolved.customerId,
+          customerName: draft.customerName,
+          mobile: draft.mobile,
+          address: draft.address,
+          sellingPricePerKg: draft.sellingPricePerKg,
+          sellingWeight: draft.totalSellingWeight,
+          totalSaleAmount: draft.totalSaleAmount,
+          deliveryType: Sale.deliveryTypeDeliverNow,
+          status: Sale.statusSold,
+          transportCost: draft.transportCost,
+          amountReceived: draft.amountReceived,
+          paymentStatus: paymentStatus,
+        );
+
+        transaction.set(
+          _sales(farmId).doc(saleId),
+          {
+            ...sale.toMap(),
+            'createdAt': FieldValue.serverTimestamp(),
+          },
+        );
+
+        for (final ref in goatRefs) {
+          transaction.update(
+            ref,
+            {
+              'currentStatus': Goat.statusSold,
+              'saleId': saleId,
+            },
+          );
+        }
+
+        // Only a genuine Sale-flow buyer's totalPurchases counter moves
+        // — an existing Palai customer buying a goat outright doesn't
+        // get a `customers` doc created just to hold this count (see
+        // _resolveSaleCustomerId's doc comment).
+        if (resolved.isSaleCustomer) {
+          transaction.set(
+            _customers(farmId).doc(resolved.customerId),
+            {
+              'totalPurchases': FieldValue.increment(1),
+            },
+            SetOptions(merge: true),
+          );
+        }
+
+        transaction.set(
+          _summaryDoc(farmId),
+          {
+            'totalStock': FieldValue.increment(-goatRefs.length),
+            'totalSold': FieldValue.increment(goatRefs.length),
+          },
+          SetOptions(merge: true),
+        );
+
+        return saleId;
+      },
+    ).timeout(_timeout);
+
+    return saleId;
+  }
+
+  // -----------------------------------------------------------------------
+  // BRANCH D: TRANSFER TO PALAI  (Task 3.4)
+  // -----------------------------------------------------------------------
+
+  /// Saves a Transfer to Palai sale: the goat is sold, but instead of
+  /// leaving the farm it's checked into the existing Customer Palai
+  /// module under the buyer's account — `currentStatus -> In Customer
+  /// Palai`. The ongoing monthly billing/health tracking from that
+  /// point on is the Customer Palai module's job, not this method's —
+  /// this only needs to get the handoff (which goat, which customer,
+  /// what package) to land correctly.
+  ///
+  /// Ordering note: the Trading-side transaction (sale doc + goat
+  /// status) runs BEFORE the Palai check-in, not after. If the
+  /// check-in step then fails, the goat is left correctly marked "In
+  /// Customer Palai" (so it can't accidentally be sold to someone else
+  /// too) but not yet actually checked into a Palai customer's goat
+  /// list — that has to be finished by hand from the existing Palai
+  /// screens. Firestore transactions can't span both the `tradingGoats`
+  /// write and FirestoreService.checkInGoat's write together, so one
+  /// side has to go first; this order was chosen because "goat exists
+  /// in Palai but Trading still thinks it's for sale" (double-booking
+  /// risk) is worse than "goat's Trading status says Palai but the
+  /// Palai record needs a manual follow-up."
+  ///
+  /// Returns the new sale's id.
+  Future<String> saveTransferToPalai({
+    required String farmId,
+    required SaleDraft draft,
+  }) async {
+    _validateSharedFields(draft);
+
+    if (draft.palaiPackage.trim().isEmpty) {
+      throw ArgumentError(
+        'Palai Package is required.',
+      );
+    }
+
+    final transferDate = draft.transferDate ?? DateTime.now();
+
+    // -------------------------------------------------------------------
+    // RESOLVE PALAI CUSTOMER
+    // -------------------------------------------------------------------
+    //
+    // An existing Palai customer (source == palai) already has a
+    // palaiCustomers doc — reuse it. Anyone else (a brand-new buyer, or
+    // a Sale-only buyer who has never boarded a goat here before) needs
+    // one created now, since checkInGoat requires a customerId to file
+    // the goat under.
+    final String palaiCustomerId;
+
+    if (draft.customerSource == CustomerMatchSource.palai &&
+        draft.customerId.isNotEmpty) {
+      palaiCustomerId = draft.customerId;
+    } else {
+      palaiCustomerId = await FirestoreService.instance.addCustomer(
+        farmId,
+        PalaiCustomer(
+          id: '',
+          name: draft.customerName,
+          mobileNumber: draft.mobile,
+          address: draft.address,
+          package: draft.palaiPackage,
+          joiningDate: transferDate,
+          pendingAmount: 0,
+          price: draft.monthlyPalaiCharge,
+        ),
+      );
+    }
+
+    final goatRefs = draft.selectedGoats
+        .map((goat) => _tradingGoats(farmId).doc(goat.id))
+        .toList();
+
+    // -------------------------------------------------------------------
+    // TRADING-SIDE TRANSACTION (sale doc + goat status + dashboard)
+    // -------------------------------------------------------------------
+
+    final saleId = await _db.runTransaction<String>(
+          (transaction) async {
+        for (final ref in goatRefs) {
+          final snap = await transaction.get(ref);
+
+          if (!snap.exists) {
+            throw StateError(
+              'Goat ${ref.id} was not found.',
+            );
+          }
+
+          final goat = Goat.fromDoc(snap);
+
+          if (!goat.isSellable) {
+            throw StateError(
+              'Goat ${ref.id} is no longer available for sale '
+                  '(current status: "${goat.currentStatus}"). '
+                  'It may already be part of another sale.',
+            );
+          }
+        }
+
+        final saleId = await nextSaleIdInTransaction(
+          transaction,
+          farmId,
+        );
+
+        final sale = Sale(
+          id: saleId,
+          goatIds: draft.goatIds,
+          customerId: palaiCustomerId,
+          customerName: draft.customerName,
+          mobile: draft.mobile,
+          address: draft.address,
+          sellingPricePerKg: draft.sellingPricePerKg,
+          sellingWeight: draft.totalSellingWeight,
+          totalSaleAmount: draft.totalSaleAmount,
+          deliveryType: Sale.deliveryTypePalai,
+          status: Sale.statusTransferredToPalai,
+          transferDate: transferDate,
+          palaiPackage: draft.palaiPackage,
+          monthlyPalaiCharge: draft.monthlyPalaiCharge,
+          palaiCustomerId: palaiCustomerId,
+        );
+
+        transaction.set(
+          _sales(farmId).doc(saleId),
+          {
+            ...sale.toMap(),
+            'createdAt': FieldValue.serverTimestamp(),
+          },
+        );
+
+        for (final ref in goatRefs) {
+          transaction.update(
+            ref,
+            {
+              'currentStatus': Goat.statusInCustomerPalai,
+              'saleId': saleId,
+            },
+          );
+        }
+
+        // Transferred goats leave Trading's sellable inventory, but this
+        // is NOT a completed cash sale (see TradingSummary.totalSold's
+        // doc comment) — the farm's revenue from here on is the ongoing
+        // Palai module's monthly billing, not this one-off amount. So
+        // only totalStock moves; totalSold is deliberately left alone.
+        transaction.set(
+          _summaryDoc(farmId),
+          {
+            'totalStock': FieldValue.increment(-goatRefs.length),
+          },
+          SetOptions(merge: true),
+        );
+
+        return saleId;
+      },
+    ).timeout(_timeout);
+
+    // -------------------------------------------------------------------
+    // PALAI CHECK-IN (per goat) — see the ordering note above for why
+    // this runs after, not inside, the transaction above.
+    // -------------------------------------------------------------------
+
+    try {
+      for (final goat in draft.selectedGoats) {
+        final gender =
+        draft.genderOverrides[goat.id]?.trim().isNotEmpty == true
+            ? draft.genderOverrides[goat.id]!.trim()
+            : 'Not specified';
+
+        await FirestoreService.instance.checkInGoat(
+          farmId,
+          palaiCustomerId,
+          PalaiGoat(
+            id: '',
+            customerId: palaiCustomerId,
+            goatCode: goat.id,
+            breed: goat.breed,
+            gender: gender,
+            color: goat.color,
+            weightAtCheckIn: draft.sellingWeightFor(goat),
+            currentWeight: draft.sellingWeightFor(goat),
+            healthStatus: goat.healthStatus,
+            checkInDate: transferDate,
+            monthlyPackage: draft.palaiPackage,
+            pricing: draft.monthlyPalaiCharge,
+            notes: 'Transferred from farm stock at sale $saleId '
+                '(was ${goat.id}).',
+          ),
+        );
+      }
+    } catch (e) {
+      throw StateError(
+        'Sale $saleId was recorded and goat(s) marked '
+            '"${Goat.statusInCustomerPalai}", but checking them into '
+            'the Palai customer\'s goat list failed: $e. '
+            'Finish the check-in for the remaining goat(s) from the '
+            'Customer Palai screens.',
+      );
+    }
+
+    return saleId;
   }
 
   // -----------------------------------------------------------------------
@@ -323,7 +768,6 @@ class CustomerMatch {
   /// show e.g. "Own Palai · Basic Package" next to the name so it's
   /// obvious this isn't a plain first-time buyer.
   final String? palaiPackageName;
-  final bool? palaiIsActive;
 
   const CustomerMatch({
     required this.source,
@@ -332,7 +776,6 @@ class CustomerMatch {
     required this.mobile,
     required this.address,
     this.palaiPackageName,
-    this.palaiIsActive,
   });
 
   factory CustomerMatch.fromCustomer(Customer customer) {
@@ -352,8 +795,7 @@ class CustomerMatch {
       name: customer.name,
       mobile: customer.mobileNumber,
       address: customer.address,
-      palaiPackageName: customer.packageName,
-      palaiIsActive: customer.isActive,
+      palaiPackageName: customer.package,
     );
   }
 
