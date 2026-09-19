@@ -2,9 +2,11 @@ import 'package:flutter/material.dart';
 
 import '../../../app_theme.dart';
 import '../../../models/sale_draft.dart';
+import '../../../models/sale_model.dart';
 import '../../../services/firestore_service.dart';
 import '../../../services/sales_service.dart';
 import '../../../widgets/farm_not_linked_state.dart';
+import '../sale_receipt_screen.dart';
 import '../purchase_goats/purchase_wizard_widgets.dart';
 import '../steps/step1_select_goats.dart';
 import '../steps/step2_customer_lookup.dart';
@@ -12,19 +14,17 @@ import '../steps/step3_selected_goat_details.dart';
 import '../steps/step4_sale_details.dart';
 import '../steps/step5_delivery_options.dart';
 
-
-/// Sell Goat wizard (Phase 4: Feature 7 + 8).
+/// Sell Goat wizard.
 ///
-/// Flow (per the Phase 4 plan):
-/// Step 1 -> Select Goat(s)             [Task 2.1]
-/// Step 2 -> Customer Mobile Lookup     [Task 2.2]
-/// Step 3 -> Selected Goat Details      [Task 2.3]
-/// Step 4 -> Sale Details               [Task 2.4]
-/// Step 5 -> Delivery Options (branch)  [Section 3 — all four branches]
+/// Flow:
+/// Step 1 -> Select Goat(s)
+/// Step 2 -> Customer
+/// Step 3 -> Goat Details
+/// Step 4 -> Sale Details
+/// Step 5 -> Delivery
 ///
-/// Each branch's "Complete Delivery" follow-up action (Booking and
-/// Wait for Delivery only) is out of scope for this phase — see the
-/// plan's Pair 7 note.
+/// After a successful save, the user is taken to the Sale Receipt screen
+/// instead of immediately being returned to the Trading dashboard.
 class SellGoatWizardScreen extends StatefulWidget {
   const SellGoatWizardScreen({super.key});
 
@@ -95,7 +95,7 @@ class _SellGoatWizardScreenState extends State<SellGoatWizardScreen> {
   }
 
   // ===========================================================================
-  // STEP TITLE
+  // STEP INFORMATION
   // ===========================================================================
 
   String get _stepTitle {
@@ -115,10 +115,11 @@ class _SellGoatWizardScreenState extends State<SellGoatWizardScreen> {
     }
   }
 
-  bool get _isLastStep => _currentStep == _stepLabels.length - 1;
+  bool get _isLastStep =>
+      _currentStep == _stepLabels.length - 1;
 
   // ===========================================================================
-  // NEXT / SAVE
+  // NEXT
   // ===========================================================================
 
   Future<void> _next() async {
@@ -127,7 +128,7 @@ class _SellGoatWizardScreenState extends State<SellGoatWizardScreen> {
     FocusScope.of(context).unfocus();
 
     // -------------------------------------------------------------------------
-    // STEP 1 — SELECT GOAT(S)
+    // STEP 1
     // -------------------------------------------------------------------------
 
     if (_currentStep == 0) {
@@ -141,11 +142,13 @@ class _SellGoatWizardScreenState extends State<SellGoatWizardScreen> {
     }
 
     // -------------------------------------------------------------------------
-    // STEP 2 — CUSTOMER LOOKUP
+    // STEP 2
     // -------------------------------------------------------------------------
 
     if (_currentStep == 1) {
-      final valid = _customerKey.currentState?.validate() ?? false;
+      final valid =
+          _customerKey.currentState?.validate() ?? false;
+
       if (!valid) return;
 
       await _goToStep(2);
@@ -153,11 +156,13 @@ class _SellGoatWizardScreenState extends State<SellGoatWizardScreen> {
     }
 
     // -------------------------------------------------------------------------
-    // STEP 3 — SELECTED GOAT DETAILS
+    // STEP 3
     // -------------------------------------------------------------------------
 
     if (_currentStep == 2) {
-      final valid = _goatDetailsKey.currentState?.validate() ?? false;
+      final valid =
+          _goatDetailsKey.currentState?.validate() ?? false;
+
       if (!valid) return;
 
       await _goToStep(3);
@@ -165,11 +170,13 @@ class _SellGoatWizardScreenState extends State<SellGoatWizardScreen> {
     }
 
     // -------------------------------------------------------------------------
-    // STEP 4 — SALE DETAILS
+    // STEP 4
     // -------------------------------------------------------------------------
 
     if (_currentStep == 3) {
-      final valid = _saleDetailsFormKey.currentState?.validate() ?? false;
+      final valid =
+          _saleDetailsFormKey.currentState?.validate() ?? false;
+
       if (!valid) return;
 
       await _goToStep(4);
@@ -177,73 +184,113 @@ class _SellGoatWizardScreenState extends State<SellGoatWizardScreen> {
     }
 
     // -------------------------------------------------------------------------
-    // STEP 5 — DELIVERY OPTIONS -> SAVE
+    // STEP 5
     // -------------------------------------------------------------------------
 
     if (_currentStep == 4) {
-      final valid = _deliveryKey.currentState?.validate() ?? false;
+      final valid =
+          _deliveryKey.currentState?.validate() ?? false;
+
       if (!valid) return;
 
       await _saveSale();
-      return;
     }
   }
 
+  // ===========================================================================
+  // SAVE SALE
+  // ===========================================================================
+
   Future<void> _saveSale() async {
     final farmId = _farmId;
-    if (farmId == null) return;
+
+    if (farmId == null || farmId.isEmpty) {
+      _showMessage('Farm could not be found.');
+      return;
+    }
+
+    if (_draft.deliveryType.trim().isEmpty) {
+      _showMessage('Choose a delivery option to continue.');
+      return;
+    }
 
     setState(() {
       _saving = true;
     });
 
     try {
-      final String saleId;
+      late final String saleId;
+
+      // -----------------------------------------------------------------------
+      // DELIVER NOW
+      // -----------------------------------------------------------------------
 
       if (_draft.isDeliverNow) {
         saleId = await SalesService.instance.saveDeliverNow(
           farmId: farmId,
           draft: _draft,
         );
-      } else if (_draft.isBooking) {
+      }
+
+      // -----------------------------------------------------------------------
+      // BOOKING / HOLD
+      // -----------------------------------------------------------------------
+
+      else if (_draft.isBooking) {
         saleId = await SalesService.instance.saveBooking(
           farmId: farmId,
           draft: _draft,
         );
-      } else if (_draft.isWaitForDelivery) {
+      }
+
+      // -----------------------------------------------------------------------
+      // WAIT FOR DELIVERY
+      // -----------------------------------------------------------------------
+
+      else if (_draft.isWaitForDelivery) {
         saleId = await SalesService.instance.saveWaitForDelivery(
           farmId: farmId,
           draft: _draft,
         );
-      } else if (_draft.isPalaiTransfer) {
+      }
+
+      // -----------------------------------------------------------------------
+      // TRANSFER TO PALAI
+      // -----------------------------------------------------------------------
+
+      else if (_draft.isPalaiTransfer) {
         saleId = await SalesService.instance.saveTransferToPalai(
           farmId: farmId,
           draft: _draft,
         );
-      } else {
-        _showMessage('Choose a delivery option to continue.');
-        setState(() {
-          _saving = false;
-        });
+      }
+
+      else {
+        _showMessage(
+          'Choose a delivery option to continue.',
+        );
+
+        if (mounted) {
+          setState(() {
+            _saving = false;
+          });
+        }
+
         return;
       }
 
       if (!mounted) return;
 
-      Navigator.of(context).pop(saleId);
+      // -----------------------------------------------------------------------
+      // OPEN RECEIPT
+      // -----------------------------------------------------------------------
 
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            _draft.isPalaiTransfer
-                ? 'Sale $saleId saved — goat transferred to Palai.'
-                : _draft.isBooking
-                ? 'Sale $saleId saved — goat booked.'
-                : _draft.isWaitForDelivery
-                ? 'Sale $saleId saved — goat marked wait for delivery.'
-                : 'Sale $saleId saved.',
+      await Navigator.of(context).pushReplacement(
+        MaterialPageRoute(
+          builder: (_) => SaleReceiptScreen(
+            farmId: farmId,
+            saleId: saleId,
           ),
-          backgroundColor: AppColors.darkGreen,
         ),
       );
     } catch (e) {
@@ -253,18 +300,48 @@ class _SellGoatWizardScreenState extends State<SellGoatWizardScreen> {
         _saving = false;
       });
 
-      _showMessage('Could not save the sale: ${e.toString()}');
+      _showMessage(
+        _friendlySaveError(e),
+      );
     }
   }
 
-  void _showMessage(String message) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(message)),
-    );
+  String _friendlySaveError(Object error) {
+    final raw = error.toString().trim();
+
+    if (raw.isEmpty) {
+      return 'Could not save the sale.';
+    }
+
+    if (raw.startsWith('Bad state: ')) {
+      return raw.substring('Bad state: '.length);
+    }
+
+    if (raw.startsWith('StateError: ')) {
+      return raw.substring('StateError: '.length);
+    }
+
+    return 'Could not save the sale.\n$raw';
   }
 
   // ===========================================================================
-  // GO TO STEP
+  // MESSAGE
+  // ===========================================================================
+
+  void _showMessage(String message) {
+    if (!mounted) return;
+
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(
+          content: Text(message),
+        ),
+      );
+  }
+
+  // ===========================================================================
+  // NAVIGATION
   // ===========================================================================
 
   Future<void> _goToStep(int step) async {
@@ -340,11 +417,15 @@ class _SellGoatWizardScreenState extends State<SellGoatWizardScreen> {
           ),
           actions: [
             TextButton(
-              onPressed: () => Navigator.of(dialogContext).pop(false),
+              onPressed: () {
+                Navigator.of(dialogContext).pop(false);
+              },
               child: const Text('Stay'),
             ),
             ElevatedButton(
-              onPressed: () => Navigator.of(dialogContext).pop(true),
+              onPressed: () {
+                Navigator.of(dialogContext).pop(true);
+              },
               style: ElevatedButton.styleFrom(
                 backgroundColor: AppColors.primaryGreen,
                 foregroundColor: Colors.white,
@@ -437,12 +518,17 @@ class _SellGoatWizardScreenState extends State<SellGoatWizardScreen> {
           centerTitle: false,
           leading: IconButton(
             onPressed: (_moving || _saving) ? null : _back,
-            icon: const Icon(Icons.arrow_back_rounded),
+            icon: const Icon(
+              Icons.arrow_back_rounded,
+            ),
             color: AppColors.textDark,
           ),
           title: Text(
             'Sell Goat',
-            style: AppTheme.heading(size: 19, color: AppColors.textDark),
+            style: AppTheme.heading(
+              size: 19,
+              color: AppColors.textDark,
+            ),
           ),
         ),
         body: SafeArea(
@@ -466,24 +552,34 @@ class _SellGoatWizardScreenState extends State<SellGoatWizardScreen> {
   Widget _buildWizardBody() {
     return Column(
       children: [
-        // ----------------------------------------------------------------
+        // ---------------------------------------------------------------------
         // STEP INDICATOR
-        // ----------------------------------------------------------------
+        // ---------------------------------------------------------------------
 
         Padding(
-          padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
+          padding: const EdgeInsets.fromLTRB(
+            16,
+            4,
+            16,
+            8,
+          ),
           child: WizardStepIndicator(
             currentStep: _currentStep,
             labels: _stepLabels,
           ),
         ),
 
-        // ----------------------------------------------------------------
+        // ---------------------------------------------------------------------
         // STEP TITLE
-        // ----------------------------------------------------------------
+        // ---------------------------------------------------------------------
 
         Padding(
-          padding: const EdgeInsets.fromLTRB(18, 4, 18, 10),
+          padding: const EdgeInsets.fromLTRB(
+            18,
+            4,
+            18,
+            10,
+          ),
           child: Row(
             children: [
               Expanded(
@@ -507,9 +603,9 @@ class _SellGoatWizardScreenState extends State<SellGoatWizardScreen> {
           ),
         ),
 
-        // ----------------------------------------------------------------
-        // PAGE VIEW
-        // ----------------------------------------------------------------
+        // ---------------------------------------------------------------------
+        // PAGE
+        // ---------------------------------------------------------------------
 
         Expanded(
           child: PageView.builder(
@@ -518,20 +614,28 @@ class _SellGoatWizardScreenState extends State<SellGoatWizardScreen> {
             itemCount: _stepLabels.length,
             onPageChanged: (index) {
               if (!mounted) return;
+
               setState(() {
                 _currentStep = index;
               });
             },
-            itemBuilder: (context, index) => _buildPage(index),
+            itemBuilder: (context, index) {
+              return _buildPage(index);
+            },
           ),
         ),
 
-        // ----------------------------------------------------------------
-        // BOTTOM ACTION BAR
-        // ----------------------------------------------------------------
+        // ---------------------------------------------------------------------
+        // ACTION BAR
+        // ---------------------------------------------------------------------
 
         Container(
-          padding: const EdgeInsets.fromLTRB(16, 10, 16, 14),
+          padding: const EdgeInsets.fromLTRB(
+            16,
+            10,
+            16,
+            14,
+          ),
           decoration: BoxDecoration(
             color: Colors.white,
             boxShadow: [
@@ -548,21 +652,27 @@ class _SellGoatWizardScreenState extends State<SellGoatWizardScreen> {
                 Expanded(
                   flex: 1,
                   child: SizedBox(
-                    height: 52,
+                    height: 50,
                     child: OutlinedButton(
-                      onPressed: (_moving || _saving) ? null : _back,
+                      onPressed:
+                      (_moving || _saving) ? null : _back,
                       style: OutlinedButton.styleFrom(
-                        foregroundColor: AppColors.primaryGreen,
+                        foregroundColor:
+                        AppColors.primaryGreen,
                         side: BorderSide(
-                          color: AppColors.primaryGreen.withOpacity(0.35),
+                          color: AppColors.primaryGreen
+                              .withOpacity(0.35),
                         ),
                         shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(15),
+                          borderRadius:
+                          BorderRadius.circular(14),
                         ),
                       ),
                       child: const Text(
                         'Back',
-                        style: TextStyle(fontWeight: FontWeight.w700),
+                        style: TextStyle(
+                          fontWeight: FontWeight.w700,
+                        ),
                       ),
                     ),
                   ),
@@ -572,41 +682,51 @@ class _SellGoatWizardScreenState extends State<SellGoatWizardScreen> {
               Expanded(
                 flex: 2,
                 child: SizedBox(
-                  height: 52,
+                  height: 50,
                   child: ElevatedButton(
-                    onPressed: (_moving || _saving) ? null : _next,
+                    onPressed:
+                    (_moving || _saving) ? null : _next,
                     style: ElevatedButton.styleFrom(
-                      backgroundColor: AppColors.primaryGreen,
+                      backgroundColor:
+                      AppColors.primaryGreen,
                       foregroundColor: Colors.white,
                       elevation: 1,
                       shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(15),
+                        borderRadius:
+                        BorderRadius.circular(14),
                       ),
                     ),
                     child: _saving
                         ? const SizedBox(
                       width: 22,
                       height: 22,
-                      child: CircularProgressIndicator(
+                      child:
+                      CircularProgressIndicator(
                         strokeWidth: 2.4,
                         color: Colors.white,
                       ),
                     )
                         : Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
+                      mainAxisAlignment:
+                      MainAxisAlignment.center,
                       children: [
                         Text(
-                          _isLastStep ? 'Save Sale' : 'Next',
+                          _isLastStep
+                              ? 'Complete Sale'
+                              : 'Next',
                           style: const TextStyle(
-                            fontWeight: FontWeight.w700,
+                            fontWeight:
+                            FontWeight.w700,
                             fontSize: 14,
                           ),
                         ),
                         const SizedBox(width: 7),
                         Icon(
                           _isLastStep
-                              ? Icons.check_circle_outline_rounded
-                              : Icons.arrow_forward_rounded,
+                              ? Icons
+                              .check_circle_outline_rounded
+                              : Icons
+                              .arrow_forward_rounded,
                           size: 20,
                         ),
                       ],
