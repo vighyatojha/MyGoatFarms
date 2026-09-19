@@ -55,8 +55,10 @@ class Step5DeliveryOptionsState extends State<Step5DeliveryOptions> {
   late final TextEditingController _bookingAmountController;
   late final TextEditingController _holdingDaysController;
   late final TextEditingController _holdingChargePerDayController;
+  late final TextEditingController _bookingTransportCostController;
 
   late final TextEditingController _bookingAdvanceController;
+  late final TextEditingController _waitForDeliveryTransportCostController;
 
   late final TextEditingController _palaiPackageController;
   late final TextEditingController _monthlyChargeController;
@@ -99,9 +101,15 @@ class Step5DeliveryOptionsState extends State<Step5DeliveryOptions> {
     _holdingChargePerDayController = TextEditingController(
       text: _trimZero(draft.holdingChargePerDay),
     );
+    _bookingTransportCostController = TextEditingController(
+      text: _trimZero(draft.bookingTransportCost),
+    );
 
     _bookingAdvanceController = TextEditingController(
       text: _trimZero(draft.bookingAdvanceAmount),
+    );
+    _waitForDeliveryTransportCostController = TextEditingController(
+      text: _trimZero(draft.waitForDeliveryTransportCost),
     );
 
     _palaiPackageController = TextEditingController(
@@ -121,7 +129,9 @@ class Step5DeliveryOptionsState extends State<Step5DeliveryOptions> {
     _bookingAmountController.dispose();
     _holdingDaysController.dispose();
     _holdingChargePerDayController.dispose();
+    _bookingTransportCostController.dispose();
     _bookingAdvanceController.dispose();
+    _waitForDeliveryTransportCostController.dispose();
     _palaiPackageController.dispose();
     _monthlyChargeController.dispose();
     super.dispose();
@@ -152,10 +162,15 @@ class Step5DeliveryOptionsState extends State<Step5DeliveryOptions> {
     draft.holdingDays =
         int.tryParse(_holdingDaysController.text.trim()) ?? 0;
     draft.holdingChargePerDay = _money(_holdingChargePerDayController);
+    draft.bookingTransportCost = _money(_bookingTransportCostController);
   }
 
   void _syncWaitForDelivery() {
-    widget.draft.bookingAdvanceAmount = _money(_bookingAdvanceController);
+    final draft = widget.draft;
+
+    draft.bookingAdvanceAmount = _money(_bookingAdvanceController);
+    draft.waitForDeliveryTransportCost =
+        _money(_waitForDeliveryTransportCostController);
   }
 
   void _syncPalai() {
@@ -307,10 +322,10 @@ class Step5DeliveryOptionsState extends State<Step5DeliveryOptions> {
             children: [
               wizardField(
                 controller: _transportCostController,
-                label: 'Transport Cost',
+                label: 'Transportation Charge',
                 hint: '0.00',
                 icon: Icons.directions_car_outlined,
-                suffix: 'Optional',
+                suffix: 'Added to bill',
                 optional: true,
                 keyboardType: const TextInputType.numberWithOptions(
                   decimal: true,
@@ -377,8 +392,17 @@ class Step5DeliveryOptionsState extends State<Step5DeliveryOptions> {
     return _buildSummaryCard(
       [
         _SummaryRow(
-          'Total Sale Amount',
+          'Goat Sale',
           _currency(draft.totalSaleAmount),
+        ),
+        if (draft.transportCost > 0)
+          _SummaryRow(
+            'Transportation',
+            _currency(draft.transportCost),
+          ),
+        _SummaryRow(
+          'Customer Total',
+          _currency(draft.customerTotalDeliverNow),
         ),
         _SummaryRow(
           'Amount Received',
@@ -396,16 +420,16 @@ class Step5DeliveryOptionsState extends State<Step5DeliveryOptions> {
       notes: [
         if (extra > 0)
           _SummaryNote(
-            'You entered ${_currency(extra)} more than the sale amount. '
-                'Check the amount received before saving.',
+            'You entered ${_currency(extra)} more than the customer '
+                'total. Check the amount received before saving.',
             color: AppColors.warning,
             icon: Icons.warning_amber_rounded,
           ),
         if (draft.transportCost > 0)
           _SummaryNote(
-            'Transport cost (${_currency(draft.transportCost)}) is saved '
-                'on the sale for your records. It is not added to the '
-                'customer\'s bill.',
+            'Transportation charge (${_currency(draft.transportCost)}) '
+                'is added to the customer\'s bill. It is not recorded as '
+                'a farm expense.',
             color: AppColors.textGrey,
             icon: Icons.info_outline_rounded,
           ),
@@ -518,6 +542,25 @@ class Step5DeliveryOptionsState extends State<Step5DeliveryOptions> {
                   return null;
                 },
               ),
+              const SizedBox(height: 14),
+              wizardField(
+                controller: _bookingTransportCostController,
+                label: 'Transportation Charge',
+                hint: '0.00',
+                icon: Icons.directions_car_outlined,
+                suffix: 'Added to bill',
+                optional: true,
+                keyboardType: const TextInputType.numberWithOptions(
+                  decimal: true,
+                ),
+                inputFormatters: [
+                  FilteringTextInputFormatter.allow(
+                    RegExp(r'^\d*\.?\d{0,2}'),
+                  ),
+                ],
+                onChanged: (_) => setState(_syncBooking),
+                validator: (_) => null,
+              ),
             ],
           ),
 
@@ -526,7 +569,7 @@ class Step5DeliveryOptionsState extends State<Step5DeliveryOptions> {
           _buildSummaryCard(
             [
               _SummaryRow(
-                'Total Sale Amount',
+                'Goat Sale',
                 _currency(draft.totalSaleAmount),
               ),
               _SummaryRow(
@@ -536,6 +579,11 @@ class Step5DeliveryOptionsState extends State<Step5DeliveryOptions> {
                     '${_currency(draft.holdingChargePerDay)})',
                 _currency(draft.totalHoldingCharges),
               ),
+              if (draft.bookingTransportCost > 0)
+                _SummaryRow(
+                  'Transportation',
+                  _currency(draft.bookingTransportCost),
+                ),
               _SummaryRow(
                 'Total Payable',
                 _currency(draft.totalPayableBooking),
@@ -567,6 +615,15 @@ class Step5DeliveryOptionsState extends State<Step5DeliveryOptions> {
                 color: AppColors.textGrey,
                 icon: Icons.info_outline_rounded,
               ),
+              if (draft.bookingTransportCost > 0)
+                _SummaryNote(
+                  'Transportation charge '
+                      '(${_currency(draft.bookingTransportCost)}) is '
+                      'added to the customer\'s bill. It is not recorded '
+                      'as a farm expense.',
+                  color: AppColors.textGrey,
+                  icon: Icons.info_outline_rounded,
+                ),
             ],
           ),
         ],
@@ -769,6 +826,25 @@ class Step5DeliveryOptionsState extends State<Step5DeliveryOptions> {
                   return null;
                 },
               ),
+              const SizedBox(height: 14),
+              wizardField(
+                controller: _waitForDeliveryTransportCostController,
+                label: 'Transportation Charge',
+                hint: '0.00',
+                icon: Icons.directions_car_outlined,
+                suffix: 'Added to bill',
+                optional: true,
+                keyboardType: const TextInputType.numberWithOptions(
+                  decimal: true,
+                ),
+                inputFormatters: [
+                  FilteringTextInputFormatter.allow(
+                    RegExp(r'^\d*\.?\d{0,2}'),
+                  ),
+                ],
+                onChanged: (_) => setState(_syncWaitForDelivery),
+                validator: (_) => null,
+              ),
             ],
           ),
 
@@ -785,8 +861,17 @@ class Step5DeliveryOptionsState extends State<Step5DeliveryOptions> {
                 _currency(draft.bookingPricePerKg),
               ),
               _SummaryRow(
-                'Estimated Total',
+                'Goat Sale (Estimated)',
                 _currency(draft.totalSaleAmount),
+              ),
+              if (draft.waitForDeliveryTransportCost > 0)
+                _SummaryRow(
+                  'Transportation',
+                  _currency(draft.waitForDeliveryTransportCost),
+                ),
+              _SummaryRow(
+                'Estimated Customer Total',
+                _currency(draft.customerTotalWaitForDelivery),
               ),
               _SummaryRow(
                 'Advance Paid',
@@ -800,10 +885,11 @@ class Step5DeliveryOptionsState extends State<Step5DeliveryOptions> {
             ],
             title: 'Booking Summary',
             notes: [
-              if (draft.bookingAdvanceAmount > draft.totalSaleAmount)
+              if (draft.bookingAdvanceAmount >
+                  draft.customerTotalWaitForDelivery)
                 _SummaryNote(
-                  'The advance is more than the estimated total '
-                      '(${_currency(draft.totalSaleAmount)}). '
+                  'The advance is more than the estimated customer total '
+                      '(${_currency(draft.customerTotalWaitForDelivery)}). '
                       'Check the amount before saving.',
                   color: AppColors.warning,
                   icon: Icons.warning_amber_rounded,
@@ -811,10 +897,20 @@ class Step5DeliveryOptionsState extends State<Step5DeliveryOptions> {
               _SummaryNote(
                 'Estimated at today\'s weight. At pickup the goat is '
                     'weighed again and the final amount is: pickup weight '
-                    '× ${_currency(draft.bookingPricePerKg)}/kg − advance.',
+                    '× ${_currency(draft.bookingPricePerKg)}/kg + '
+                    'transportation − advance.',
                 color: AppColors.textGrey,
                 icon: Icons.info_outline_rounded,
               ),
+              if (draft.waitForDeliveryTransportCost > 0)
+                _SummaryNote(
+                  'Transportation charge '
+                      '(${_currency(draft.waitForDeliveryTransportCost)}) '
+                      'is added to the customer\'s bill. It is not '
+                      'recorded as a farm expense.',
+                  color: AppColors.textGrey,
+                  icon: Icons.info_outline_rounded,
+                ),
             ],
           ),
         ],

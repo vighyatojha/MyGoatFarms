@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:cloud_firestore/cloud_firestore.dart';
 
 import '../models/customer_model.dart';
+import '../models/expense_categories.dart';
 import '../models/goat_model.dart';
 import '../models/palai_models.dart';
 import '../models/sale_draft.dart';
@@ -137,6 +138,77 @@ class SalesService {
 
   String _formatSaleId(int saleNumber) =>
       'S-${saleNumber.toString().padLeft(4, '0')}';
+
+  // -----------------------------------------------------------------------
+  // FINANCE INTEGRATION — SOLD GOAT REVENUE
+  // -----------------------------------------------------------------------
+  //
+  // A sale is linked to its Finance revenue through:
+  //
+  // referenceType = tradingSale
+  // referenceId   = S-0001 (the saleId)
+  //
+  // Mirrors TradingService._ensurePurchaseFinanceExpense, but writes a
+  // `transactions` doc directly (isIncome: true) instead of going through
+  // FinanceService.addExpense/addManualRevenue — the Sell Goat flow
+  // doesn't collect a Finance-style payment method, and this also needs
+  // to *update* the same doc in place (not just dedup-skip) once a
+  // Booking/Wait-for-Delivery sale's estimate becomes a real settled
+  // amount at Complete Delivery.
+  //
+  // Revenue amount = Goat Sale Amount + applicable Transportation
+  // Charge (+ Holding Charges for Booking). Never a transport expense —
+  // transport is billed to the customer, not paid out by the farm.
+  Future<void> _ensureSaleFinanceRevenue({
+    required String farmId,
+    required String saleId,
+    required double amount,
+    required DateTime date,
+  }) async {
+    if (amount <= 0) return;
+
+    final transactions = _db
+        .collection('farms')
+        .doc(farmId)
+        .collection('transactions');
+
+    final existing = await transactions
+        .where('referenceType', isEqualTo: 'tradingSale')
+        .where('referenceId', isEqualTo: saleId)
+        .limit(1)
+        .get()
+        .timeout(_timeout);
+
+    final data = {
+      'amount': amount,
+      'isIncome': true,
+      'category': RevenueCategories.soldGoatRevenue,
+      'note': 'Sold Goat Revenue — Sale $saleId',
+      'paymentMethod': FinancePaymentMethods.other,
+      'date': Timestamp.fromDate(date),
+      'status': 'active',
+      'referenceType': 'tradingSale',
+      'referenceId': saleId,
+    };
+
+    if (existing.docs.isNotEmpty) {
+      // Update in place rather than creating a second transaction — this
+      // is what keeps a Booking/Wait-for-Delivery sale's revenue at
+      // exactly one entry as it moves from creation-time estimate to
+      // the real settled amount recorded at Complete Delivery.
+      await existing.docs.first.reference
+          .update(data)
+          .timeout(_timeout);
+      return;
+    }
+
+    await transactions
+        .add({
+      ...data,
+      'createdAt': FieldValue.serverTimestamp(),
+    })
+        .timeout(_timeout);
+  }
 
   // -----------------------------------------------------------------------
   // BRANCH A — DELIVER NOW (Task 3.1)
@@ -296,6 +368,19 @@ class SalesService {
       );
     }).timeout(_timeout * 2);
 
+    // -----------------------------------------------------------------
+    // FINANCE REVENUE — the goat is Sold immediately in this branch, so
+    // the revenue is recorded right away: sale amount + transport, no
+    // transport expense. See _ensureSaleFinanceRevenue's doc comment.
+    // -----------------------------------------------------------------
+
+    await _ensureSaleFinanceRevenue(
+      farmId: farmId,
+      saleId: saleId,
+      amount: draft.customerTotalDeliverNow,
+      date: DateTime.now(),
+    );
+
     return saleId;
   }
 
@@ -411,6 +496,9 @@ class SalesService {
         holdingDays: draft.holdingDays,
         holdingChargePerDay: draft.holdingChargePerDay,
         totalHoldingCharges: draft.totalHoldingCharges,
+        transportCost: draft.bookingTransportCost > 0
+            ? draft.bookingTransportCost
+            : null,
       );
 
       transaction.set(_sales(farmId).doc(saleId), {
@@ -559,6 +647,9 @@ class SalesService {
         bookingPricePerKg: draft.bookingPricePerKg,
         bookingAdvanceAmount: draft.bookingAdvanceAmount,
         bookingWeight: draft.bookingWeightTotal,
+        transportCost: draft.waitForDeliveryTransportCost > 0
+            ? draft.waitForDeliveryTransportCost
+            : null,
       );
 
       transaction.set(_sales(farmId).doc(saleId), {
@@ -820,6 +911,12 @@ class SalesService {
       throw StateError('Holding days cannot be negative.');
     }
 
+    // Not `late final`: Firestore may re-run the transaction closure on
+    // contention, which would assign these more than once.
+    double totalSaleAmount = 0;
+    double actualHoldingCharges = 0;
+    double transportCost = 0;
+
     await _db.runTransaction((transaction) async {
       // ---------------------------------------------------------------
       // 1. Reads first — a Firestore transaction requires every read
@@ -860,13 +957,22 @@ class SalesService {
 
       final holdingChargePerDay = sale.holdingChargePerDay ?? 0;
       final bookingAmount = sale.bookingAmount ?? 0;
-      final actualHoldingCharges =
+      final actualHoldingChargesValue =
           actualHoldingDays * holdingChargePerDay;
 
       final rawFinalAmount = sale.totalSaleAmount +
-          actualHoldingCharges -
+          actualHoldingChargesValue -
           bookingAmount;
       final finalAmount = rawFinalAmount < 0 ? 0.0 : rawFinalAmount;
+
+      // Captured for the Finance revenue write after this transaction
+      // commits — gross sale value, not net of the booking amount
+      // already paid (that's [finalAmount] above, the *remaining*
+      // balance — revenue is recognized on the full sale, same as
+      // Deliver Now does regardless of amountReceived).
+      totalSaleAmount = sale.totalSaleAmount;
+      actualHoldingCharges = actualHoldingChargesValue;
+      transportCost = sale.transportCost ?? 0;
 
       // ---------------------------------------------------------------
       // 3. Update the sale doc.
@@ -924,6 +1030,21 @@ class SalesService {
         SetOptions(merge: true),
       );
     }).timeout(_timeout * 2);
+
+    // -----------------------------------------------------------------
+    // FINANCE REVENUE — the goat has now actually left the farm, so
+    // this is where a Booking sale's revenue is recorded/updated (not
+    // at saveBooking, when it was only a reservation). Replaces the
+    // same referenceId if a prior write had already created one — see
+    // _ensureSaleFinanceRevenue's doc comment.
+    // -----------------------------------------------------------------
+
+    await _ensureSaleFinanceRevenue(
+      farmId: farmId,
+      saleId: saleId,
+      amount: totalSaleAmount + actualHoldingCharges + transportCost,
+      date: DateTime.now(),
+    );
   }
 
   // -----------------------------------------------------------------------
@@ -953,6 +1074,11 @@ class SalesService {
     if (pickupWeight <= 0) {
       throw StateError('Pickup weight must be greater than zero.');
     }
+
+    // Not `late final`: Firestore may re-run the transaction closure on
+    // contention, which would assign these more than once.
+    double grossSaleValue = 0;
+    double transportCost = 0;
 
     await _db.runTransaction((transaction) async {
       // ---------------------------------------------------------------
@@ -999,6 +1125,14 @@ class SalesService {
       final rawFinalPrice =
           pickupWeight * bookingPricePerKg - bookingAdvanceAmount;
       final finalPrice = rawFinalPrice < 0 ? 0.0 : rawFinalPrice;
+
+      // Captured for the Finance revenue write after this transaction
+      // commits — gross sale value (pickup weight × booking rate),
+      // not net of the advance already paid (that's [finalPrice]
+      // above). Revenue is recognized on the full sale, same as every
+      // other branch.
+      grossSaleValue = pickupWeight * bookingPricePerKg;
+      transportCost = sale.transportCost ?? 0;
 
       // ---------------------------------------------------------------
       // 3. Update the sale doc.
@@ -1055,6 +1189,21 @@ class SalesService {
         SetOptions(merge: true),
       );
     }).timeout(_timeout * 2);
+
+    // -----------------------------------------------------------------
+    // FINANCE REVENUE — the goat has now actually left the farm, so
+    // this is where a Wait-for-Delivery sale's revenue is recorded/
+    // updated: pickup weight × booking rate + transport. Replaces the
+    // same referenceId if a prior write had already created one — see
+    // _ensureSaleFinanceRevenue's doc comment.
+    // -----------------------------------------------------------------
+
+    await _ensureSaleFinanceRevenue(
+      farmId: farmId,
+      saleId: saleId,
+      amount: grossSaleValue + transportCost,
+      date: DateTime.now(),
+    );
   }
 
   // -----------------------------------------------------------------------

@@ -191,21 +191,28 @@ class SaleDraft {
   double transportCost = 0;
   double amountReceived = 0;
 
-  double get remainingBalanceDeliverNow =>
-      _nonNegative(totalSaleAmount - amountReceived);
+  /// What the customer actually owes: sale amount + transport charge.
+  /// Transportation charges are billed to the customer, not absorbed by
+  /// the farm — see the Step 5 summary note and SalesService's revenue
+  /// write, which both use this same total.
+  double get customerTotalDeliverNow =>
+      round2(totalSaleAmount + transportCost);
 
-  /// How much MORE than the sale amount was entered as received. Not
+  double get remainingBalanceDeliverNow =>
+      _nonNegative(customerTotalDeliverNow - amountReceived);
+
+  /// How much MORE than the customer total was entered as received. Not
   /// blocked (the person may be rounding up, or settling something else
   /// in the same handover) but Step 5 surfaces it so a typo such as an
   /// extra digit is obvious before saving.
   double get extraReceivedDeliverNow =>
-      _nonNegative(amountReceived - totalSaleAmount);
+      _nonNegative(amountReceived - customerTotalDeliverNow);
 
   String get paymentStatusDeliverNow {
     final received = round2(amountReceived);
 
     if (received <= 0) return Sale.paymentStatusPending;
-    if (received >= totalSaleAmount) return Sale.paymentStatusPaid;
+    if (received >= customerTotalDeliverNow) return Sale.paymentStatusPaid;
     return Sale.paymentStatusPartial;
   }
 
@@ -216,22 +223,29 @@ class SaleDraft {
   int holdingDays = 0;
   double holdingChargePerDay = 0;
 
+  /// Transportation charge for this booking, billed to the customer —
+  /// same rule as Branch A. Typically collected/confirmed when the
+  /// goat is actually handed over (Complete Delivery), but can be
+  /// estimated here at booking time too. Named distinctly from Branch
+  /// A's [transportCost] since both live flat on the same draft.
+  double bookingTransportCost = 0;
+
   /// Auto-calculated: Holding Days x Daily Charge — never entered
   /// directly, same "derived field" rule as totalSaleAmount.
   double get totalHoldingCharges =>
       round2(holdingDays * holdingChargePerDay);
 
-  /// Sale amount + holding charges — what the customer owes in total
-  /// before the booking amount is deducted.
+  /// Sale amount + holding charges + transport — what the customer owes
+  /// in total before the booking amount is deducted.
   double get totalPayableBooking =>
-      round2(totalSaleAmount + totalHoldingCharges);
+      round2(totalSaleAmount + totalHoldingCharges + bookingTransportCost);
 
-  /// What's left to collect once holding charges are added on top of
-  /// the sale amount and the booking amount already paid is deducted.
-  /// The actual "Complete Delivery" recompute (Task 3.2's follow-up,
-  /// out of scope this phase) does this same sum again later using
-  /// whatever holding days actually elapse — this is just the
-  /// creation-time estimate shown on Step 5.
+  /// What's left to collect once holding charges and transport are added
+  /// on top of the sale amount and the booking amount already paid is
+  /// deducted. The actual "Complete Delivery" recompute redoes this same
+  /// sum later using whatever holding days actually elapse and whatever
+  /// transport is confirmed then — this is just the creation-time
+  /// estimate shown on Step 5.
   double get remainingBalanceBooking =>
       _nonNegative(totalPayableBooking - bookingAmount);
 
@@ -250,10 +264,23 @@ class SaleDraft {
 
   double bookingAdvanceAmount = 0;
 
+  /// Transportation charge for this booking, billed to the customer —
+  /// same rule as Branch A. Confirmed for real at pickup (Complete
+  /// Delivery), but can be estimated here at booking time too. Named
+  /// distinctly from the other two branches' transport fields since
+  /// all three live flat on the same draft.
+  double waitForDeliveryTransportCost = 0;
+
+  /// Customer total at today's estimate: sale amount + transport. The
+  /// real payable amount is settled at pickup using pickup weight x
+  /// booking rate + whatever transport is confirmed then.
+  double get customerTotalWaitForDelivery =>
+      round2(totalSaleAmount + waitForDeliveryTransportCost);
+
   /// Estimate at BOOKING weight. The real amount is settled at pickup
-  /// (pickup weight x this same booking rate - advance).
+  /// (pickup weight x this same booking rate + transport - advance).
   double get remainingAdvanceBalanceWaitForDelivery =>
-      _nonNegative(totalSaleAmount - bookingAdvanceAmount);
+      _nonNegative(customerTotalWaitForDelivery - bookingAdvanceAmount);
 
   // --- Branch D: Transfer to Palai (Task 3.4) --------------------------------
 
