@@ -7,8 +7,8 @@ import '../../models/trading_purchase_model.dart';
 import '../../models/trading_summary_model.dart';
 import '../../services/firestore_service.dart';
 import '../../services/trading_service.dart';
-import '../../widgets/fast_route.dart';
 import '../../widgets/farm_not_linked_state.dart';
+import '../../widgets/fast_route.dart';
 import 'goat_stock/goat_stock_list_screen.dart';
 import 'own_palai/own_palai_list_screen.dart';
 import 'purchase_goats/complete_receiving_screen.dart';
@@ -18,30 +18,33 @@ import 'sell_goat/sell_goat_wizard_screen.dart';
 
 /// Trading Dashboard.
 ///
-/// UI follows the same compact visual language as the Stock screen:
-/// - compact widgets
-/// - pastel/colorful cards
-/// - stock-style header
-/// - skeleton loading
-/// - default AppTheme/AppColors
-///
-/// Existing trading functionality is preserved.
+/// Layout (top to bottom):
+///  1. Header (back, title, recalculate)
+///  2. 2x2 stat cards + compact secondary stats list
+///  3. Quick actions (Register Goats hero + 2x2 action tiles)
+///  4. Pending receiving (empty state card or list of pending purchases)
 class TradingDashboardScreen extends StatefulWidget {
-  const TradingDashboardScreen({
-    super.key,
-  });
+  const TradingDashboardScreen({super.key});
 
   @override
-  State<TradingDashboardScreen> createState() =>
-      _TradingDashboardScreenState();
+  State<TradingDashboardScreen> createState() => _TradingDashboardScreenState();
 }
 
-class _TradingDashboardScreenState
-    extends State<TradingDashboardScreen> {
+class _TradingDashboardScreenState extends State<TradingDashboardScreen> {
+  static final NumberFormat _inr = NumberFormat.currency(
+    locale: 'en_IN',
+    symbol: '₹',
+    decimalDigits: 0,
+  );
+  static final DateFormat _dateFmt = DateFormat('dd MMM yyyy');
+
   String? _farmId;
   bool _loadingFarm = true;
   bool _recalculating = false;
-  String? _farmLoadError;
+
+  // Created once per farm (not in build) so rebuilds never resubscribe.
+  Stream<TradingSummary>? _summaryStream;
+  Stream<List<TradingPurchase>>? _pendingStream;
 
   @override
   void initState() {
@@ -53,174 +56,114 @@ class _TradingDashboardScreenState
   // FARM
   // ===========================================================================
 
-  Future<void> _loadFarm() async {
-    if (mounted) {
-      setState(() {
-        _loadingFarm = true;
-        _farmLoadError = null;
-      });
+  void _applyFarm(String? raw) {
+    final id = raw?.trim();
+    final next = (id == null || id.isEmpty) ? null : id;
+    if (next == _farmId) return;
+
+    _farmId = next;
+    _summaryStream = next == null
+        ? null
+        : TradingService.instance.dashboardSummaryStream(next);
+    _pendingStream = next == null
+        ? null
+        : TradingService.instance.pendingReceivingStream(next);
+  }
+
+  /// [silent] = pull-to-refresh: keeps the current farm/streams on failure
+  /// and never swaps the screen for the skeleton.
+  Future<void> _loadFarm({bool silent = false}) async {
+    if (!silent && mounted) {
+      setState(() => _loadingFarm = true);
     }
 
     try {
-      final id =
-      await FirestoreService.instance.currentFarmId();
-
+      final id = await FirestoreService.instance.currentFarmId();
       if (!mounted) return;
-
       setState(() {
-        _farmId =
-        id == null || id.trim().isEmpty ? null : id.trim();
+        _applyFarm(id);
         _loadingFarm = false;
       });
-    } catch (e) {
+    } catch (_) {
       if (!mounted) return;
-
       setState(() {
-        _farmId = null;
+        if (!silent) _applyFarm(null);
         _loadingFarm = false;
-        _farmLoadError = e.toString();
       });
     }
   }
 
-  /// Refresh farm state without replacing the RefreshIndicator subtree.
-  Future<void> _refreshFarm() async {
-    try {
-      final id =
-      await FirestoreService.instance.currentFarmId();
-
-      if (!mounted) return;
-
-      setState(() {
-        _farmId =
-        id == null || id.trim().isEmpty ? null : id.trim();
-        _farmLoadError = null;
-      });
-    } catch (e) {
-      if (!mounted) return;
-
-      setState(() {
-        _farmLoadError = e.toString();
-      });
-    }
-  }
-
-  /// Fixes dashboard stat cards showing negative or drifted numbers by
-  /// re-deriving every count straight from the actual purchase and
-  /// goat records, then overwriting the stored aggregate with the
-  /// corrected values. Safe to run any time — it's a pure
-  /// recomputation, not an increment, so running it twice in a row
-  /// produces the same result.
-  Future<void> _recalculateDashboard() async {
+  /// Re-derives every dashboard count from the real purchase / goat records.
+  /// Pure recomputation, so it is safe to run repeatedly.
+  Future<void> _recalculateDashboard({bool quiet = false}) async {
     final farmId = _farmId;
     if (farmId == null || _recalculating) return;
 
-    setState(() {
-      _recalculating = true;
-    });
+    _recalculating = true; // guard only, no UI depends on it
 
     try {
       await TradingService.instance.backfillDashboardSummary(farmId);
-
-      if (!mounted) return;
-
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Dashboard numbers recalculated.'),
-          backgroundColor: AppColors.darkGreen,
-        ),
-      );
+      if (!quiet) {
+        _snack('Dashboard numbers recalculated.', AppColors.darkGreen);
+      }
     } catch (e) {
-      if (!mounted) return;
-
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            'Could not recalculate: '
-                '${FirestoreService.instance.describeError(e)}',
-          ),
-          backgroundColor: AppColors.error,
-        ),
+      _snack(
+        'Could not recalculate: ${FirestoreService.instance.describeError(e)}',
+        AppColors.error,
       );
     } finally {
-      if (mounted) {
-        setState(() {
-          _recalculating = false;
-        });
-      }
+      _recalculating = false;
     }
   }
 
-  // ===========================================================================
-  // NAVIGATION HELPERS
-  // ===========================================================================
-
-  /// Shared by the stat cards below and by the "Goat Stock" quick
-  /// action — every one of them ends up on the same list screen, just
-  /// pre-filtered differently.
-  void _openGoatStock({String? statusFilter}) {
-    Navigator.of(context).push(
-      fastRoute(
-        GoatStockListScreen(
-          initialStatusFilter: statusFilter,
-        ),
-      ),
-    );
+  /// Pull-to-refresh: re-check the farm, then re-derive the counts.
+  Future<void> _onRefresh() async {
+    await _loadFarm(silent: true);
+    await _recalculateDashboard(quiet: true);
   }
 
   // ===========================================================================
   // HELPERS
   // ===========================================================================
 
-  String _currency(num value) {
-    return NumberFormat.currency(
-      locale: 'en_IN',
-      symbol: '₹',
-      decimalDigits: 0,
-    ).format(value);
+  void _push(Widget screen) {
+    Navigator.of(context).push(fastRoute(screen));
   }
 
-  // ===========================================================================
-  // COMPLETE RECEIVING
-  // ===========================================================================
+  void _openGoatStock({String? statusFilter}) {
+    _push(GoatStockListScreen(initialStatusFilter: statusFilter));
+  }
 
-  Future<void> _openCompleteReceiving(
-      TradingPurchase purchase,
-      ) async {
-    final farmId = _farmId;
-
-    if (farmId == null || farmId.isEmpty) {
-      return;
-    }
-
-    final result =
-    await Navigator.of(context).push<TradingPurchase>(
-      MaterialPageRoute<TradingPurchase>(
-        builder: (_) {
-          return CompleteReceivingScreen(
-            farmId: farmId,
-            purchase: purchase,
-          );
-        },
-      ),
-    );
-
-    if (!mounted || result == null) {
-      return;
-    }
-
+  void _snack(String message, Color color) {
+    if (!mounted) return;
     ScaffoldMessenger.of(context)
       ..hideCurrentSnackBar()
       ..showSnackBar(
-        const SnackBar(
-          content: Text(
-            'Receiving completed successfully.',
-          ),
-          backgroundColor: AppColors.darkGreen,
+        SnackBar(
+          content: Text(message),
+          backgroundColor: color,
           behavior: SnackBarBehavior.floating,
-          margin: EdgeInsets.all(16),
+          margin: const EdgeInsets.all(16),
         ),
       );
+  }
+
+  Future<void> _openCompleteReceiving(TradingPurchase purchase) async {
+    final farmId = _farmId;
+    if (farmId == null) return;
+
+    final result = await Navigator.of(context).push<TradingPurchase>(
+      MaterialPageRoute<TradingPurchase>(
+        builder: (_) => CompleteReceivingScreen(
+          farmId: farmId,
+          purchase: purchase,
+        ),
+      ),
+    );
+
+    if (result != null) {
+      _snack('Receiving completed successfully.', AppColors.darkGreen);
+    }
   }
 
   // ===========================================================================
@@ -231,29 +174,20 @@ class _TradingDashboardScreenState
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: AppColors.paleGreen,
-      body: SafeArea(
-        child: _buildBody(),
-      ),
+      body: SafeArea(child: _buildBody()),
     );
   }
 
   Widget _buildBody() {
-    // -------------------------------------------------------------------------
-    // FARM LOADING
-    // -------------------------------------------------------------------------
+    if (_loadingFarm) return const _DashboardSkeleton();
 
-    if (_loadingFarm) {
-      return const _TradingDashboardSkeleton();
-    }
-
-    // -------------------------------------------------------------------------
-    // FARM NOT LINKED
-    // -------------------------------------------------------------------------
-
-    if (_farmId == null || _farmId!.isEmpty) {
+    if (_farmId == null) {
       return Column(
         children: [
-          _header(),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 10, 16, 0),
+            child: _header(),
+          ),
           Expanded(
             child: FarmNotLinkedState(
               buttonColor: AppColors.primaryGreen,
@@ -264,64 +198,36 @@ class _TradingDashboardScreenState
       );
     }
 
-    // -------------------------------------------------------------------------
-    // MAIN DASHBOARD
-    // -------------------------------------------------------------------------
-
     return RefreshIndicator(
       color: AppColors.primaryGreen,
-      onRefresh: _refreshFarm,
+      onRefresh: _onRefresh,
       child: ListView(
         physics: const AlwaysScrollableScrollPhysics(
           parent: BouncingScrollPhysics(),
         ),
-        padding: const EdgeInsets.fromLTRB(
-          16,
-          8,
-          16,
-          30,
-        ),
+        padding: const EdgeInsets.fromLTRB(16, 10, 16, 30),
         children: [
           _header(),
+          const SizedBox(height: 16),
 
-          const SizedBox(height: 20),
-
-          _sectionHeader(
-            title: 'Trading Overview',
-            subtitle: 'Your trading activity at a glance',
-            icon: Icons.bar_chart_rounded,
-            color: AppColors.primaryGreen,
+          // One subscription feeds both the overview and the
+          // "Register Goats" hero (pending registrations count).
+          StreamBuilder<TradingSummary>(
+            stream: _summaryStream,
+            builder: (context, snap) {
+              final summary = snap.data ?? TradingSummary.empty;
+              return Column(
+                children: [
+                  _overview(snap, summary),
+                  const SizedBox(height: 18),
+                  _quickActions(summary),
+                ],
+              );
+            },
           ),
 
-          const SizedBox(height: 12),
-
-          _summarySection(_farmId!),
-
-          const SizedBox(height: 24),
-
-          _sectionHeader(
-            title: 'Pending Receiving',
-            subtitle: 'Purchases waiting to be received',
-            icon: Icons.local_shipping_outlined,
-            color: AppColors.stockTeal,
-          ),
-
-          const SizedBox(height: 12),
-
-          _pendingReceivingSection(_farmId!),
-
-          const SizedBox(height: 24),
-
-          _sectionHeader(
-            title: 'Quick Actions',
-            subtitle: 'Manage your trading quickly',
-            icon: Icons.bolt_rounded,
-            color: AppColors.primaryGreen,
-          ),
-
-          const SizedBox(height: 12),
-
-          _quickActions(),
+          const SizedBox(height: 18),
+          _pendingSection(),
         ],
       ),
     );
@@ -332,139 +238,30 @@ class _TradingDashboardScreenState
   // ===========================================================================
 
   Widget _header() {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.fromLTRB(
-        4,
-        10,
-        4,
-        2,
-      ),
-      child: Row(
-        children: [
-          // Header icon
-          Container(
-            width: 54,
-            height: 54,
-            decoration: BoxDecoration(
-              color: AppColors.primaryGreen.withOpacity(0.10),
-              borderRadius: BorderRadius.circular(17),
-            ),
-            child: const Icon(
-              Icons.storefront_rounded,
-              color: AppColors.primaryGreen,
-              size: 28,
-            ),
-          ),
+    final canPop = Navigator.of(context).canPop();
 
-          const SizedBox(width: 13),
-
-          // Header title
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  'Trading',
-                  style: AppTheme.heading(
-                    size: 22,
-                  ),
-                ),
-                const SizedBox(height: 2),
-                Text(
-                  'Wholesale purchases & stock',
-                  style: AppTheme.body(
-                    size: 12,
-                  ),
-                ),
-              ],
-            ),
-          ),
-
-          // Recalculate dashboard numbers — fixes stat cards that have
-          // drifted or gone negative by re-deriving them from the
-          // actual purchase / goat records.
-          Tooltip(
-            message: 'Recalculate dashboard numbers',
-            child: Material(
-              color: AppColors.primaryGreen.withOpacity(0.08),
-              shape: const CircleBorder(),
-              child: InkWell(
-                customBorder: const CircleBorder(),
-                onTap: _recalculating ? null : _recalculateDashboard,
-                child: SizedBox(
-                  width: 48,
-                  height: 48,
-                  child: _recalculating
-                      ? const Padding(
-                    padding: EdgeInsets.all(14),
-                    child: CircularProgressIndicator(
-                      strokeWidth: 2.2,
-                      color: AppColors.primaryGreen,
-                    ),
-                  )
-                      : const Icon(
-                    Icons.refresh_rounded,
-                    color: AppColors.primaryGreen,
-                    size: 24,
-                  ),
-                ),
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  // ===========================================================================
-  // SECTION HEADER
-  // ===========================================================================
-
-  Widget _sectionHeader({
-    required String title,
-    required String subtitle,
-    required IconData icon,
-    required Color color,
-  }) {
     return Row(
       children: [
-        Container(
-          width: 42,
-          height: 42,
-          decoration: BoxDecoration(
-            color: color.withOpacity(0.10),
-            borderRadius: BorderRadius.circular(14),
+        if (canPop) ...[
+          _HeaderButton(
+            icon: Icons.chevron_left_rounded,
+            tooltip: 'Back',
+            onTap: () => Navigator.of(context).maybePop(),
           ),
-          child: Icon(
-            icon,
-            color: color,
-            size: 22,
-          ),
+          const SizedBox(width: 12),
+        ],
+        const _IconBox(
+          icon: Icons.storefront_rounded,
+          color: AppColors.primaryGreen,
+          size: 38,
         ),
-
-        const SizedBox(width: 11),
-
+        const SizedBox(width: 10),
         Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                title,
-                style: AppTheme.heading(
-                  size: 17,
-                ),
-              ),
-              const SizedBox(height: 2),
-              Text(
-                subtitle,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: AppTheme.body(
-                  size: 10.5,
-                ),
-              ),
-            ],
+          child: Text(
+            'Trading Overview',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: AppTheme.heading(size: 20),
           ),
         ),
       ],
@@ -472,603 +269,155 @@ class _TradingDashboardScreenState
   }
 
   // ===========================================================================
-  // SUMMARY
+  // OVERVIEW (stat cards + secondary stats)
   // ===========================================================================
 
-  Widget _summarySection(String farmId) {
-    return StreamBuilder<TradingSummary>(
-      stream:
-      TradingService.instance.dashboardSummaryStream(
-        farmId,
-      ),
-      builder: (context, snapshot) {
-        if (snapshot.hasError) {
-          return _summaryError();
-        }
+  Widget _overview(AsyncSnapshot<TradingSummary> snap, TradingSummary s) {
+    if (snap.hasError) {
+      return _errorCard('Unable to load trading summary. Pull down to refresh.');
+    }
 
-        if (snapshot.connectionState ==
-            ConnectionState.waiting &&
-            !snapshot.hasData) {
-          return const _TradingSummarySkeleton();
-        }
-
-        final summary =
-            snapshot.data ?? TradingSummary.empty;
-
-        return _statGrid(summary);
-      },
-    );
-  }
-
-  Widget _summaryError() {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(15),
-      decoration: AppTheme.card(
-        radius: 17,
-      ),
-      child: Row(
-        children: [
-          Container(
-            width: 38,
-            height: 38,
-            decoration: BoxDecoration(
-              color: AppColors.error.withOpacity(0.10),
-              borderRadius: BorderRadius.circular(11),
-            ),
-            child: const Icon(
-              Icons.error_outline,
-              color: AppColors.error,
-              size: 20,
-            ),
-          ),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Text(
-              'Unable to load trading summary. Pull down to refresh.',
-              style: AppTheme.body(
-                size: 11,
-                color: AppColors.textDark,
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  // ===========================================================================
-  // STAT GRID
-  // ===========================================================================
-
-  Widget _statGrid(TradingSummary summary) {
-    // Only stats with somewhere real to go get a full card — a card
-    // that goes nowhere just wastes a tap. Everything else moves to
-    // the compact strip below instead of taking up a full tile.
-    final cards = <_TradingStatCardData>[
-      _TradingStatCardData(
-        icon: Icons.pets_rounded,
-        label: 'Total Stock',
-        value: '${summary.totalStock}',
-        color: AppColors.primaryGreen,
-        onTap: () => _openGoatStock(),
-      ),
-      _TradingStatCardData(
-        icon: Icons.event_available_outlined,
-        label: 'Booking',
-        value: '${summary.booking}',
-        color: Colors.deepPurple,
-        onTap: () => _openGoatStock(
-          statusFilter: Goat.statusBooked,
-        ),
-      ),
-      _TradingStatCardData(
-        icon: Icons.local_shipping_outlined,
-        label: 'Wait on Delivery',
-        value: '${summary.waitOnDelivery}',
-        color: AppColors.stockTeal,
-        onTap: () => _openGoatStock(
-          statusFilter: Goat.statusWaitOnDelivery,
-        ),
-      ),
-      _TradingStatCardData(
-        icon: Icons.sell_outlined,
-        label: 'Total Sold',
-        value: '${summary.totalSold}',
-        color: AppColors.error,
-        onTap: () => _openGoatStock(
-          statusFilter: Goat.statusSold,
-        ),
-      ),
-    ];
+    if (snap.connectionState == ConnectionState.waiting && !snap.hasData) {
+      return const _Pulse(child: _OverviewSkeleton());
+    }
 
     return Column(
       children: [
-        GridView.builder(
-          shrinkWrap: true,
-          physics: const NeverScrollableScrollPhysics(),
-          itemCount: cards.length,
-          gridDelegate:
-          const SliverGridDelegateWithFixedCrossAxisCount(
-            crossAxisCount: 2,
-            crossAxisSpacing: 10,
-            mainAxisSpacing: 10,
-            childAspectRatio: 1.5,
+        _pair(
+          _StatCard(
+            icon: Icons.pets_rounded,
+            label: 'Total Stock',
+            value: '${s.totalStock}',
+            color: AppColors.primaryGreen,
+            // Needs a "new this week" field on TradingSummary, e.g.
+            // badge: '+${s.newThisWeek} new',
+            onTap: () => _openGoatStock(),
           ),
-          itemBuilder: (context, index) {
-            return _TradingStatCard(
-              data: cards[index],
-            );
-          },
+          _StatCard(
+            icon: Icons.event_available_outlined,
+            label: 'Booking',
+            value: '${s.booking}',
+            color: Colors.deepPurple,
+            badge: s.booking > 0 ? 'Deposit paid' : null,
+            onTap: () => _openGoatStock(statusFilter: Goat.statusBooked),
+          ),
+          height: 116,
         ),
-        const SizedBox(height: 12),
-        _secondaryStatsStrip(summary),
+        const SizedBox(height: 10),
+        _pair(
+          _StatCard(
+            icon: Icons.local_shipping_outlined,
+            label: 'Wait on Delivery',
+            value: '${s.waitOnDelivery}',
+            color: AppColors.stockTeal,
+            badge: s.waitOnDelivery == 0 ? 'All clear' : null,
+            onTap: () => _openGoatStock(
+              statusFilter: Goat.statusWaitOnDelivery,
+            ),
+          ),
+          _StatCard(
+            icon: Icons.sell_outlined,
+            label: 'Total Sold',
+            value: '${s.totalSold}',
+            color: AppColors.error,
+            badge: s.totalSold > 0 ? 'Sold Out' : null,
+            onTap: () => _openGoatStock(statusFilter: Goat.statusSold),
+          ),
+          height: 116,
+        ),
+        const SizedBox(height: 10),
+        _secondaryStats(s),
       ],
     );
   }
 
-  /// Everything that doesn't have a screen of its own to go to —
-  /// shown as a single compact, non-tappable strip instead of three
-  /// more big cards that would otherwise just sit there unusable.
-  Widget _secondaryStatsStrip(TradingSummary summary) {
-    final items = <_SecondaryStatData>[
-      _SecondaryStatData(
-        icon: Icons.shopping_cart_outlined,
-        label: 'Wholesale Purchased',
-        value: '${summary.wholesalePurchased}',
-        color: AppColors.info,
-      ),
-      _SecondaryStatData(
-        icon: Icons.pending_actions_outlined,
-        label: 'Pending Registrations',
-        value: '${summary.pendingRegistrations}',
-        color: AppColors.warning,
-      ),
-      _SecondaryStatData(
-        icon: Icons.trending_up_rounded,
-        label: 'Total Profit',
-        value: _currency(summary.totalProfit),
-        color: AppColors.success,
-      ),
-    ];
+  Widget _secondaryStats(TradingSummary s) {
+    final profit = s.totalProfit;
+    final profitColor = profit > 0
+        ? AppColors.success
+        : profit < 0
+        ? AppColors.error
+        : AppColors.textDark;
+    final profitNote = profit > 0
+        ? 'In profit'
+        : profit < 0
+        ? 'In loss'
+        : 'Break-even phase';
 
-    return Container(
-      padding: const EdgeInsets.symmetric(
-        horizontal: 14,
-        vertical: 4,
-      ),
+    const divider = Divider(
+      height: 1,
+      indent: 12,
+      endIndent: 12,
+      color: AppColors.divider,
+    );
+
+    return DecoratedBox(
       decoration: AppTheme.card(radius: 16),
-      child: Column(
-        children: [
-          for (var i = 0; i < items.length; i++) ...[
-            if (i > 0)
-              const Divider(
-                height: 1,
-                color: AppColors.divider,
-              ),
-            _secondaryStatRow(items[i]),
-          ],
-        ],
-      ),
-    );
-  }
-
-  Widget _secondaryStatRow(_SecondaryStatData item) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 11),
-      child: Row(
-        children: [
-          Container(
-            width: 30,
-            height: 30,
-            decoration: BoxDecoration(
-              color: item.color.withOpacity(0.10),
-              borderRadius: BorderRadius.circular(9),
-            ),
-            child: Icon(
-              item.icon,
-              color: item.color,
-              size: 16,
-            ),
-          ),
-          const SizedBox(width: 11),
-          Expanded(
-            child: Text(
-              item.label,
-              style: AppTheme.body(size: 12),
-            ),
-          ),
-          Text(
-            item.value,
-            style: AppTheme.heading(size: 14, color: item.color),
-          ),
-        ],
-      ),
-    );
-  }
-
-  // ===========================================================================
-  // PENDING RECEIVING
-  // ===========================================================================
-
-  Widget _pendingReceivingSection(
-      String farmId,
-      ) {
-    return StreamBuilder<List<TradingPurchase>>(
-      stream:
-      TradingService.instance.pendingReceivingStream(
-        farmId,
-      ),
-      builder: (context, snapshot) {
-        if (snapshot.hasError) {
-          return _pendingError();
-        }
-
-        if (snapshot.connectionState ==
-            ConnectionState.waiting &&
-            !snapshot.hasData) {
-          return const _PendingReceivingSkeleton();
-        }
-
-        final purchases =
-            snapshot.data ?? <TradingPurchase>[];
-
-        if (purchases.isEmpty) {
-          return _emptyPending();
-        }
-
-        return Column(
-          children: purchases.map(
-                (purchase) {
-              return Padding(
-                padding: const EdgeInsets.only(
-                  bottom: 10,
-                ),
-                child: _pendingReceivingCard(
-                  purchase,
-                ),
-              );
-            },
-          ).toList(),
-        );
-      },
-    );
-  }
-
-  Widget _pendingReceivingCard(
-      TradingPurchase purchase,
-      ) {
-    final purchaseId = purchase.id;
-    final seller = purchase.sellerName;
-    final goats = purchase.totalGoats;
-    final weight = purchase.totalWeightAtPurchase;
-    final payment = purchase.paymentMethod;
-
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(14),
-      decoration: AppTheme.card(
-        radius: 18,
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // -------------------------------------------------------------------
-          // Header
-          // -------------------------------------------------------------------
-
-          Row(
-            children: [
-              Container(
-                width: 43,
-                height: 43,
-                decoration: BoxDecoration(
-                  color: AppColors.warning.withOpacity(0.11),
-                  borderRadius: BorderRadius.circular(13),
-                ),
-                child: const Icon(
-                  Icons.local_shipping_outlined,
-                  color: AppColors.warning,
-                  size: 22,
-                ),
-              ),
-
-              const SizedBox(width: 10),
-
-              Expanded(
-                child: Column(
-                  crossAxisAlignment:
-                  CrossAxisAlignment.start,
+      child: Material(
+        type: MaterialType.transparency,
+        child: Column(
+          children: [
+            _StripRow(
+              icon: Icons.shopping_cart_outlined,
+              color: AppColors.info,
+              title: 'Wholesale Purchased',
+              subtitle: 'Inbound batch goats',
+              trailing: Text.rich(
+                TextSpan(
                   children: [
-                    Text(
-                      'Pending Receiving',
-                      style: AppTheme.body(
-                        size: 10,
-                      ),
+                    TextSpan(
+                      text: '${s.wholesalePurchased}',
+                      style: AppTheme.heading(size: 15, color: AppColors.info),
                     ),
-                    const SizedBox(height: 2),
-                    Text(
-                      purchaseId,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: AppTheme.heading(
-                        size: 14,
-                      ),
-                    ),
+                    TextSpan(text: ' head', style: AppTheme.body(size: 10)),
                   ],
                 ),
               ),
-
-              Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 9,
-                  vertical: 5,
-                ),
-                decoration: BoxDecoration(
-                  color: AppColors.warning.withOpacity(0.10),
-                  borderRadius: BorderRadius.circular(20),
-                ),
-                child: const Text(
-                  'Pending',
-                  style: TextStyle(
-                    color: AppColors.warning,
-                    fontSize: 9,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-              ),
-            ],
-          ),
-
-          const SizedBox(height: 13),
-
-          // -------------------------------------------------------------------
-          // Information
-          // -------------------------------------------------------------------
-
-          Container(
-            padding: const EdgeInsets.all(11),
-            decoration: BoxDecoration(
-              color: AppColors.paleGreen.withOpacity(0.55),
-              borderRadius: BorderRadius.circular(13),
             ),
-            child: Column(
-              children: [
-                _pendingInfoRow(
-                  Icons.person_outline,
-                  'Seller',
-                  seller,
-                ),
-                const SizedBox(height: 8),
-                _pendingInfoRow(
-                  Icons.pets_outlined,
-                  'Goats',
-                  '$goats',
-                ),
-                const SizedBox(height: 8),
-                _pendingInfoRow(
-                  Icons.monitor_weight_outlined,
-                  'Weight',
-                  '${weight.toStringAsFixed(2)} Kg',
-                ),
-                const SizedBox(height: 8),
-                _pendingInfoRow(
-                  Icons.calendar_today_outlined,
-                  'Purchase Date',
-                  DateFormat(
-                    'dd MMM yyyy',
-                  ).format(
-                    purchase.purchaseDate,
+            divider,
+            _StripRow(
+              icon: Icons.description_outlined,
+              color: AppColors.warning,
+              title: 'Pending Registrations',
+              subtitle: 'Needs ear-tags & weight',
+              subtitleColor: AppColors.warning,
+              onTap: () => _push(const SelectPurchaseScreen()),
+              trailing: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  s.pendingRegistrations > 0
+                      ? _Pill('${s.pendingRegistrations} Pending',
+                      AppColors.warning)
+                      : const _Pill('All done', AppColors.success),
+                  const SizedBox(width: 4),
+                  Icon(
+                    Icons.chevron_right_rounded,
+                    size: 18,
+                    color: AppColors.textGrey,
                   ),
-                ),
-                const SizedBox(height: 8),
-                _pendingInfoRow(
-                  Icons.payments_outlined,
-                  'Payment',
-                  payment,
-                ),
-              ],
-            ),
-          ),
-
-          const SizedBox(height: 10),
-
-          // -------------------------------------------------------------------
-          // Amount
-          // -------------------------------------------------------------------
-
-          Container(
-            padding: const EdgeInsets.symmetric(
-              horizontal: 12,
-              vertical: 10,
-            ),
-            decoration: BoxDecoration(
-              color:
-              AppColors.primaryGreen.withOpacity(0.07),
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: Row(
-              children: [
-                const Icon(
-                  Icons.currency_rupee,
-                  color: AppColors.primaryGreen,
-                  size: 18,
-                ),
-                const SizedBox(width: 6),
-                Expanded(
-                  child: Text(
-                    'Purchase Amount',
-                    style: AppTheme.body(
-                      size: 10.5,
-                    ),
-                  ),
-                ),
-                Text(
-                  _currency(
-                    purchase.purchaseAmount,
-                  ),
-                  style: AppTheme.heading(
-                    size: 14,
-                  ),
-                ),
-              ],
-            ),
-          ),
-
-          const SizedBox(height: 11),
-
-          // -------------------------------------------------------------------
-          // Complete receiving
-          // -------------------------------------------------------------------
-
-          SizedBox(
-            width: double.infinity,
-            height: 44,
-            child: ElevatedButton.icon(
-              onPressed: () {
-                _openCompleteReceiving(
-                  purchase,
-                );
-              },
-              icon: const Icon(
-                Icons.check_circle_outline,
-                size: 18,
-              ),
-              label: const Text(
-                'Complete Receiving',
-                style: TextStyle(
-                  fontSize: 12,
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
-              style: ElevatedButton.styleFrom(
-                backgroundColor:
-                AppColors.primaryGreen,
-                foregroundColor: Colors.white,
-                elevation: 0,
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 12,
-                ),
-                shape: RoundedRectangleBorder(
-                  borderRadius:
-                  BorderRadius.circular(12),
-                ),
+                ],
               ),
             ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _pendingInfoRow(
-      IconData icon,
-      String label,
-      String value,
-      ) {
-    return Row(
-      children: [
-        Icon(
-          icon,
-          size: 15,
-          color: AppColors.primaryGreen,
-        ),
-        const SizedBox(width: 7),
-        Expanded(
-          child: Text(
-            label,
-            style: AppTheme.body(
-              size: 10,
-            ),
-          ),
-        ),
-        const SizedBox(width: 8),
-        Flexible(
-          child: Text(
-            value,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            textAlign: TextAlign.right,
-            style: AppTheme.body(
-              size: 10,
-              color: AppColors.textDark,
-            ),
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _emptyPending() {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.symmetric(
-        horizontal: 18,
-        vertical: 22,
-      ),
-      decoration: AppTheme.card(
-        radius: 18,
-      ),
-      child: Column(
-        children: [
-          Container(
-            width: 48,
-            height: 48,
-            decoration: BoxDecoration(
-              color:
-              AppColors.success.withOpacity(0.10),
-              shape: BoxShape.circle,
-            ),
-            child: const Icon(
-              Icons.check_circle_outline,
+            divider,
+            _StripRow(
+              icon: Icons.trending_up_rounded,
               color: AppColors.success,
-              size: 26,
-            ),
-          ),
-          const SizedBox(height: 10),
-          Text(
-            'No Pending Receiving',
-            style: AppTheme.heading(
-              size: 14,
-            ),
-          ),
-          const SizedBox(height: 4),
-          Text(
-            'All purchased goats have been received.',
-            textAlign: TextAlign.center,
-            style: AppTheme.body(
-              size: 10.5,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _pendingError() {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(14),
-      decoration: AppTheme.card(
-        radius: 17,
-      ),
-      child: Row(
-        children: [
-          const Icon(
-            Icons.error_outline,
-            color: AppColors.error,
-            size: 21,
-          ),
-          const SizedBox(width: 9),
-          Expanded(
-            child: Text(
-              'Unable to load pending receiving records. Pull down to refresh.',
-              style: AppTheme.body(
-                size: 10.5,
+              title: 'Total Realized Profit',
+              subtitle: 'Current Q${_quarter(DateTime.now())} cycle margin',
+              trailing: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  Text(
+                    _inr.format(profit),
+                    style: AppTheme.heading(size: 16, color: profitColor),
+                  ),
+                  Text(profitNote, style: AppTheme.body(size: 9.5)),
+                ],
               ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
@@ -1077,348 +426,832 @@ class _TradingDashboardScreenState
   // QUICK ACTIONS
   // ===========================================================================
 
-  Widget _quickActions() {
-    final actions = <_TradingQuickActionData>[
-      _TradingQuickActionData(
-        icon: Icons.shopping_cart_outlined,
-        title: 'Purchase Goats',
-        subtitle: 'Buy new wholesale stock',
-        color: AppColors.primaryGreen,
-        onTap: () {
-          Navigator.of(context).push(
-            fastRoute(
-              const PurchaseGoatsWizardScreen(),
+  Widget _quickActions(TradingSummary s) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            const _IconBox(
+              icon: Icons.bolt_rounded,
+              color: AppColors.primaryGreen,
+              size: 28,
             ),
-          );
-        },
-      ),
-      _TradingQuickActionData(
-        icon: Icons.how_to_reg_outlined,
-        title: 'Register Goats',
-        subtitle: 'Add individual records for received goats',
-        color: AppColors.info,
-        onTap: () {
-          Navigator.of(context).push(
-            fastRoute(
-              const SelectPurchaseScreen(),
-            ),
-          );
-        },
-      ),
-      _TradingQuickActionData(
-        icon: Icons.inventory_2_outlined,
-        title: 'Goat Stock',
-        subtitle: 'Browse, filter, and manage every goat',
-        color: Colors.deepPurple,
-        onTap: () => _openGoatStock(),
-      ),
-      _TradingQuickActionData(
-        icon: Icons.holiday_village_outlined,
-        title: 'Own Palai',
-        subtitle: 'Goats kept and boarded by your own farm',
-        color: AppColors.warning,
-        onTap: () {
-          Navigator.of(context).push(
-            fastRoute(
-              const OwnPalaiListScreen(),
-            ),
-          );
-        },
-      ),
-      _TradingQuickActionData(
-        icon: Icons.sell_outlined,
-        title: 'Sell Goat',
-        subtitle: 'Start a new sale',
-        color: AppColors.error,
-        onTap: () {
-          Navigator.of(context).push(
-            fastRoute(
-              const SellGoatWizardScreen(),
-            ),
-          );
-        },
-      ),
-    ];
+            const SizedBox(width: 8),
+            Text('Quick Actions', style: AppTheme.heading(size: 14)),
+            const Spacer(),
+            Text('Trading operations', style: AppTheme.body(size: 10)),
+          ],
+        ),
+        const SizedBox(height: 10),
+        _registerHero(s.pendingRegistrations),
+        const SizedBox(height: 10),
+        _pair(
+          _ActionTile(
+            icon: Icons.shopping_cart_outlined,
+            title: 'Purchase Goats',
+            subtitle: 'Wholesale & direct stock',
+            color: AppColors.primaryGreen,
+            onTap: () => _push(const PurchaseGoatsWizardScreen()),
+          ),
+          _ActionTile(
+            icon: Icons.currency_rupee_rounded,
+            title: 'Sell Goat',
+            subtitle: 'Invoice & gate pass',
+            color: AppColors.error,
+            onTap: () => _push(const SellGoatWizardScreen()),
+          ),
+          height: 100,
+        ),
+        const SizedBox(height: 10),
+        _pair(
+          _ActionTile(
+            icon: Icons.inventory_2_outlined,
+            title: 'Goat Stock',
+            subtitle: 'Browse & filter herd',
+            color: Colors.deepPurple,
+            onTap: () => _openGoatStock(),
+          ),
+          _ActionTile(
+            icon: Icons.holiday_village_outlined,
+            title: 'Own Palai',
+            subtitle: 'Boarded pen records',
+            color: AppColors.warning,
+            onTap: () => _push(const OwnPalaiListScreen()),
+          ),
+          height: 100,
+        ),
+      ],
+    );
+  }
 
+  Widget _registerHero(int pending) {
+    final now = DateTime.now();
+
+    return _CardTap(
+      radius: 18,
+      decoration: BoxDecoration(
+        color: AppColors.darkGreen,
+        borderRadius: BorderRadius.circular(18),
+      ),
+      onTap: () => _push(const SelectPurchaseScreen()),
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          children: [
+            Row(
+              children: [
+                Container(
+                  width: 38,
+                  height: 38,
+                  decoration: BoxDecoration(
+                    color: Colors.white.withOpacity(0.14),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: const Icon(
+                    Icons.how_to_reg_outlined,
+                    color: Colors.white,
+                    size: 21,
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Flexible(
+                            child: Text(
+                              'Register Goats',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: AppTheme.heading(
+                                size: 14,
+                                color: Colors.white,
+                              ),
+                            ),
+                          ),
+                          if (pending > 0) ...[
+                            const SizedBox(width: 8),
+                            _Pill('$pending Pending', AppColors.warning,
+                                solid: true),
+                          ],
+                        ],
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        'Tag & weigh incoming batch',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: AppTheme.body(
+                          size: 10.5,
+                          color: Colors.white70,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 10),
+            Divider(height: 1, color: Colors.white.withOpacity(0.15)),
+            const SizedBox(height: 10),
+            Row(
+              children: [
+                Container(
+                  width: 6,
+                  height: 6,
+                  decoration: const BoxDecoration(
+                    color: AppColors.warning,
+                    shape: BoxShape.circle,
+                  ),
+                ),
+                const SizedBox(width: 7),
+                Expanded(
+                  child: Text(
+                    'Batch ${now.year}-Q${_quarter(now)} · Queue',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: AppTheme.body(size: 10.5, color: Colors.white70),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 7,
+                  ),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(20),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        pending > 0 ? 'Process Now' : 'Open',
+                        style: const TextStyle(
+                          color: AppColors.darkGreen,
+                          fontSize: 11,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                      const SizedBox(width: 2),
+                      const Icon(
+                        Icons.chevron_right_rounded,
+                        size: 16,
+                        color: AppColors.darkGreen,
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // ===========================================================================
+  // PENDING RECEIVING
+  // ===========================================================================
+
+  Widget _pendingSection() {
+    return StreamBuilder<List<TradingPurchase>>(
+      stream: _pendingStream,
+      builder: (context, snap) {
+        if (snap.hasError) {
+          return _errorCard(
+            'Unable to load pending receiving records. Pull down to refresh.',
+          );
+        }
+
+        if (snap.connectionState == ConnectionState.waiting && !snap.hasData) {
+          return const _Pulse(child: _PendingSkeleton());
+        }
+
+        final purchases = snap.data ?? const <TradingPurchase>[];
+        return purchases.isEmpty ? _pendingEmpty() : _pendingList(purchases);
+      },
+    );
+  }
+
+  Widget _pendingHeader(Widget trailing) {
+    return Row(
+      children: [
+        const _IconBox(
+          icon: Icons.local_shipping_outlined,
+          color: AppColors.stockTeal,
+          size: 36,
+        ),
+        const SizedBox(width: 10),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('Pending Receiving', style: AppTheme.heading(size: 13.5)),
+              const SizedBox(height: 1),
+              Text(
+                'Purchases waiting delivery',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: AppTheme.body(size: 10),
+              ),
+            ],
+          ),
+        ),
+        trailing,
+      ],
+    );
+  }
+
+  Widget _pendingEmpty() {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(14),
+      decoration: AppTheme.card(radius: 18),
+      child: Column(
+        children: [
+          _pendingHeader(const _Pill('Synced', AppColors.success)),
+          const SizedBox(height: 16),
+          Container(
+            width: 52,
+            height: 52,
+            decoration: BoxDecoration(
+              color: AppColors.success.withOpacity(0.10),
+              shape: BoxShape.circle,
+            ),
+            child: const Icon(
+              Icons.check_rounded,
+              color: AppColors.success,
+              size: 28,
+            ),
+          ),
+          const SizedBox(height: 10),
+          Text('No Pending Receiving', style: AppTheme.heading(size: 14)),
+          const SizedBox(height: 4),
+          Text(
+            'All purchased goats have been received, weighed, and moved to '
+                'quarantine or active barns.',
+            textAlign: TextAlign.center,
+            style: AppTheme.body(size: 10.5),
+          ),
+          const SizedBox(height: 4),
+        ],
+      ),
+    );
+  }
+
+  Widget _pendingList(List<TradingPurchase> purchases) {
     return Column(
       children: [
-        for (var i = 0; i < actions.length; i++) ...[
-          if (i > 0) const SizedBox(height: 9),
-          _TradingQuickAction(data: actions[i]),
-        ],
+        _pendingHeader(
+          _Pill('${purchases.length} Pending', AppColors.warning),
+        ),
+        const SizedBox(height: 10),
+        for (final purchase in purchases)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 10),
+            child: _pendingCard(purchase),
+          ),
       ],
+    );
+  }
+
+  Widget _pendingCard(TradingPurchase p) {
+    final rows = <Widget>[
+      _InfoRow(Icons.person_outline, 'Seller', p.sellerName),
+      _InfoRow(Icons.pets_outlined, 'Goats', '${p.totalGoats}'),
+      _InfoRow(
+        Icons.monitor_weight_outlined,
+        'Weight',
+        '${p.totalWeightAtPurchase.toStringAsFixed(2)} Kg',
+      ),
+      _InfoRow(
+        Icons.calendar_today_outlined,
+        'Purchase Date',
+        _dateFmt.format(p.purchaseDate),
+      ),
+      _InfoRow(Icons.payments_outlined, 'Payment', p.paymentMethod),
+    ];
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(12),
+      decoration: AppTheme.card(radius: 18),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const _IconBox(
+                icon: Icons.local_shipping_outlined,
+                color: AppColors.warning,
+                size: 36,
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('Purchase', style: AppTheme.body(size: 10)),
+                    Text(
+                      p.id,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: AppTheme.heading(size: 13),
+                    ),
+                  ],
+                ),
+              ),
+              const _Pill('Pending', AppColors.warning),
+            ],
+          ),
+          const SizedBox(height: 10),
+          Container(
+            padding: const EdgeInsets.all(10),
+            decoration: BoxDecoration(
+              color: AppColors.paleGreen.withOpacity(0.55),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Column(
+              children: [
+                for (var i = 0; i < rows.length; i++) ...[
+                  if (i > 0) const SizedBox(height: 6),
+                  rows[i],
+                ],
+              ],
+            ),
+          ),
+          const SizedBox(height: 8),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+            decoration: BoxDecoration(
+              color: AppColors.primaryGreen.withOpacity(0.07),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Row(
+              children: [
+                const Icon(
+                  Icons.currency_rupee,
+                  color: AppColors.primaryGreen,
+                  size: 17,
+                ),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: Text(
+                    'Purchase Amount',
+                    style: AppTheme.body(size: 10.5),
+                  ),
+                ),
+                Text(
+                  _inr.format(p.purchaseAmount),
+                  style: AppTheme.heading(size: 14),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 10),
+          SizedBox(
+            width: double.infinity,
+            height: 42,
+            child: ElevatedButton.icon(
+              onPressed: () => _openCompleteReceiving(p),
+              icon: const Icon(Icons.check_circle_outline, size: 18),
+              label: const Text(
+                'Complete Receiving',
+                style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700),
+              ),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: AppColors.primaryGreen,
+                foregroundColor: Colors.white,
+                elevation: 0,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _errorCard(String message) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(14),
+      decoration: AppTheme.card(radius: 16),
+      child: Row(
+        children: [
+          const _IconBox(
+            icon: Icons.error_outline,
+            color: AppColors.error,
+            size: 34,
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              message,
+              style: AppTheme.body(size: 11, color: AppColors.textDark),
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
 
 // ============================================================================
-// STAT CARD DATA
+// SHARED HELPERS
 // ============================================================================
 
-class _TradingStatCardData {
-  final IconData icon;
-  final String label;
-  final String value;
-  final Color color;
-  final VoidCallback onTap;
+int _quarter(DateTime d) => (d.month - 1) ~/ 3 + 1;
 
-  const _TradingStatCardData({
-    required this.icon,
-    required this.label,
-    required this.value,
-    required this.color,
-    required this.onTap,
-  });
+/// Two equal-width cells with a fixed height (lighter than a shrink-wrapped
+/// GridView and immune to aspect-ratio drift).
+Widget _pair(Widget a, Widget b, {required double height}) {
+  return SizedBox(
+    height: height,
+    child: Row(
+      children: [
+        Expanded(child: a),
+        const SizedBox(width: 10),
+        Expanded(child: b),
+      ],
+    ),
+  );
 }
 
 // ============================================================================
-// SECONDARY STAT DATA (non-navigable — shown in the compact strip)
+// SMALL WIDGETS
 // ============================================================================
 
-class _SecondaryStatData {
-  final IconData icon;
-  final String label;
-  final String value;
-  final Color color;
-
-  const _SecondaryStatData({
-    required this.icon,
-    required this.label,
-    required this.value,
-    required this.color,
+/// Card surface with a correctly clipped ink ripple.
+class _CardTap extends StatelessWidget {
+  const _CardTap({
+    required this.radius,
+    required this.child,
+    this.onTap,
+    this.decoration,
   });
-}
 
-// ============================================================================
-// STAT CARD
-// ============================================================================
-
-class _TradingStatCard extends StatelessWidget {
-  final _TradingStatCardData data;
-
-  const _TradingStatCard({
-    required this.data,
-  });
+  final double radius;
+  final Widget child;
+  final VoidCallback? onTap;
+  final Decoration? decoration;
 
   @override
   Widget build(BuildContext context) {
-    return Material(
-      color: Colors.transparent,
-      child: InkWell(
-        onTap: data.onTap,
-        borderRadius: BorderRadius.circular(17),
-        child: Container(
-          padding: const EdgeInsets.all(12),
-          decoration: BoxDecoration(
-            color: data.color.withOpacity(0.07),
-            borderRadius: BorderRadius.circular(17),
-            border: Border.all(
-              color: data.color.withOpacity(0.12),
-              width: 1,
-            ),
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Container(
-                    width: 36,
-                    height: 36,
-                    decoration: BoxDecoration(
-                      color: data.color.withOpacity(0.10),
-                      borderRadius: BorderRadius.circular(11),
-                    ),
-                    child: Icon(
-                      data.icon,
-                      color: data.color,
-                      size: 19,
-                    ),
-                  ),
-                  Icon(
-                    Icons.chevron_right_rounded,
-                    color: data.color.withOpacity(0.55),
-                    size: 20,
-                  ),
-                ],
-              ),
-
-              const Spacer(),
-
-              Text(
-                data.label,
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-                style: AppTheme.body(
-                  size: 9.5,
-                ),
-              ),
-
-              const SizedBox(height: 2),
-
-              Text(
-                data.value,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: AppTheme.heading(
-                  size: 17,
-                  color: data.color,
-                ),
-              ),
-            ],
-          ),
+    return DecoratedBox(
+      decoration: decoration ?? AppTheme.card(radius: radius),
+      child: Material(
+        type: MaterialType.transparency,
+        child: InkWell(
+          borderRadius: BorderRadius.circular(radius),
+          onTap: onTap,
+          child: child,
         ),
       ),
     );
   }
 }
 
-// ============================================================================
-// QUICK ACTION DATA
-// ============================================================================
+class _HeaderButton extends StatelessWidget {
+  const _HeaderButton({
+    required this.icon,
+    required this.onTap,
+    this.tooltip,
+  });
 
-class _TradingQuickActionData {
   final IconData icon;
-  final String title;
-  final String subtitle;
+  final VoidCallback onTap;
+  final String? tooltip;
+
+  @override
+  Widget build(BuildContext context) {
+    final button = _CardTap(
+      radius: 14,
+      onTap: onTap,
+      child: SizedBox(
+        width: 42,
+        height: 42,
+        child: Center(
+          child: Icon(icon, size: 22, color: AppColors.textDark),
+        ),
+      ),
+    );
+
+    return tooltip == null ? button : Tooltip(message: tooltip!, child: button);
+  }
+}
+
+class _IconBox extends StatelessWidget {
+  const _IconBox({
+    required this.icon,
+    required this.color,
+    this.size = 34,
+  });
+
+  final IconData icon;
+  final Color color;
+  final double size;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: size,
+      height: size,
+      decoration: BoxDecoration(
+        color: color.withOpacity(0.10),
+        borderRadius: BorderRadius.circular(size * 0.3),
+      ),
+      child: Icon(icon, color: color, size: size * 0.55),
+    );
+  }
+}
+
+class _Pill extends StatelessWidget {
+  const _Pill(this.text, this.color, {this.solid = false});
+
+  final String text;
+  final Color color;
+  final bool solid;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+      decoration: BoxDecoration(
+        color: solid ? color : color.withOpacity(0.10),
+        borderRadius: BorderRadius.circular(20),
+      ),
+      child: Text(
+        text,
+        maxLines: 1,
+        softWrap: false,
+        overflow: TextOverflow.ellipsis,
+        style: TextStyle(
+          color: solid ? Colors.white : color,
+          fontSize: 9.5,
+          fontWeight: FontWeight.w700,
+        ),
+      ),
+    );
+  }
+}
+
+class _StatCard extends StatelessWidget {
+  const _StatCard({
+    required this.icon,
+    required this.label,
+    required this.value,
+    required this.color,
+    required this.onTap,
+    this.badge,
+  });
+
+  final IconData icon;
+  final String label;
+  final String value;
   final Color color;
   final VoidCallback onTap;
+  final String? badge;
 
-  const _TradingQuickActionData({
+  @override
+  Widget build(BuildContext context) {
+    return _CardTap(
+      radius: 16,
+      onTap: onTap,
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                _IconBox(icon: icon, color: color),
+                Icon(Icons.chevron_right_rounded, size: 20, color: color),
+              ],
+            ),
+            const Spacer(),
+            Text(
+              label,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: AppTheme.body(size: 11),
+            ),
+            const SizedBox(height: 2),
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.center,
+              children: [
+                Text(
+                  value,
+                  maxLines: 1,
+                  style: AppTheme.heading(
+                    size: 22,
+                    color: AppColors.textDark,
+                  ),
+                ),
+                if (badge != null) ...[
+                  const SizedBox(width: 6),
+                  Expanded(
+                    child: Align(
+                      alignment: Alignment.centerRight,
+                      child: _Pill(badge!, color),
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _StripRow extends StatelessWidget {
+  const _StripRow({
+    required this.icon,
+    required this.color,
+    required this.title,
+    required this.subtitle,
+    required this.trailing,
+    this.subtitleColor,
+    this.onTap,
+  });
+
+  final IconData icon;
+  final Color color;
+  final String title;
+  final String subtitle;
+  final Widget trailing;
+  final Color? subtitleColor;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: onTap,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        child: Row(
+          children: [
+            _IconBox(icon: icon, color: color),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    title,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: AppTheme.heading(size: 12.5),
+                  ),
+                  const SizedBox(height: 1),
+                  Text(
+                    subtitle,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: subtitleColor == null
+                        ? AppTheme.body(size: 10)
+                        : AppTheme.body(size: 10, color: subtitleColor!),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(width: 8),
+            trailing,
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _ActionTile extends StatelessWidget {
+  const _ActionTile({
     required this.icon,
     required this.title,
     required this.subtitle,
     required this.color,
     required this.onTap,
   });
-}
 
-// ============================================================================
-// QUICK ACTION
-// ============================================================================
-
-class _TradingQuickAction extends StatelessWidget {
-  final _TradingQuickActionData data;
-
-  const _TradingQuickAction({
-    required this.data,
-  });
+  final IconData icon;
+  final String title;
+  final String subtitle;
+  final Color color;
+  final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
-    return Material(
-      color: Colors.transparent,
-      child: InkWell(
-        onTap: data.onTap,
-        borderRadius: BorderRadius.circular(17),
-        child: Container(
-          padding: const EdgeInsets.symmetric(
-            horizontal: 11,
-            vertical: 10,
-          ),
-          decoration: BoxDecoration(
-            color: data.color.withOpacity(0.06),
-            borderRadius: BorderRadius.circular(17),
-            border: Border.all(
-              color: data.color.withOpacity(0.12),
+    return _CardTap(
+      radius: 16,
+      onTap: onTap,
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                _IconBox(icon: icon, color: color),
+                Container(
+                  width: 24,
+                  height: 24,
+                  decoration: BoxDecoration(
+                    color: AppColors.paleGreen,
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Icon(
+                    Icons.chevron_right_rounded,
+                    size: 16,
+                    color: AppColors.textGrey,
+                  ),
+                ),
+              ],
             ),
-          ),
-          child: Row(
-            children: [
-              Container(
-                width: 43,
-                height: 43,
-                decoration: BoxDecoration(
-                  color: data.color.withOpacity(0.10),
-                  borderRadius: BorderRadius.circular(13),
-                ),
-                child: Icon(
-                  data.icon,
-                  color: data.color,
-                  size: 21,
-                ),
-              ),
-
-              const SizedBox(width: 10),
-
-              Expanded(
-                child: Column(
-                  mainAxisAlignment:
-                  MainAxisAlignment.center,
-                  crossAxisAlignment:
-                  CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      data.title,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: AppTheme.heading(
-                        size: 12,
-                        color: data.color,
-                      ),
-                    ),
-                    const SizedBox(height: 1),
-                    Text(
-                      data.subtitle,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: AppTheme.body(
-                        size: 10,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-
-              Icon(
-                Icons.chevron_right_rounded,
-                color: data.color,
-                size: 20,
-              ),
-            ],
-          ),
+            const Spacer(),
+            Text(
+              title,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: AppTheme.heading(size: 12.5),
+            ),
+            const SizedBox(height: 2),
+            Text(
+              subtitle,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: AppTheme.body(size: 10),
+            ),
+          ],
         ),
       ),
     );
   }
 }
 
-// ============================================================================
-// SKELETON BASE
-// ============================================================================
+class _InfoRow extends StatelessWidget {
+  const _InfoRow(this.icon, this.label, this.value);
 
-class _SkeletonBox extends StatefulWidget {
-  final double width;
-  final double height;
-  final double radius;
-
-  const _SkeletonBox({
-    required this.width,
-    required this.height,
-    this.radius = 10,
-  });
+  final IconData icon;
+  final String label;
+  final String value;
 
   @override
-  State<_SkeletonBox> createState() =>
-      _SkeletonBoxState();
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        Icon(icon, size: 15, color: AppColors.primaryGreen),
+        const SizedBox(width: 7),
+        Expanded(child: Text(label, style: AppTheme.body(size: 10))),
+        const SizedBox(width: 8),
+        Flexible(
+          child: Text(
+            value,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            textAlign: TextAlign.right,
+            style: AppTheme.body(size: 10, color: AppColors.textDark),
+          ),
+        ),
+      ],
+    );
+  }
 }
 
-class _SkeletonBoxState extends State<_SkeletonBox>
-    with SingleTickerProviderStateMixin {
-  late final AnimationController _controller;
+// ============================================================================
+// SKELETONS
+//
+// One animation controller per skeleton *group* (via _Pulse) instead of one
+// per box, so loading states stay cheap.
+// ============================================================================
+
+class _Pulse extends StatefulWidget {
+  const _Pulse({required this.child});
+
+  final Widget child;
 
   @override
-  void initState() {
-    super.initState();
+  State<_Pulse> createState() => _PulseState();
+}
 
-    _controller = AnimationController(
-      vsync: this,
-      duration: const Duration(
-        milliseconds: 950,
-      ),
-    )..repeat(reverse: true);
-  }
+class _PulseState extends State<_Pulse> with SingleTickerProviderStateMixin {
+  late final AnimationController _controller = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 950),
+  )..repeat(reverse: true);
+
+  late final Animation<double> _opacity =
+  Tween<double>(begin: 0.45, end: 0.95).animate(_controller);
 
   @override
   void dispose() {
@@ -1428,341 +1261,185 @@ class _SkeletonBoxState extends State<_SkeletonBox>
 
   @override
   Widget build(BuildContext context) {
-    return AnimatedBuilder(
-      animation: _controller,
-      builder: (context, child) {
-        final opacity =
-            0.35 + (_controller.value * 0.30);
-
-        return Opacity(
-          opacity: opacity,
-          child: Container(
-            width: widget.width,
-            height: widget.height,
-            decoration: BoxDecoration(
-              color: AppColors.textGrey.withOpacity(0.18),
-              borderRadius:
-              BorderRadius.circular(widget.radius),
-            ),
-          ),
-        );
-      },
-    );
+    return FadeTransition(opacity: _opacity, child: widget.child);
   }
 }
 
-// ============================================================================
-// DASHBOARD SKELETON
-// ============================================================================
+class _Bone extends StatelessWidget {
+  const _Bone({
+    required this.width,
+    required this.height,
+    this.radius = 8,
+  });
 
-class _TradingDashboardSkeleton extends StatelessWidget {
-  const _TradingDashboardSkeleton();
-
-  @override
-  Widget build(BuildContext context) {
-    return ListView(
-      physics: const NeverScrollableScrollPhysics(),
-      padding: const EdgeInsets.fromLTRB(
-        16,
-        8,
-        16,
-        30,
-      ),
-      children: [
-        // Header
-        Row(
-          children: [
-            const _SkeletonBox(
-              width: 54,
-              height: 54,
-              radius: 17,
-            ),
-            const SizedBox(width: 13),
-            const Expanded(
-              child: Column(
-                crossAxisAlignment:
-                CrossAxisAlignment.start,
-                children: [
-                  _SkeletonBox(
-                    width: 110,
-                    height: 22,
-                    radius: 7,
-                  ),
-                  SizedBox(height: 7),
-                  _SkeletonBox(
-                    width: 185,
-                    height: 12,
-                    radius: 6,
-                  ),
-                ],
-              ),
-            ),
-            _SkeletonBox(
-              width: 48,
-              height: 48,
-              radius: 24,
-            ),
-          ],
-        ),
-
-        const SizedBox(height: 24),
-
-        const _SkeletonSectionHeader(),
-
-        const SizedBox(height: 12),
-
-        const _TradingSummarySkeleton(),
-
-        const SizedBox(height: 24),
-
-        const _SkeletonSectionHeader(),
-
-        const SizedBox(height: 12),
-
-        const _PendingReceivingSkeleton(),
-
-        const SizedBox(height: 24),
-
-        const _SkeletonSectionHeader(),
-
-        const SizedBox(height: 12),
-
-        const _QuickActionsSkeleton(),
-      ],
-    );
-  }
-}
-
-// ============================================================================
-// SKELETON SECTION HEADER
-// ============================================================================
-
-class _SkeletonSectionHeader extends StatelessWidget {
-  const _SkeletonSectionHeader();
-
-  @override
-  Widget build(BuildContext context) {
-    return Row(
-      children: const [
-        _SkeletonBox(
-          width: 42,
-          height: 42,
-          radius: 14,
-        ),
-        SizedBox(width: 11),
-        Column(
-          crossAxisAlignment:
-          CrossAxisAlignment.start,
-          children: [
-            _SkeletonBox(
-              width: 145,
-              height: 17,
-              radius: 6,
-            ),
-            SizedBox(height: 5),
-            _SkeletonBox(
-              width: 210,
-              height: 10,
-              radius: 5,
-            ),
-          ],
-        ),
-      ],
-    );
-  }
-}
-
-// ============================================================================
-// SUMMARY SKELETON
-// ============================================================================
-
-class _TradingSummarySkeleton extends StatelessWidget {
-  const _TradingSummarySkeleton();
-
-  @override
-  Widget build(BuildContext context) {
-    return GridView.builder(
-      shrinkWrap: true,
-      physics: const NeverScrollableScrollPhysics(),
-      itemCount: 4,
-      gridDelegate:
-      const SliverGridDelegateWithFixedCrossAxisCount(
-        crossAxisCount: 2,
-        crossAxisSpacing: 10,
-        mainAxisSpacing: 10,
-        childAspectRatio: 1.5,
-      ),
-      itemBuilder: (context, index) {
-        return Container(
-          padding: const EdgeInsets.all(12),
-          decoration: AppTheme.card(
-            radius: 17,
-          ),
-          child: const Column(
-            crossAxisAlignment:
-            CrossAxisAlignment.start,
-            children: [
-              _SkeletonBox(
-                width: 36,
-                height: 36,
-                radius: 11,
-              ),
-              Spacer(),
-              _SkeletonBox(
-                width: 78,
-                height: 10,
-                radius: 5,
-              ),
-              SizedBox(height: 6),
-              _SkeletonBox(
-                width: 48,
-                height: 17,
-                radius: 6,
-              ),
-            ],
-          ),
-        );
-      },
-    );
-  }
-}
-
-// ============================================================================
-// PENDING SKELETON
-// ============================================================================
-
-class _PendingReceivingSkeleton
-    extends StatelessWidget {
-  const _PendingReceivingSkeleton();
+  final double width;
+  final double height;
+  final double radius;
 
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.all(14),
-      decoration: AppTheme.card(
-        radius: 18,
+      width: width,
+      height: height,
+      decoration: BoxDecoration(
+        color: AppColors.textGrey.withOpacity(0.18),
+        borderRadius: BorderRadius.circular(radius),
       ),
-      child: Column(
+    );
+  }
+}
+
+class _SkeletonCard extends StatelessWidget {
+  const _SkeletonCard();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: AppTheme.card(radius: 16),
+      child: const Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
-            children: const [
-              _SkeletonBox(
-                width: 43,
-                height: 43,
-                radius: 13,
-              ),
-              SizedBox(width: 10),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment:
-                  CrossAxisAlignment.start,
-                  children: [
-                    _SkeletonBox(
-                      width: 95,
-                      height: 10,
-                      radius: 5,
-                    ),
-                    SizedBox(height: 5),
-                    _SkeletonBox(
-                      width: 120,
-                      height: 14,
-                      radius: 6,
-                    ),
-                  ],
-                ),
-              ),
-              _SkeletonBox(
-                width: 54,
-                height: 22,
-                radius: 12,
-              ),
-            ],
-          ),
-
-          SizedBox(height: 14),
-
-          _SkeletonBox(
-            width: double.infinity,
-            height: 112,
-            radius: 13,
-          ),
-
-          SizedBox(height: 10),
-
-          _SkeletonBox(
-            width: double.infinity,
-            height: 38,
-            radius: 12,
-          ),
-
-          SizedBox(height: 10),
-
-          _SkeletonBox(
-            width: double.infinity,
-            height: 44,
-            radius: 12,
-          ),
+          _Bone(width: 34, height: 34, radius: 10),
+          Spacer(),
+          _Bone(width: 72, height: 10, radius: 5),
+          SizedBox(height: 6),
+          _Bone(width: 44, height: 16, radius: 6),
         ],
       ),
     );
   }
 }
 
-// ============================================================================
-// QUICK ACTIONS SKELETON
-// ============================================================================
+class _OverviewSkeleton extends StatelessWidget {
+  const _OverviewSkeleton();
 
-class _QuickActionsSkeleton
-    extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      children: [
+        _pair(const _SkeletonCard(), const _SkeletonCard(), height: 116),
+        const SizedBox(height: 10),
+        _pair(const _SkeletonCard(), const _SkeletonCard(), height: 116),
+        const SizedBox(height: 10),
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+          decoration: AppTheme.card(radius: 16),
+          child: Column(
+            children: List.generate(3, (i) {
+              return Padding(
+                padding: EdgeInsets.only(top: i == 0 ? 0 : 10),
+                child: const Row(
+                  children: [
+                    _Bone(width: 34, height: 34, radius: 10),
+                    SizedBox(width: 10),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          _Bone(width: 130, height: 12, radius: 5),
+                          SizedBox(height: 5),
+                          _Bone(width: 90, height: 9, radius: 5),
+                        ],
+                      ),
+                    ),
+                    _Bone(width: 46, height: 16, radius: 6),
+                  ],
+                ),
+              );
+            }),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _QuickActionsSkeleton extends StatelessWidget {
   const _QuickActionsSkeleton();
 
   @override
   Widget build(BuildContext context) {
     return Column(
-      children: List.generate(5, (index) {
-        return Padding(
-          padding: EdgeInsets.only(
-            bottom: index == 4 ? 0 : 9,
-          ),
-          child: Container(
-            padding: const EdgeInsets.all(10),
-            decoration: AppTheme.card(
-              radius: 17,
-            ),
-            child: const Row(
-              children: [
-                _SkeletonBox(
-                  width: 43,
-                  height: 43,
-                  radius: 13,
+      children: [
+        const Row(
+          children: [
+            _Bone(width: 28, height: 28, radius: 9),
+            SizedBox(width: 8),
+            _Bone(width: 100, height: 14, radius: 5),
+          ],
+        ),
+        const SizedBox(height: 10),
+        const _Bone(width: double.infinity, height: 110, radius: 18),
+        const SizedBox(height: 10),
+        _pair(const _SkeletonCard(), const _SkeletonCard(), height: 100),
+        const SizedBox(height: 10),
+        _pair(const _SkeletonCard(), const _SkeletonCard(), height: 100),
+      ],
+    );
+  }
+}
+
+class _PendingSkeleton extends StatelessWidget {
+  const _PendingSkeleton();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: AppTheme.card(radius: 18),
+      child: const Column(
+        children: [
+          Row(
+            children: [
+              _Bone(width: 36, height: 36, radius: 11),
+              SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    _Bone(width: 110, height: 12, radius: 5),
+                    SizedBox(height: 5),
+                    _Bone(width: 150, height: 9, radius: 5),
+                  ],
                 ),
-                SizedBox(width: 10),
-                Expanded(
-                  child: Column(
-                    mainAxisAlignment:
-                    MainAxisAlignment.center,
-                    crossAxisAlignment:
-                    CrossAxisAlignment.start,
-                    children: [
-                      _SkeletonBox(
-                        width: 110,
-                        height: 11,
-                        radius: 5,
-                      ),
-                      SizedBox(height: 5),
-                      _SkeletonBox(
-                        width: 160,
-                        height: 9,
-                        radius: 5,
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
+              ),
+              _Bone(width: 54, height: 20, radius: 10),
+            ],
           ),
-        );
-      }),
+          SizedBox(height: 14),
+          _Bone(width: double.infinity, height: 96, radius: 13),
+        ],
+      ),
+    );
+  }
+}
+
+class _DashboardSkeleton extends StatelessWidget {
+  const _DashboardSkeleton();
+
+  @override
+  Widget build(BuildContext context) {
+    return _Pulse(
+      child: ListView(
+        physics: const NeverScrollableScrollPhysics(),
+        padding: const EdgeInsets.fromLTRB(16, 10, 16, 30),
+        children: const [
+          Row(
+            children: [
+              _Bone(width: 42, height: 42, radius: 14),
+              SizedBox(width: 12),
+              _Bone(width: 160, height: 20, radius: 6),
+            ],
+          ),
+          SizedBox(height: 16),
+          _OverviewSkeleton(),
+          SizedBox(height: 18),
+          _QuickActionsSkeleton(),
+          SizedBox(height: 18),
+          _PendingSkeleton(),
+        ],
+      ),
     );
   }
 }

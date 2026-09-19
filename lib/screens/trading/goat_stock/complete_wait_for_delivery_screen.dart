@@ -19,7 +19,8 @@ import '../purchase_goats/purchase_wizard_widgets.dart';
 /// booking time ([Sale.bookingPricePerKg]); only the weight is taken
 /// fresh, at pickup:
 ///
-///   Final Price = Pickup Weight x Booking Price/Kg - Advance Paid
+///   Final Price = Pickup Weight x Booking Price/Kg
+///                 + Transportation Charge - Advance Paid
 class CompleteWaitForDeliveryScreen extends StatefulWidget {
   final String farmId;
   final Goat goat;
@@ -147,11 +148,16 @@ class _CompleteWaitForDeliveryScreenState
   double get _pickupWeight =>
       double.tryParse(_pickupWeightController.text.trim()) ?? 0;
 
+  /// What the customer still owes at pickup: pickup weight x the
+  /// booking-time rate + the transportation charge billed to them - the
+  /// advance already paid. Same figure SalesService stores as
+  /// finalPriceAfterPickup.
   double get _finalPrice {
     final sale = _sale;
     if (sale == null) return 0;
 
-    final raw = _pickupWeight * (sale.bookingPricePerKg ?? 0) -
+    final raw = _pickupWeight * (sale.bookingPricePerKg ?? 0) +
+        (sale.transportCost ?? 0) -
         (sale.bookingAdvanceAmount ?? 0);
 
     return raw < 0 ? 0 : raw;
@@ -349,6 +355,13 @@ class _CompleteWaitForDeliveryScreenState
                   ),
                 ),
                 const SizedBox(height: 8),
+                if ((sale.transportCost ?? 0) > 0) ...[
+                  _summaryRow(
+                    'Transportation',
+                    _currency(sale.transportCost!),
+                  ),
+                  const SizedBox(height: 8),
+                ],
                 _summaryRow(
                   'Final Amount Due',
                   _currency(_finalPrice),

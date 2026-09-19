@@ -156,9 +156,12 @@ class SalesService {
   // Booking/Wait-for-Delivery sale's estimate becomes a real settled
   // amount at Complete Delivery.
   //
-  // Revenue amount = Goat Sale Amount + applicable Transportation
-  // Charge (+ Holding Charges for Booking). Never a transport expense —
-  // transport is billed to the customer, not paid out by the farm.
+  // Revenue amount = Goat Sale Amount (+ Holding Charges for Booking).
+  // The Transportation Charge is NOT revenue: it is collected from the
+  // customer on the bill but paid on to the transport team, so it is
+  // left out of this amount (Customer Total - Transportation). No
+  // transport expense entry is created either — the farm never books
+  // that money as income in the first place.
   Future<void> _ensureSaleFinanceRevenue({
     required String farmId,
     required String saleId,
@@ -370,14 +373,15 @@ class SalesService {
 
     // -----------------------------------------------------------------
     // FINANCE REVENUE — the goat is Sold immediately in this branch, so
-    // the revenue is recorded right away: sale amount + transport, no
-    // transport expense. See _ensureSaleFinanceRevenue's doc comment.
+    // the revenue is recorded right away: the goat sale amount only.
+    // Transport is on the customer's bill but is not revenue — see
+    // _ensureSaleFinanceRevenue's doc comment.
     // -----------------------------------------------------------------
 
     await _ensureSaleFinanceRevenue(
       farmId: farmId,
       saleId: saleId,
-      amount: draft.customerTotalDeliverNow,
+      amount: draft.totalSaleAmount,
       date: DateTime.now(),
     );
 
@@ -897,7 +901,13 @@ class SalesService {
   /// pick up later or earlier than first expected:
   ///
   ///   Final Amount = Goat Sale Amount + (actualHoldingDays x Daily
-  ///                  Charge) - Booking Amount already paid
+  ///                  Charge) + Transportation Charge - Booking Amount
+  ///                  already paid
+  ///
+  /// The stored [Sale.finalAmountAfterHolding] is what the customer
+  /// still owes at pickup, so it includes the transportation charge
+  /// billed to them. (Transportation is left out of the Finance
+  /// revenue below — it is paid on to the transport team.)
   ///
   /// Same reads-then-writes transaction shape as the Phase 4 branch
   /// save methods, extended to also verify the sale is still in the
@@ -915,7 +925,6 @@ class SalesService {
     // contention, which would assign these more than once.
     double totalSaleAmount = 0;
     double actualHoldingCharges = 0;
-    double transportCost = 0;
 
     await _db.runTransaction((transaction) async {
       // ---------------------------------------------------------------
@@ -960,8 +969,11 @@ class SalesService {
       final actualHoldingChargesValue =
           actualHoldingDays * holdingChargePerDay;
 
+      final transportCost = sale.transportCost ?? 0;
+
       final rawFinalAmount = sale.totalSaleAmount +
-          actualHoldingChargesValue -
+          actualHoldingChargesValue +
+          transportCost -
           bookingAmount;
       final finalAmount = rawFinalAmount < 0 ? 0.0 : rawFinalAmount;
 
@@ -972,7 +984,6 @@ class SalesService {
       // Deliver Now does regardless of amountReceived).
       totalSaleAmount = sale.totalSaleAmount;
       actualHoldingCharges = actualHoldingChargesValue;
-      transportCost = sale.transportCost ?? 0;
 
       // ---------------------------------------------------------------
       // 3. Update the sale doc.
@@ -1042,7 +1053,7 @@ class SalesService {
     await _ensureSaleFinanceRevenue(
       farmId: farmId,
       saleId: saleId,
-      amount: totalSaleAmount + actualHoldingCharges + transportCost,
+      amount: totalSaleAmount + actualHoldingCharges,
       date: DateTime.now(),
     );
   }
@@ -1061,11 +1072,19 @@ class SalesService {
   /// current market rate is the easiest mistake to make here. Only
   /// the weight is taken fresh, at pickup:
   ///
-  ///   Final Price = Pickup Weight x Booking Price/Kg - Advance Paid
+  ///   Final Price = Pickup Weight x Booking Price/Kg
+  ///                 + Transportation Charge - Advance Paid
   ///
-  /// Worked example from the plan (Section 2, Task 2.2): 34kg booked,
-  /// 38kg at delivery, ₹520/kg fixed, ₹5,000 advance -> ₹14,760
-  /// remaining. 38 x 520 = 19,760; 19,760 - 5,000 = 14,760. ✓
+  /// The stored [Sale.finalPriceAfterPickup] is what the customer still
+  /// owes at pickup, so it includes the transportation charge billed to
+  /// them. (Transportation is left out of the Finance revenue below —
+  /// it is paid on to the transport team.)
+  ///
+  /// Worked example from the plan (Section 2, Task 2.2), with no
+  /// transportation charge: 34kg booked, 38kg at delivery, ₹520/kg
+  /// fixed, ₹5,000 advance -> ₹14,760 remaining.
+  /// 38 x 520 = 19,760; 19,760 - 5,000 = 14,760. ✓ With a ₹1,000
+  /// transportation charge the customer owes ₹15,760.
   Future<void> completeWaitForDeliveryPickup({
     required String farmId,
     required String saleId,
@@ -1078,7 +1097,6 @@ class SalesService {
     // Not `late final`: Firestore may re-run the transaction closure on
     // contention, which would assign these more than once.
     double grossSaleValue = 0;
-    double transportCost = 0;
 
     await _db.runTransaction((transaction) async {
       // ---------------------------------------------------------------
@@ -1122,8 +1140,11 @@ class SalesService {
       final bookingPricePerKg = sale.bookingPricePerKg ?? 0;
       final bookingAdvanceAmount = sale.bookingAdvanceAmount ?? 0;
 
-      final rawFinalPrice =
-          pickupWeight * bookingPricePerKg - bookingAdvanceAmount;
+      final transportCost = sale.transportCost ?? 0;
+
+      final rawFinalPrice = pickupWeight * bookingPricePerKg +
+          transportCost -
+          bookingAdvanceAmount;
       final finalPrice = rawFinalPrice < 0 ? 0.0 : rawFinalPrice;
 
       // Captured for the Finance revenue write after this transaction
@@ -1132,7 +1153,6 @@ class SalesService {
       // above). Revenue is recognized on the full sale, same as every
       // other branch.
       grossSaleValue = pickupWeight * bookingPricePerKg;
-      transportCost = sale.transportCost ?? 0;
 
       // ---------------------------------------------------------------
       // 3. Update the sale doc.
@@ -1193,15 +1213,15 @@ class SalesService {
     // -----------------------------------------------------------------
     // FINANCE REVENUE — the goat has now actually left the farm, so
     // this is where a Wait-for-Delivery sale's revenue is recorded/
-    // updated: pickup weight × booking rate + transport. Replaces the
-    // same referenceId if a prior write had already created one — see
-    // _ensureSaleFinanceRevenue's doc comment.
+    // updated: pickup weight × booking rate (transport excluded).
+    // Replaces the same referenceId if a prior write had already
+    // created one — see _ensureSaleFinanceRevenue's doc comment.
     // -----------------------------------------------------------------
 
     await _ensureSaleFinanceRevenue(
       farmId: farmId,
       saleId: saleId,
-      amount: grossSaleValue + transportCost,
+      amount: grossSaleValue,
       date: DateTime.now(),
     );
   }

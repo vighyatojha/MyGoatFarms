@@ -136,12 +136,17 @@ class _CompleteBookingDeliveryScreenState
     return _actualHoldingDays * (sale.holdingChargePerDay ?? 0);
   }
 
+  /// What the customer still owes at pickup: goat sale + actual holding
+  /// charges + the transportation charge billed to them - the booking
+  /// amount already paid. Same figure SalesService stores as
+  /// finalAmountAfterHolding.
   double get _finalAmount {
     final sale = _sale;
     if (sale == null) return 0;
 
     final raw = sale.totalSaleAmount +
-        _actualHoldingCharges -
+        _actualHoldingCharges +
+        (sale.transportCost ?? 0) -
         (sale.bookingAmount ?? 0);
 
     return raw < 0 ? 0 : raw;
@@ -344,6 +349,13 @@ class _CompleteBookingDeliveryScreenState
                   _currency(_actualHoldingCharges),
                 ),
                 const SizedBox(height: 8),
+                if ((sale.transportCost ?? 0) > 0) ...[
+                  _summaryRow(
+                    'Transportation',
+                    _currency(sale.transportCost!),
+                  ),
+                  const SizedBox(height: 8),
+                ],
                 _summaryRow(
                   'Final Amount Due',
                   _currency(_finalAmount),

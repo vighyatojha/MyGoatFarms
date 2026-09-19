@@ -77,8 +77,10 @@ class Sale {
   /// not the original quote.
   final int? actualHoldingDays;
 
-  /// Set by the (future, Task "Complete Delivery" for Branch B) action:
-  /// Goat Sale Amount + Holding Charges - Amount Already Paid.
+  /// Set by the Complete Delivery action for Branch B: what the customer
+  /// still owes at pickup — Goat Sale Amount + Holding Charges +
+  /// Transportation - Booking Amount already paid. (Sales completed
+  /// before transportation was included here stored it without.)
   final double? finalAmountAfterHolding;
 
   final DateTime? deliveryCompletedAt;
@@ -102,7 +104,7 @@ class Sale {
 
   /// Weight recorded at pickup, filled in by the Complete Delivery
   /// action. Final Price = pickupWeight * bookingPricePerKg (never the
-  /// current rate) - bookingAdvanceAmount.
+  /// current rate) + transportation - bookingAdvanceAmount.
   final double? pickupWeight;
   final double? finalPriceAfterPickup;
 
@@ -219,6 +221,92 @@ class Sale {
 
   @override
   int get hashCode => id.hashCode;
+
+  // ---------------------------------------------------------------------
+  // CUSTOMER BILL (used by the Sale Receipt screen and PDF)
+  // ---------------------------------------------------------------------
+  //
+  //   Goat Sale              ₹20,000
+  //   Holding Charges           ₹500   (Booking only)
+  //   Transportation          ₹1,000
+  //   ------------------------------
+  //   Customer Total         ₹21,500
+  //
+  // Transportation is collected from the customer but passed on to the
+  // transport team, so it is part of what the customer pays
+  // ([billCustomerTotal]) and is NOT farm revenue. Sold Goat Revenue is
+  // Customer Total - Transportation = Goat Sale + Holding Charges (see
+  // SalesService._ensureSaleFinanceRevenue).
+  //
+  // These getters deliberately do not read [finalAmountAfterHolding] or
+  // [finalPriceAfterPickup]: SalesService stores both as the REMAINING
+  // balance (already net of the booking amount / advance). Using them as
+  // the gross total and then subtracting the amount paid again would
+  // understate what is still owed. Rebuilding the gross total from its
+  // parts also keeps older sales (completed before transportation was
+  // added to those two fields) showing a correct bill.
+
+  /// True once a Wait for Delivery sale has been picked up and its pickup
+  /// weight recorded.
+  bool get hasPickupSettlement =>
+      isWaitForDelivery &&
+          status == statusPickupCompleted &&
+          pickupWeight != null;
+
+  /// Goat sale value on the bill.
+  ///
+  /// Normally [totalSaleAmount]. After a Wait for Delivery pickup it is
+  /// pickup weight x the booking-time rate (never today's rate), which is
+  /// the same figure SalesService records as revenue at pickup. Note that
+  /// [totalSaleAmount] itself keeps the booking-weight value.
+  double get billGoatSale => hasPickupSettlement
+      ? _round2(pickupWeight! * (bookingPricePerKg ?? sellingPricePerKg))
+      : _round2(totalSaleAmount);
+
+  /// Holding charges on the bill. Booking sales only; 0 otherwise.
+  double get billHoldingCharges =>
+      isBooking ? _nonNegative(totalHoldingCharges ?? 0) : 0.0;
+
+  /// Transportation charge collected from the customer for the transport
+  /// team. 0 when there is none.
+  double get billTransportCharges => _nonNegative(transportCost ?? 0);
+
+  /// Goat Sale + Holding Charges + Transportation.
+  double get billCustomerTotal => _round2(
+    billGoatSale + billHoldingCharges + billTransportCharges,
+  );
+
+  /// Money already received: amount received (Deliver Now), booking
+  /// amount (Booking) or advance (Wait for Delivery).
+  double get billAmountPaid {
+    if (isDeliverNow) return _nonNegative(amountReceived ?? 0);
+    if (isBooking) return _nonNegative(bookingAmount ?? 0);
+    if (isWaitForDelivery) return _nonNegative(bookingAdvanceAmount ?? 0);
+
+    return 0.0;
+  }
+
+  /// Customer Total - Amount Paid. Never negative.
+  double get billBalanceDue =>
+      _nonNegative(billCustomerTotal - billAmountPaid);
+
+  /// Rounds to 2 decimals so floating-point drift (e.g.
+  /// 27456.000000000004) never shows up in a figure or flips "PAID" to
+  /// "PARTIALLY PAID". Same rounding as SaleDraft.round2.
+  static double _round2(double value) {
+    if (value.isNaN || value.isInfinite) return 0;
+
+    final nudge = value >= 0 ? 1e-9 : -1e-9;
+
+    return ((value + nudge) * 100).roundToDouble() / 100;
+  }
+
+  /// Never negative and never `-0.0` (which would print as "-₹0.00").
+  static double _nonNegative(double value) {
+    final rounded = _round2(value);
+
+    return rounded <= 0 ? 0.0 : rounded;
+  }
 
   // ---------------------------------------------------------------------
   // FIRESTORE

@@ -148,11 +148,7 @@ class _GoatStockListScreenState
   String? _farmId;
   bool _loadingFarm = true;
 
-  /// Created once per farm so typing in the search box (which rebuilds
-  /// this screen) doesn't re-subscribe to Firestore on every keystroke.
   Stream<List<Goat>>? _goatsStream;
-
-  /// Same idea for the farm name shown in the header.
   Stream<FarmModel?>? _farmStream;
 
   final TextEditingController _searchController =
@@ -160,12 +156,10 @@ class _GoatStockListScreenState
 
   String _search = '';
 
-  /// null = All.
   late String? _statusFilter = widget.initialStatusFilter;
 
   _StockSort _sort = _StockSort.newest;
 
-  /// null = any. Otherwise one of [Goat.genderValues].
   String? _genderFilter;
 
   bool get _hasSortOrGender =>
@@ -232,9 +226,6 @@ class _GoatStockListScreenState
     );
   }
 
-  /// Card-level shortcut so a Booked / Wait-on-Delivery goat's
-  /// "Complete Delivery" action doesn't require going through the
-  /// detail screen first.
   void _openCompleteDelivery(Goat goat) {
     final farmId = _farmId;
 
@@ -255,7 +246,6 @@ class _GoatStockListScreenState
     );
   }
 
-  /// Card-level shortcut for Own Palai goats.
   void _openLogWeighIn(Goat goat) {
     final farmId = _farmId;
 
@@ -271,8 +261,6 @@ class _GoatStockListScreenState
     );
   }
 
-  /// Individual goat purchase (FAB). The goat list is a live stream, so
-  /// the new goat appears on its own once the purchase screen pops.
   Future<void> _openPurchase() async {
     final farmId = _farmId;
 
@@ -326,14 +314,14 @@ class _GoatStockListScreenState
                 decoration: const BoxDecoration(
                   color: Colors.white,
                   borderRadius: BorderRadius.vertical(
-                    top: Radius.circular(26),
+                    top: Radius.circular(24),
                   ),
                 ),
                 padding: const EdgeInsets.fromLTRB(
-                  20,
-                  12,
-                  20,
-                  20,
+                  18,
+                  10,
+                  18,
+                  18,
                 ),
                 child: SingleChildScrollView(
                   child: Column(
@@ -343,8 +331,8 @@ class _GoatStockListScreenState
                     children: [
                       Center(
                         child: Container(
-                          width: 42,
-                          height: 4,
+                          width: 38,
+                          height: 3,
                           decoration: BoxDecoration(
                             color: Colors.black12,
                             borderRadius:
@@ -353,28 +341,28 @@ class _GoatStockListScreenState
                         ),
                       ),
 
-                      const SizedBox(height: 18),
+                      const SizedBox(height: 14),
 
                       Text(
                         'Sort & filter',
-                        style: AppTheme.heading(size: 17),
+                        style: AppTheme.heading(size: 16),
                       ),
 
-                      const SizedBox(height: 16),
+                      const SizedBox(height: 14),
 
                       Text(
                         'Sort by',
                         style: AppTheme.body(
-                          size: 11,
+                          size: 10.5,
                           weight: FontWeight.w600,
                         ),
                       ),
 
-                      const SizedBox(height: 8),
+                      const SizedBox(height: 7),
 
                       Wrap(
-                        spacing: 8,
-                        runSpacing: 8,
+                        spacing: 7,
+                        runSpacing: 7,
                         children: _StockSort.values.map((value) {
                           return _sheetChip(
                             label: value.label,
@@ -388,21 +376,21 @@ class _GoatStockListScreenState
                         }).toList(),
                       ),
 
-                      const SizedBox(height: 18),
+                      const SizedBox(height: 15),
 
                       Text(
                         'Gender',
                         style: AppTheme.body(
-                          size: 11,
+                          size: 10.5,
                           weight: FontWeight.w600,
                         ),
                       ),
 
-                      const SizedBox(height: 8),
+                      const SizedBox(height: 7),
 
                       Wrap(
-                        spacing: 8,
-                        runSpacing: 8,
+                        spacing: 7,
+                        runSpacing: 7,
                         children: [
                           _sheetChip(
                             label: 'Any',
@@ -427,20 +415,20 @@ class _GoatStockListScreenState
                         ],
                       ),
 
-                      const SizedBox(height: 6),
+                      const SizedBox(height: 5),
 
                       Text(
                         'Only goats with a recorded gender match.',
-                        style: AppTheme.body(size: 10),
+                        style: AppTheme.body(size: 9.5),
                       ),
 
-                      const SizedBox(height: 22),
+                      const SizedBox(height: 18),
 
                       Row(
                         children: [
                           Expanded(
                             child: SizedBox(
-                              height: 48,
+                              height: 44,
                               child: OutlinedButton(
                                 onPressed: () {
                                   Navigator.of(sheetContext).pop(
@@ -458,23 +446,23 @@ class _GoatStockListScreenState
                                   ),
                                   shape: RoundedRectangleBorder(
                                     borderRadius:
-                                    BorderRadius.circular(14),
+                                    BorderRadius.circular(12),
                                   ),
                                 ),
                                 child: Text(
                                   'Reset',
                                   style: AppTheme.heading(
-                                    size: 14,
+                                    size: 13,
                                   ),
                                 ),
                               ),
                             ),
                           ),
-                          const SizedBox(width: 12),
+                          const SizedBox(width: 10),
                           Expanded(
                             flex: 2,
                             child: SizedBox(
-                              height: 48,
+                              height: 44,
                               child: ElevatedButton(
                                 onPressed: () {
                                   Navigator.of(sheetContext).pop(
@@ -491,13 +479,13 @@ class _GoatStockListScreenState
                                   elevation: 0,
                                   shape: RoundedRectangleBorder(
                                     borderRadius:
-                                    BorderRadius.circular(14),
+                                    BorderRadius.circular(12),
                                   ),
                                 ),
                                 child: Text(
                                   'Apply',
                                   style: AppTheme.heading(
-                                    size: 14,
+                                    size: 13,
                                     color: Colors.white,
                                   ),
                                 ),
@@ -533,15 +521,15 @@ class _GoatStockListScreenState
       color: Colors.transparent,
       child: InkWell(
         onTap: onTap,
-        borderRadius: BorderRadius.circular(20),
+        borderRadius: BorderRadius.circular(18),
         child: Container(
           padding: const EdgeInsets.symmetric(
-            horizontal: 14,
-            vertical: 9,
+            horizontal: 12,
+            vertical: 7,
           ),
           decoration: BoxDecoration(
             color: selected ? AppColors.textDark : Colors.white,
-            borderRadius: BorderRadius.circular(20),
+            borderRadius: BorderRadius.circular(18),
             border: Border.all(
               color: selected
                   ? AppColors.textDark
@@ -551,9 +539,11 @@ class _GoatStockListScreenState
           child: Text(
             label,
             style: AppTheme.body(
-              size: 12,
+              size: 11,
               weight: FontWeight.w600,
-              color: selected ? Colors.white : AppColors.textDark,
+              color: selected
+                  ? Colors.white
+                  : AppColors.textDark,
             ),
           ),
         ),
@@ -577,13 +567,13 @@ class _GoatStockListScreenState
         tooltip: 'Purchase a goat',
         backgroundColor: AppColors.darkGreen,
         foregroundColor: Colors.white,
-        elevation: 4,
+        elevation: 3,
         shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(18),
+          borderRadius: BorderRadius.circular(16),
         ),
         child: const Icon(
           Icons.add_rounded,
-          size: 30,
+          size: 27,
         ),
       ),
 
@@ -608,17 +598,17 @@ class _GoatStockListScreenState
     final farmId = _farmId;
 
     return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 8, 16, 10),
+      padding: const EdgeInsets.fromLTRB(14, 6, 14, 8),
       child: Row(
         children: [
           _roundButton(
             icon: Icons.arrow_back_ios_new_rounded,
-            iconSize: 17,
+            iconSize: 15,
             tooltip: 'Back',
             onTap: () => Navigator.of(context).maybePop(),
           ),
 
-          const SizedBox(width: 12),
+          const SizedBox(width: 9),
 
           Expanded(
             child: Column(
@@ -629,7 +619,7 @@ class _GoatStockListScreenState
                   'Goat Stock',
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: AppTheme.heading(size: 21),
+                  style: AppTheme.heading(size: 19),
                 ),
 
                 if (farmId != null)
@@ -644,7 +634,7 @@ class _GoatStockListScreenState
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: AppTheme.body(
-                          size: 12,
+                          size: 10.5,
                           color: AppColors.textGrey,
                         ),
                       );
@@ -654,7 +644,7 @@ class _GoatStockListScreenState
             ),
           ),
 
-          const SizedBox(width: 12),
+          const SizedBox(width: 9),
 
           if (farmId != null)
             Stack(
@@ -662,7 +652,7 @@ class _GoatStockListScreenState
               children: [
                 _roundButton(
                   icon: Icons.tune_rounded,
-                  iconSize: 20,
+                  iconSize: 18,
                   tooltip: 'Sort & filter',
                   onTap: _openSortFilterSheet,
                 ),
@@ -672,8 +662,8 @@ class _GoatStockListScreenState
                     top: 2,
                     right: 2,
                     child: Container(
-                      width: 11,
-                      height: 11,
+                      width: 9,
+                      height: 9,
                       decoration: BoxDecoration(
                         color: AppColors.darkGreen,
                         shape: BoxShape.circle,
@@ -701,15 +691,15 @@ class _GoatStockListScreenState
       message: tooltip,
       child: Material(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
+        borderRadius: BorderRadius.circular(13),
         child: InkWell(
           onTap: onTap,
-          borderRadius: BorderRadius.circular(16),
+          borderRadius: BorderRadius.circular(13),
           child: Container(
-            width: 46,
-            height: 46,
+            width: 40,
+            height: 40,
             decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(16),
+              borderRadius: BorderRadius.circular(13),
               border: Border.all(color: AppColors.divider),
             ),
             child: Icon(
@@ -775,26 +765,24 @@ class _GoatStockListScreenState
   List<Goat> _visibleGoats(List<Goat> allGoats) {
     var goats = List<Goat>.from(allGoats);
 
-    // Status
     final status = _statusFilter;
 
     if (status != null) {
       goats = goats.where((g) => _hasStatus(g, status)).toList();
     }
 
-    // Gender
     final gender = _genderFilter;
 
     if (gender != null) {
       goats = goats
           .where(
-            (g) => g.gender.trim().toLowerCase() ==
+            (g) =>
+        g.gender.trim().toLowerCase() ==
             gender.toLowerCase(),
       )
           .toList();
     }
 
-    // Search
     if (_search.isNotEmpty) {
       goats = goats
           .where(
@@ -806,7 +794,6 @@ class _GoatStockListScreenState
           .toList();
     }
 
-    // Sort. The stream already arrives newest first.
     switch (_sort) {
       case _StockSort.newest:
         break;
@@ -834,58 +821,42 @@ class _GoatStockListScreenState
       keyboardDismissBehavior:
       ScrollViewKeyboardDismissBehavior.onDrag,
       slivers: [
-        // ---------------------------------------------------------------------
-        // SUMMARY
-        // ---------------------------------------------------------------------
-
         SliverToBoxAdapter(
           child: Padding(
-            padding: const EdgeInsets.fromLTRB(16, 2, 16, 14),
+            padding: const EdgeInsets.fromLTRB(14, 1, 14, 10),
             child: _summary(allGoats),
           ),
         ),
 
-        // ---------------------------------------------------------------------
-        // SEARCH
-        // ---------------------------------------------------------------------
-
         SliverToBoxAdapter(
           child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16),
+            padding: const EdgeInsets.symmetric(horizontal: 14),
             child: _searchBox(),
           ),
         ),
 
-        // ---------------------------------------------------------------------
-        // FILTERS (pinned so they stay reachable while scrolling)
-        // ---------------------------------------------------------------------
-
         SliverPersistentHeader(
           pinned: true,
           delegate: _PinnedBarDelegate(
-            height: 62,
+            height: 56,
             child: _filters(allGoats),
           ),
         ),
 
-        // ---------------------------------------------------------------------
-        // LIST
-        // ---------------------------------------------------------------------
-
         if (goats.isEmpty)
           SliverFillRemaining(
             hasScrollBody: false,
-            child: _emptyState(hasAnyGoats: allGoats.isNotEmpty),
+            child: _emptyState(
+              hasAnyGoats: allGoats.isNotEmpty,
+            ),
           )
         else
           SliverPadding(
-            // Extra bottom space so the floating "+" never covers the
-            // last card's actions.
-            padding: const EdgeInsets.fromLTRB(16, 2, 16, 104),
+            padding: const EdgeInsets.fromLTRB(14, 2, 14, 94),
             sliver: SliverList.separated(
               itemCount: goats.length,
               separatorBuilder: (_, __) =>
-              const SizedBox(height: 12),
+              const SizedBox(height: 9),
               itemBuilder: (context, index) {
                 final goat = goats[index];
 
@@ -899,7 +870,8 @@ class _GoatStockListScreenState
                 return _GoatStockCard(
                   goat: goat,
                   onTap: () => _openDetail(goat),
-                  onCompleteDelivery: canCompleteDelivery
+                  onCompleteDelivery:
+                  canCompleteDelivery
                       ? () => _openCompleteDelivery(goat)
                       : null,
                   onLogWeighIn: _hasStatus(
@@ -924,10 +896,10 @@ class _GoatStockListScreenState
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.symmetric(
-        horizontal: 4,
-        vertical: 14,
+        horizontal: 2,
+        vertical: 10,
       ),
-      decoration: AppTheme.card(radius: 22).copyWith(
+      decoration: AppTheme.card(radius: 18).copyWith(
         border: Border.all(
           color: AppColors.divider.withOpacity(0.6),
         ),
@@ -952,7 +924,10 @@ class _GoatStockListScreenState
               child: _summaryItem(
                 icon: Icons.check_circle_outline_rounded,
                 label: 'Available',
-                value: _count(allGoats, Goat.statusAvailable),
+                value: _count(
+                  allGoats,
+                  Goat.statusAvailable,
+                ),
                 color: AppColors.success,
                 status: Goat.statusAvailable,
               ),
@@ -964,7 +939,10 @@ class _GoatStockListScreenState
               child: _summaryItem(
                 icon: Icons.bookmark_border_rounded,
                 label: 'Booked',
-                value: _count(allGoats, Goat.statusBooked),
+                value: _count(
+                  allGoats,
+                  Goat.statusBooked,
+                ),
                 color: AppColors.warning,
                 status: Goat.statusBooked,
               ),
@@ -976,7 +954,10 @@ class _GoatStockListScreenState
               child: _summaryItem(
                 icon: Icons.sell_outlined,
                 label: 'Sold Out',
-                value: _count(allGoats, Goat.statusSold),
+                value: _count(
+                  allGoats,
+                  Goat.statusSold,
+                ),
                 color: AppColors.error,
                 status: Goat.statusSold,
               ),
@@ -1000,35 +981,35 @@ class _GoatStockListScreenState
           _statusFilter = status;
         });
       },
-      borderRadius: BorderRadius.circular(16),
+      borderRadius: BorderRadius.circular(14),
       child: Padding(
         padding: const EdgeInsets.symmetric(
-          horizontal: 2,
-          vertical: 2,
+          horizontal: 1,
+          vertical: 1,
         ),
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
             Container(
-              width: 42,
-              height: 42,
+              width: 34,
+              height: 34,
               decoration: BoxDecoration(
                 color: color.withOpacity(0.12),
                 shape: BoxShape.circle,
               ),
               child: Icon(
                 icon,
-                size: 20,
+                size: 17,
                 color: color,
               ),
             ),
 
-            const SizedBox(height: 6),
+            const SizedBox(height: 4),
 
             Text(
               '$value',
               style: AppTheme.heading(
-                size: 22,
+                size: 19,
                 color: AppColors.textDark,
               ),
             ),
@@ -1038,7 +1019,7 @@ class _GoatStockListScreenState
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: AppTheme.body(
-                size: 11,
+                size: 9.5,
                 color: AppColors.textGrey,
               ),
             ),
@@ -1051,7 +1032,7 @@ class _GoatStockListScreenState
   Widget _divider() {
     return Container(
       width: 1,
-      margin: const EdgeInsets.symmetric(vertical: 6),
+      margin: const EdgeInsets.symmetric(vertical: 5),
       color: AppColors.divider,
     );
   }
@@ -1062,7 +1043,8 @@ class _GoatStockListScreenState
 
   Widget _searchBox() {
     return Container(
-      decoration: AppTheme.card(radius: 18).copyWith(
+      height: 46,
+      decoration: AppTheme.card(radius: 15).copyWith(
         border: Border.all(
           color: AppColors.divider.withOpacity(0.6),
         ),
@@ -1076,18 +1058,18 @@ class _GoatStockListScreenState
         },
         textInputAction: TextInputAction.search,
         style: AppTheme.body(
-          size: 13,
+          size: 12,
           color: AppColors.textDark,
         ),
         decoration: InputDecoration(
           hintText: 'Search ID, breed or color',
           hintStyle: AppTheme.body(
-            size: 13,
+            size: 12,
             color: AppColors.textGrey,
           ),
           prefixIcon: const Icon(
             Icons.search_rounded,
-            size: 22,
+            size: 20,
             color: AppColors.textGrey,
           ),
           suffixIcon: _search.isEmpty
@@ -1103,7 +1085,7 @@ class _GoatStockListScreenState
             },
             icon: const Icon(
               Icons.close_rounded,
-              size: 19,
+              size: 17,
               color: AppColors.textGrey,
             ),
           ),
@@ -1112,7 +1094,7 @@ class _GoatStockListScreenState
           enabledBorder: InputBorder.none,
           focusedBorder: InputBorder.none,
           contentPadding: const EdgeInsets.symmetric(
-            vertical: 15,
+            vertical: 12,
           ),
         ),
       ),
@@ -1126,20 +1108,20 @@ class _GoatStockListScreenState
   Widget _filters(List<Goat> allGoats) {
     return ListView(
       padding: const EdgeInsets.symmetric(
-        horizontal: 16,
-        vertical: 10,
+        horizontal: 14,
+        vertical: 8,
       ),
       scrollDirection: Axis.horizontal,
       children: [
         _filterChip(
-          label: 'All Animals',
+          label: 'All',
           status: null,
           count: allGoats.length,
         ),
 
         ...Goat.statusValues.map((status) {
           return Padding(
-            padding: const EdgeInsets.only(left: 8),
+            padding: const EdgeInsets.only(left: 6),
             child: _filterChip(
               label: _statusLabel(status),
               status: status,
@@ -1166,13 +1148,17 @@ class _GoatStockListScreenState
             _statusFilter = status;
           });
         },
-        borderRadius: BorderRadius.circular(22),
+        borderRadius: BorderRadius.circular(18),
         child: AnimatedContainer(
           duration: const Duration(milliseconds: 160),
-          padding: const EdgeInsets.symmetric(horizontal: 14),
+          padding: const EdgeInsets.symmetric(
+            horizontal: 11,
+          ),
           decoration: BoxDecoration(
-            color: selected ? AppColors.textDark : Colors.white,
-            borderRadius: BorderRadius.circular(22),
+            color: selected
+                ? AppColors.textDark
+                : Colors.white,
+            borderRadius: BorderRadius.circular(18),
             border: Border.all(
               color: selected
                   ? AppColors.textDark
@@ -1184,20 +1170,20 @@ class _GoatStockListScreenState
             children: [
               if (status != null && !selected) ...[
                 Container(
-                  width: 8,
-                  height: 8,
+                  width: 6,
+                  height: 6,
                   decoration: BoxDecoration(
                     color: _statusColor(status),
                     shape: BoxShape.circle,
                   ),
                 ),
-                const SizedBox(width: 7),
+                const SizedBox(width: 6),
               ],
 
               Text(
                 label,
                 style: AppTheme.body(
-                  size: 13,
+                  size: 11.5,
                   weight: FontWeight.w600,
                   color: selected
                       ? Colors.white
@@ -1205,22 +1191,22 @@ class _GoatStockListScreenState
                 ),
               ),
 
-              const SizedBox(width: 7),
+              const SizedBox(width: 5),
 
               if (selected)
                 Container(
                   padding: const EdgeInsets.symmetric(
-                    horizontal: 7,
+                    horizontal: 6,
                     vertical: 1,
                   ),
                   decoration: BoxDecoration(
                     color: Colors.white.withOpacity(0.18),
-                    borderRadius: BorderRadius.circular(10),
+                    borderRadius: BorderRadius.circular(8),
                   ),
                   child: Text(
                     '$count',
                     style: AppTheme.body(
-                      size: 11,
+                      size: 10,
                       weight: FontWeight.w700,
                       color: Colors.white,
                     ),
@@ -1230,7 +1216,7 @@ class _GoatStockListScreenState
                 Text(
                   '$count',
                   style: AppTheme.body(
-                    size: 12,
+                    size: 10.5,
                     weight: FontWeight.w600,
                     color: AppColors.textGrey,
                   ),
@@ -1272,50 +1258,58 @@ class _GoatStockListScreenState
 
     return Center(
       child: Padding(
-        padding: const EdgeInsets.fromLTRB(28, 20, 28, 110),
+        padding: const EdgeInsets.fromLTRB(
+          24,
+          18,
+          24,
+          100,
+        ),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
             Container(
-              width: 64,
-              height: 64,
+              width: 56,
+              height: 56,
               decoration: BoxDecoration(
                 color: AppColors.stockTeal.withOpacity(0.12),
                 shape: BoxShape.circle,
               ),
               child: const Icon(
                 Icons.inventory_2_outlined,
-                size: 29,
+                size: 25,
                 color: AppColors.stockTeal,
               ),
             ),
 
-            const SizedBox(height: 14),
+            const SizedBox(height: 11),
 
             Text(
               title,
               textAlign: TextAlign.center,
-              style: AppTheme.heading(size: 16),
+              style: AppTheme.heading(size: 15),
             ),
 
-            const SizedBox(height: 5),
+            const SizedBox(height: 4),
 
             Text(
               subtitle,
               textAlign: TextAlign.center,
-              style: AppTheme.body(size: 12),
+              style: AppTheme.body(size: 11),
             ),
 
             if (!hasAnyGoats && !hasSearch) ...[
-              const SizedBox(height: 18),
+              const SizedBox(height: 15),
 
               ElevatedButton.icon(
                 onPressed: _openPurchase,
-                icon: const Icon(Icons.add_rounded, size: 20),
+                icon: const Icon(
+                  Icons.add_rounded,
+                  size: 18,
+                ),
                 label: Text(
                   'Purchase a Goat',
                   style: AppTheme.heading(
-                    size: 14,
+                    size: 13,
                     color: Colors.white,
                   ),
                 ),
@@ -1324,11 +1318,11 @@ class _GoatStockListScreenState
                   foregroundColor: Colors.white,
                   elevation: 0,
                   padding: const EdgeInsets.symmetric(
-                    horizontal: 20,
-                    vertical: 12,
+                    horizontal: 17,
+                    vertical: 10,
                   ),
                   shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(14),
+                    borderRadius: BorderRadius.circular(12),
                   ),
                 ),
               ),
@@ -1346,32 +1340,32 @@ class _GoatStockListScreenState
   Widget _errorState() {
     return Center(
       child: Padding(
-        padding: const EdgeInsets.all(24),
+        padding: const EdgeInsets.all(22),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
             const Icon(
               Icons.error_outline_rounded,
-              size: 44,
+              size: 40,
               color: AppColors.error,
             ),
 
-            const SizedBox(height: 12),
+            const SizedBox(height: 10),
 
             Text(
               'Unable to load goat stock',
-              style: AppTheme.heading(size: 16),
+              style: AppTheme.heading(size: 15),
             ),
 
-            const SizedBox(height: 5),
+            const SizedBox(height: 4),
 
             Text(
               'Please check your connection and try again.',
               textAlign: TextAlign.center,
-              style: AppTheme.body(size: 12),
+              style: AppTheme.body(size: 11),
             ),
 
-            const SizedBox(height: 14),
+            const SizedBox(height: 12),
 
             OutlinedButton(
               onPressed: _loadFarm,
@@ -1429,13 +1423,7 @@ class _PinnedBarDelegate extends SliverPersistentHeaderDelegate {
 class _GoatStockCard extends StatelessWidget {
   final Goat goat;
   final VoidCallback onTap;
-
-  /// Non-null only for Booked / Wait-on-Delivery goats — renders a
-  /// "Complete Delivery" shortcut directly on the card when set.
   final VoidCallback? onCompleteDelivery;
-
-  /// Non-null only for Own Palai goats — renders a "Log Weigh-in"
-  /// shortcut in the card footer when set.
   final VoidCallback? onLogWeighIn;
 
   const _GoatStockCard({
@@ -1445,15 +1433,16 @@ class _GoatStockCard extends StatelessWidget {
     this.onLogWeighIn,
   });
 
-  static final DateFormat _dateFormat = DateFormat('d MMM yyyy');
+  static final DateFormat _dateFormat =
+  DateFormat('d MMM yyyy');
 
-  /// "G-0003" -> "#03". Null when the id carries no number.
   String? get _badge {
     final match = RegExp(r'(\d+)$').firstMatch(goat.id);
 
     if (match == null) return null;
 
-    final number = int.tryParse(match.group(1) ?? '');
+    final number =
+    int.tryParse(match.group(1) ?? '');
 
     if (number == null) return null;
 
@@ -1479,10 +1468,10 @@ class _GoatStockCard extends StatelessWidget {
       color: Colors.transparent,
       child: InkWell(
         onTap: onTap,
-        borderRadius: BorderRadius.circular(22),
+        borderRadius: BorderRadius.circular(18),
         child: Container(
-          padding: const EdgeInsets.all(14),
-          decoration: AppTheme.card(radius: 22).copyWith(
+          padding: const EdgeInsets.all(11),
+          decoration: AppTheme.card(radius: 18).copyWith(
             border: Border.all(
               color: AppColors.divider.withOpacity(0.6),
             ),
@@ -1493,12 +1482,12 @@ class _GoatStockCard extends StatelessWidget {
               _topRow(),
 
               if (footer != null) ...[
-                const SizedBox(height: 12),
+                const SizedBox(height: 9),
                 const Divider(
                   height: 1,
                   color: AppColors.divider,
                 ),
-                const SizedBox(height: 12),
+                const SizedBox(height: 9),
                 footer,
               ],
             ],
@@ -1521,19 +1510,16 @@ class _GoatStockCard extends StatelessWidget {
       children: [
         _photo(),
 
-        const SizedBox(width: 12),
+        const SizedBox(width: 10),
 
         Expanded(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // ID + health dot ............ status pill
               LayoutBuilder(
                 builder: (context, constraints) {
-                  // The pill keeps its natural width but never takes
-                  // more than ~60% of the row, so the ID always stays
-                  // readable on narrow screens / large text sizes.
-                  final maxPillWidth = constraints.maxWidth * 0.6;
+                  final maxPillWidth =
+                      constraints.maxWidth * 0.55;
 
                   return Row(
                     children: [
@@ -1547,21 +1533,22 @@ class _GoatStockCard extends StatelessWidget {
                               child: Text(
                                 goat.id,
                                 maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
+                                overflow:
+                                TextOverflow.ellipsis,
                                 style: AppTheme.heading(
-                                  size: 17,
+                                  size: 15.5,
                                   color: AppColors.textDark,
                                 ),
                               ),
                             ),
 
-                            const SizedBox(width: 6),
+                            const SizedBox(width: 5),
 
                             Tooltip(
                               message: goat.healthStatus,
                               child: Container(
-                                width: 7,
-                                height: 7,
+                                width: 6,
+                                height: 6,
                                 decoration: BoxDecoration(
                                   color: _healthColor(
                                     goat.healthStatus,
@@ -1574,7 +1561,7 @@ class _GoatStockCard extends StatelessWidget {
                         ),
                       ),
 
-                      const SizedBox(width: 8),
+                      const SizedBox(width: 6),
 
                       ConstrainedBox(
                         constraints: BoxConstraints(
@@ -1587,7 +1574,7 @@ class _GoatStockCard extends StatelessWidget {
                 },
               ),
 
-              const SizedBox(height: 2),
+              const SizedBox(height: 1),
 
               Text(
                 goat.breed.trim().isEmpty
@@ -1596,16 +1583,16 @@ class _GoatStockCard extends StatelessWidget {
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: AppTheme.body(
-                  size: 12.5,
+                  size: 11.5,
                   color: AppColors.textGrey,
                 ),
               ),
 
-              const SizedBox(height: 9),
+              const SizedBox(height: 7),
 
               Wrap(
-                spacing: 7,
-                runSpacing: 7,
+                spacing: 5,
+                runSpacing: 5,
                 children: [
                   _infoChip(
                     Icons.calendar_month_outlined,
@@ -1619,10 +1606,11 @@ class _GoatStockCard extends StatelessWidget {
               ),
 
               if (gender != null) ...[
-                const SizedBox(height: 8),
+                const SizedBox(height: 6),
                 _tag(
                   gender,
-                  goat.gender.trim().toLowerCase() == 'female'
+                  goat.gender.trim().toLowerCase() ==
+                      'female'
                       ? AppColors.breedingPurple
                       : AppColors.success,
                 ),
@@ -1638,11 +1626,11 @@ class _GoatStockCard extends StatelessWidget {
     final badge = _badge;
 
     return Container(
-      width: 76,
-      height: 76,
+      width: 62,
+      height: 62,
       decoration: BoxDecoration(
         color: AppColors.stockTeal.withOpacity(0.12),
-        borderRadius: BorderRadius.circular(18),
+        borderRadius: BorderRadius.circular(15),
       ),
       clipBehavior: Clip.antiAlias,
       child: Stack(
@@ -1653,37 +1641,37 @@ class _GoatStockCard extends StatelessWidget {
               goat.photo!,
               fit: BoxFit.cover,
               gaplessPlayback: true,
-              cacheWidth: 228,
+              cacheWidth: 186,
             )
           else
             const Center(
               child: Icon(
                 Icons.pets_outlined,
-                size: 28,
+                size: 24,
                 color: AppColors.stockTeal,
               ),
             ),
 
           if (badge != null)
             Positioned(
-              top: 5,
-              left: 5,
+              top: 4,
+              left: 4,
               child: Container(
                 padding: const EdgeInsets.symmetric(
-                  horizontal: 6,
-                  vertical: 2,
+                  horizontal: 5,
+                  vertical: 1,
                 ),
                 decoration: BoxDecoration(
                   color: Colors.black.withOpacity(0.55),
-                  borderRadius: BorderRadius.circular(7),
+                  borderRadius: BorderRadius.circular(6),
                 ),
                 child: Text(
                   badge,
                   style: const TextStyle(
                     color: Colors.white,
-                    fontSize: 9.5,
+                    fontSize: 8.5,
                     fontWeight: FontWeight.w700,
-                    letterSpacing: 0.2,
+                    letterSpacing: 0.1,
                   ),
                 ),
               ),
@@ -1696,12 +1684,12 @@ class _GoatStockCard extends StatelessWidget {
   Widget _statusPill(Color color) {
     return Container(
       padding: const EdgeInsets.symmetric(
-        horizontal: 10,
-        vertical: 5,
+        horizontal: 8,
+        vertical: 4,
       ),
       decoration: BoxDecoration(
         color: color.withOpacity(0.12),
-        borderRadius: BorderRadius.circular(20),
+        borderRadius: BorderRadius.circular(16),
         border: Border.all(
           color: color.withOpacity(0.30),
         ),
@@ -1710,15 +1698,15 @@ class _GoatStockCard extends StatelessWidget {
         mainAxisSize: MainAxisSize.min,
         children: [
           Container(
-            width: 6,
-            height: 6,
+            width: 5,
+            height: 5,
             decoration: BoxDecoration(
               color: color,
               shape: BoxShape.circle,
             ),
           ),
 
-          const SizedBox(width: 5),
+          const SizedBox(width: 4),
 
           Flexible(
             child: Text(
@@ -1727,7 +1715,7 @@ class _GoatStockCard extends StatelessWidget {
               overflow: TextOverflow.ellipsis,
               style: TextStyle(
                 color: _statusTextColor(color),
-                fontSize: 11,
+                fontSize: 9.5,
                 fontWeight: FontWeight.w700,
               ),
             ),
@@ -1737,32 +1725,37 @@ class _GoatStockCard extends StatelessWidget {
     );
   }
 
-  Widget _infoChip(IconData icon, String text) {
+  Widget _infoChip(
+      IconData icon,
+      String text,
+      ) {
     return Container(
       padding: const EdgeInsets.symmetric(
-        horizontal: 9,
-        vertical: 5,
+        horizontal: 7,
+        vertical: 4,
       ),
       decoration: BoxDecoration(
         color: AppColors.paleGreen,
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: AppColors.divider),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(
+          color: AppColors.divider,
+        ),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
           Icon(
             icon,
-            size: 14,
+            size: 12,
             color: AppColors.textGrey,
           ),
 
-          const SizedBox(width: 5),
+          const SizedBox(width: 4),
 
           Text(
             text,
             style: AppTheme.body(
-              size: 11.5,
+              size: 10,
               color: AppColors.textDark,
               weight: FontWeight.w500,
             ),
@@ -1775,18 +1768,18 @@ class _GoatStockCard extends StatelessWidget {
   Widget _tag(String text, Color color) {
     return Container(
       padding: const EdgeInsets.symmetric(
-        horizontal: 9,
-        vertical: 4,
+        horizontal: 7,
+        vertical: 3,
       ),
       decoration: BoxDecoration(
         color: color.withOpacity(0.10),
-        borderRadius: BorderRadius.circular(8),
+        borderRadius: BorderRadius.circular(7),
       ),
       child: Text(
         text,
         style: TextStyle(
           color: _statusTextColor(color),
-          fontSize: 10.5,
+          fontSize: 9.5,
           fontWeight: FontWeight.w700,
         ),
       ),
@@ -1794,29 +1787,28 @@ class _GoatStockCard extends StatelessWidget {
   }
 
   // ---------------------------------------------------------------------------
-  // FOOTER (depends on status)
+  // FOOTER
   // ---------------------------------------------------------------------------
 
   Widget? _footer() {
-    // Booked / Wait on Delivery -> primary action.
     if (onCompleteDelivery != null) {
       return Row(
         children: [
           Expanded(
             child: SizedBox(
-              height: 46,
+              height: 40,
               child: ElevatedButton.icon(
                 onPressed: onCompleteDelivery,
                 icon: const Icon(
                   Icons.check_rounded,
-                  size: 19,
+                  size: 17,
                 ),
                 label: Text(
                   'Complete Delivery',
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: AppTheme.heading(
-                    size: 14,
+                    size: 12.5,
                     color: Colors.white,
                   ),
                 ),
@@ -1824,34 +1816,39 @@ class _GoatStockCard extends StatelessWidget {
                   backgroundColor: AppColors.darkGreen,
                   foregroundColor: Colors.white,
                   elevation: 0,
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                  ),
                   shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(14),
+                    borderRadius: BorderRadius.circular(11),
                   ),
                 ),
               ),
             ),
           ),
 
-          const SizedBox(width: 10),
+          const SizedBox(width: 8),
 
           Tooltip(
             message: 'View details',
             child: Material(
               color: Colors.white,
-              borderRadius: BorderRadius.circular(14),
+              borderRadius: BorderRadius.circular(11),
               child: InkWell(
                 onTap: onTap,
-                borderRadius: BorderRadius.circular(14),
+                borderRadius: BorderRadius.circular(11),
                 child: Container(
-                  width: 46,
-                  height: 46,
+                  width: 40,
+                  height: 40,
                   decoration: BoxDecoration(
-                    borderRadius: BorderRadius.circular(14),
-                    border: Border.all(color: AppColors.divider),
+                    borderRadius: BorderRadius.circular(11),
+                    border: Border.all(
+                      color: AppColors.divider,
+                    ),
                   ),
                   child: const Icon(
                     Icons.chevron_right_rounded,
-                    size: 22,
+                    size: 20,
                     color: AppColors.textDark,
                   ),
                 ),
@@ -1862,7 +1859,6 @@ class _GoatStockCard extends StatelessWidget {
       );
     }
 
-    // Sold Out -> sale reference + details link.
     if (_hasStatus(goat, Goat.statusSold)) {
       final saleId = goat.saleId;
 
@@ -1871,21 +1867,22 @@ class _GoatStockCard extends StatelessWidget {
           children: [
             const Icon(
               Icons.check_circle_rounded,
-              size: 16,
+              size: 14,
               color: AppColors.success,
             ),
 
-            const SizedBox(width: 7),
+            const SizedBox(width: 6),
 
             Expanded(
               child: Text(
-                saleId == null || saleId.trim().isEmpty
+                saleId == null ||
+                    saleId.trim().isEmpty
                     ? 'Sold'
                     : 'Sale $saleId',
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: AppTheme.body(
-                  size: 12,
+                  size: 11,
                   color: AppColors.textGrey,
                 ),
               ),
@@ -1896,7 +1893,6 @@ class _GoatStockCard extends StatelessWidget {
       );
     }
 
-    // Own Palai -> since date + weigh-in shortcut.
     if (onLogWeighIn != null) {
       final since = goat.movedToOwnPalaiAt;
 
@@ -1904,44 +1900,47 @@ class _GoatStockCard extends StatelessWidget {
         leading: Text(
           since == null
               ? 'In Own Palai'
-              : 'In Own Palai since ${_dateFormat.format(since)}',
+              : 'In Own Palai since '
+              '${_dateFormat.format(since)}',
           maxLines: 2,
           overflow: TextOverflow.ellipsis,
           style: AppTheme.body(
-            size: 12,
+            size: 11,
             color: AppColors.textGrey,
           ),
         ),
         action: Material(
           color: AppColors.paleGreen,
-          borderRadius: BorderRadius.circular(12),
+          borderRadius: BorderRadius.circular(10),
           child: InkWell(
             onTap: onLogWeighIn,
-            borderRadius: BorderRadius.circular(12),
+            borderRadius: BorderRadius.circular(10),
             child: Container(
               padding: const EdgeInsets.symmetric(
-                horizontal: 12,
-                vertical: 9,
+                horizontal: 9,
+                vertical: 7,
               ),
               decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: AppColors.divider),
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(
+                  color: AppColors.divider,
+                ),
               ),
               child: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   const Icon(
                     Icons.add_rounded,
-                    size: 16,
+                    size: 14,
                     color: AppColors.textDark,
                   ),
 
-                  const SizedBox(width: 4),
+                  const SizedBox(width: 3),
 
                   Text(
                     'Log Weigh-in',
                     style: AppTheme.body(
-                      size: 12,
+                      size: 10.5,
                       color: AppColors.textDark,
                       weight: FontWeight.w600,
                     ),
@@ -1954,8 +1953,8 @@ class _GoatStockCard extends StatelessWidget {
       );
     }
 
-    // Available / In Customer Palai / anything else.
-    final purchased = _dateFormat.format(goat.purchaseDate);
+    final purchased =
+    _dateFormat.format(goat.purchaseDate);
 
     final reference = goat.purchaseId.trim().isEmpty
         ? 'Purchased $purchased'
@@ -1967,7 +1966,7 @@ class _GoatStockCard extends StatelessWidget {
         maxLines: 2,
         overflow: TextOverflow.ellipsis,
         style: AppTheme.body(
-          size: 12,
+          size: 11,
           color: AppColors.textGrey,
         ),
       ),
@@ -1982,22 +1981,20 @@ class _GoatStockCard extends StatelessWidget {
     return Row(
       children: [
         Expanded(child: leading),
-        const SizedBox(width: 10),
+        const SizedBox(width: 8),
         action,
       ],
     );
   }
 
-  /// Text link with a chevron. The whole card is already tappable, so this
-  /// is purely a visual affordance and defers to [onTap].
   Widget _linkAction(String label) {
     return InkWell(
       onTap: onTap,
-      borderRadius: BorderRadius.circular(8),
+      borderRadius: BorderRadius.circular(7),
       child: Padding(
         padding: const EdgeInsets.symmetric(
-          horizontal: 4,
-          vertical: 4,
+          horizontal: 3,
+          vertical: 3,
         ),
         child: Row(
           mainAxisSize: MainAxisSize.min,
@@ -2005,7 +2002,7 @@ class _GoatStockCard extends StatelessWidget {
             Text(
               label,
               style: AppTheme.body(
-                size: 13,
+                size: 11.5,
                 color: AppColors.darkGreen,
                 weight: FontWeight.w700,
               ),
@@ -2013,7 +2010,7 @@ class _GoatStockCard extends StatelessWidget {
 
             const Icon(
               Icons.chevron_right_rounded,
-              size: 20,
+              size: 18,
               color: AppColors.darkGreen,
             ),
           ],
@@ -2061,41 +2058,79 @@ class _GoatStockSkeletonState
     return AnimatedBuilder(
       animation: _controller,
       builder: (context, child) {
-        final opacity = 0.45 + (_controller.value * 0.25);
+        final opacity =
+            0.45 + (_controller.value * 0.25);
 
         return SingleChildScrollView(
-          physics: const NeverScrollableScrollPhysics(),
-          padding: const EdgeInsets.fromLTRB(16, 2, 16, 24),
+          physics:
+          const NeverScrollableScrollPhysics(),
+          padding: const EdgeInsets.fromLTRB(
+            14,
+            1,
+            14,
+            20,
+          ),
           child: Column(
             children: [
-              _box(height: 112, radius: 22, opacity: opacity),
+              _box(
+                height: 94,
+                radius: 18,
+                opacity: opacity,
+              ),
 
-              const SizedBox(height: 14),
+              const SizedBox(height: 10),
 
-              _box(height: 52, radius: 18, opacity: opacity),
+              _box(
+                height: 46,
+                radius: 15,
+                opacity: opacity,
+              ),
 
-              const SizedBox(height: 14),
+              const SizedBox(height: 10),
 
               SizedBox(
-                height: 40,
+                height: 36,
                 child: Row(
                   children: [
-                    Expanded(flex: 5, child: _pill(opacity: opacity)),
-                    const SizedBox(width: 8),
-                    Expanded(flex: 4, child: _pill(opacity: opacity)),
-                    const SizedBox(width: 8),
-                    Expanded(flex: 4, child: _pill(opacity: opacity)),
-                    const SizedBox(width: 8),
-                    Expanded(flex: 4, child: _pill(opacity: opacity)),
+                    Expanded(
+                      flex: 5,
+                      child: _pill(
+                        opacity: opacity,
+                      ),
+                    ),
+                    const SizedBox(width: 6),
+                    Expanded(
+                      flex: 4,
+                      child: _pill(
+                        opacity: opacity,
+                      ),
+                    ),
+                    const SizedBox(width: 6),
+                    Expanded(
+                      flex: 4,
+                      child: _pill(
+                        opacity: opacity,
+                      ),
+                    ),
+                    const SizedBox(width: 6),
+                    Expanded(
+                      flex: 4,
+                      child: _pill(
+                        opacity: opacity,
+                      ),
+                    ),
                   ],
                 ),
               ),
 
-              const SizedBox(height: 14),
+              const SizedBox(height: 10),
 
               for (int i = 0; i < 4; i++) ...[
-                _goatCardSkeleton(opacity: opacity),
-                if (i != 3) const SizedBox(height: 12),
+                _goatCardSkeleton(
+                  opacity: opacity,
+                ),
+                if (i != 3)
+                  const SizedBox(height: 9),
               ],
             ],
           ),
@@ -2119,12 +2154,14 @@ class _GoatStockSkeletonState
     );
   }
 
-  Widget _pill({required double opacity}) {
+  Widget _pill({
+    required double opacity,
+  }) {
     return Container(
-      height: 40,
+      height: 36,
       decoration: BoxDecoration(
         color: AppColors.divider.withOpacity(opacity),
-        borderRadius: BorderRadius.circular(22),
+        borderRadius: BorderRadius.circular(18),
       ),
     );
   }
@@ -2139,38 +2176,54 @@ class _GoatStockSkeletonState
       height: height,
       decoration: BoxDecoration(
         color: AppColors.divider.withOpacity(opacity),
-        borderRadius: BorderRadius.circular(6),
+        borderRadius: BorderRadius.circular(5),
       ),
     );
   }
 
-  Widget _goatCardSkeleton({required double opacity}) {
+  Widget _goatCardSkeleton({
+    required double opacity,
+  }) {
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.all(14),
-      decoration: AppTheme.card(radius: 22),
+      padding: const EdgeInsets.all(11),
+      decoration: AppTheme.card(radius: 18),
       child: Row(
         children: [
           Container(
-            width: 76,
-            height: 76,
+            width: 62,
+            height: 62,
             decoration: BoxDecoration(
-              color: AppColors.divider.withOpacity(opacity),
-              borderRadius: BorderRadius.circular(18),
+              color:
+              AppColors.divider.withOpacity(opacity),
+              borderRadius: BorderRadius.circular(15),
             ),
           ),
 
-          const SizedBox(width: 12),
+          const SizedBox(width: 10),
 
           Expanded(
             child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
+              crossAxisAlignment:
+              CrossAxisAlignment.start,
               children: [
-                _bar(width: 110, height: 14, opacity: opacity),
+                _bar(
+                  width: 95,
+                  height: 12,
+                  opacity: opacity,
+                ),
+                const SizedBox(height: 7),
+                _bar(
+                  width: 130,
+                  height: 9,
+                  opacity: opacity,
+                ),
                 const SizedBox(height: 9),
-                _bar(width: 150, height: 10, opacity: opacity),
-                const SizedBox(height: 12),
-                _bar(width: 120, height: 22, opacity: opacity),
+                _bar(
+                  width: 105,
+                  height: 19,
+                  opacity: opacity,
+                ),
               ],
             ),
           ),

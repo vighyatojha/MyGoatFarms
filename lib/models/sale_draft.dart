@@ -192,9 +192,9 @@ class SaleDraft {
   double amountReceived = 0;
 
   /// What the customer actually owes: sale amount + transport charge.
-  /// Transportation charges are billed to the customer, not absorbed by
-  /// the farm — see the Step 5 summary note and SalesService's revenue
-  /// write, which both use this same total.
+  /// Transportation is billed to the customer but paid on to the
+  /// transport team, so it is part of this total and NOT farm revenue —
+  /// SalesService's revenue write uses [totalSaleAmount] instead.
   double get customerTotalDeliverNow =>
       round2(totalSaleAmount + transportCost);
 

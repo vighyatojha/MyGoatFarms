@@ -25,6 +25,7 @@ class SaleReceiptScreen extends StatefulWidget {
 
 class _SaleReceiptScreenState extends State<SaleReceiptScreen> {
   Sale? _sale;
+  FarmModel? _farm;
   BillSettings? _billSettings;
 
   bool _loading = true;
@@ -45,12 +46,12 @@ class _SaleReceiptScreenState extends State<SaleReceiptScreen> {
     });
 
     try {
-      final Sale? sale = await SalesService.instance.getSale(
+      final sale = await SalesService.instance.getSale(
         widget.farmId,
         widget.saleId,
       );
 
-      final FarmModel? farm = await FirestoreService.instance.getFarmById(
+      final farm = await FirestoreService.instance.getFarmById(
         widget.farmId,
       );
 
@@ -66,6 +67,7 @@ class _SaleReceiptScreenState extends State<SaleReceiptScreen> {
 
       setState(() {
         _sale = sale;
+        _farm = farm;
         _billSettings = farm?.billSettings;
         _loading = false;
       });
@@ -141,59 +143,6 @@ class _SaleReceiptScreenState extends State<SaleReceiptScreen> {
     return AppColors.primaryGreen;
   }
 
-  /// Rounds to 2 decimals so floating-point drift never shows up in a
-  /// figure (e.g. 27456.000000000004). Mirrors the PDF service.
-  double _round2(double value) {
-    if (value.isNaN || value.isInfinite) return 0;
-
-    final nudge = value >= 0 ? 1e-9 : -1e-9;
-
-    return ((value + nudge) * 100).roundToDouble() / 100;
-  }
-
-  double _paid(Sale sale) {
-    if (sale.isDeliverNow) {
-      return _round2(sale.amountReceived ?? 0);
-    }
-
-    if (sale.isBooking) {
-      return _round2(sale.bookingAmount ?? 0);
-    }
-
-    if (sale.isWaitForDelivery) {
-      return _round2(sale.bookingAdvanceAmount ?? 0);
-    }
-
-    return 0;
-  }
-
-  double _payable(Sale sale) {
-    if (sale.isBooking &&
-        sale.status == Sale.statusDeliveryCompleted) {
-      return _round2(
-        sale.finalAmountAfterHolding ?? sale.totalSaleAmount,
-      );
-    }
-
-    if (sale.isWaitForDelivery &&
-        sale.status == Sale.statusPickupCompleted) {
-      return _round2(
-        sale.finalPriceAfterPickup ?? sale.totalSaleAmount,
-      );
-    }
-
-    return _round2(
-      sale.totalSaleAmount +
-          (sale.isBooking ? (sale.totalHoldingCharges ?? 0) : 0),
-    );
-  }
-
-  double _remaining(Sale sale) {
-    final value = _round2(_payable(sale) - _paid(sale));
-
-    return value <= 0 ? 0.0 : value;
-  }
-
   Future<void> _previewPdf() async {
     if (_sale == null) return;
 
@@ -201,6 +150,7 @@ class _SaleReceiptScreenState extends State<SaleReceiptScreen> {
           () => SaleReceiptPdfService.instance.preview(
         sale: _sale!,
         billSettings: _billSettings ?? BillSettings(),
+        farmLogo: _farm?.profileImage,
       ),
     );
   }
@@ -212,6 +162,7 @@ class _SaleReceiptScreenState extends State<SaleReceiptScreen> {
           () => SaleReceiptPdfService.instance.share(
         sale: _sale!,
         billSettings: _billSettings ?? BillSettings(),
+        farmLogo: _farm?.profileImage,
       ),
     );
   }
@@ -223,19 +174,14 @@ class _SaleReceiptScreenState extends State<SaleReceiptScreen> {
       final path = await SaleReceiptPdfService.instance.save(
         sale: _sale!,
         billSettings: _billSettings ?? BillSettings(),
+        farmLogo: _farm?.profileImage,
       );
 
       if (!mounted) return;
 
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: const Text(
-            'Receipt saved successfully.',
-          ),
-          action: SnackBarAction(
-            label: 'OK',
-            onPressed: () {},
-          ),
+        const SnackBar(
+          content: Text('Receipt saved successfully.'),
         ),
       );
 
@@ -255,8 +201,6 @@ class _SaleReceiptScreenState extends State<SaleReceiptScreen> {
     try {
       await action();
     } catch (e, stack) {
-      // Always log the real error + stack — this is what makes a PDF
-      // problem diagnosable from `flutter run` / logcat.
       debugPrint('Sale receipt PDF error: $e\n$stack');
 
       if (!mounted) return;
@@ -275,17 +219,10 @@ class _SaleReceiptScreenState extends State<SaleReceiptScreen> {
     }
   }
 
-  /// User-facing text for a failed PDF action.
-  ///
-  /// Deliberately NOT routed through FirestoreService.describeError: that
-  /// helper labels every unknown error "Could not reach Firestore", which
-  /// is wrong (and misleading) for a PDF/font problem.
   String _pdfErrorMessage(Object error) {
     final raw = error.toString();
     final lower = raw.toLowerCase();
 
-    // The receipt fonts (Noto Sans) are downloaded the first time a PDF is
-    // built, so a network failure surfaces here.
     if (lower.contains('socketexception') ||
         lower.contains('clientexception') ||
         lower.contains('failed host lookup') ||
@@ -315,9 +252,7 @@ class _SaleReceiptScreenState extends State<SaleReceiptScreen> {
         titleSpacing: 4,
         title: Text(
           'Sale Receipt',
-          style: AppTheme.heading(
-            size: 18,
-          ),
+          style: AppTheme.heading(size: 18),
         ),
       ),
       body: SafeArea(
@@ -370,12 +305,7 @@ class _SaleReceiptScreenState extends State<SaleReceiptScreen> {
     final color = _statusColor(sale);
 
     return ListView(
-      padding: const EdgeInsets.fromLTRB(
-        16,
-        4,
-        16,
-        28,
-      ),
+      padding: const EdgeInsets.fromLTRB(16, 4, 16, 28),
       children: [
         _statusCard(sale, color),
         const SizedBox(height: 12),
@@ -385,22 +315,10 @@ class _SaleReceiptScreenState extends State<SaleReceiptScreen> {
           'Sale Information',
           Icons.receipt_long_outlined,
           [
-            _row(
-              'Receipt / Sale ID',
-              sale.id,
-            ),
-            _row(
-              'Sale Date',
-              _date(sale.createdAt),
-            ),
-            _row(
-              'Status',
-              _statusLabel(sale),
-            ),
-            _row(
-              'Delivery Type',
-              _deliveryType(sale),
-            ),
+            _row('Receipt / Sale ID', sale.id),
+            _row('Sale Date', _date(sale.createdAt)),
+            _row('Status', _statusLabel(sale)),
+            _row('Delivery Type', _deliveryType(sale)),
           ],
         ),
         const SizedBox(height: 12),
@@ -408,19 +326,10 @@ class _SaleReceiptScreenState extends State<SaleReceiptScreen> {
           'Customer',
           Icons.person_outline_rounded,
           [
-            _row(
-              'Name',
-              sale.customerName,
-            ),
-            _row(
-              'Mobile',
-              sale.mobile,
-            ),
+            _row('Name', sale.customerName),
+            _row('Mobile', sale.mobile),
             if (sale.address.trim().isNotEmpty)
-              _row(
-                'Address',
-                sale.address,
-              ),
+              _row('Address', sale.address),
           ],
         ),
         const SizedBox(height: 12),
@@ -430,9 +339,7 @@ class _SaleReceiptScreenState extends State<SaleReceiptScreen> {
           [
             _row(
               'Goat(s)',
-              sale.goatIds.isEmpty
-                  ? '-'
-                  : sale.goatIds.join(', '),
+              sale.goatIds.isEmpty ? '-' : sale.goatIds.join(', '),
             ),
             _row(
               'Selling Weight',
@@ -450,8 +357,7 @@ class _SaleReceiptScreenState extends State<SaleReceiptScreen> {
         _paymentSection(sale),
         if (sale.isBooking ||
             sale.isWaitForDelivery ||
-            sale.isPalaiTransfer ||
-            sale.transportCost != null) ...[
+            sale.isPalaiTransfer) ...[
           const SizedBox(height: 12),
           _transactionSection(sale),
         ],
@@ -461,20 +367,12 @@ class _SaleReceiptScreenState extends State<SaleReceiptScreen> {
     );
   }
 
-  Widget _statusCard(
-      Sale sale,
-      Color color,
-      ) {
+  Widget _statusCard(Sale sale, Color color) {
     final completed = _completed(sale);
 
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.fromLTRB(
-        16,
-        18,
-        16,
-        16,
-      ),
+      padding: const EdgeInsets.fromLTRB(16, 18, 16, 16),
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(18),
@@ -560,9 +458,7 @@ class _SaleReceiptScreenState extends State<SaleReceiptScreen> {
             child: _pdfButton(
               icon: Icons.picture_as_pdf_outlined,
               label: 'Preview PDF',
-              onPressed: _pdfBusy
-                  ? null
-                  : _previewPdf,
+              onPressed: _pdfBusy ? null : _previewPdf,
             ),
           ),
           const SizedBox(width: 8),
@@ -570,9 +466,7 @@ class _SaleReceiptScreenState extends State<SaleReceiptScreen> {
             child: _pdfButton(
               icon: Icons.share_outlined,
               label: 'Share',
-              onPressed: _pdfBusy
-                  ? null
-                  : _sharePdf,
+              onPressed: _pdfBusy ? null : _sharePdf,
             ),
           ),
           const SizedBox(width: 8),
@@ -580,9 +474,7 @@ class _SaleReceiptScreenState extends State<SaleReceiptScreen> {
             child: _pdfButton(
               icon: Icons.save_alt_outlined,
               label: 'Save',
-              onPressed: _pdfBusy
-                  ? null
-                  : _savePdf,
+              onPressed: _pdfBusy ? null : _savePdf,
             ),
           ),
         ],
@@ -598,9 +490,7 @@ class _SaleReceiptScreenState extends State<SaleReceiptScreen> {
     return OutlinedButton(
       onPressed: onPressed,
       style: OutlinedButton.styleFrom(
-        padding: const EdgeInsets.symmetric(
-          vertical: 10,
-        ),
+        padding: const EdgeInsets.symmetric(vertical: 10),
         side: const BorderSide(
           color: AppColors.primaryGreen,
         ),
@@ -640,56 +530,51 @@ class _SaleReceiptScreenState extends State<SaleReceiptScreen> {
   }
 
   Widget _priceSection(Sale sale) {
-    final holding =
-        sale.totalHoldingCharges ?? 0;
-
-    final finalAmount = _payable(sale);
-
     return _section(
       'Price Calculation',
       Icons.calculate_outlined,
       [
-        _moneyRow(
-          'Selling Weight',
-          sale.sellingWeight,
-          suffix: ' kg',
-        ),
-        _moneyRow(
-          'Selling Price / kg',
-          sale.sellingPricePerKg,
-        ),
+        if (sale.hasPickupSettlement) ...[
+          _moneyRow(
+            'Pickup Weight',
+            sale.pickupWeight!,
+            suffix: ' kg',
+          ),
+          _moneyRow(
+            'Booking Rate / kg',
+            sale.bookingPricePerKg ?? sale.sellingPricePerKg,
+            subtitle: 'Fixed at booking time, not today\'s rate',
+          ),
+        ] else ...[
+          _moneyRow(
+            'Selling Weight',
+            sale.sellingWeight,
+            suffix: ' kg',
+          ),
+          _moneyRow(
+            'Selling Price / kg',
+            sale.sellingPricePerKg,
+          ),
+        ],
         const Divider(height: 18),
-        _moneyRow(
-          'Goat Sale Amount',
-          sale.totalSaleAmount,
-        ),
-        if (sale.isBooking && holding > 0)
+        _moneyRow('Goat Sale', sale.billGoatSale),
+        if (sale.billHoldingCharges > 0)
           _moneyRow(
             'Holding Charges',
-            holding,
+            sale.billHoldingCharges,
             subtitle:
             '${sale.actualHoldingDays ?? sale.holdingDays ?? 0} days × '
                 '${_currency(sale.holdingChargePerDay ?? 0)} / day',
           ),
-        if (sale.isWaitForDelivery &&
-            sale.status == Sale.statusPickupCompleted)
+        if (sale.billTransportCharges > 0)
           _moneyRow(
-            'Pickup Weight',
-            sale.pickupWeight ??
-                sale.sellingWeight,
-            suffix: ' kg',
-            subtitle:
-            'Final price uses booking rate '
-                '${_currency(sale.bookingPricePerKg ?? sale.sellingPricePerKg)} / kg',
+            'Transportation',
+            sale.billTransportCharges,
           ),
         const Divider(height: 18),
         _moneyRow(
-          sale.isBooking &&
-              sale.status ==
-                  Sale.statusDeliveryCompleted
-              ? 'Final Amount After Holding'
-              : 'Total Payable',
-          finalAmount,
+          'Customer Total',
+          sale.billCustomerTotal,
           emphasized: true,
         ),
       ],
@@ -697,9 +582,6 @@ class _SaleReceiptScreenState extends State<SaleReceiptScreen> {
   }
 
   Widget _paymentSection(Sale sale) {
-    final paid = _paid(sale);
-    final remaining = _remaining(sale);
-
     return _section(
       'Payment Summary',
       Icons.account_balance_wallet_outlined,
@@ -710,11 +592,11 @@ class _SaleReceiptScreenState extends State<SaleReceiptScreen> {
               : sale.isWaitForDelivery
               ? 'Advance Paid'
               : 'Amount Received',
-          paid,
+          sale.billAmountPaid,
         ),
         _moneyRow(
           'Remaining Amount',
-          remaining,
+          sale.billBalanceDue,
           emphasized: true,
         ),
       ],
@@ -769,9 +651,7 @@ class _SaleReceiptScreenState extends State<SaleReceiptScreen> {
               DateFormat('dd MMM yyyy')
                   .format(sale.transferDate!),
             ),
-          if ((sale.palaiPackage ?? '')
-              .trim()
-              .isNotEmpty)
+          if ((sale.palaiPackage ?? '').trim().isNotEmpty)
             _row(
               'Palai Package',
               sale.palaiPackage!,
@@ -779,32 +659,20 @@ class _SaleReceiptScreenState extends State<SaleReceiptScreen> {
           if (sale.monthlyPalaiCharge != null)
             _row(
               'Monthly Palai Charge',
-              _currency(
-                sale.monthlyPalaiCharge!,
-              ),
+              _currency(sale.monthlyPalaiCharge!),
             ),
         ],
-        if (sale.transportCost != null)
-          _row(
-            'Transport Cost',
-            _currency(sale.transportCost!),
-          ),
       ],
     );
   }
 
-  Widget _bottomNotice(
-      Sale sale,
-      Color color,
-      ) {
+  Widget _bottomNotice(Sale sale, Color color) {
     final message =
     sale.isBooking &&
-        sale.status !=
-            Sale.statusDeliveryCompleted
+        sale.status != Sale.statusDeliveryCompleted
         ? 'This is the booking receipt. Final holding charges are recalculated when delivery is completed.'
         : sale.isWaitForDelivery &&
-        sale.status !=
-            Sale.statusPickupCompleted
+        sale.status != Sale.statusPickupCompleted
         ? 'This sale is waiting for delivery. Final settlement uses the booking-time rate and pickup weight.'
         : 'This receipt reflects the sale values currently saved in Firestore.';
 
@@ -819,12 +687,10 @@ class _SaleReceiptScreenState extends State<SaleReceiptScreen> {
         ),
       ),
       child: Row(
-        crossAxisAlignment:
-        CrossAxisAlignment.start,
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Icon(
-            sale.isBooking ||
-                sale.isWaitForDelivery
+            sale.isBooking || sale.isWaitForDelivery
                 ? Icons.info_outline_rounded
                 : Icons.verified_rounded,
             color: color,
@@ -852,12 +718,7 @@ class _SaleReceiptScreenState extends State<SaleReceiptScreen> {
       ) {
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.fromLTRB(
-        14,
-        14,
-        14,
-        12,
-      ),
+      padding: const EdgeInsets.fromLTRB(14, 14, 14, 12),
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(16),
@@ -866,8 +727,7 @@ class _SaleReceiptScreenState extends State<SaleReceiptScreen> {
         ),
       ),
       child: Column(
-        crossAxisAlignment:
-        CrossAxisAlignment.start,
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
             children: [
@@ -895,17 +755,11 @@ class _SaleReceiptScreenState extends State<SaleReceiptScreen> {
     );
   }
 
-  Widget _row(
-      String label,
-      String value,
-      ) {
+  Widget _row(String label, String value) {
     return Padding(
-      padding: const EdgeInsets.only(
-        bottom: 8,
-      ),
+      padding: const EdgeInsets.only(bottom: 8),
       child: Row(
-        crossAxisAlignment:
-        CrossAxisAlignment.start,
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Expanded(
             flex: 5,
@@ -943,12 +797,9 @@ class _SaleReceiptScreenState extends State<SaleReceiptScreen> {
         bool emphasized = false,
       }) {
     return Padding(
-      padding: const EdgeInsets.only(
-        bottom: 8,
-      ),
+      padding: const EdgeInsets.only(bottom: 8),
       child: Column(
-        crossAxisAlignment:
-        CrossAxisAlignment.start,
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
             children: [
@@ -1000,22 +851,10 @@ class _SaleReceiptScreenState extends State<SaleReceiptScreen> {
   }
 
   String _deliveryType(Sale sale) {
-    if (sale.isDeliverNow) {
-      return 'Deliver Now';
-    }
-
-    if (sale.isBooking) {
-      return 'Booking / Holding';
-    }
-
-    if (sale.isWaitForDelivery) {
-      return 'Wait for Delivery';
-    }
-
-    if (sale.isPalaiTransfer) {
-      return 'Transfer to Palai';
-    }
-
+    if (sale.isDeliverNow) return 'Deliver Now';
+    if (sale.isBooking) return 'Booking / Holding';
+    if (sale.isWaitForDelivery) return 'Wait for Delivery';
+    if (sale.isPalaiTransfer) return 'Transfer to Palai';
     return sale.deliveryType;
   }
 }

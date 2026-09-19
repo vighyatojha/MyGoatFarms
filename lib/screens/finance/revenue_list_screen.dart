@@ -12,6 +12,7 @@ import '../../services/firestore_service.dart';
 import '../../widgets/fast_route.dart';
 import '../../widgets/farm_not_linked_state.dart';
 import '../../widgets/finance/expense_category_chip.dart';
+import '../trading/sale_receipt_screen.dart';
 import 'add_edit_revenue_screen.dart';
 
 /// Revenue — reads the existing shared `transactions` collection, so
@@ -80,10 +81,12 @@ class _RevenueListScreenState extends State<RevenueListScreen> {
     if (result == true) setState(() {});
   }
 
-  /// Manual revenue rows open the edit form. Customer-payment rows open
-  /// the read-only detail sheet (ported from the old IncomeDetailScreen)
-  /// instead — correcting a real payment goes through Customers/Palai,
-  /// not here (spec §29).
+  /// Manual revenue rows open the edit form. Sold Goat Revenue rows open
+  /// the receipt of the sale they came from (the sale id is stored in the
+  /// transaction's referenceId). Customer-payment rows open the read-only
+  /// detail sheet (ported from the old IncomeDetailScreen) instead —
+  /// correcting a real payment goes through Customers/Palai, not here
+  /// (spec §29).
   Future<void> _handleTap(FinanceTransactionRow row) async {
     final doc = await FirebaseFirestore.instance
         .collection('farms')
@@ -101,6 +104,20 @@ class _RevenueListScreenState extends State<RevenueListScreen> {
       );
       if (result == true) setState(() {});
       return;
+    }
+
+    // Revenue -> Sale -> Receipt: a Sold Goat Revenue entry is linked to
+    // its sale by referenceType = tradingSale / referenceId = saleId.
+    if (data['referenceType'] == 'tradingSale') {
+      final saleId = (data['referenceId'] ?? '').toString().trim();
+      final farmId = _farmId;
+
+      if (saleId.isNotEmpty && farmId != null && mounted) {
+        await Navigator.of(context).push(
+          fastRoute(SaleReceiptScreen(farmId: farmId, saleId: saleId)),
+        );
+        return;
+      }
     }
 
     _showPaymentDetails(data);
@@ -157,7 +174,7 @@ class _RevenueListScreenState extends State<RevenueListScreen> {
     if (_selectedDate != null) {
       final day = _selectedDate!;
       results = results.where((r) =>
-          r.date.year == day.year && r.date.month == day.month && r.date.day == day.day).toList();
+      r.date.year == day.year && r.date.month == day.month && r.date.day == day.day).toList();
     }
 
     final query = _search.trim().toLowerCase();
@@ -335,137 +352,137 @@ class _RevenueListScreenState extends State<RevenueListScreen> {
         child: _loadingFarm
             ? const Center(child: CircularProgressIndicator(color: AppColors.primaryGreen))
             : _farmId == null
-                ? FarmNotLinkedState(
-                    buttonColor: AppColors.primaryGreen,
-                    onRetry: () {
-                      setState(() => _loadingFarm = true);
-                      _loadFarm();
-                    },
-                  )
-                : Column(
-                    children: [
-                      Padding(
-                        padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
-                        child: TextField(
-                          controller: _searchController,
-                          onChanged: (v) => setState(() => _search = v),
-                          style: AppTheme.body(size: 13),
-                          decoration: InputDecoration(
-                            hintText: 'Search customer, category...',
-                            prefixIcon: const Icon(Icons.search, size: 20, color: AppColors.textGrey),
-                            filled: true,
-                            fillColor: Colors.white,
-                            contentPadding: const EdgeInsets.symmetric(vertical: 4),
-                            border: OutlineInputBorder(
-                              borderRadius: BorderRadius.circular(13),
-                              borderSide: BorderSide(color: AppColors.divider),
-                            ),
-                          ),
-                        ),
-                      ),
-                      if (_showCalendar)
-                        Container(
-                          margin: const EdgeInsets.fromLTRB(16, 0, 16, 8),
-                          decoration: AppTheme.card(radius: 16),
-                          clipBehavior: Clip.antiAlias,
-                          child: CalendarDatePicker(
-                            initialDate: _selectedDate ?? DateTime.now(),
-                            firstDate: DateTime(DateTime.now().year - 5),
-                            lastDate: DateTime.now(),
-                            onDateChanged: (date) {
-                              setState(() {
-                                _selectedDate = date;
-                                _showCalendar = false;
-                              });
-                            },
-                          ),
-                        ),
-                      if (_selectedDate != null)
-                        Padding(
-                          padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
-                          child: Row(
-                            children: [
-                              Container(
-                                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                                decoration: BoxDecoration(
-                                  color: AppColors.primaryGreen.withOpacity(0.12),
-                                  borderRadius: BorderRadius.circular(20),
-                                ),
-                                child: Row(
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    const Icon(Icons.event, size: 14, color: AppColors.primaryGreen),
-                                    const SizedBox(width: 6),
-                                    Text(
-                                      _formatDayLabel(_selectedDate!),
-                                      style: AppTheme.body(size: 12, color: AppColors.darkGreen, weight: FontWeight.w600),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                              const SizedBox(width: 8),
-                              GestureDetector(
-                                onTap: () => setState(() => _selectedDate = null),
-                                child: Text('Clear', style: AppTheme.body(size: 12, color: AppColors.textGrey, weight: FontWeight.w600)),
-                              ),
-                            ],
-                          ),
-                        ),
-                      Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 12),
-                        child: CategoryChipRow(
-                          categories: allRevenueCategories,
-                          selected: _category,
-                          onSelected: (v) => setState(() => _category = v),
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                      Expanded(
-                        child: StreamBuilder<List<FinanceTransactionRow>>(
-                          stream: FinanceService.instance.revenueStream(
-                            _farmId!,
-                            category: _category,
-                          ),
-                          builder: (context, snapshot) {
-                            if (!snapshot.hasData) {
-                              return const Center(
-                                child: CircularProgressIndicator(color: AppColors.primaryGreen),
-                              );
-                            }
-                            final items = _filter(snapshot.data!);
-                            if (items.isEmpty) {
-                              return Center(
-                                child: Text(
-                                  _selectedDate != null ? 'No revenue on this day.' : 'No revenue found.',
-                                  style: AppTheme.body(size: 13),
-                                ),
-                              );
-                            }
-
-                            final total = items.fold<double>(0, (sum, r) => sum + r.amount);
-
-                            return ListView.builder(
-                              padding: const EdgeInsets.fromLTRB(16, 0, 16, 90),
-                              itemCount: items.length + 1,
-                              itemBuilder: (context, index) {
-                                if (index == 0) {
-                                  return Padding(
-                                    padding: const EdgeInsets.symmetric(vertical: 10),
-                                    child: Text(
-                                      'Total: ${_rupees(total)}',
-                                      style: AppTheme.heading(size: 16),
-                                    ),
-                                  );
-                                }
-                                final row = items[index - 1];
-                                return _revenueCard(row);
-                              },
-                            );
-                          },
-                        ),
-                      ),
-                    ],
+            ? FarmNotLinkedState(
+          buttonColor: AppColors.primaryGreen,
+          onRetry: () {
+            setState(() => _loadingFarm = true);
+            _loadFarm();
+          },
+        )
+            : Column(
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
+              child: TextField(
+                controller: _searchController,
+                onChanged: (v) => setState(() => _search = v),
+                style: AppTheme.body(size: 13),
+                decoration: InputDecoration(
+                  hintText: 'Search customer, category...',
+                  prefixIcon: const Icon(Icons.search, size: 20, color: AppColors.textGrey),
+                  filled: true,
+                  fillColor: Colors.white,
+                  contentPadding: const EdgeInsets.symmetric(vertical: 4),
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(13),
+                    borderSide: BorderSide(color: AppColors.divider),
                   ),
+                ),
+              ),
+            ),
+            if (_showCalendar)
+              Container(
+                margin: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+                decoration: AppTheme.card(radius: 16),
+                clipBehavior: Clip.antiAlias,
+                child: CalendarDatePicker(
+                  initialDate: _selectedDate ?? DateTime.now(),
+                  firstDate: DateTime(DateTime.now().year - 5),
+                  lastDate: DateTime.now(),
+                  onDateChanged: (date) {
+                    setState(() {
+                      _selectedDate = date;
+                      _showCalendar = false;
+                    });
+                  },
+                ),
+              ),
+            if (_selectedDate != null)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+                child: Row(
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                      decoration: BoxDecoration(
+                        color: AppColors.primaryGreen.withOpacity(0.12),
+                        borderRadius: BorderRadius.circular(20),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const Icon(Icons.event, size: 14, color: AppColors.primaryGreen),
+                          const SizedBox(width: 6),
+                          Text(
+                            _formatDayLabel(_selectedDate!),
+                            style: AppTheme.body(size: 12, color: AppColors.darkGreen, weight: FontWeight.w600),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    GestureDetector(
+                      onTap: () => setState(() => _selectedDate = null),
+                      child: Text('Clear', style: AppTheme.body(size: 12, color: AppColors.textGrey, weight: FontWeight.w600)),
+                    ),
+                  ],
+                ),
+              ),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 12),
+              child: CategoryChipRow(
+                categories: allRevenueCategories,
+                selected: _category,
+                onSelected: (v) => setState(() => _category = v),
+              ),
+            ),
+            const SizedBox(height: 8),
+            Expanded(
+              child: StreamBuilder<List<FinanceTransactionRow>>(
+                stream: FinanceService.instance.revenueStream(
+                  _farmId!,
+                  category: _category,
+                ),
+                builder: (context, snapshot) {
+                  if (!snapshot.hasData) {
+                    return const Center(
+                      child: CircularProgressIndicator(color: AppColors.primaryGreen),
+                    );
+                  }
+                  final items = _filter(snapshot.data!);
+                  if (items.isEmpty) {
+                    return Center(
+                      child: Text(
+                        _selectedDate != null ? 'No revenue on this day.' : 'No revenue found.',
+                        style: AppTheme.body(size: 13),
+                      ),
+                    );
+                  }
+
+                  final total = items.fold<double>(0, (sum, r) => sum + r.amount);
+
+                  return ListView.builder(
+                    padding: const EdgeInsets.fromLTRB(16, 0, 16, 90),
+                    itemCount: items.length + 1,
+                    itemBuilder: (context, index) {
+                      if (index == 0) {
+                        return Padding(
+                          padding: const EdgeInsets.symmetric(vertical: 10),
+                          child: Text(
+                            'Total: ${_rupees(total)}',
+                            style: AppTheme.heading(size: 16),
+                          ),
+                        );
+                      }
+                      final row = items[index - 1];
+                      return _revenueCard(row);
+                    },
+                  );
+                },
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
