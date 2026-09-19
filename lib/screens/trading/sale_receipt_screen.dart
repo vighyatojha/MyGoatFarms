@@ -141,17 +141,27 @@ class _SaleReceiptScreenState extends State<SaleReceiptScreen> {
     return AppColors.primaryGreen;
   }
 
+  /// Rounds to 2 decimals so floating-point drift never shows up in a
+  /// figure (e.g. 27456.000000000004). Mirrors the PDF service.
+  double _round2(double value) {
+    if (value.isNaN || value.isInfinite) return 0;
+
+    final nudge = value >= 0 ? 1e-9 : -1e-9;
+
+    return ((value + nudge) * 100).roundToDouble() / 100;
+  }
+
   double _paid(Sale sale) {
     if (sale.isDeliverNow) {
-      return sale.amountReceived ?? 0;
+      return _round2(sale.amountReceived ?? 0);
     }
 
     if (sale.isBooking) {
-      return sale.bookingAmount ?? 0;
+      return _round2(sale.bookingAmount ?? 0);
     }
 
     if (sale.isWaitForDelivery) {
-      return sale.bookingAdvanceAmount ?? 0;
+      return _round2(sale.bookingAdvanceAmount ?? 0);
     }
 
     return 0;
@@ -160,24 +170,28 @@ class _SaleReceiptScreenState extends State<SaleReceiptScreen> {
   double _payable(Sale sale) {
     if (sale.isBooking &&
         sale.status == Sale.statusDeliveryCompleted) {
-      return sale.finalAmountAfterHolding ?? sale.totalSaleAmount;
+      return _round2(
+        sale.finalAmountAfterHolding ?? sale.totalSaleAmount,
+      );
     }
 
     if (sale.isWaitForDelivery &&
         sale.status == Sale.statusPickupCompleted) {
-      return sale.finalPriceAfterPickup ?? sale.totalSaleAmount;
+      return _round2(
+        sale.finalPriceAfterPickup ?? sale.totalSaleAmount,
+      );
     }
 
-    return sale.totalSaleAmount +
-        (sale.isBooking
-            ? (sale.totalHoldingCharges ?? 0)
-            : 0);
+    return _round2(
+      sale.totalSaleAmount +
+          (sale.isBooking ? (sale.totalHoldingCharges ?? 0) : 0),
+    );
   }
 
   double _remaining(Sale sale) {
-    final value = _payable(sale) - _paid(sale);
+    final value = _round2(_payable(sale) - _paid(sale));
 
-    return value < 0 ? 0 : value;
+    return value <= 0 ? 0.0 : value;
   }
 
   Future<void> _previewPdf() async {
@@ -240,15 +254,16 @@ class _SaleReceiptScreenState extends State<SaleReceiptScreen> {
 
     try {
       await action();
-    } catch (e) {
+    } catch (e, stack) {
+      // Always log the real error + stack — this is what makes a PDF
+      // problem diagnosable from `flutter run` / logcat.
+      debugPrint('Sale receipt PDF error: $e\n$stack');
+
       if (!mounted) return;
 
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text(
-            'Could not generate receipt: '
-                '${FirestoreService.instance.describeError(e)}',
-          ),
+          content: Text(_pdfErrorMessage(e)),
         ),
       );
     } finally {
@@ -258,6 +273,35 @@ class _SaleReceiptScreenState extends State<SaleReceiptScreen> {
         });
       }
     }
+  }
+
+  /// User-facing text for a failed PDF action.
+  ///
+  /// Deliberately NOT routed through FirestoreService.describeError: that
+  /// helper labels every unknown error "Could not reach Firestore", which
+  /// is wrong (and misleading) for a PDF/font problem.
+  String _pdfErrorMessage(Object error) {
+    final raw = error.toString();
+    final lower = raw.toLowerCase();
+
+    // The receipt fonts (Noto Sans) are downloaded the first time a PDF is
+    // built, so a network failure surfaces here.
+    if (lower.contains('socketexception') ||
+        lower.contains('clientexception') ||
+        lower.contains('failed host lookup') ||
+        lower.contains('handshakeexception') ||
+        lower.contains('timeoutexception')) {
+      return 'Could not download the receipt font. '
+          'Check your internet connection and try again.';
+    }
+
+    final cleaned = raw
+        .replaceFirst('Exception: ', '')
+        .replaceFirst('Bad state: ', '')
+        .trim();
+
+    return 'Could not generate receipt: '
+        '${cleaned.isEmpty ? 'unknown error' : cleaned}';
   }
 
   @override

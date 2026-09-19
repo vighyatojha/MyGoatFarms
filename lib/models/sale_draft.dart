@@ -14,6 +14,48 @@ import 'sale_model.dart';
 /// (Pair 7 / Phase 5) is out of scope for this phase.
 class SaleDraft {
   // ---------------------------------------------------------------------------
+  // NUMBER HELPERS
+  // ---------------------------------------------------------------------------
+
+  /// Rounds to 2 decimals (paise / 10 g).
+  ///
+  /// Dart doubles cannot represent most decimals exactly, so raw sums and
+  /// products drift: 34.2 + 18.6 = 52.800000000000004 and
+  /// 52.8 * 520 = 27456.000000000004. Left alone, that shows up as ugly
+  /// text ("52.800000000000004 KG") and — worse — makes
+  /// `amountReceived >= totalSaleAmount` fail when the customer paid the
+  /// exact amount, flipping "Paid" to "Partial".
+  ///
+  /// Every derived money/weight figure in this draft goes through here.
+  static double round2(double value) {
+    if (value.isNaN || value.isInfinite) return 0;
+
+    // The tiny epsilon nudges values such as 1.005 (stored as
+    // 1.00499999999999989...) to the rounding a human expects.
+    final nudge = value >= 0 ? 1e-9 : -1e-9;
+
+    return ((value + nudge) * 100).roundToDouble() / 100;
+  }
+
+  /// Never negative, never `-0.0` (which NumberFormat would print as
+  /// "-₹0.00").
+  static double _nonNegative(double value) {
+    final rounded = round2(value);
+
+    return rounded <= 0 ? 0.0 : rounded;
+  }
+
+  /// Weight for display: at most 2 decimals, trailing zeros removed.
+  ///   50.0 -> "50"   50.8 -> "50.8"   50.05 -> "50.05"
+  static String formatWeight(double value) {
+    final fixed = round2(value).toStringAsFixed(2);
+
+    if (!fixed.contains('.')) return fixed;
+
+    return fixed.replaceFirst(RegExp(r'\.?0+$'), '');
+  }
+
+  // ---------------------------------------------------------------------------
   // STEP 1 — SELECT GOAT(S)  (Task 2.1)
   // ---------------------------------------------------------------------------
 
@@ -100,9 +142,18 @@ class SaleDraft {
   /// derived from Step 3's per-goat entries rather than re-entered as
   /// an independent value in Step 4, so the two steps can never
   /// disagree about how much is being sold.
-  double get totalSellingWeight => selectedGoats.fold(
-    0.0,
-        (sum, g) => sum + weightFor(g),
+  double get totalSellingWeight => round2(
+    selectedGoats.fold(
+      0.0,
+          (sum, g) => sum + weightFor(g),
+    ),
+  );
+
+  /// Sum of every selected goat's last *recorded* weight. Only used by
+  /// Step 3 to show how far the entered selling weights are from the
+  /// weights already on file.
+  double get totalRecordedWeight => round2(
+    selectedGoats.fold(0.0, (sum, g) => sum + g.weight),
   );
 
   // ---------------------------------------------------------------------------
@@ -113,7 +164,8 @@ class SaleDraft {
 
   /// Derived: never manually overridden, same rule as the Purchase
   /// wizard's Purchase Amount.
-  double get totalSaleAmount => totalSellingWeight * sellingPricePerKg;
+  double get totalSaleAmount =>
+      round2(totalSellingWeight * sellingPricePerKg);
 
   // ---------------------------------------------------------------------------
   // STEP 5 — DELIVERY OPTIONS  (Section 3)
@@ -139,14 +191,21 @@ class SaleDraft {
   double transportCost = 0;
   double amountReceived = 0;
 
-  double get remainingBalanceDeliverNow {
-    final remaining = totalSaleAmount - amountReceived;
-    return remaining < 0 ? 0 : remaining;
-  }
+  double get remainingBalanceDeliverNow =>
+      _nonNegative(totalSaleAmount - amountReceived);
+
+  /// How much MORE than the sale amount was entered as received. Not
+  /// blocked (the person may be rounding up, or settling something else
+  /// in the same handover) but Step 5 surfaces it so a typo such as an
+  /// extra digit is obvious before saving.
+  double get extraReceivedDeliverNow =>
+      _nonNegative(amountReceived - totalSaleAmount);
 
   String get paymentStatusDeliverNow {
-    if (amountReceived <= 0) return Sale.paymentStatusPending;
-    if (amountReceived >= totalSaleAmount) return Sale.paymentStatusPaid;
+    final received = round2(amountReceived);
+
+    if (received <= 0) return Sale.paymentStatusPending;
+    if (received >= totalSaleAmount) return Sale.paymentStatusPaid;
     return Sale.paymentStatusPartial;
   }
 
@@ -159,7 +218,13 @@ class SaleDraft {
 
   /// Auto-calculated: Holding Days x Daily Charge — never entered
   /// directly, same "derived field" rule as totalSaleAmount.
-  double get totalHoldingCharges => holdingDays * holdingChargePerDay;
+  double get totalHoldingCharges =>
+      round2(holdingDays * holdingChargePerDay);
+
+  /// Sale amount + holding charges — what the customer owes in total
+  /// before the booking amount is deducted.
+  double get totalPayableBooking =>
+      round2(totalSaleAmount + totalHoldingCharges);
 
   /// What's left to collect once holding charges are added on top of
   /// the sale amount and the booking amount already paid is deducted.
@@ -167,11 +232,8 @@ class SaleDraft {
   /// out of scope this phase) does this same sum again later using
   /// whatever holding days actually elapse — this is just the
   /// creation-time estimate shown on Step 5.
-  double get remainingBalanceBooking {
-    final remaining =
-        totalSaleAmount + totalHoldingCharges - bookingAmount;
-    return remaining < 0 ? 0 : remaining;
-  }
+  double get remainingBalanceBooking =>
+      _nonNegative(totalPayableBooking - bookingAmount);
 
   // --- Branch C: Wait for Delivery (Task 3.3) --------------------------------
 
@@ -188,10 +250,10 @@ class SaleDraft {
 
   double bookingAdvanceAmount = 0;
 
-  double get remainingAdvanceBalanceWaitForDelivery {
-    final remaining = totalSaleAmount - bookingAdvanceAmount;
-    return remaining < 0 ? 0 : remaining;
-  }
+  /// Estimate at BOOKING weight. The real amount is settled at pickup
+  /// (pickup weight x this same booking rate - advance).
+  double get remainingAdvanceBalanceWaitForDelivery =>
+      _nonNegative(totalSaleAmount - bookingAdvanceAmount);
 
   // --- Branch D: Transfer to Palai (Task 3.4) --------------------------------
 

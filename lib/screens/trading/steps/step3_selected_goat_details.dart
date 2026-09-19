@@ -16,6 +16,11 @@ import '../../../../models/sale_draft.dart';
 /// Goat.gender's doc comment), so this is the one place it can be
 /// filled in, and it's written back onto the goat record on save.
 ///
+/// Weights are pushed into the [SaleDraft] on EVERY keystroke (not only
+/// when Next is pressed), so:
+///  - the live "Total Selling Weight" bar below is always accurate, and
+///  - pressing Back and returning never loses an edited weight.
+///
 /// Exposes [validate] via its State, same pattern as Step2, so the
 /// wizard can block advancing until every goat has a valid weight.
 class Step3SelectedGoatDetails extends StatefulWidget {
@@ -42,15 +47,22 @@ class Step3SelectedGoatDetailsState
 
     for (final goat in widget.draft.selectedGoats) {
       _weightControllers[goat.id] = TextEditingController(
-        text: _trimZero(widget.draft.weightFor(goat)),
+        text: SaleDraft.formatWeight(widget.draft.weightFor(goat)),
       );
     }
   }
 
-  String _trimZero(double value) {
-    return value == value.roundToDouble()
-        ? value.toStringAsFixed(0)
-        : value.toString();
+  /// Live sync: called on every keystroke in a weight field.
+  ///
+  /// A blank / invalid field counts as 0 kg in the live total so the total
+  /// always reflects exactly what is typed. [validate] still refuses to
+  /// continue until every goat has a weight above zero.
+  void _onWeightChanged(Goat goat, String text) {
+    final parsed = double.tryParse(text.trim()) ?? 0;
+
+    setState(() {
+      widget.draft.setWeight(goat, parsed);
+    });
   }
 
   @override
@@ -62,45 +74,164 @@ class Step3SelectedGoatDetailsState
   }
 
   bool validate() {
-    final valid = _formKey.currentState?.validate() ?? false;
+    final formValid = _formKey.currentState?.validate() ?? false;
 
-    if (!valid) return false;
+    // The list is lazily built, so a Form only validates the goats that
+    // are currently on screen. With many goats selected, one scrolled
+    // out of view could slip through with a blank weight. Check every
+    // controller explicitly.
+    String? firstInvalidGoatId;
 
     for (final goat in widget.draft.selectedGoats) {
       final weight = double.tryParse(
         _weightControllers[goat.id]?.text.trim() ?? '',
       );
 
-      if (weight != null) {
-        widget.draft.setWeight(goat, weight);
+      if (weight == null || weight <= 0) {
+        firstInvalidGoatId ??= goat.id;
+        continue;
       }
+
+      widget.draft.setWeight(goat, weight);
     }
 
-    return true;
+    if (firstInvalidGoatId != null) {
+      // If the visible fields were fine, the invalid one is off-screen —
+      // the inline error text can't help, so say which goat it is.
+      if (formValid) {
+        ScaffoldMessenger.of(context)
+          ..hideCurrentSnackBar()
+          ..showSnackBar(
+            SnackBar(
+              content: Text(
+                'Enter a valid selling weight for $firstInvalidGoatId.',
+              ),
+            ),
+          );
+      }
+
+      return false;
+    }
+
+    return formValid;
   }
 
   @override
   Widget build(BuildContext context) {
-    return Form(
-      key: _formKey,
-      child: ListView.separated(
-        padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
-        itemCount: widget.draft.selectedGoats.length,
-        separatorBuilder: (_, __) => const SizedBox(height: 12),
-        itemBuilder: (context, index) {
-          final goat = widget.draft.selectedGoats[index];
+    final draft = widget.draft;
 
-          return _GoatDetailCard(
-            goat: goat,
-            weightController: _weightControllers[goat.id]!,
-            gender: widget.draft.genderFor(goat),
-            onGenderChanged: (value) {
-              setState(() {
-                widget.draft.setGender(goat, value);
-              });
-            },
-          );
-        },
+    return Column(
+      children: [
+        Expanded(
+          child: Form(
+            key: _formKey,
+            child: ListView.separated(
+              keyboardDismissBehavior:
+              ScrollViewKeyboardDismissBehavior.onDrag,
+              padding: const EdgeInsets.fromLTRB(16, 16, 16, 16),
+              itemCount: draft.selectedGoats.length,
+              separatorBuilder: (_, __) => const SizedBox(height: 12),
+              itemBuilder: (context, index) {
+                final goat = draft.selectedGoats[index];
+
+                return _GoatDetailCard(
+                  goat: goat,
+                  weightController: _weightControllers[goat.id]!,
+                  gender: draft.genderFor(goat),
+                  onWeightChanged: (value) =>
+                      _onWeightChanged(goat, value),
+                  onGenderChanged: (value) {
+                    setState(() {
+                      draft.setGender(goat, value);
+                    });
+                  },
+                );
+              },
+            ),
+          ),
+        ),
+
+        // -------------------------------------------------------------
+        // LIVE TOTAL — pinned, so it stays visible while scrolling
+        // through many goats and while the keyboard is open.
+        // -------------------------------------------------------------
+        _buildTotalBar(draft),
+      ],
+    );
+  }
+
+  Widget _buildTotalBar(SaleDraft draft) {
+    final count = draft.selectedGoats.length;
+    final total = draft.totalSellingWeight;
+    final recorded = draft.totalRecordedWeight;
+    final diff = SaleDraft.round2(total - recorded);
+
+    final diffText = diff == 0
+        ? 'Same as recorded weight'
+        : '${diff > 0 ? '+' : '−'}${SaleDraft.formatWeight(diff.abs())} kg '
+        'vs recorded ${SaleDraft.formatWeight(recorded)} kg';
+
+    return Container(
+      width: double.infinity,
+      margin: const EdgeInsets.fromLTRB(16, 4, 16, 10),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      decoration: BoxDecoration(
+        color: AppColors.lightGreen,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+          color: AppColors.primaryGreen.withOpacity(0.22),
+        ),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 40,
+            height: 40,
+            decoration: BoxDecoration(
+              color: AppColors.primaryGreen.withOpacity(0.12),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: const Icon(
+              Icons.scale_outlined,
+              color: AppColors.darkGreen,
+              size: 21,
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Total Selling Weight · $count '
+                      'goat${count == 1 ? '' : 's'}',
+                  style: AppTheme.heading(
+                    size: 12,
+                    color: AppColors.textDark,
+                  ),
+                ),
+                const SizedBox(height: 3),
+                Text(
+                  diffText,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: AppTheme.body(
+                    size: 10,
+                    color: AppColors.textGrey,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 10),
+          Text(
+            '${SaleDraft.formatWeight(total)} KG',
+            style: AppTheme.heading(
+              size: 17,
+              color: AppColors.darkGreen,
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -114,12 +245,14 @@ class _GoatDetailCard extends StatelessWidget {
   final Goat goat;
   final TextEditingController weightController;
   final String gender;
+  final ValueChanged<String> onWeightChanged;
   final ValueChanged<String> onGenderChanged;
 
   const _GoatDetailCard({
     required this.goat,
     required this.weightController,
     required this.gender,
+    required this.onWeightChanged,
     required this.onGenderChanged,
   });
 
@@ -274,6 +407,7 @@ class _GoatDetailCard extends StatelessWidget {
           const SizedBox(height: 8),
           TextFormField(
             controller: weightController,
+            onChanged: onWeightChanged,
             keyboardType: const TextInputType.numberWithOptions(
               decimal: true,
             ),
@@ -286,6 +420,8 @@ class _GoatDetailCard extends StatelessWidget {
             decoration: InputDecoration(
               hintText: '0.00',
               suffixText: 'KG',
+              helperText:
+              'Last recorded: ${SaleDraft.formatWeight(goat.weight)} kg',
               prefixIcon: const Icon(
                 Icons.monitor_weight_outlined,
                 color: AppColors.primaryGreen,

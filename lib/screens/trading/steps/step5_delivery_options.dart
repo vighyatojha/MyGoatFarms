@@ -21,6 +21,12 @@ import '../purchase_goats/purchase_wizard_widgets.dart';
 /// only ever creates the sale in its initial state (Booked /
 /// WaitForDelivery), never completes it.
 ///
+/// LIVE CALCULATIONS: every input writes into the [SaleDraft] on each
+/// keystroke (see the `_sync*` methods). The summary cards read the same
+/// draft getters that the save step uses, so what the person sees while
+/// typing is exactly what gets saved — there is no second copy of the
+/// maths on this screen.
+///
 /// Exposes [validate] via its State (same pattern as earlier steps) so
 /// the wizard's Save action can block until the selected branch's
 /// required fields are filled in.
@@ -122,6 +128,44 @@ class Step5DeliveryOptionsState extends State<Step5DeliveryOptions> {
   }
 
   // ===========================================================================
+  // LIVE SYNC — controllers -> draft
+  // ===========================================================================
+  //
+  // The summary cards below read `draft.*` getters. The draft therefore
+  // has to be updated as the person types, not only when Save is pressed —
+  // otherwise every "live" figure stays frozen at its old value.
+
+  double _money(TextEditingController controller) =>
+      double.tryParse(controller.text.trim()) ?? 0;
+
+  void _syncDeliverNow() {
+    final draft = widget.draft;
+
+    draft.transportCost = _money(_transportCostController);
+    draft.amountReceived = _money(_amountReceivedController);
+  }
+
+  void _syncBooking() {
+    final draft = widget.draft;
+
+    draft.bookingAmount = _money(_bookingAmountController);
+    draft.holdingDays =
+        int.tryParse(_holdingDaysController.text.trim()) ?? 0;
+    draft.holdingChargePerDay = _money(_holdingChargePerDayController);
+  }
+
+  void _syncWaitForDelivery() {
+    widget.draft.bookingAdvanceAmount = _money(_bookingAdvanceController);
+  }
+
+  void _syncPalai() {
+    final draft = widget.draft;
+
+    draft.palaiPackage = _palaiPackageController.text.trim();
+    draft.monthlyPalaiCharge = _money(_monthlyChargeController);
+  }
+
+  // ===========================================================================
   // VALIDATE (called by the wizard's Save button)
   // ===========================================================================
 
@@ -141,10 +185,7 @@ class Step5DeliveryOptionsState extends State<Step5DeliveryOptions> {
       final valid = _deliverNowFormKey.currentState?.validate() ?? false;
       if (!valid) return false;
 
-      draft.transportCost =
-          double.tryParse(_transportCostController.text.trim()) ?? 0;
-      draft.amountReceived =
-          double.tryParse(_amountReceivedController.text.trim()) ?? 0;
+      _syncDeliverNow();
 
       return true;
     }
@@ -153,14 +194,7 @@ class Step5DeliveryOptionsState extends State<Step5DeliveryOptions> {
       final valid = _bookingFormKey.currentState?.validate() ?? false;
       if (!valid) return false;
 
-      draft.bookingAmount =
-          double.tryParse(_bookingAmountController.text.trim()) ?? 0;
-      draft.holdingDays =
-          int.tryParse(_holdingDaysController.text.trim()) ?? 0;
-      draft.holdingChargePerDay = double.tryParse(
-        _holdingChargePerDayController.text.trim(),
-      ) ??
-          0;
+      _syncBooking();
       draft.expectedDeliveryDate ??= DateTime.now();
 
       return true;
@@ -171,8 +205,7 @@ class Step5DeliveryOptionsState extends State<Step5DeliveryOptions> {
           _waitForDeliveryFormKey.currentState?.validate() ?? false;
       if (!valid) return false;
 
-      draft.bookingAdvanceAmount =
-          double.tryParse(_bookingAdvanceController.text.trim()) ?? 0;
+      _syncWaitForDelivery();
 
       return true;
     }
@@ -181,9 +214,7 @@ class Step5DeliveryOptionsState extends State<Step5DeliveryOptions> {
       final valid = _palaiFormKey.currentState?.validate() ?? false;
       if (!valid) return false;
 
-      draft.palaiPackage = _palaiPackageController.text.trim();
-      draft.monthlyPalaiCharge =
-          double.tryParse(_monthlyChargeController.text.trim()) ?? 0;
+      _syncPalai();
 
       return true;
     }
@@ -210,6 +241,7 @@ class Step5DeliveryOptionsState extends State<Step5DeliveryOptions> {
     final draft = widget.draft;
 
     return ListView(
+      keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
       padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
       children: [
         Text(
@@ -288,7 +320,7 @@ class Step5DeliveryOptionsState extends State<Step5DeliveryOptions> {
                     RegExp(r'^\d*\.?\d{0,2}'),
                   ),
                 ],
-                onChanged: (_) => setState(() {}),
+                onChanged: (_) => setState(_syncDeliverNow),
                 validator: (_) => null,
               ),
               const SizedBox(height: 14),
@@ -305,7 +337,7 @@ class Step5DeliveryOptionsState extends State<Step5DeliveryOptions> {
                     RegExp(r'^\d*\.?\d{0,2}'),
                   ),
                 ],
-                onChanged: (_) => setState(() {}),
+                onChanged: (_) => setState(_syncDeliverNow),
                 validator: (value) {
                   final number = double.tryParse(value?.trim() ?? '');
 
@@ -321,81 +353,63 @@ class Step5DeliveryOptionsState extends State<Step5DeliveryOptions> {
 
           const SizedBox(height: 12),
 
-          _buildBalanceCard(
-            draft.remainingBalanceDeliverNow,
-            draft.paymentStatusDeliverNow,
-          ),
+          _buildDeliverNowSummary(draft),
         ],
       ),
     );
   }
 
-  Widget _buildBalanceCard(double remaining, String status) {
-    Color statusColor;
-
+  Color _statusColor(String status) {
     switch (status) {
       case Sale.paymentStatusPaid:
-        statusColor = AppColors.success;
-        break;
+        return AppColors.success;
       case Sale.paymentStatusPartial:
-        statusColor = AppColors.warning;
-        break;
+        return AppColors.warning;
       default:
-        statusColor = AppColors.error;
+        return AppColors.error;
     }
+  }
 
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: AppColors.divider),
-      ),
-      child: Row(
-        children: [
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  'Remaining Balance',
-                  style: AppTheme.body(
-                    size: 11,
-                    color: AppColors.textGrey,
-                  ),
-                ),
-                const SizedBox(height: 3),
-                Text(
-                  _currency(remaining),
-                  style: AppTheme.heading(
-                    size: 15,
-                    color: AppColors.textDark,
-                  ),
-                ),
-              ],
-            ),
+  Widget _buildDeliverNowSummary(SaleDraft draft) {
+    final status = draft.paymentStatusDeliverNow;
+    final extra = draft.extraReceivedDeliverNow;
+
+    return _buildSummaryCard(
+      [
+        _SummaryRow(
+          'Total Sale Amount',
+          _currency(draft.totalSaleAmount),
+        ),
+        _SummaryRow(
+          'Amount Received',
+          _currency(draft.amountReceived),
+        ),
+        _SummaryRow(
+          'Remaining Balance',
+          _currency(draft.remainingBalanceDeliverNow),
+          emphasized: true,
+        ),
+      ],
+      title: 'Payment Summary',
+      statusLabel: status,
+      statusColor: _statusColor(status),
+      notes: [
+        if (extra > 0)
+          _SummaryNote(
+            'You entered ${_currency(extra)} more than the sale amount. '
+                'Check the amount received before saving.',
+            color: AppColors.warning,
+            icon: Icons.warning_amber_rounded,
           ),
-          Container(
-            padding: const EdgeInsets.symmetric(
-              horizontal: 10,
-              vertical: 6,
-            ),
-            decoration: BoxDecoration(
-              color: statusColor.withOpacity(0.10),
-              borderRadius: BorderRadius.circular(20),
-            ),
-            child: Text(
-              status,
-              style: TextStyle(
-                color: statusColor,
-                fontSize: 10,
-                fontWeight: FontWeight.w700,
-              ),
-            ),
+        if (draft.transportCost > 0)
+          _SummaryNote(
+            'Transport cost (${_currency(draft.transportCost)}) is saved '
+                'on the sale for your records. It is not added to the '
+                'customer\'s bill.',
+            color: AppColors.textGrey,
+            icon: Icons.info_outline_rounded,
           ),
-        ],
-      ),
+      ],
     );
   }
 
@@ -425,7 +439,7 @@ class Step5DeliveryOptionsState extends State<Step5DeliveryOptions> {
                     RegExp(r'^\d*\.?\d{0,2}'),
                   ),
                 ],
-                onChanged: (_) => setState(() {}),
+                onChanged: (_) => setState(_syncBooking),
                 validator: (value) {
                   final number = double.tryParse(value?.trim() ?? '');
 
@@ -467,7 +481,7 @@ class Step5DeliveryOptionsState extends State<Step5DeliveryOptions> {
                 inputFormatters: [
                   FilteringTextInputFormatter.digitsOnly,
                 ],
-                onChanged: (_) => setState(() {}),
+                onChanged: (_) => setState(_syncBooking),
                 validator: (value) {
                   final number = int.tryParse(value?.trim() ?? '');
 
@@ -493,7 +507,7 @@ class Step5DeliveryOptionsState extends State<Step5DeliveryOptions> {
                     RegExp(r'^\d*\.?\d{0,2}'),
                   ),
                 ],
-                onChanged: (_) => setState(() {}),
+                onChanged: (_) => setState(_syncBooking),
                 validator: (value) {
                   final number = double.tryParse(value?.trim() ?? '');
 
@@ -509,23 +523,64 @@ class Step5DeliveryOptionsState extends State<Step5DeliveryOptions> {
 
           const SizedBox(height: 12),
 
-          _buildSummaryCard([
-            _SummaryRow(
-              'Total Holding Charges',
-              _currency(draft.totalHoldingCharges),
-            ),
-            _SummaryRow(
-              'Remaining Balance',
-              _currency(draft.remainingBalanceBooking),
-              emphasized: true,
-            ),
-          ]),
+          _buildSummaryCard(
+            [
+              _SummaryRow(
+                'Total Sale Amount',
+                _currency(draft.totalSaleAmount),
+              ),
+              _SummaryRow(
+                'Holding Charges '
+                    '(${draft.holdingDays} '
+                    'day${draft.holdingDays == 1 ? '' : 's'} × '
+                    '${_currency(draft.holdingChargePerDay)})',
+                _currency(draft.totalHoldingCharges),
+              ),
+              _SummaryRow(
+                'Total Payable',
+                _currency(draft.totalPayableBooking),
+              ),
+              _SummaryRow(
+                'Booking Amount Paid',
+                _currency(draft.bookingAmount),
+              ),
+              _SummaryRow(
+                'Remaining Balance',
+                _currency(draft.remainingBalanceBooking),
+                emphasized: true,
+              ),
+            ],
+            title: 'Booking Summary',
+            notes: [
+              if (draft.bookingAmount > draft.totalPayableBooking)
+                _SummaryNote(
+                  'The booking amount is more than the total payable '
+                      '(${_currency(draft.totalPayableBooking)}). '
+                      'Check the amount before saving.',
+                  color: AppColors.warning,
+                  icon: Icons.warning_amber_rounded,
+                ),
+              _SummaryNote(
+                'This is an estimate using the holding days entered '
+                    'above. The final amount is recalculated from the '
+                    'actual holding days when delivery is completed.',
+                color: AppColors.textGrey,
+                icon: Icons.info_outline_rounded,
+              ),
+            ],
+          ),
         ],
       ),
     );
   }
 
-  Widget _buildSummaryCard(List<_SummaryRow> rows) {
+  Widget _buildSummaryCard(
+      List<_SummaryRow> rows, {
+        String? title,
+        String? statusLabel,
+        Color? statusColor,
+        List<_SummaryNote> notes = const [],
+      }) {
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.all(14),
@@ -535,21 +590,72 @@ class Step5DeliveryOptionsState extends State<Step5DeliveryOptions> {
         border: Border.all(color: AppColors.divider),
       ),
       child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          if (title != null || statusLabel != null) ...[
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    title ?? '',
+                    style: AppTheme.heading(
+                      size: 13,
+                      color: AppColors.textDark,
+                    ),
+                  ),
+                ),
+                if (statusLabel != null)
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 10,
+                      vertical: 5,
+                    ),
+                    decoration: BoxDecoration(
+                      color: (statusColor ?? AppColors.textGrey)
+                          .withOpacity(0.10),
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                    child: Text(
+                      statusLabel,
+                      style: TextStyle(
+                        color: statusColor ?? AppColors.textGrey,
+                        fontSize: 10,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+            const SizedBox(height: 10),
+            Divider(color: AppColors.divider, height: 1),
+            const SizedBox(height: 10),
+          ],
           for (var i = 0; i < rows.length; i++) ...[
             if (i > 0) const SizedBox(height: 8),
             Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(
-                  rows[i].label,
-                  style: AppTheme.body(
-                    size: 11,
-                    color: AppColors.textGrey,
+                // Expanded label: a long label such as
+                // "Holding Charges (5 days × ₹150.00)" wraps instead of
+                // overflowing the row.
+                Expanded(
+                  child: Text(
+                    rows[i].label,
+                    style: rows[i].emphasized
+                        ? AppTheme.heading(
+                      size: 12,
+                      color: AppColors.textDark,
+                    )
+                        : AppTheme.body(
+                      size: 11,
+                      color: AppColors.textGrey,
+                    ),
                   ),
                 ),
+                const SizedBox(width: 12),
                 Text(
                   rows[i].value,
+                  textAlign: TextAlign.right,
                   style: rows[i].emphasized
                       ? AppTheme.heading(
                     size: 14,
@@ -559,6 +665,28 @@ class Step5DeliveryOptionsState extends State<Step5DeliveryOptions> {
                     size: 12,
                     color: AppColors.textDark,
                     weight: FontWeight.w600,
+                  ),
+                ),
+              ],
+            ),
+          ],
+          for (final note in notes) ...[
+            const SizedBox(height: 10),
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Padding(
+                  padding: const EdgeInsets.only(top: 1),
+                  child: Icon(note.icon, size: 14, color: note.color),
+                ),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: Text(
+                    note.text,
+                    style: AppTheme.body(
+                      size: 10,
+                      color: note.color,
+                    ),
                   ),
                 ),
               ],
@@ -630,7 +758,7 @@ class Step5DeliveryOptionsState extends State<Step5DeliveryOptions> {
                     RegExp(r'^\d*\.?\d{0,2}'),
                   ),
                 ],
-                onChanged: (_) => setState(() {}),
+                onChanged: (_) => setState(_syncWaitForDelivery),
                 validator: (value) {
                   final number = double.tryParse(value?.trim() ?? '');
 
@@ -646,21 +774,49 @@ class Step5DeliveryOptionsState extends State<Step5DeliveryOptions> {
 
           const SizedBox(height: 12),
 
-          _buildSummaryCard([
-            _SummaryRow(
-              'Booking Weight',
-              '${_trimZero(draft.bookingWeightTotal)} kg',
-            ),
-            _SummaryRow(
-              'Booking Price/Kg',
-              _currency(draft.bookingPricePerKg),
-            ),
-            _SummaryRow(
-              'Remaining Balance',
-              _currency(draft.remainingAdvanceBalanceWaitForDelivery),
-              emphasized: true,
-            ),
-          ]),
+          _buildSummaryCard(
+            [
+              _SummaryRow(
+                'Booking Weight',
+                '${SaleDraft.formatWeight(draft.bookingWeightTotal)} kg',
+              ),
+              _SummaryRow(
+                'Booking Price/Kg',
+                _currency(draft.bookingPricePerKg),
+              ),
+              _SummaryRow(
+                'Estimated Total',
+                _currency(draft.totalSaleAmount),
+              ),
+              _SummaryRow(
+                'Advance Paid',
+                _currency(draft.bookingAdvanceAmount),
+              ),
+              _SummaryRow(
+                'Estimated Remaining',
+                _currency(draft.remainingAdvanceBalanceWaitForDelivery),
+                emphasized: true,
+              ),
+            ],
+            title: 'Booking Summary',
+            notes: [
+              if (draft.bookingAdvanceAmount > draft.totalSaleAmount)
+                _SummaryNote(
+                  'The advance is more than the estimated total '
+                      '(${_currency(draft.totalSaleAmount)}). '
+                      'Check the amount before saving.',
+                  color: AppColors.warning,
+                  icon: Icons.warning_amber_rounded,
+                ),
+              _SummaryNote(
+                'Estimated at today\'s weight. At pickup the goat is '
+                    'weighed again and the final amount is: pickup weight '
+                    '× ${_currency(draft.bookingPricePerKg)}/kg − advance.',
+                color: AppColors.textGrey,
+                icon: Icons.info_outline_rounded,
+              ),
+            ],
+          ),
         ],
       ),
     );
@@ -711,6 +867,7 @@ class Step5DeliveryOptionsState extends State<Step5DeliveryOptions> {
             label: 'Palai Package',
             hint: 'e.g. Standard Monthly Care',
             icon: Icons.card_giftcard_outlined,
+            onChanged: (_) => _syncPalai(),
             validator: (value) {
               final v = value?.trim() ?? '';
               if (v.isEmpty) return 'Enter the Palai package';
@@ -734,6 +891,7 @@ class Step5DeliveryOptionsState extends State<Step5DeliveryOptions> {
                 RegExp(r'^\d*\.?\d{0,2}'),
               ),
             ],
+            onChanged: (_) => _syncPalai(),
             validator: (value) {
               final number = double.tryParse(value?.trim() ?? '');
 
@@ -760,6 +918,19 @@ class _SummaryRow {
   final bool emphasized;
 
   const _SummaryRow(this.label, this.value, {this.emphasized = false});
+}
+
+/// Small explanatory / warning line under a summary card.
+class _SummaryNote {
+  final String text;
+  final Color color;
+  final IconData icon;
+
+  const _SummaryNote(
+      this.text, {
+        required this.color,
+        required this.icon,
+      });
 }
 
 // ============================================================================

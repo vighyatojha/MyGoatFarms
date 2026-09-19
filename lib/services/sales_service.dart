@@ -100,29 +100,43 @@ class SalesService {
   // SEQUENTIAL SALE ID
   // -----------------------------------------------------------------------
 
-  Future<String> nextSaleIdInTransaction(
+  /// IMPORTANT — Firestore transactions require EVERY read to happen
+  /// before ANY write. Calling a `transaction.set/update` and only then
+  /// reading the counter throws:
+  ///   "Transactions require all reads to be executed before all writes."
+  ///
+  /// So sale-ID generation is split in two:
+  ///   1. [_readNextSaleNumber]  -> READ  (call with the other reads)
+  ///   2. [_writeSaleCounter]    -> WRITE (call with the other writes)
+
+  /// READ step. Returns the next sequential sale number.
+  Future<int> _readNextSaleNumber(
       Transaction transaction,
       String farmId,
       ) async {
-    final counterRef = _saleCounterDoc(farmId);
-
-    final counterSnap = await transaction.get(counterRef);
+    final counterSnap = await transaction.get(_saleCounterDoc(farmId));
 
     final lastValue =
         (counterSnap.data()?['lastValue'] as num?)?.toInt() ?? 0;
 
-    final nextValue = lastValue + 1;
+    return lastValue + 1;
+  }
 
+  /// WRITE step. Persists the number returned by [_readNextSaleNumber].
+  void _writeSaleCounter(
+      Transaction transaction,
+      String farmId,
+      int saleNumber,
+      ) {
     transaction.set(
-      counterRef,
-      {
-        'lastValue': nextValue,
-      },
+      _saleCounterDoc(farmId),
+      {'lastValue': saleNumber},
       SetOptions(merge: true),
     );
-
-    return 'S-${nextValue.toString().padLeft(4, '0')}';
   }
+
+  String _formatSaleId(int saleNumber) =>
+      'S-${saleNumber.toString().padLeft(4, '0')}';
 
   // -----------------------------------------------------------------------
   // BRANCH A — DELIVER NOW (Task 3.1)
@@ -145,7 +159,9 @@ class SalesService {
       throw StateError('Select at least one goat before saving.');
     }
 
-    late final String saleId;
+    // Not `late final`: Firestore may re-run the transaction closure
+    // on contention, which would assign this more than once.
+    String saleId = '';
 
     await _db.runTransaction((transaction) async {
       // ---------------------------------------------------------------
@@ -172,6 +188,13 @@ class SalesService {
           );
         }
       }
+
+      // ---------------------------------------------------------------
+      // 1b. Read the sale counter NOW, while we are still in the
+      //     read phase. Every write below happens after this point.
+      // ---------------------------------------------------------------
+
+      final saleNumber = await _readNextSaleNumber(transaction, farmId);
 
       // ---------------------------------------------------------------
       // 2. Resolve the customer.
@@ -216,7 +239,8 @@ class SalesService {
       // 3. Create the sale doc.
       // ---------------------------------------------------------------
 
-      saleId = await nextSaleIdInTransaction(transaction, farmId);
+      saleId = _formatSaleId(saleNumber);
+      _writeSaleCounter(transaction, farmId, saleNumber);
 
       final sale = Sale(
         id: saleId,
@@ -295,7 +319,9 @@ class SalesService {
       throw StateError('Select at least one goat before saving.');
     }
 
-    late final String saleId;
+    // Not `late final`: Firestore may re-run the transaction closure
+    // on contention, which would assign this more than once.
+    String saleId = '';
 
     await _db.runTransaction((transaction) async {
       // ---------------------------------------------------------------
@@ -320,6 +346,13 @@ class SalesService {
           );
         }
       }
+
+      // ---------------------------------------------------------------
+      // 1b. Read the sale counter NOW, while we are still in the
+      //     read phase. Every write below happens after this point.
+      // ---------------------------------------------------------------
+
+      final saleNumber = await _readNextSaleNumber(transaction, farmId);
 
       // ---------------------------------------------------------------
       // 2. Resolve the customer. Same three-way rule as saveDeliverNow.
@@ -358,7 +391,8 @@ class SalesService {
       // 3. Create the sale doc.
       // ---------------------------------------------------------------
 
-      saleId = await nextSaleIdInTransaction(transaction, farmId);
+      saleId = _formatSaleId(saleNumber);
+      _writeSaleCounter(transaction, farmId, saleNumber);
 
       final sale = Sale(
         id: saleId,
@@ -435,7 +469,9 @@ class SalesService {
       throw StateError('Select at least one goat before saving.');
     }
 
-    late final String saleId;
+    // Not `late final`: Firestore may re-run the transaction closure
+    // on contention, which would assign this more than once.
+    String saleId = '';
 
     await _db.runTransaction((transaction) async {
       // ---------------------------------------------------------------
@@ -460,6 +496,13 @@ class SalesService {
           );
         }
       }
+
+      // ---------------------------------------------------------------
+      // 1b. Read the sale counter NOW, while we are still in the
+      //     read phase. Every write below happens after this point.
+      // ---------------------------------------------------------------
+
+      final saleNumber = await _readNextSaleNumber(transaction, farmId);
 
       // ---------------------------------------------------------------
       // 2. Resolve the customer. Same three-way rule as saveDeliverNow.
@@ -498,7 +541,8 @@ class SalesService {
       // 3. Create the sale doc.
       // ---------------------------------------------------------------
 
-      saleId = await nextSaleIdInTransaction(transaction, farmId);
+      saleId = _formatSaleId(saleNumber);
+      _writeSaleCounter(transaction, farmId, saleNumber);
 
       final sale = Sale(
         id: saleId,
@@ -627,7 +671,9 @@ class SalesService {
     // 2. Trading-side transaction.
     // -----------------------------------------------------------------
 
-    late final String saleId;
+    // Not `late final`: Firestore may re-run the transaction closure
+    // on contention, which would assign this more than once.
+    String saleId = '';
 
     await _db.runTransaction((transaction) async {
       for (final goat in draft.selectedGoats) {
@@ -649,7 +695,11 @@ class SalesService {
         }
       }
 
-      saleId = await nextSaleIdInTransaction(transaction, farmId);
+      // Palai branch has no customer write, but keep the same
+      // read-then-write discipline.
+      final saleNumber = await _readNextSaleNumber(transaction, farmId);
+      saleId = _formatSaleId(saleNumber);
+      _writeSaleCounter(transaction, farmId, saleNumber);
 
       final sale = Sale(
         id: saleId,

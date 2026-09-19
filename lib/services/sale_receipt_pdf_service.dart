@@ -52,13 +52,20 @@ class SaleReceiptPdfService {
           pageNumber: context.pageNumber,
           totalPages: context.pagesCount,
         ),
-        build: (context) => [
-          if (context.pageNumber == 1) ...[
-            _receiptTitle(sale),
-            pw.SizedBox(height: 8),
-            _infoBar(sale),
-            pw.SizedBox(height: 10),
-          ],
+        // IMPORTANT: this callback builds the BODY, and the pdf package
+        // hands it a Context that has no page yet. Reading
+        // `context.pageNumber` / `context.pagesCount` here throws
+        // "Null check operator used on a null value". Those are only valid
+        // inside `header:` and `footer:` (which is where they are used).
+        //
+        // The body list is built exactly once, so the title and info bar
+        // below already appear only once, at the top of the first page —
+        // no page-number check is needed.
+        build: (_) => [
+          _receiptTitle(sale),
+          pw.SizedBox(height: 8),
+          _infoBar(sale),
+          pw.SizedBox(height: 10),
           _sectionBanner(
             number: '1',
             title: 'Customer Details',
@@ -197,6 +204,7 @@ class SaleReceiptPdfService {
             right: 2,
             top: 2,
             child: pw.Column(
+              mainAxisSize: pw.MainAxisSize.min,
               crossAxisAlignment: pw.CrossAxisAlignment.center,
               children: [
                 pw.Text(
@@ -549,11 +557,13 @@ class SaleReceiptPdfService {
         sale.isWaitForDelivery && sale.status == Sale.statusPickupCompleted;
 
     final baseAmount = sale.totalSaleAmount;
-    final finalTotal = isFinalBooking
-        ? (sale.finalAmountAfterHolding ?? baseAmount + holding)
-        : isFinalPickup
-        ? (sale.finalPriceAfterPickup ?? baseAmount)
-        : baseAmount + (sale.isBooking ? holding : 0);
+    final finalTotal = _round2(
+      isFinalBooking
+          ? (sale.finalAmountAfterHolding ?? baseAmount + holding)
+          : isFinalPickup
+          ? (sale.finalPriceAfterPickup ?? baseAmount)
+          : baseAmount + (sale.isBooking ? holding : 0),
+    );
 
     return _card(
       child: pw.Column(
@@ -721,8 +731,9 @@ class SaleReceiptPdfService {
   pw.Widget _paymentSummary(Sale sale) {
     final paid = _paid(sale);
     final total = _finalPayable(sale);
-    final remaining = (total - paid).clamp(0, double.infinity).toDouble();
-    final status = remaining <= 0.01
+    final rawRemaining = _round2(total - paid);
+    final remaining = rawRemaining <= 0 ? 0.0 : rawRemaining;
+    final status = remaining <= 0
         ? 'PAID'
         : paid > 0
         ? 'PARTIALLY PAID'
@@ -928,26 +939,40 @@ class SaleReceiptPdfService {
     );
   }
 
+  /// Rounds to 2 decimals so floating-point drift (e.g.
+  /// 27456.000000000004) can never flip "PAID" to "PARTIALLY PAID".
+  double _round2(double value) {
+    if (value.isNaN || value.isInfinite) return 0;
+    final nudge = value >= 0 ? 1e-9 : -1e-9;
+    return ((value + nudge) * 100).roundToDouble() / 100;
+  }
+
   double _paid(Sale sale) {
-    if (sale.isDeliverNow) return sale.amountReceived ?? 0;
-    if (sale.isBooking) return sale.bookingAmount ?? 0;
-    if (sale.isWaitForDelivery) return sale.bookingAdvanceAmount ?? 0;
+    if (sale.isDeliverNow) return _round2(sale.amountReceived ?? 0);
+    if (sale.isBooking) return _round2(sale.bookingAmount ?? 0);
+    if (sale.isWaitForDelivery) {
+      return _round2(sale.bookingAdvanceAmount ?? 0);
+    }
     return 0;
   }
 
   double _finalPayable(Sale sale) {
     if (sale.isBooking &&
         sale.status == Sale.statusDeliveryCompleted) {
-      return sale.finalAmountAfterHolding ?? sale.totalSaleAmount;
+      return _round2(
+        sale.finalAmountAfterHolding ?? sale.totalSaleAmount,
+      );
     }
 
     if (sale.isWaitForDelivery &&
         sale.status == Sale.statusPickupCompleted) {
-      return sale.finalPriceAfterPickup ?? sale.totalSaleAmount;
+      return _round2(sale.finalPriceAfterPickup ?? sale.totalSaleAmount);
     }
 
-    return sale.totalSaleAmount +
-        (sale.isBooking ? (sale.totalHoldingCharges ?? 0) : 0);
+    return _round2(
+      sale.totalSaleAmount +
+          (sale.isBooking ? (sale.totalHoldingCharges ?? 0) : 0),
+    );
   }
 
   String _statusLabel(Sale sale) {
@@ -987,11 +1012,14 @@ class SaleReceiptPdfService {
     return sale.deliveryType;
   }
 
-  String _currency(double value) {
-    return NumberFormat('#,##0.00', 'en_IN').format(value).replaceFirst(
-      RegExp(r'^'),
-      '₹',
-    );
+  /// Same formatter as the on-screen receipt, so both show identical
+  /// figures (Indian digit grouping, e.g. ₹1,00,000.00).
+  String _currency(num value) {
+    return NumberFormat.currency(
+      locale: 'en_IN',
+      symbol: '₹',
+      decimalDigits: 2,
+    ).format(value);
   }
 
   String _farmName(BillSettings settings) {

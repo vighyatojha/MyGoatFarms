@@ -37,11 +37,8 @@ class _Step4SaleDetailsState extends State<Step4SaleDetails> {
     ).format(value);
   }
 
-  String _trimZero(double value) {
-    return value == value.roundToDouble()
-        ? value.toStringAsFixed(0)
-        : value.toString();
-  }
+  /// Price shown in the text field: "520", "520.5", "520.55".
+  String _priceText(double value) => SaleDraft.formatWeight(value);
 
   @override
   void initState() {
@@ -50,7 +47,7 @@ class _Step4SaleDetailsState extends State<Step4SaleDetails> {
     _priceController = TextEditingController(
       text: widget.draft.sellingPricePerKg == 0
           ? ''
-          : _trimZero(widget.draft.sellingPricePerKg),
+          : _priceText(widget.draft.sellingPricePerKg),
     );
   }
 
@@ -74,6 +71,8 @@ class _Step4SaleDetailsState extends State<Step4SaleDetails> {
     return Form(
       key: widget.formKey,
       child: ListView(
+        keyboardDismissBehavior:
+        ScrollViewKeyboardDismissBehavior.onDrag,
         padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
         children: [
           WizardSectionCard(
@@ -89,7 +88,7 @@ class _Step4SaleDetailsState extends State<Step4SaleDetails> {
               _ReadOnlyRow(
                 icon: Icons.scale_outlined,
                 label: 'Total Selling Weight',
-                value: '${_trimZero(draft.totalSellingWeight)} KG',
+                value: '${SaleDraft.formatWeight(draft.totalSellingWeight)} KG',
               ),
               const SizedBox(height: 14),
               wizardField(
@@ -122,13 +121,22 @@ class _Step4SaleDetailsState extends State<Step4SaleDetails> {
 
           const SizedBox(height: 14),
 
-          _buildTotalCard(draft.totalSaleAmount),
+          _buildTotalCard(draft),
         ],
       ),
     );
   }
 
-  Widget _buildTotalCard(double amount) {
+  Widget _buildTotalCard(SaleDraft draft) {
+    final amount = draft.totalSaleAmount;
+
+    // Live, human-checkable working: "52.8 kg × ₹520 = ₹27,456.00".
+    // Falls back to the generic hint until a price has been typed.
+    final formula = draft.sellingPricePerKg > 0
+        ? '${SaleDraft.formatWeight(draft.totalSellingWeight)} kg × '
+        '${_currency(draft.sellingPricePerKg)} / kg'
+        : 'Selling Weight × Price per KG';
+
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.all(16),
@@ -169,7 +177,7 @@ class _Step4SaleDetailsState extends State<Step4SaleDetails> {
                 ),
                 const SizedBox(height: 4),
                 Text(
-                  'Selling Weight × Price per KG',
+                  formula,
                   maxLines: 2,
                   overflow: TextOverflow.ellipsis,
                   style: AppTheme.body(
@@ -182,14 +190,19 @@ class _Step4SaleDetailsState extends State<Step4SaleDetails> {
           ),
           const SizedBox(width: 12),
           Flexible(
-            child: Text(
-              _currency(amount),
-              textAlign: TextAlign.right,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: AppTheme.heading(
-                size: 18,
-                color: AppColors.darkGreen,
+            // A money figure must never be cut off with "…" — shrink it
+            // to fit instead.
+            child: FittedBox(
+              fit: BoxFit.scaleDown,
+              alignment: Alignment.centerRight,
+              child: Text(
+                _currency(amount),
+                textAlign: TextAlign.right,
+                maxLines: 1,
+                style: AppTheme.heading(
+                  size: 18,
+                  color: AppColors.darkGreen,
+                ),
               ),
             ),
           ),
