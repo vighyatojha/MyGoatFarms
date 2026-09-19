@@ -22,8 +22,15 @@ import 'goat_stock_detail_screen.dart';
 /// Farm ID is resolved internally, so this screen does not require a
 /// farmId constructor parameter.
 class GoatStockListScreen extends StatefulWidget {
+  /// Pre-selects a status filter chip on open — lets other screens
+  /// (like the Trading Dashboard's stat cards) deep-link straight to
+  /// a filtered view instead of landing on the unfiltered list.
+  /// `null` keeps the previous default of "All".
+  final String? initialStatusFilter;
+
   const GoatStockListScreen({
     super.key,
+    this.initialStatusFilter,
   });
 
   @override
@@ -42,7 +49,7 @@ class _GoatStockListScreenState
   String _search = '';
 
   /// null = All.
-  String? _statusFilter;
+  late String? _statusFilter = widget.initialStatusFilter;
 
   @override
   void initState() {

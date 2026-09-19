@@ -85,9 +85,11 @@ class TradingSummary {
     }
 
     return TradingSummary(
-      totalStock: intFrom('totalStock'),
-      wholesalePurchased: intFrom('wholesalePurchased'),
-      totalSold: intFrom('totalSold'),
+      totalStock: intFrom('totalStock') < 0 ? 0 : intFrom('totalStock'),
+      wholesalePurchased: intFrom('wholesalePurchased') < 0
+          ? 0
+          : intFrom('wholesalePurchased'),
+      totalSold: intFrom('totalSold') < 0 ? 0 : intFrom('totalSold'),
       // Floored at 0 for display: GoatService.registerGoat() now floors
       // this itself going forward, but any value already written to
       // Firestore before that fix (e.g. the -2 from registering against
@@ -95,13 +97,16 @@ class TradingSummary {
       // never be shown to the user as a negative "count". Running
       // TradingService.backfillDashboardSummary() once corrects the
       // stored value properly; this clamp is just a display-side safety
-      // net in the meantime.
+      // net in the meantime. The same reasoning — and the same
+      // backfillDashboardSummary() fix — now applies to every counter
+      // on this dashboard, not just this one.
       pendingRegistrations:
       intFrom('pendingRegistrations') < 0
           ? 0
           : intFrom('pendingRegistrations'),
-      booking: intFrom('booking'),
-      waitOnDelivery: intFrom('waitOnDelivery'),
+      booking: intFrom('booking') < 0 ? 0 : intFrom('booking'),
+      waitOnDelivery:
+      intFrom('waitOnDelivery') < 0 ? 0 : intFrom('waitOnDelivery'),
     );
   }
 }

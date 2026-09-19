@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 
 import '../../app_theme.dart';
+import '../../models/goat_model.dart';
 import '../../models/trading_purchase_model.dart';
 import '../../models/trading_summary_model.dart';
 import '../../services/firestore_service.dart';
@@ -39,6 +40,7 @@ class _TradingDashboardScreenState
     extends State<TradingDashboardScreen> {
   String? _farmId;
   bool _loadingFarm = true;
+  bool _recalculating = false;
   String? _farmLoadError;
 
   @override
@@ -101,6 +103,69 @@ class _TradingDashboardScreenState
         _farmLoadError = e.toString();
       });
     }
+  }
+
+  /// Fixes dashboard stat cards showing negative or drifted numbers by
+  /// re-deriving every count straight from the actual purchase and
+  /// goat records, then overwriting the stored aggregate with the
+  /// corrected values. Safe to run any time — it's a pure
+  /// recomputation, not an increment, so running it twice in a row
+  /// produces the same result.
+  Future<void> _recalculateDashboard() async {
+    final farmId = _farmId;
+    if (farmId == null || _recalculating) return;
+
+    setState(() {
+      _recalculating = true;
+    });
+
+    try {
+      await TradingService.instance.backfillDashboardSummary(farmId);
+
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Dashboard numbers recalculated.'),
+          backgroundColor: AppColors.darkGreen,
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'Could not recalculate: '
+                '${FirestoreService.instance.describeError(e)}',
+          ),
+          backgroundColor: AppColors.error,
+        ),
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _recalculating = false;
+        });
+      }
+    }
+  }
+
+  // ===========================================================================
+  // NAVIGATION HELPERS
+  // ===========================================================================
+
+  /// Shared by the stat cards below and by the "Goat Stock" quick
+  /// action — every one of them ends up on the same list screen, just
+  /// pre-filtered differently.
+  void _openGoatStock({String? statusFilter}) {
+    Navigator.of(context).push(
+      fastRoute(
+        GoatStockListScreen(
+          initialStatusFilter: statusFilter,
+        ),
+      ),
+    );
   }
 
   // ===========================================================================
@@ -316,22 +381,33 @@ class _TradingDashboardScreenState
             ),
           ),
 
-          // Search-style action
-          Material(
-            color: AppColors.primaryGreen.withOpacity(0.08),
-            shape: const CircleBorder(),
-            child: InkWell(
-              customBorder: const CircleBorder(),
-              onTap: () {
-                // Reserved for future Trading search.
-              },
-              child: const SizedBox(
-                width: 48,
-                height: 48,
-                child: Icon(
-                  Icons.search_rounded,
-                  color: AppColors.primaryGreen,
-                  size: 24,
+          // Recalculate dashboard numbers — fixes stat cards that have
+          // drifted or gone negative by re-deriving them from the
+          // actual purchase / goat records.
+          Tooltip(
+            message: 'Recalculate dashboard numbers',
+            child: Material(
+              color: AppColors.primaryGreen.withOpacity(0.08),
+              shape: const CircleBorder(),
+              child: InkWell(
+                customBorder: const CircleBorder(),
+                onTap: _recalculating ? null : _recalculateDashboard,
+                child: SizedBox(
+                  width: 48,
+                  height: 48,
+                  child: _recalculating
+                      ? const Padding(
+                    padding: EdgeInsets.all(14),
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2.2,
+                      color: AppColors.primaryGreen,
+                    ),
+                  )
+                      : const Icon(
+                    Icons.refresh_rounded,
+                    color: AppColors.primaryGreen,
+                    size: 24,
+                  ),
                 ),
               ),
             ),
@@ -466,99 +542,49 @@ class _TradingDashboardScreenState
   // ===========================================================================
 
   Widget _statGrid(TradingSummary summary) {
+    // Only stats with somewhere real to go get a full card — a card
+    // that goes nowhere just wastes a tap. Everything else moves to
+    // the compact strip below instead of taking up a full tile.
     final cards = <_TradingStatCardData>[
       _TradingStatCardData(
         icon: Icons.pets_rounded,
         label: 'Total Stock',
         value: '${summary.totalStock}',
         color: AppColors.primaryGreen,
-      ),
-      _TradingStatCardData(
-        icon: Icons.shopping_cart_outlined,
-        label: 'Wholesale Purchased',
-        value: '${summary.wholesalePurchased}',
-        color: AppColors.info,
-      ),
-      _TradingStatCardData(
-        icon: Icons.sell_outlined,
-        label: 'Total Sold',
-        value: '${summary.totalSold}',
-        color: AppColors.error,
-      ),
-      _TradingStatCardData(
-        icon: Icons.trending_up_rounded,
-        label: 'Total Profit',
-        value: _currency(summary.totalProfit),
-        color: AppColors.success,
-      ),
-      _TradingStatCardData(
-        icon: Icons.pending_actions_outlined,
-        label: 'Pending Registrations',
-        value: '${summary.pendingRegistrations}',
-        color: AppColors.warning,
+        onTap: () => _openGoatStock(),
       ),
       _TradingStatCardData(
         icon: Icons.event_available_outlined,
         label: 'Booking',
         value: '${summary.booking}',
         color: Colors.deepPurple,
+        onTap: () => _openGoatStock(
+          statusFilter: Goat.statusBooked,
+        ),
       ),
       _TradingStatCardData(
         icon: Icons.local_shipping_outlined,
         label: 'Wait on Delivery',
         value: '${summary.waitOnDelivery}',
         color: AppColors.stockTeal,
+        onTap: () => _openGoatStock(
+          statusFilter: Goat.statusWaitOnDelivery,
+        ),
+      ),
+      _TradingStatCardData(
+        icon: Icons.sell_outlined,
+        label: 'Total Sold',
+        value: '${summary.totalSold}',
+        color: AppColors.error,
+        onTap: () => _openGoatStock(
+          statusFilter: Goat.statusSold,
+        ),
       ),
     ];
 
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final width = constraints.maxWidth;
-
-        // Four compact cards on larger screens.
-        if (width >= 700) {
-          return GridView.builder(
-            shrinkWrap: true,
-            physics: const NeverScrollableScrollPhysics(),
-            itemCount: cards.length,
-            gridDelegate:
-            const SliverGridDelegateWithFixedCrossAxisCount(
-              crossAxisCount: 4,
-              crossAxisSpacing: 10,
-              mainAxisSpacing: 10,
-              childAspectRatio: 1.25,
-            ),
-            itemBuilder: (context, index) {
-              return _TradingStatCard(
-                data: cards[index],
-              );
-            },
-          );
-        }
-
-        // Three cards per row on medium phones/tablets.
-        if (width >= 520) {
-          return GridView.builder(
-            shrinkWrap: true,
-            physics: const NeverScrollableScrollPhysics(),
-            itemCount: cards.length,
-            gridDelegate:
-            const SliverGridDelegateWithFixedCrossAxisCount(
-              crossAxisCount: 3,
-              crossAxisSpacing: 10,
-              mainAxisSpacing: 10,
-              childAspectRatio: 1.05,
-            ),
-            itemBuilder: (context, index) {
-              return _TradingStatCard(
-                data: cards[index],
-              );
-            },
-          );
-        }
-
-        // Compact two-column mobile layout.
-        return GridView.builder(
+    return Column(
+      children: [
+        GridView.builder(
           shrinkWrap: true,
           physics: const NeverScrollableScrollPhysics(),
           itemCount: cards.length,
@@ -567,15 +593,97 @@ class _TradingDashboardScreenState
             crossAxisCount: 2,
             crossAxisSpacing: 10,
             mainAxisSpacing: 10,
-            childAspectRatio: 1.42,
+            childAspectRatio: 1.5,
           ),
           itemBuilder: (context, index) {
             return _TradingStatCard(
               data: cards[index],
             );
           },
-        );
-      },
+        ),
+        const SizedBox(height: 12),
+        _secondaryStatsStrip(summary),
+      ],
+    );
+  }
+
+  /// Everything that doesn't have a screen of its own to go to —
+  /// shown as a single compact, non-tappable strip instead of three
+  /// more big cards that would otherwise just sit there unusable.
+  Widget _secondaryStatsStrip(TradingSummary summary) {
+    final items = <_SecondaryStatData>[
+      _SecondaryStatData(
+        icon: Icons.shopping_cart_outlined,
+        label: 'Wholesale Purchased',
+        value: '${summary.wholesalePurchased}',
+        color: AppColors.info,
+      ),
+      _SecondaryStatData(
+        icon: Icons.pending_actions_outlined,
+        label: 'Pending Registrations',
+        value: '${summary.pendingRegistrations}',
+        color: AppColors.warning,
+      ),
+      _SecondaryStatData(
+        icon: Icons.trending_up_rounded,
+        label: 'Total Profit',
+        value: _currency(summary.totalProfit),
+        color: AppColors.success,
+      ),
+    ];
+
+    return Container(
+      padding: const EdgeInsets.symmetric(
+        horizontal: 14,
+        vertical: 4,
+      ),
+      decoration: AppTheme.card(radius: 16),
+      child: Column(
+        children: [
+          for (var i = 0; i < items.length; i++) ...[
+            if (i > 0)
+              const Divider(
+                height: 1,
+                color: AppColors.divider,
+              ),
+            _secondaryStatRow(items[i]),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _secondaryStatRow(_SecondaryStatData item) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 11),
+      child: Row(
+        children: [
+          Container(
+            width: 30,
+            height: 30,
+            decoration: BoxDecoration(
+              color: item.color.withOpacity(0.10),
+              borderRadius: BorderRadius.circular(9),
+            ),
+            child: Icon(
+              item.icon,
+              color: item.color,
+              size: 16,
+            ),
+          ),
+          const SizedBox(width: 11),
+          Expanded(
+            child: Text(
+              item.label,
+              style: AppTheme.body(size: 12),
+            ),
+          ),
+          Text(
+            item.value,
+            style: AppTheme.heading(size: 14, color: item.color),
+          ),
+        ],
+      ),
     );
   }
 
@@ -973,8 +1081,8 @@ class _TradingDashboardScreenState
     final actions = <_TradingQuickActionData>[
       _TradingQuickActionData(
         icon: Icons.shopping_cart_outlined,
-        title: 'Purchase',
-        subtitle: 'Goats',
+        title: 'Purchase Goats',
+        subtitle: 'Buy new wholesale stock',
         color: AppColors.primaryGreen,
         onTap: () {
           Navigator.of(context).push(
@@ -986,8 +1094,8 @@ class _TradingDashboardScreenState
       ),
       _TradingQuickActionData(
         icon: Icons.how_to_reg_outlined,
-        title: 'Register',
-        subtitle: 'Goats',
+        title: 'Register Goats',
+        subtitle: 'Add individual records for received goats',
         color: AppColors.info,
         onTap: () {
           Navigator.of(context).push(
@@ -999,21 +1107,15 @@ class _TradingDashboardScreenState
       ),
       _TradingQuickActionData(
         icon: Icons.inventory_2_outlined,
-        title: 'Goat',
-        subtitle: 'Stock',
+        title: 'Goat Stock',
+        subtitle: 'Browse, filter, and manage every goat',
         color: Colors.deepPurple,
-        onTap: () {
-          Navigator.of(context).push(
-            fastRoute(
-              const GoatStockListScreen(),
-            ),
-          );
-        },
+        onTap: () => _openGoatStock(),
       ),
       _TradingQuickActionData(
         icon: Icons.holiday_village_outlined,
-        title: 'Own',
-        subtitle: 'Palai',
+        title: 'Own Palai',
+        subtitle: 'Goats kept and boarded by your own farm',
         color: AppColors.warning,
         onTap: () {
           Navigator.of(context).push(
@@ -1025,8 +1127,8 @@ class _TradingDashboardScreenState
       ),
       _TradingQuickActionData(
         icon: Icons.sell_outlined,
-        title: 'Sell',
-        subtitle: 'Goat',
+        title: 'Sell Goat',
+        subtitle: 'Start a new sale',
         color: AppColors.error,
         onTap: () {
           Navigator.of(context).push(
@@ -1038,48 +1140,13 @@ class _TradingDashboardScreenState
       ),
     ];
 
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final width = constraints.maxWidth;
-
-        if (width >= 700) {
-          return GridView.builder(
-            shrinkWrap: true,
-            physics: const NeverScrollableScrollPhysics(),
-            itemCount: actions.length,
-            gridDelegate:
-            const SliverGridDelegateWithFixedCrossAxisCount(
-              crossAxisCount: 3,
-              crossAxisSpacing: 10,
-              mainAxisSpacing: 10,
-              childAspectRatio: 2.8,
-            ),
-            itemBuilder: (context, index) {
-              return _TradingQuickAction(
-                data: actions[index],
-              );
-            },
-          );
-        }
-
-        return GridView.builder(
-          shrinkWrap: true,
-          physics: const NeverScrollableScrollPhysics(),
-          itemCount: actions.length,
-          gridDelegate:
-          const SliverGridDelegateWithFixedCrossAxisCount(
-            crossAxisCount: 2,
-            crossAxisSpacing: 10,
-            mainAxisSpacing: 10,
-            childAspectRatio: 1.65,
-          ),
-          itemBuilder: (context, index) {
-            return _TradingQuickAction(
-              data: actions[index],
-            );
-          },
-        );
-      },
+    return Column(
+      children: [
+        for (var i = 0; i < actions.length; i++) ...[
+          if (i > 0) const SizedBox(height: 9),
+          _TradingQuickAction(data: actions[i]),
+        ],
+      ],
     );
   }
 }
@@ -1093,8 +1160,28 @@ class _TradingStatCardData {
   final String label;
   final String value;
   final Color color;
+  final VoidCallback onTap;
 
   const _TradingStatCardData({
+    required this.icon,
+    required this.label,
+    required this.value,
+    required this.color,
+    required this.onTap,
+  });
+}
+
+// ============================================================================
+// SECONDARY STAT DATA (non-navigable — shown in the compact strip)
+// ============================================================================
+
+class _SecondaryStatData {
+  final IconData icon;
+  final String label;
+  final String value;
+  final Color color;
+
+  const _SecondaryStatData({
     required this.icon,
     required this.label,
     required this.value,
@@ -1115,56 +1202,73 @@ class _TradingStatCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: data.color.withOpacity(0.07),
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: data.onTap,
         borderRadius: BorderRadius.circular(17),
-        border: Border.all(
-          color: data.color.withOpacity(0.12),
-          width: 1,
+        child: Container(
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            color: data.color.withOpacity(0.07),
+            borderRadius: BorderRadius.circular(17),
+            border: Border.all(
+              color: data.color.withOpacity(0.12),
+              width: 1,
+            ),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Container(
+                    width: 36,
+                    height: 36,
+                    decoration: BoxDecoration(
+                      color: data.color.withOpacity(0.10),
+                      borderRadius: BorderRadius.circular(11),
+                    ),
+                    child: Icon(
+                      data.icon,
+                      color: data.color,
+                      size: 19,
+                    ),
+                  ),
+                  Icon(
+                    Icons.chevron_right_rounded,
+                    color: data.color.withOpacity(0.55),
+                    size: 20,
+                  ),
+                ],
+              ),
+
+              const Spacer(),
+
+              Text(
+                data.label,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: AppTheme.body(
+                  size: 9.5,
+                ),
+              ),
+
+              const SizedBox(height: 2),
+
+              Text(
+                data.value,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: AppTheme.heading(
+                  size: 17,
+                  color: data.color,
+                ),
+              ),
+            ],
+          ),
         ),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Container(
-            width: 36,
-            height: 36,
-            decoration: BoxDecoration(
-              color: data.color.withOpacity(0.10),
-              borderRadius: BorderRadius.circular(11),
-            ),
-            child: Icon(
-              data.icon,
-              color: data.color,
-              size: 19,
-            ),
-          ),
-
-          const Spacer(),
-
-          Text(
-            data.label,
-            maxLines: 2,
-            overflow: TextOverflow.ellipsis,
-            style: AppTheme.body(
-              size: 9.5,
-            ),
-          ),
-
-          const SizedBox(height: 2),
-
-          Text(
-            data.value,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: AppTheme.heading(
-              size: 17,
-              color: data.color,
-            ),
-          ),
-        ],
       ),
     );
   }
@@ -1480,13 +1584,13 @@ class _TradingSummarySkeleton extends StatelessWidget {
     return GridView.builder(
       shrinkWrap: true,
       physics: const NeverScrollableScrollPhysics(),
-      itemCount: 7,
+      itemCount: 4,
       gridDelegate:
       const SliverGridDelegateWithFixedCrossAxisCount(
         crossAxisCount: 2,
         crossAxisSpacing: 10,
         mainAxisSpacing: 10,
-        childAspectRatio: 1.42,
+        childAspectRatio: 1.5,
       ),
       itemBuilder: (context, index) {
         return Container(
@@ -1614,56 +1718,51 @@ class _QuickActionsSkeleton
 
   @override
   Widget build(BuildContext context) {
-    return GridView.builder(
-      shrinkWrap: true,
-      physics: const NeverScrollableScrollPhysics(),
-      itemCount: 4,
-      gridDelegate:
-      const SliverGridDelegateWithFixedCrossAxisCount(
-        crossAxisCount: 2,
-        crossAxisSpacing: 10,
-        mainAxisSpacing: 10,
-        childAspectRatio: 1.65,
-      ),
-      itemBuilder: (context, index) {
-        return Container(
-          padding: const EdgeInsets.all(10),
-          decoration: AppTheme.card(
-            radius: 17,
+    return Column(
+      children: List.generate(5, (index) {
+        return Padding(
+          padding: EdgeInsets.only(
+            bottom: index == 4 ? 0 : 9,
           ),
-          child: Row(
-            children: const [
-              _SkeletonBox(
-                width: 43,
-                height: 43,
-                radius: 13,
-              ),
-              SizedBox(width: 9),
-              Expanded(
-                child: Column(
-                  mainAxisAlignment:
-                  MainAxisAlignment.center,
-                  crossAxisAlignment:
-                  CrossAxisAlignment.start,
-                  children: [
-                    _SkeletonBox(
-                      width: 60,
-                      height: 11,
-                      radius: 5,
-                    ),
-                    SizedBox(height: 5),
-                    _SkeletonBox(
-                      width: 45,
-                      height: 9,
-                      radius: 5,
-                    ),
-                  ],
+          child: Container(
+            padding: const EdgeInsets.all(10),
+            decoration: AppTheme.card(
+              radius: 17,
+            ),
+            child: const Row(
+              children: [
+                _SkeletonBox(
+                  width: 43,
+                  height: 43,
+                  radius: 13,
                 ),
-              ),
-            ],
+                SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    mainAxisAlignment:
+                    MainAxisAlignment.center,
+                    crossAxisAlignment:
+                    CrossAxisAlignment.start,
+                    children: [
+                      _SkeletonBox(
+                        width: 110,
+                        height: 11,
+                        radius: 5,
+                      ),
+                      SizedBox(height: 5),
+                      _SkeletonBox(
+                        width: 160,
+                        height: 9,
+                        radius: 5,
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
           ),
         );
-      },
+      }),
     );
   }
 }

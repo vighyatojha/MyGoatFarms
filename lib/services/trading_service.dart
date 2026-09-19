@@ -5,6 +5,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import '../models/activity_model.dart';
 import '../models/expense_categories.dart';
 import '../models/expense_model.dart';
+import '../models/goat_model.dart';
 import '../models/trading_purchase_model.dart';
 import '../models/trading_summary_model.dart';
 import 'firestore_service.dart';
@@ -79,6 +80,14 @@ class TradingService {
         .doc(farmId)
         .collection('tradingSummary')
         .doc('dashboard');
+  }
+
+  CollectionReference<Map<String, dynamic>> _tradingGoats(
+      String farmId,
+      ) {
+    return _farms()
+        .doc(farmId)
+        .collection('tradingGoats');
   }
 
   // -----------------------------------------------------------------------
@@ -755,12 +764,32 @@ class TradingService {
   /// current `pendingCount` (which already reflects registrations to
   /// date), or re-running backfill after registration has started would
   /// silently undo it.
+  ///
+  /// `totalStock`, `totalSold`, `booking`, and `waitOnDelivery` are
+  /// additionally reconciled here (added when negative dashboard values
+  /// turned up in production — a purchase from before this dashboard
+  /// tracking existed had already thrown every increment/decrement
+  /// pair off balance). Unlike the purchase-only totalStock estimate
+  /// above, these four are derived straight from each goat's actual
+  /// `currentStatus` today, so they self-heal regardless of what drifted
+  /// the stored counters in the first place:
+  ///
+  ///   totalStock = pendingRegistrations (received, not yet
+  ///                individually registered — no tradingGoats doc yet)
+  ///                + goats still on the farm (Available, Booked,
+  ///                Wait on Delivery, Own Palai)
+  ///   totalSold       = goats currently Sold
+  ///   booking         = goats currently Booked
+  ///   waitOnDelivery  = goats currently Wait on Delivery
+  ///
+  /// Goats currently Sold or In Customer Palai have left the farm and
+  /// are excluded from totalStock, matching how every sale/transfer
+  /// path already decrements it.
   Future<void> backfillDashboardSummary(String farmId) async {
     final snapshot =
     await _tradingPurchases(farmId).get().timeout(_timeout);
 
     var wholesalePurchased = 0;
-    var totalStock = 0;
     var pendingRegistrations = 0;
 
     for (final doc in snapshot.docs) {
@@ -769,13 +798,6 @@ class TradingService {
       wholesalePurchased += purchase.totalGoats;
 
       if (purchase.isReceivingCompleted) {
-        final surviving =
-            purchase.totalGoats - purchase.mortality;
-
-        if (surviving > 0) {
-          totalStock += surviving;
-        }
-
         // Reflects goats from this purchase still awaiting individual
         // registration — kept in sync by GoatService.registerGoat() as
         // each goat is saved. Not the same as `surviving`: a partially
@@ -787,11 +809,52 @@ class TradingService {
       }
     }
 
+    final goatsSnapshot =
+    await _tradingGoats(farmId).get().timeout(_timeout);
+
+    var onFarmGoats = 0;
+    var totalSold = 0;
+    var booking = 0;
+    var waitOnDelivery = 0;
+
+    for (final doc in goatsSnapshot.docs) {
+      final goat = Goat.fromDoc(doc);
+
+      switch (goat.currentStatus) {
+        case Goat.statusAvailable:
+        case Goat.statusOwnPalai:
+          onFarmGoats++;
+          break;
+
+        case Goat.statusBooked:
+          onFarmGoats++;
+          booking++;
+          break;
+
+        case Goat.statusWaitOnDelivery:
+          onFarmGoats++;
+          waitOnDelivery++;
+          break;
+
+        case Goat.statusSold:
+          totalSold++;
+          break;
+
+      // Goat.statusInCustomerPalai: left the farm via Branch D —
+      // not counted anywhere here, same as Sold.
+      }
+    }
+
+    final totalStock = pendingRegistrations + onFarmGoats;
+
     await _summaryDoc(farmId).set(
       {
         'wholesalePurchased': wholesalePurchased,
         'totalStock': totalStock,
         'pendingRegistrations': pendingRegistrations,
+        'totalSold': totalSold,
+        'booking': booking,
+        'waitOnDelivery': waitOnDelivery,
       },
       SetOptions(merge: true),
     ).timeout(_timeout);
