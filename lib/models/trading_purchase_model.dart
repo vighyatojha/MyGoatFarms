@@ -1,5 +1,7 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 
+import 'purchase_costing.dart';
+
 /// A wholesale goat purchase in the Trading module.
 ///
 /// Stored at:
@@ -133,6 +135,31 @@ class TradingPurchase {
 
   bool get isReceivingCompleted =>
       receivingStatus.trim().toLowerCase() == 'completed';
+
+  /// Costing rebuilt from the stored figures, using the same engine as the
+  /// wizard so cost numbers shown anywhere in the app match what was
+  /// calculated at entry time.
+  PurchaseCosting get costing => PurchaseCosting(
+    totalGoats: totalGoats,
+    weightAtPurchase: totalWeightAtPurchase,
+    pricePerKg: pricePerKg,
+    weightAfterArrival: totalWeightAfterArrival ?? 0,
+    mortality: mortality,
+    transportCost: transportCost,
+    loadingCharges: loadingCharges,
+    unloadingCharges: unloadingCharges,
+    otherExpenses: otherExpenses,
+  );
+
+  /// Goats that arrived alive (totalGoats - mortality). This is how many
+  /// goats can actually be registered.
+  int get survivingGoats => costing.survivingGoats;
+
+  /// Grand Total / surviving goats. 0 until receiving is completed.
+  double get costPerSurvivingGoat => costing.costPerSurvivingGoat;
+
+  /// Purchase value of goats lost in transit (already inside grandTotal).
+  double get mortalityLoss => costing.mortalityLoss;
 
   // -----------------------------------------------------------------------
   // FIRESTORE

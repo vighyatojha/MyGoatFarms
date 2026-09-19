@@ -1,15 +1,15 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:intl/intl.dart';
 
-import '../../../../app_theme.dart';
-import '../../../../models/trading_purchase_draft.dart';
+import '../../../app_theme.dart';
+import '../../../models/purchase_costing.dart';
+import '../../../models/trading_purchase_draft.dart';
+import '../purchase_goats/purchase_cost_card.dart';
 import '../purchase_goats/purchase_wizard_widgets.dart';
 
 /// Step 3 — Receiving & Transport.
 ///
-/// Receiving information is required only when the user chooses
-/// "Fill Receiving Details Now".
+/// Only shown when the user chooses "Fill Receiving Details Now".
 ///
 /// Fields:
 /// - Date Received at Farm
@@ -21,7 +21,10 @@ import '../purchase_goats/purchase_wizard_widgets.dart';
 /// - Unloading Charges
 /// - Other Expenses
 ///
-/// All calculated values update live from [PurchaseDraft].
+/// Everything is LIVE: each keystroke is pushed into the [PurchaseDraft] and
+/// the cards below are rebuilt from [PurchaseCosting]. The bottom card shows
+/// the purchase cost after transportation, mortality and arrival weight —
+/// the same numbers the summary step shows and the service saves.
 class Step3ReceivingTransport extends StatefulWidget {
   final GlobalKey<FormState> formKey;
   final PurchaseDraft draft;
@@ -47,13 +50,10 @@ class _Step3ReceivingTransportState
   late final TextEditingController _unloadingController;
   late final TextEditingController _otherController;
 
-  String _currency(num value) {
-    return NumberFormat.currency(
-      locale: 'en_IN',
-      symbol: '₹',
-      decimalDigits: 2,
-    ).format(value);
-  }
+  static DateTime _dateOnly(DateTime d) => DateTime(d.year, d.month, d.day);
+
+  String _moneyText(double value) =>
+      value == 0 ? '' : PurchaseCosting.formatNumber(value);
 
   @override
   void initState() {
@@ -61,51 +61,35 @@ class _Step3ReceivingTransportState
 
     final draft = widget.draft;
 
+    // The farm cannot receive goats before they were bought. If the purchase
+    // date was moved forward after this step was first filled in, pull the
+    // received date up with it.
+    if (_dateOnly(draft.dateReceivedAtFarm)
+        .isBefore(_dateOnly(draft.purchaseDate))) {
+      draft.dateReceivedAtFarm = _dateOnly(draft.purchaseDate);
+    }
+
     _weightAfterController = TextEditingController(
-      text: draft.totalWeightAfterArrival == 0
-          ? ''
-          : _trimZero(draft.totalWeightAfterArrival),
+      text: _moneyText(draft.totalWeightAfterArrival),
     );
 
     _mortalityController = TextEditingController(
-      text: draft.mortality == 0
-          ? ''
-          : draft.mortality.toString(),
+      text: draft.mortality == 0 ? '' : draft.mortality.toString(),
     );
 
-    _remarksController = TextEditingController(
-      text: draft.remarks,
-    );
+    _remarksController = TextEditingController(text: draft.remarks);
 
-    _transportController = TextEditingController(
-      text: draft.transportCost == 0
-          ? ''
-          : _trimZero(draft.transportCost),
-    );
+    _transportController =
+        TextEditingController(text: _moneyText(draft.transportCost));
 
-    _loadingController = TextEditingController(
-      text: draft.loadingCharges == 0
-          ? ''
-          : _trimZero(draft.loadingCharges),
-    );
+    _loadingController =
+        TextEditingController(text: _moneyText(draft.loadingCharges));
 
-    _unloadingController = TextEditingController(
-      text: draft.unloadingCharges == 0
-          ? ''
-          : _trimZero(draft.unloadingCharges),
-    );
+    _unloadingController =
+        TextEditingController(text: _moneyText(draft.unloadingCharges));
 
-    _otherController = TextEditingController(
-      text: draft.otherExpenses == 0
-          ? ''
-          : _trimZero(draft.otherExpenses),
-    );
-  }
-
-  String _trimZero(double value) {
-    return value == value.roundToDouble()
-        ? value.toStringAsFixed(0)
-        : value.toString();
+    _otherController =
+        TextEditingController(text: _moneyText(draft.otherExpenses));
   }
 
   @override
@@ -121,76 +105,38 @@ class _Step3ReceivingTransportState
   }
 
   Future<void> _pickReceivedDate() async {
-    final picked = await showDatePicker(
+    final draft = widget.draft;
+
+    final picked = await showWizardDatePicker(
       context: context,
-      initialDate: widget.draft.dateReceivedAtFarm,
-      firstDate: DateTime(2020),
-      lastDate: DateTime.now().add(
-        const Duration(days: 1),
-      ),
-      builder: (context, child) {
-        return Theme(
-          data: Theme.of(context).copyWith(
-            colorScheme: Theme.of(context)
-                .colorScheme
-                .copyWith(
-              primary: AppColors.primaryGreen,
-            ),
-          ),
-          child: child!,
-        );
-      },
+      initialDate: draft.dateReceivedAtFarm,
+      // Cannot be received before it was purchased, or in the future.
+      firstDate: draft.purchaseDate,
+      lastDate: DateTime.now(),
+      helpText: 'Date received at farm',
     );
 
-    if (picked == null) {
-      return;
-    }
+    if (picked == null || !mounted) return;
 
     setState(() {
-      widget.draft.dateReceivedAtFarm = picked;
+      draft.dateReceivedAtFarm = picked;
     });
   }
 
+  double _number(TextEditingController controller) =>
+      double.tryParse(controller.text.trim()) ?? 0;
+
+  /// Pushes every field into the draft and rebuilds — this is what keeps
+  /// all the calculated cards live.
   void _recalculate() {
     final draft = widget.draft;
 
-    draft.totalWeightAfterArrival =
-        double.tryParse(
-          _weightAfterController.text.trim(),
-        ) ??
-            0;
-
-    draft.mortality =
-        int.tryParse(
-          _mortalityController.text.trim(),
-        ) ??
-            0;
-
-    draft.remarks = _remarksController.text;
-
-    draft.transportCost =
-        double.tryParse(
-          _transportController.text.trim(),
-        ) ??
-            0;
-
-    draft.loadingCharges =
-        double.tryParse(
-          _loadingController.text.trim(),
-        ) ??
-            0;
-
-    draft.unloadingCharges =
-        double.tryParse(
-          _unloadingController.text.trim(),
-        ) ??
-            0;
-
-    draft.otherExpenses =
-        double.tryParse(
-          _otherController.text.trim(),
-        ) ??
-            0;
+    draft.totalWeightAfterArrival = _number(_weightAfterController);
+    draft.mortality = int.tryParse(_mortalityController.text.trim()) ?? 0;
+    draft.transportCost = _number(_transportController);
+    draft.loadingCharges = _number(_loadingController);
+    draft.unloadingCharges = _number(_unloadingController);
+    draft.otherExpenses = _number(_otherController);
 
     setState(() {});
   }
@@ -198,36 +144,51 @@ class _Step3ReceivingTransportState
   @override
   Widget build(BuildContext context) {
     final draft = widget.draft;
+    final costing = draft.costing;
 
     return Form(
       key: widget.formKey,
       child: ListView(
-        padding: const EdgeInsets.fromLTRB(
-          16,
-          16,
-          16,
-          24,
-        ),
+        keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+        padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
         children: [
-          _buildReceivingSection(draft),
+          _buildReceivingSection(draft, costing),
+
           const SizedBox(height: 14),
-          _buildTransportSection(draft),
+
+          _buildTransportSection(),
+
           const SizedBox(height: 14),
-          _buildTransportTotal(draft),
+
+          WizardResultCard(
+            icon: Icons.receipt_long_outlined,
+            title: 'Total Transportation Expenses',
+            formula: 'Transport + loading + unloading + other',
+            value: wizardCurrency(costing.totalExpenses),
+          ),
+
+          const SizedBox(height: 14),
+
+          PurchaseCostCard(costing: costing),
         ],
       ),
     );
   }
 
+  // ===========================================================================
+  // RECEIVING
+  // ===========================================================================
+
   Widget _buildReceivingSection(
       PurchaseDraft draft,
+      PurchaseCosting costing,
       ) {
     return WizardSectionCard(
-      title: 'Receiving Details',
+      title: 'Farm Receiving',
       icon: Icons.inventory_2_outlined,
       children: [
         WizardDateField(
-          label: 'Date Received at Farm',
+          label: 'Date Received at Farm *',
           date: draft.dateReceivedAtFarm,
           onTap: _pickReceivedDate,
         ),
@@ -240,27 +201,21 @@ class _Step3ReceivingTransportState
           hint: '0.00',
           icon: Icons.scale_outlined,
           suffix: 'KG',
-          keyboardType:
-          const TextInputType.numberWithOptions(
-            decimal: true,
-          ),
-          inputFormatters: [
-            FilteringTextInputFormatter.allow(
-              RegExp(r'^\d*\.?\d{0,2}'),
-            ),
-          ],
+          helper:
+          'Purchased: ${PurchaseCosting.formatNumber(draft.totalWeightAtPurchase)} kg',
+          keyboardType: wizardDecimalKeyboard,
+          inputFormatters: wizardDecimalFormatters(),
           onChanged: (_) => _recalculate(),
           validator: (value) {
-            final number = double.tryParse(
-              value?.trim() ?? '',
-            );
+            final number = double.tryParse(value?.trim() ?? '');
 
             if (number == null || number <= 0) {
               return 'Enter a valid weight';
             }
 
             if (number > draft.totalWeightAtPurchase) {
-              return 'Cannot exceed purchase weight';
+              return 'Cannot exceed the purchase weight '
+                  '(${PurchaseCosting.formatNumber(draft.totalWeightAtPurchase)} kg)';
             }
 
             return null;
@@ -272,28 +227,33 @@ class _Step3ReceivingTransportState
         wizardField(
           controller: _mortalityController,
           label: 'Mortality',
-          hint: 'Optional — goats lost in transit',
+          hint: 'Goats lost in transit (0 if none)',
           icon: Icons.report_gmailerrorred_outlined,
+          suffix: 'goats',
+          helper: 'Out of ${draft.totalGoats} purchased',
           keyboardType: TextInputType.number,
           inputFormatters: [
             FilteringTextInputFormatter.digitsOnly,
+            LengthLimitingTextInputFormatter(5),
           ],
           optional: true,
           onChanged: (_) => _recalculate(),
           validator: (value) {
-            final number = int.tryParse(
-              value?.trim() ?? '',
-            );
+            final text = value?.trim() ?? '';
 
-            if (value != null &&
-                value.trim().isNotEmpty &&
-                (number == null || number < 0)) {
+            if (text.isEmpty) return null;
+
+            final number = int.tryParse(text);
+
+            if (number == null || number < 0) {
               return 'Enter a valid number';
             }
 
-            if (number != null &&
-                number > draft.totalGoats) {
-              return 'Cannot exceed total goats';
+            // At least one goat must have arrived: an arrival weight is
+            // required, and there is nothing to register otherwise.
+            if (number >= draft.totalGoats) {
+              return 'Must be less than the ${draft.totalGoats} '
+                  'goats purchased';
             }
 
             return null;
@@ -304,244 +264,110 @@ class _Step3ReceivingTransportState
 
         wizardField(
           controller: _remarksController,
-          label: 'Remarks',
-          hint: 'Optional',
+          label: 'Remarks / Notes',
+          hint: 'e.g. 1 goat weak on arrival',
           icon: Icons.edit_note_rounded,
           maxLines: 3,
           optional: true,
+          textCapitalization: TextCapitalization.sentences,
           onChanged: (value) {
             draft.remarks = value;
           },
         ),
 
-        const SizedBox(height: 12),
+        const SizedBox(height: 14),
 
-        _buildComputedRow(
-          label: 'Weight Loss',
-          value:
-          '${_trimZero(draft.weightLoss)} KG',
+        // ---------------------------------------------------------------
+        // LIVE — weight loss + goats that arrived
+        // ---------------------------------------------------------------
+
+        Row(
+          children: [
+            Expanded(
+              child: WizardStatTile(
+                icon: Icons.trending_down_rounded,
+                label: 'Weight loss',
+                value: costing.hasArrival
+                    ? '${PurchaseCosting.formatNumber(costing.weightLoss)} kg '
+                    '(${PurchaseCosting.formatNumber(costing.weightLossPercent)}%)'
+                    : '—',
+              ),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: WizardStatTile(
+                icon: Icons.pets_outlined,
+                label: 'Goats arrived',
+                value: costing.totalGoats > 0
+                    ? '${costing.survivingGoats} of ${costing.totalGoats}'
+                    : '—',
+              ),
+            ),
+          ],
         ),
       ],
     );
   }
 
-  Widget _buildTransportSection(
-      PurchaseDraft draft,
-      ) {
+  // ===========================================================================
+  // TRANSPORT
+  // ===========================================================================
+
+  Widget _moneyField({
+    required TextEditingController controller,
+    required String label,
+    required IconData icon,
+    bool last = false,
+  }) {
+    return wizardField(
+      controller: controller,
+      label: label,
+      hint: '0.00',
+      icon: icon,
+      prefix: '₹ ',
+      keyboardType: wizardDecimalKeyboard,
+      inputFormatters: wizardDecimalFormatters(),
+      optional: true,
+      textInputAction: last ? TextInputAction.done : TextInputAction.next,
+      onChanged: (_) => _recalculate(),
+    );
+  }
+
+  Widget _buildTransportSection() {
     return WizardSectionCard(
-      title: 'Transport Expenses',
+      title: 'Transportation & Expenses',
       icon: Icons.local_shipping_outlined,
       children: [
-        wizardField(
+        Text(
+          'Add whatever applies. Every amount is optional.',
+          style: AppTheme.body(size: 11),
+        ),
+        const SizedBox(height: 12),
+        _moneyField(
           controller: _transportController,
           label: 'Transport Cost',
-          hint: 'Optional',
           icon: Icons.directions_car_outlined,
-          suffix: '₹',
-          keyboardType:
-          const TextInputType.numberWithOptions(
-            decimal: true,
-          ),
-          inputFormatters: [
-            FilteringTextInputFormatter.allow(
-              RegExp(r'^\d*\.?\d{0,2}'),
-            ),
-          ],
-          optional: true,
-          onChanged: (_) => _recalculate(),
         ),
-
         const SizedBox(height: 14),
-
-        wizardField(
+        _moneyField(
           controller: _loadingController,
           label: 'Loading Charges',
-          hint: 'Optional',
           icon: Icons.upload_outlined,
-          suffix: '₹',
-          keyboardType:
-          const TextInputType.numberWithOptions(
-            decimal: true,
-          ),
-          inputFormatters: [
-            FilteringTextInputFormatter.allow(
-              RegExp(r'^\d*\.?\d{0,2}'),
-            ),
-          ],
-          optional: true,
-          onChanged: (_) => _recalculate(),
         ),
-
         const SizedBox(height: 14),
-
-        wizardField(
+        _moneyField(
           controller: _unloadingController,
           label: 'Unloading Charges',
-          hint: 'Optional',
           icon: Icons.download_outlined,
-          suffix: '₹',
-          keyboardType:
-          const TextInputType.numberWithOptions(
-            decimal: true,
-          ),
-          inputFormatters: [
-            FilteringTextInputFormatter.allow(
-              RegExp(r'^\d*\.?\d{0,2}'),
-            ),
-          ],
-          optional: true,
-          onChanged: (_) => _recalculate(),
         ),
-
         const SizedBox(height: 14),
-
-        wizardField(
+        _moneyField(
           controller: _otherController,
           label: 'Other Expenses',
-          hint: 'Optional',
           icon: Icons.more_horiz_rounded,
-          suffix: '₹',
-          keyboardType:
-          const TextInputType.numberWithOptions(
-            decimal: true,
-          ),
-          inputFormatters: [
-            FilteringTextInputFormatter.allow(
-              RegExp(r'^\d*\.?\d{0,2}'),
-            ),
-          ],
-          optional: true,
-          onChanged: (_) => _recalculate(),
+          last: true,
         ),
       ],
-    );
-  }
-
-  Widget _buildTransportTotal(
-      PurchaseDraft draft,
-      ) {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: AppColors.lightGreen,
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(
-          color:
-          AppColors.primaryGreen.withOpacity(0.22),
-        ),
-      ),
-      child: Row(
-        crossAxisAlignment:
-        CrossAxisAlignment.center,
-        children: [
-          Container(
-            width: 44,
-            height: 44,
-            decoration: BoxDecoration(
-              color: AppColors.primaryGreen
-                  .withOpacity(0.12),
-              borderRadius:
-              BorderRadius.circular(13),
-            ),
-            child: const Icon(
-              Icons.receipt_long_outlined,
-              color: AppColors.darkGreen,
-              size: 22,
-            ),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment:
-              CrossAxisAlignment.start,
-              children: [
-                Text(
-                  'Total Transportation Expenses',
-                  maxLines: 2,
-                  overflow:
-                  TextOverflow.ellipsis,
-                  style: AppTheme.heading(
-                    size: 12,
-                    color: AppColors.textDark,
-                  ),
-                ),
-                const SizedBox(height: 3),
-                Text(
-                  'Transport + loading + unloading + other',
-                  maxLines: 2,
-                  overflow:
-                  TextOverflow.ellipsis,
-                  style: AppTheme.body(
-                    size: 10,
-                    color: AppColors.textGrey,
-                  ),
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(width: 12),
-          Flexible(
-            child: Text(
-              _currency(
-                draft.totalTransportExpenses,
-              ),
-              textAlign: TextAlign.right,
-              maxLines: 1,
-              overflow:
-              TextOverflow.ellipsis,
-              style: AppTheme.heading(
-                size: 17,
-                color: AppColors.darkGreen,
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildComputedRow({
-    required String label,
-    required String value,
-  }) {
-    return Container(
-      padding: const EdgeInsets.symmetric(
-        horizontal: 14,
-        vertical: 11,
-      ),
-      decoration: BoxDecoration(
-        color: AppColors.paleGreen,
-        borderRadius:
-        BorderRadius.circular(12),
-      ),
-      child: Row(
-        children: [
-          Expanded(
-            child: Text(
-              label,
-              style: AppTheme.body(
-                size: 11,
-                color: AppColors.textGrey,
-              ),
-            ),
-          ),
-          const SizedBox(width: 10),
-          Flexible(
-            child: Text(
-              value,
-              textAlign: TextAlign.right,
-              maxLines: 1,
-              overflow:
-              TextOverflow.ellipsis,
-              style: AppTheme.heading(
-                size: 12,
-                color: AppColors.darkGreen,
-              ),
-            ),
-          ),
-        ],
-      ),
     );
   }
 }

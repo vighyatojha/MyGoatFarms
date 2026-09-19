@@ -1,9 +1,13 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
 
 import '../../../app_theme.dart';
+import '../../../models/purchase_costing.dart';
 import '../../../models/trading_purchase_model.dart';
 import '../../../services/trading_service.dart';
+import 'purchase_cost_card.dart';
+import 'purchase_wizard_widgets.dart';
 
 /// Receiving screen for an existing Trading purchase.
 ///
@@ -38,6 +42,10 @@ class _CompleteReceivingScreenState
   late final TextEditingController _arrivalWeightController;
   late final TextEditingController _mortalityController;
   late final TextEditingController _remarksController;
+  late final TextEditingController _transportController;
+  late final TextEditingController _loadingController;
+  late final TextEditingController _unloadingController;
+  late final TextEditingController _otherController;
 
   bool _saving = false;
 
@@ -50,6 +58,10 @@ class _CompleteReceivingScreenState
     _arrivalWeightController = TextEditingController();
     _mortalityController = TextEditingController(text: '0');
     _remarksController = TextEditingController();
+    _transportController = TextEditingController();
+    _loadingController = TextEditingController();
+    _unloadingController = TextEditingController();
+    _otherController = TextEditingController();
   }
 
   @override
@@ -57,6 +69,10 @@ class _CompleteReceivingScreenState
     _arrivalWeightController.dispose();
     _mortalityController.dispose();
     _remarksController.dispose();
+    _transportController.dispose();
+    _loadingController.dispose();
+    _unloadingController.dispose();
+    _otherController.dispose();
     super.dispose();
   }
 
@@ -64,7 +80,7 @@ class _CompleteReceivingScreenState
     return NumberFormat.currency(
       locale: 'en_IN',
       symbol: '₹',
-      decimalDigits: 0,
+      decimalDigits: 2,
     ).format(value);
   }
 
@@ -82,35 +98,38 @@ class _CompleteReceivingScreenState
         0;
   }
 
-  double get _weightLoss {
-    final loss =
-        widget.purchase.totalWeightAtPurchase - _arrivalWeight;
+  double _money(TextEditingController controller) {
+    return double.tryParse(controller.text.trim()) ?? 0;
+  }
 
-    return loss < 0 ? 0 : loss;
+  /// Live costing: the purchase as saved + whatever is typed on this
+  /// screen. Same engine as the wizard, so the numbers match everywhere.
+  PurchaseCosting get _costing {
+    final p = widget.purchase;
+
+    return PurchaseCosting(
+      totalGoats: p.totalGoats,
+      weightAtPurchase: p.totalWeightAtPurchase,
+      pricePerKg: p.pricePerKg,
+      weightAfterArrival: _arrivalWeight,
+      mortality: _mortality,
+      transportCost: _money(_transportController),
+      loadingCharges: _money(_loadingController),
+      unloadingCharges: _money(_unloadingController),
+      otherExpenses: _money(_otherController),
+    );
   }
 
   Future<void> _selectDate() async {
-    final selected = await showDatePicker(
+    final selected = await showWizardDatePicker(
       context: context,
       initialDate: _receivedDate,
       firstDate: widget.purchase.purchaseDate,
       lastDate: DateTime.now(),
-      builder: (context, child) {
-        return Theme(
-          data: Theme.of(context).copyWith(
-            colorScheme: const ColorScheme.light(
-              primary: AppColors.primaryGreen,
-              onPrimary: Colors.white,
-              surface: Colors.white,
-              onSurface: Colors.black87,
-            ),
-          ),
-          child: child!,
-        );
-      },
+      helpText: 'Date received at farm',
     );
 
-    if (selected == null) return;
+    if (selected == null || !mounted) return;
 
     setState(() {
       _receivedDate = selected;
@@ -139,9 +158,10 @@ class _CompleteReceivingScreenState
       return;
     }
 
-    if (mortality > widget.purchase.totalGoats) {
+    if (mortality >= widget.purchase.totalGoats) {
       _showError(
-        'Mortality cannot be greater than total goats.',
+        'Mortality must be less than the '
+            '${widget.purchase.totalGoats} goats purchased.',
       );
       return;
     }
@@ -159,6 +179,10 @@ class _CompleteReceivingScreenState
         totalWeightAfterArrival: arrivalWeight,
         mortality: mortality,
         remarks: _remarksController.text.trim(),
+        transportCost: _money(_transportController),
+        loadingCharges: _money(_loadingController),
+        unloadingCharges: _money(_unloadingController),
+        otherExpenses: _money(_otherController),
       );
 
       if (!mounted) return;
@@ -238,11 +262,12 @@ class _CompleteReceivingScreenState
                 const TextInputType.numberWithOptions(
                   decimal: true,
                 ),
+                inputFormatters: wizardDecimalFormatters(),
                 // Without this, typing a value updates the
                 // controller/text field itself (which manages its own
                 // rendering) but never calls setState, so
                 // _receivingSummary() below — which reads
-                // _arrivalWeight/_weightLoss/effective-cost-per-kg via
+                // _arrivalWeight and the cost card (via _costing) via
                 // getters — keeps rendering whatever it saw on the
                 // last rebuild (i.e. stays stuck on "—").
                 onChanged: (_) => setState(() {}),
@@ -273,6 +298,10 @@ class _CompleteReceivingScreenState
                 suffix: 'Goats',
                 icon: Icons.pets_outlined,
                 keyboardType: TextInputType.number,
+                inputFormatters: [
+                  FilteringTextInputFormatter.digitsOnly,
+                  LengthLimitingTextInputFormatter(5),
+                ],
                 // Same reason as the arrival-weight field above: the
                 // Mortality row in the summary card reads _mortality
                 // via a getter, so it needs a setState to pick up the
@@ -287,8 +316,9 @@ class _CompleteReceivingScreenState
                     return 'Enter a valid mortality count';
                   }
 
-                  if (parsed > widget.purchase.totalGoats) {
-                    return 'Cannot exceed total goats';
+                  if (parsed >= widget.purchase.totalGoats) {
+                    return 'Must be less than the '
+                        '${widget.purchase.totalGoats} goats purchased';
                   }
 
                   return null;
@@ -305,6 +335,46 @@ class _CompleteReceivingScreenState
                 maxLines: 4,
                 textCapitalization:
                 TextCapitalization.sentences,
+              ),
+
+              const SizedBox(height: 22),
+
+              _sectionTitle(
+                icon: Icons.local_shipping_outlined,
+                title: 'Transportation & Expenses',
+              ),
+
+              const SizedBox(height: 4),
+
+              Text(
+                'Add whatever applies. Every amount is optional.',
+                style: AppTheme.body(size: 11),
+              ),
+
+              const SizedBox(height: 10),
+
+              _moneyField(
+                controller: _transportController,
+                label: 'Transport Cost',
+                icon: Icons.directions_car_outlined,
+              ),
+              const SizedBox(height: 12),
+              _moneyField(
+                controller: _loadingController,
+                label: 'Loading Charges',
+                icon: Icons.upload_outlined,
+              ),
+              const SizedBox(height: 12),
+              _moneyField(
+                controller: _unloadingController,
+                label: 'Unloading Charges',
+                icon: Icons.download_outlined,
+              ),
+              const SizedBox(height: 12),
+              _moneyField(
+                controller: _otherController,
+                label: 'Other Expenses',
+                icon: Icons.more_horiz_rounded,
               ),
 
               const SizedBox(height: 18),
@@ -490,72 +560,10 @@ class _CompleteReceivingScreenState
   // ---------------------------------------------------------------------------
 
   Widget _receivingSummary() {
-    final arrivalWeight = _arrivalWeight;
-
-    return Container(
-      padding: const EdgeInsets.all(17),
-      decoration: BoxDecoration(
-        color: AppColors.primaryGreen.withOpacity(0.07),
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(
-          color: AppColors.primaryGreen.withOpacity(0.15),
-        ),
-      ),
-      child: Column(
-        crossAxisAlignment:
-        CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              const Icon(
-                Icons.analytics_outlined,
-                color: AppColors.primaryGreen,
-                size: 21,
-              ),
-              const SizedBox(width: 9),
-              Text(
-                'Receiving Summary',
-                style: AppTheme.heading(size: 15),
-              ),
-            ],
-          ),
-          const SizedBox(height: 16),
-          _summaryRow(
-            'Purchase Weight',
-            '${widget.purchase.totalWeightAtPurchase.toStringAsFixed(2)} Kg',
-          ),
-          const SizedBox(height: 10),
-          _summaryRow(
-            'Arrival Weight',
-            arrivalWeight > 0
-                ? '${arrivalWeight.toStringAsFixed(2)} Kg'
-                : '—',
-          ),
-          const SizedBox(height: 10),
-          _summaryRow(
-            'Weight Loss',
-            arrivalWeight > 0
-                ? '${_weightLoss.toStringAsFixed(2)} Kg'
-                : '—',
-          ),
-          const SizedBox(height: 10),
-          _summaryRow(
-            'Mortality',
-            '$_mortality goats',
-          ),
-          const SizedBox(height: 10),
-          _summaryRow(
-            'Effective Cost / Kg',
-            arrivalWeight > 0
-                ? _currency(
-              widget.purchase.grandTotal /
-                  arrivalWeight,
-            )
-                : '—',
-            bold: true,
-          ),
-        ],
-      ),
+    // Shared live card: grand total, weight loss, goats arrived, effective
+    // cost per KG and per surviving goat.
+    return PurchaseCostCard(
+      costing: _costing,
     );
   }
 
@@ -592,6 +600,8 @@ class _CompleteReceivingScreenState
     TextInputType? keyboardType,
     String? Function(String?)? validator,
     ValueChanged<String>? onChanged,
+    List<TextInputFormatter>? inputFormatters,
+    String? prefix,
     int maxLines = 1,
     TextCapitalization textCapitalization =
         TextCapitalization.none,
@@ -600,6 +610,7 @@ class _CompleteReceivingScreenState
       controller: controller,
       enabled: !_saving,
       keyboardType: keyboardType,
+      inputFormatters: inputFormatters,
       validator: validator,
       onChanged: onChanged,
       maxLines: maxLines,
@@ -612,6 +623,7 @@ class _CompleteReceivingScreenState
           color: AppColors.primaryGreen,
         ),
         suffixText: suffix,
+        prefixText: prefix,
         filled: true,
         fillColor: Colors.white,
         border: OutlineInputBorder(
@@ -646,6 +658,24 @@ class _CompleteReceivingScreenState
     );
   }
 
+  Widget _moneyField({
+    required TextEditingController controller,
+    required String label,
+    required IconData icon,
+  }) {
+    return _textField(
+      controller: controller,
+      label: label,
+      hint: '0.00',
+      icon: icon,
+      prefix: '₹ ',
+      keyboardType: const TextInputType.numberWithOptions(decimal: true),
+      inputFormatters: wizardDecimalFormatters(),
+      // Live: the cost card below reads these controllers via _costing.
+      onChanged: (_) => setState(() {}),
+    );
+  }
+
   Widget _infoRow(
       String label,
       String value, {
@@ -675,30 +705,4 @@ class _CompleteReceivingScreenState
     );
   }
 
-  Widget _summaryRow(
-      String label,
-      String value, {
-        bool bold = false,
-      }) {
-    return Row(
-      children: [
-        Expanded(
-          child: Text(
-            label,
-            style: AppTheme.body(size: 12),
-          ),
-        ),
-        const SizedBox(width: 12),
-        Flexible(
-          child: Text(
-            value,
-            textAlign: TextAlign.right,
-            style: bold
-                ? AppTheme.heading(size: 13)
-                : AppTheme.body(size: 13),
-          ),
-        ),
-      ],
-    );
-  }
 }

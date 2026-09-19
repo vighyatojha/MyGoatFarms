@@ -1,22 +1,27 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
-import 'package:intl/intl.dart';
 
-import '../../../../app_theme.dart';
-import '../../../../models/trading_purchase_draft.dart';
-import '../../../../models/trading_purchase_model.dart';
-import '../../../../services/firestore_service.dart';
-import '../../../../services/trading_service.dart';
+import '../../../app_theme.dart';
+import '../../../models/purchase_costing.dart';
+import '../../../models/trading_purchase_draft.dart';
+import '../../../models/trading_purchase_model.dart';
+import '../../../services/firestore_service.dart';
+import '../../../services/trading_service.dart';
 import '../purchase_goats/purchase_wizard_widgets.dart';
 
 /// Step 4 — Purchase Summary.
 ///
-/// This is the final review screen for a new goat purchase.
+/// Final review before saving, laid out the way the Trading flow PDF asks:
 ///
-/// Receiving can be:
-/// - Completed now
-/// - Pending / completed later
+///   Weight Summary  -> goats, weight at purchase, weight after arrival,
+///                      weight loss, mortality
+///   Cost Summary    -> purchase amount, each expense, total expenses,
+///                      grand total, effective cost per KG after arrival
+///
+/// Receiving can be completed now or left pending. When it is pending the
+/// summary is built from [PurchaseDraft.finalCosting], which ignores anything
+/// typed earlier on Step 3, so it only ever shows what will really be saved.
 ///
 /// The actual Firestore save happens only through [save].
 class Step4Summary extends StatefulWidget {
@@ -24,10 +29,17 @@ class Step4Summary extends StatefulWidget {
 
   final ValueChanged<TradingPurchase> onSaved;
 
+  /// Lets the wizard's bottom bar show a spinner and disable its buttons
+  /// while saving. (The bar lives in the parent, so it cannot see this
+  /// State's `_saving` on its own — reading it in the parent's build never
+  /// triggered a rebuild, which is why the spinner never appeared before.)
+  final ValueNotifier<bool>? savingNotifier;
+
   const Step4Summary({
     super.key,
     required this.draft,
     required this.onSaved,
+    this.savingNotifier,
   });
 
   @override
@@ -37,43 +49,24 @@ class Step4Summary extends StatefulWidget {
 class Step4SummaryState extends State<Step4Summary> {
   bool _saving = false;
 
-  String _currency(num value) {
-    return NumberFormat.currency(
-      locale: 'en_IN',
-      symbol: '₹',
-      decimalDigits: 2,
-    ).format(value);
+  /// True once the purchase is saved and navigation has started, so the
+  /// buttons never re-enable during the page transition (which could allow
+  /// a second, duplicate save).
+  bool _completed = false;
+
+  bool get isSaving => _saving;
+
+  void _setSaving(bool value) {
+    _saving = value;
+    widget.savingNotifier?.value = value;
+
+    if (mounted) setState(() {});
   }
 
-  String _date(DateTime date) {
-    return '${date.day.toString().padLeft(2, '0')}/'
-        '${date.month.toString().padLeft(2, '0')}/'
-        '${date.year}';
-  }
-
-  String _trimZero(double value) {
-    return value == value.roundToDouble()
-        ? value.toStringAsFixed(0)
-        : value.toString();
-  }
-
-  void _message(
-      String text, {
-        bool error = false,
-      }) {
+  void _message(String text, {bool error = false}) {
     if (!mounted) return;
 
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(text),
-        behavior: SnackBarBehavior.floating,
-        backgroundColor:
-        error ? AppColors.error : AppColors.primaryGreen,
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(14),
-        ),
-      ),
-    );
+    wizardSnack(context, text, error: error);
   }
 
   // ===========================================================================
@@ -83,15 +76,12 @@ class Step4SummaryState extends State<Step4Summary> {
   Future<void> save() async {
     if (_saving) return;
 
-    setState(() {
-      _saving = true;
-    });
+    _setSaving(true);
 
     final draft = widget.draft;
 
     try {
-      final farmId =
-      await FirestoreService.instance.currentFarmId();
+      final farmId = await FirestoreService.instance.currentFarmId();
 
       if (farmId == null) {
         _message(
@@ -105,89 +95,47 @@ class Step4SummaryState extends State<Step4Summary> {
       draft.setPaymentMethod(draft.paymentMethod);
 
       // When receiving was not filled now, force pending status.
-      //
-      // When receiving was filled, Step 3 validation has already happened
-      // in the wizard and the draft is marked completed.
       final receivingStatus =
       draft.isReceivingCompleted ? 'completed' : 'pending';
 
-      final saved =
-      await TradingService.instance.savePurchase(
+      final completed = receivingStatus == 'completed';
+
+      final saved = await TradingService.instance.savePurchase(
         farmId: farmId,
 
-        // -------------------------------------------------------------------
-        // SELLER
-        // -------------------------------------------------------------------
-        sellerName: draft.sellerName,
-        mobile: draft.mobile,
-        market: draft.market,
-        vehicleNumber: draft.vehicleNumber,
+        // Seller
+        sellerName: draft.sellerName.trim(),
+        mobile: draft.mobile.trim(),
+        market: draft.market.trim(),
+        vehicleNumber: draft.vehicleNumber.trim(),
         purchaseDate: draft.purchaseDate,
 
-        // -------------------------------------------------------------------
-        // PURCHASE
-        // -------------------------------------------------------------------
+        // Purchase
         totalGoats: draft.totalGoats,
-        totalWeightAtPurchase:
-        draft.totalWeightAtPurchase,
+        totalWeightAtPurchase: draft.totalWeightAtPurchase,
         pricePerKg: draft.pricePerKg,
 
-        // -------------------------------------------------------------------
-        // PAYMENT
-        // -------------------------------------------------------------------
+        // Payment
         paymentMethod: draft.paymentMethod,
 
-        // -------------------------------------------------------------------
-        // RECEIVING
-        // -------------------------------------------------------------------
+        // Receiving
         receivingStatus: receivingStatus,
-
-        dateReceivedAtFarm:
-        receivingStatus == 'completed'
-            ? draft.dateReceivedAtFarm
-            : null,
-
+        dateReceivedAtFarm: completed ? draft.dateReceivedAtFarm : null,
         totalWeightAfterArrival:
-        receivingStatus == 'completed'
-            ? draft.totalWeightAfterArrival
-            : null,
+        completed ? draft.totalWeightAfterArrival : null,
+        mortality: completed ? draft.mortality : 0,
+        remarks: completed ? draft.remarks : '',
 
-        mortality:
-        receivingStatus == 'completed'
-            ? draft.mortality
-            : 0,
-
-        remarks:
-        receivingStatus == 'completed'
-            ? draft.remarks
-            : '',
-
-        // -------------------------------------------------------------------
-        // TRANSPORT / OTHER EXPENSES
-        // -------------------------------------------------------------------
-        transportCost:
-        receivingStatus == 'completed'
-            ? draft.transportCost
-            : 0,
-
-        loadingCharges:
-        receivingStatus == 'completed'
-            ? draft.loadingCharges
-            : 0,
-
-        unloadingCharges:
-        receivingStatus == 'completed'
-            ? draft.unloadingCharges
-            : 0,
-
-        otherExpenses:
-        receivingStatus == 'completed'
-            ? draft.otherExpenses
-            : 0,
+        // Transport / other expenses
+        transportCost: completed ? draft.transportCost : 0,
+        loadingCharges: completed ? draft.loadingCharges : 0,
+        unloadingCharges: completed ? draft.unloadingCharges : 0,
+        otherExpenses: completed ? draft.otherExpenses : 0,
       );
 
       if (!mounted) return;
 
+      _completed = true;
       widget.onSaved(saved);
     } on TimeoutException {
       _message(
@@ -196,8 +144,7 @@ class Step4SummaryState extends State<Step4Summary> {
       );
     } on ArgumentError catch (e) {
       _message(
-        e.message?.toString() ??
-            'Please check the purchase details.',
+        e.message?.toString() ?? 'Please check the purchase details.',
         error: true,
       );
     } catch (e) {
@@ -206,15 +153,11 @@ class Step4SummaryState extends State<Step4Summary> {
         error: true,
       );
     } finally {
-      if (mounted) {
-        setState(() {
-          _saving = false;
-        });
+      if (mounted && !_completed) {
+        _setSaving(false);
       }
     }
   }
-
-  bool get isSaving => _saving;
 
   // ===========================================================================
   // BUILD
@@ -223,25 +166,14 @@ class Step4SummaryState extends State<Step4Summary> {
   @override
   Widget build(BuildContext context) {
     final draft = widget.draft;
-
-    final bool receivingCompleted =
-        draft.isReceivingCompleted;
+    final c = draft.finalCosting;
+    final completed = draft.isReceivingCompleted;
 
     return ListView(
-      padding: const EdgeInsets.fromLTRB(
-        16,
-        16,
-        16,
-        24,
-      ),
+      keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
       children: [
-        // =====================================================================
-        // RECEIVING STATUS
-        // =====================================================================
-
-        _receivingStatusCard(
-          completed: receivingCompleted,
-        ),
+        _receivingStatusCard(completed: completed),
 
         const SizedBox(height: 14),
 
@@ -255,30 +187,26 @@ class Step4SummaryState extends State<Step4Summary> {
           children: [
             WizardComputedRow(
               label: 'Seller',
-              value: draft.sellerName,
+              value: draft.sellerName.trim(),
             ),
             WizardComputedRow(
               label: 'Mobile',
-              value: draft.mobile,
+              value: draft.mobile.trim(),
             ),
-
             if (draft.market.trim().isNotEmpty)
               WizardComputedRow(
                 label: 'Market',
-                value: draft.market,
+                value: draft.market.trim(),
               ),
-
             if (draft.vehicleNumber.trim().isNotEmpty)
               WizardComputedRow(
                 label: 'Vehicle No.',
-                value: draft.vehicleNumber,
+                value: draft.vehicleNumber.trim(),
               ),
-
             WizardComputedRow(
               label: 'Purchase Date',
-              value: _date(draft.purchaseDate),
+              value: wizardDate(draft.purchaseDate),
             ),
-
             WizardComputedRow(
               label: 'Payment Method',
               value: draft.paymentMethod,
@@ -289,133 +217,68 @@ class Step4SummaryState extends State<Step4Summary> {
         const SizedBox(height: 14),
 
         // =====================================================================
-        // PURCHASE WEIGHT
+        // WEIGHT SUMMARY
         // =====================================================================
 
         WizardSectionCard(
-          title: 'Purchase Details',
+          title: 'Weight Summary',
           icon: Icons.scale_outlined,
           children: [
             WizardComputedRow(
-              label: 'Total Goats',
-              value: '${draft.totalGoats}',
+              label: 'Total Goats Purchased',
+              value: '${c.totalGoats}',
             ),
             WizardComputedRow(
               label: 'Weight at Purchase',
-              value:
-              '${_trimZero(draft.totalWeightAtPurchase)} kg',
+              value: '${PurchaseCosting.formatNumber(c.weightAtPurchase)} kg',
             ),
-            WizardComputedRow(
-              label: 'Price per KG',
-              value: _currency(draft.pricePerKg),
-            ),
-            WizardComputedRow(
-              label: 'Purchase Amount',
-              value: _currency(draft.purchaseAmount),
-              emphasize: true,
-            ),
-          ],
-        ),
-
-        const SizedBox(height: 14),
-
-        // =====================================================================
-        // RECEIVING DETAILS
-        // =====================================================================
-
-        if (receivingCompleted) ...[
-          WizardSectionCard(
-            title: 'Receiving Details',
-            icon: Icons.local_shipping_outlined,
-            children: [
+            if (completed) ...[
               WizardComputedRow(
                 label: 'Received at Farm',
-                value: _date(
-                  draft.dateReceivedAtFarm,
-                ),
+                value: wizardDate(draft.dateReceivedAtFarm),
               ),
               WizardComputedRow(
                 label: 'Weight After Arrival',
                 value:
-                '${_trimZero(draft.totalWeightAfterArrival)} kg',
+                '${PurchaseCosting.formatNumber(c.weightAfterArrival)} kg',
               ),
               WizardComputedRow(
                 label: 'Weight Loss',
-                value:
-                '${_trimZero(draft.weightLoss)} kg',
+                value: '${PurchaseCosting.formatNumber(c.weightLoss)} kg '
+                    '(${PurchaseCosting.formatNumber(c.weightLossPercent)}%)',
               ),
               WizardComputedRow(
                 label: 'Mortality',
-                value: '${draft.mortality}',
+                value: c.safeMortality == 0
+                    ? 'None'
+                    : '${c.safeMortality} '
+                    'goat${c.safeMortality == 1 ? '' : 's'}',
               ),
-
+              const Divider(height: 18, color: AppColors.divider),
+              WizardComputedRow(
+                label: 'Goats to Register',
+                value: '${c.survivingGoats}',
+                emphasize: true,
+              ),
               if (draft.remarks.trim().isNotEmpty)
                 WizardComputedRow(
                   label: 'Remarks',
-                  value: draft.remarks,
+                  value: draft.remarks.trim(),
                 ),
-            ],
-          ),
-
-          const SizedBox(height: 14),
-
-          // ===================================================================
-          // TRANSPORT EXPENSES
-          // ===================================================================
-
-          WizardSectionCard(
-            title: 'Transportation & Other Expenses',
-            icon: Icons.local_shipping_outlined,
-            children: [
-              if (draft.transportCost > 0)
-                WizardComputedRow(
-                  label: 'Transport Cost',
-                  value:
-                  _currency(draft.transportCost),
-                ),
-
-              if (draft.loadingCharges > 0)
-                WizardComputedRow(
-                  label: 'Loading Charges',
-                  value:
-                  _currency(draft.loadingCharges),
-                ),
-
-              if (draft.unloadingCharges > 0)
-                WizardComputedRow(
-                  label: 'Unloading Charges',
-                  value:
-                  _currency(draft.unloadingCharges),
-                ),
-
-              if (draft.otherExpenses > 0)
-                WizardComputedRow(
-                  label: 'Other Expenses',
-                  value:
-                  _currency(draft.otherExpenses),
-                ),
-
-              if (draft.totalTransportExpenses <= 0)
-                WizardComputedRow(
-                  label: 'Total Additional Expenses',
-                  value: _currency(0),
-                ),
-
-              const Divider(
-                height: 20,
-                color: AppColors.divider,
+            ] else ...[
+              const WizardComputedRow(
+                label: 'Weight After Arrival',
+                value: 'Pending',
               ),
-
-              WizardComputedRow(
-                label: 'Total Additional Expenses',
-                value:
-                _currency(draft.totalTransportExpenses),
+              const WizardComputedRow(
+                label: 'Mortality',
+                value: 'Pending',
               ),
             ],
-          ),
+          ],
+        ),
 
-          const SizedBox(height: 14),
-        ],
+        const SizedBox(height: 14),
 
         // =====================================================================
         // COST SUMMARY
@@ -426,47 +289,74 @@ class Step4SummaryState extends State<Step4Summary> {
           icon: Icons.currency_rupee_rounded,
           children: [
             WizardComputedRow(
-              label: 'Purchase Amount',
-              value: _currency(draft.purchaseAmount),
+              label:
+              'Purchase Amount\n${PurchaseCosting.formatNumber(c.weightAtPurchase)} kg × ${wizardCurrency(c.pricePerKg)}',
+              value: wizardCurrency(c.purchaseAmount),
             ),
-
-            WizardComputedRow(
-              label: 'Total Expenses',
-              value:
-              _currency(draft.totalExpenses),
-            ),
-
-            const Divider(
-              height: 20,
-              color: AppColors.divider,
-            ),
-
+            if (completed) ...[
+              WizardComputedRow(
+                label: 'Transport Cost',
+                value: wizardCurrency(c.transportCost),
+              ),
+              WizardComputedRow(
+                label: 'Loading Charges',
+                value: wizardCurrency(c.loadingCharges),
+              ),
+              WizardComputedRow(
+                label: 'Unloading Charges',
+                value: wizardCurrency(c.unloadingCharges),
+              ),
+              WizardComputedRow(
+                label: 'Other Expenses',
+                value: wizardCurrency(c.otherExpenses),
+              ),
+              WizardComputedRow(
+                label: 'Total Expenses',
+                value: wizardCurrency(c.totalExpenses),
+              ),
+            ],
+            const Divider(height: 18, color: AppColors.divider),
             WizardComputedRow(
               label: 'Grand Total',
-              value:
-              _currency(draft.grandTotal),
+              value: wizardCurrency(c.grandTotal),
               emphasize: true,
             ),
-
-            if (receivingCompleted)
+            if (completed) ...[
               WizardComputedRow(
-                label:
-                'Effective Cost per KG After Arrival',
-                value:
-                _currency(draft.effectiveCostPerKg),
+                label: 'Effective Cost per KG After Arrival',
+                value: wizardCurrency(c.effectiveCostPerKg),
                 emphasize: true,
               ),
+              WizardComputedRow(
+                label: 'Cost per Surviving Goat',
+                value: wizardCurrency(c.costPerSurvivingGoat),
+              ),
+              if (c.costIncreasePerKg > 0) ...[
+                const SizedBox(height: 6),
+                WizardNote(
+                  'Each kg costs ${wizardCurrency(c.costIncreasePerKg)} more '
+                      'than the ${wizardCurrency(c.pricePerKg)} / kg paid to '
+                      'the seller, after transport and weight loss.',
+                ),
+              ],
+              if (c.safeMortality > 0) ...[
+                const SizedBox(height: 8),
+                WizardNote(
+                  '${c.safeMortality} goat${c.safeMortality == 1 ? '' : 's'} '
+                      'lost in transit — about '
+                      '${wizardCurrency(c.mortalityLoss)} of the purchase '
+                      'amount, already included in the Grand Total.',
+                  tone: WizardNoteTone.warning,
+                ),
+              ],
+            ],
           ],
         ),
 
-        const SizedBox(height: 14),
-
-        // =====================================================================
-        // FINAL INFORMATION
-        // =====================================================================
-
-        if (!receivingCompleted)
+        if (!completed) ...[
+          const SizedBox(height: 14),
           _pendingInformationCard(),
+        ],
       ],
     );
   }
@@ -475,27 +365,16 @@ class Step4SummaryState extends State<Step4Summary> {
   // RECEIVING STATUS CARD
   // ===========================================================================
 
-  Widget _receivingStatusCard({
-    required bool completed,
-  }) {
-    final Color background =
-    completed
-        ? AppColors.success.withOpacity(0.10)
-        : AppColors.warning.withOpacity(0.10);
-
+  Widget _receivingStatusCard({required bool completed}) {
     final Color foreground =
-    completed
-        ? AppColors.success
-        : AppColors.warning;
+    completed ? AppColors.success : const Color(0xFFB26A00);
 
     return Container(
       padding: const EdgeInsets.all(15),
       decoration: BoxDecoration(
-        color: background,
+        color: foreground.withOpacity(0.10),
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(
-          color: foreground.withOpacity(0.18),
-        ),
+        border: Border.all(color: foreground.withOpacity(0.18)),
       ),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -518,24 +397,21 @@ class Step4SummaryState extends State<Step4Summary> {
           const SizedBox(width: 12),
           Expanded(
             child: Column(
-              crossAxisAlignment:
-              CrossAxisAlignment.start,
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
                   completed
                       ? 'Receiving Details Filled'
                       : 'Receiving Details Pending',
-                  style: TextStyle(
-                    color: foreground,
-                    fontSize: 14,
-                    fontWeight: FontWeight.w700,
-                  ),
+                  style: AppTheme.heading(size: 14, color: foreground),
                 ),
                 const SizedBox(height: 4),
                 Text(
                   completed
-                      ? 'The goats have been received at the farm and the arrival details will be saved with this purchase.'
-                      : 'The purchase will be saved now. You can complete the receiving details later from the Trading Dashboard.',
+                      ? 'Arrival weight, mortality and transport costs are '
+                      'saved with this purchase.'
+                      : 'The purchase will be saved now. Complete the '
+                      'receiving details later from the Trading Dashboard.',
                   style: AppTheme.body(size: 11),
                 ),
               ],
@@ -565,7 +441,10 @@ class Step4SummaryState extends State<Step4Summary> {
           const SizedBox(width: 10),
           Expanded(
             child: Text(
-              'This purchase will appear under Pending Receiving on the Trading Dashboard until the receiving details are completed.',
+              'This purchase will appear under Pending Receiving on the '
+                  'Trading Dashboard. Transport costs, mortality and the '
+                  'effective cost per KG are worked out when you complete '
+                  'receiving. Goats can be registered after that.',
               style: AppTheme.body(size: 11),
             ),
           ),

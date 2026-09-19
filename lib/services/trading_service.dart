@@ -6,6 +6,7 @@ import '../models/activity_model.dart';
 import '../models/expense_categories.dart';
 import '../models/expense_model.dart';
 import '../models/goat_model.dart';
+import '../models/purchase_costing.dart';
 import '../models/trading_purchase_model.dart';
 import '../models/trading_summary_model.dart';
 import 'firestore_service.dart';
@@ -321,6 +322,12 @@ class TradingService {
           'Arrival weight is required when receiving is completed.',
         );
       }
+
+      if (totalWeightAfterArrival > totalWeightAtPurchase) {
+        throw ArgumentError(
+          'Arrival weight cannot be greater than purchase weight.',
+        );
+      }
     }
 
     if (mortality < 0) {
@@ -339,30 +346,34 @@ class TradingService {
     // CALCULATIONS
     // ---------------------------------------------------------------------
 
-    final purchaseAmount =
-        totalWeightAtPurchase * pricePerKg;
+    // Same engine the wizard uses for its live numbers, so what was shown
+    // on screen is exactly what gets saved (rounded to 2 decimals).
+    final isCompleted = normalizedReceivingStatus == 'completed';
 
     final safeArrivalWeight =
-        totalWeightAfterArrival ?? 0;
+    isCompleted ? (totalWeightAfterArrival ?? 0.0) : 0.0;
 
-    final weightLoss =
-    normalizedReceivingStatus == 'completed'
-        ? totalWeightAtPurchase - safeArrivalWeight
-        : null;
+    final costing = PurchaseCosting(
+      totalGoats: totalGoats,
+      weightAtPurchase: totalWeightAtPurchase,
+      pricePerKg: pricePerKg,
+      weightAfterArrival: safeArrivalWeight,
+      mortality: isCompleted ? mortality : 0,
+      transportCost: transportCost,
+      loadingCharges: loadingCharges,
+      unloadingCharges: unloadingCharges,
+      otherExpenses: otherExpenses,
+    );
 
-    final totalTransportExpenses =
-        transportCost +
-            loadingCharges +
-            unloadingCharges +
-            otherExpenses;
+    final purchaseAmount = costing.purchaseAmount;
 
-    final grandTotal =
-        purchaseAmount + totalTransportExpenses;
+    final weightLoss = isCompleted ? costing.weightLoss : null;
 
-    final effectiveCostPerKg =
-    safeArrivalWeight > 0
-        ? grandTotal / safeArrivalWeight
-        : 0.0;
+    final totalTransportExpenses = costing.totalExpenses;
+
+    final grandTotal = costing.grandTotal;
+
+    final effectiveCostPerKg = costing.effectiveCostPerKg;
 
     // ---------------------------------------------------------------------
     // CREATE SEQUENTIAL PURCHASE ID
@@ -445,7 +456,13 @@ class TradingService {
 
           registeredCount: 0,
 
-          pendingCount: totalGoats,
+          // Only goats that actually arrived alive can be registered.
+          // (This used to be totalGoats even after mortality, which forced
+          // the person to "register" goats that had died.) While receiving
+          // is still pending the survivors are unknown, so it starts at
+          // totalGoats and completeReceiving() corrects it.
+          pendingCount:
+          isCompleted ? costing.survivingGoats : totalGoats,
         );
 
         transaction.set(
@@ -474,9 +491,7 @@ class TradingService {
         // in transit aren't on-farm stock yet — see completeReceiving()
         // for the equivalent update once "Later" receiving finishes.
         final survivingGoatsAtCreation =
-        normalizedReceivingStatus == 'completed'
-            ? totalGoats - mortality
-            : 0;
+        isCompleted ? costing.survivingGoats : 0;
 
         transaction.set(
           _summaryDoc(farmId),
@@ -619,6 +634,13 @@ class TradingService {
     required double totalWeightAfterArrival,
     required int mortality,
     String remarks = '',
+
+    // Transport / additional costs. A purchase saved with "receive later"
+    // has none yet, so they are captured here, when the goats arrive.
+    double transportCost = 0,
+    double loadingCharges = 0,
+    double unloadingCharges = 0,
+    double otherExpenses = 0,
   }) async {
     if (totalWeightAfterArrival <= 0) {
       throw ArgumentError(
@@ -650,15 +672,29 @@ class TradingService {
       );
     }
 
-    final weightLoss =
-        purchase.totalWeightAtPurchase -
-            totalWeightAfterArrival;
+    if (totalWeightAfterArrival > purchase.totalWeightAtPurchase) {
+      throw ArgumentError(
+        'Arrival weight cannot be greater than purchase weight.',
+      );
+    }
 
-    final effectiveCostPerKg =
-    totalWeightAfterArrival > 0
-        ? purchase.grandTotal /
-        totalWeightAfterArrival
-        : 0.0;
+    // Grand total now includes the transport costs entered at receiving
+    // (before, it stayed at the bare purchase amount forever).
+    final costing = PurchaseCosting(
+      totalGoats: purchase.totalGoats,
+      weightAtPurchase: purchase.totalWeightAtPurchase,
+      pricePerKg: purchase.pricePerKg,
+      weightAfterArrival: totalWeightAfterArrival,
+      mortality: mortality,
+      transportCost: transportCost,
+      loadingCharges: loadingCharges,
+      unloadingCharges: unloadingCharges,
+      otherExpenses: otherExpenses,
+    );
+
+    final weightLoss = costing.weightLoss;
+
+    final effectiveCostPerKg = costing.effectiveCostPerKg;
 
     final batch = _db.batch();
 
@@ -675,8 +711,18 @@ class TradingService {
         'weightLoss': weightLoss,
         'mortality': mortality,
         'remarks': remarks.trim(),
+        'transportCost': transportCost,
+        'loadingCharges': loadingCharges,
+        'unloadingCharges': unloadingCharges,
+        'otherExpenses': otherExpenses,
+        'totalTransportExpenses': costing.totalExpenses,
+        'grandTotal': costing.grandTotal,
         'effectiveCostPerKg':
         effectiveCostPerKg,
+        // Goats left to register = survivors minus any already registered.
+        'pendingCount': costing.survivingGoats > purchase.registeredCount
+            ? costing.survivingGoats - purchase.registeredCount
+            : 0,
         'updatedAt':
         FieldValue.serverTimestamp(),
       },

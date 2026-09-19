@@ -1,9 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:intl/intl.dart';
 
-import '../../../../app_theme.dart';
-import '../../../../models/trading_purchase_draft.dart';
+import '../../../app_theme.dart';
+import '../../../models/purchase_costing.dart';
+import '../../../models/trading_purchase_draft.dart';
 import '../purchase_goats/purchase_wizard_widgets.dart';
 
 /// Step 2 — Purchase Details.
@@ -16,8 +16,11 @@ import '../purchase_goats/purchase_wizard_widgets.dart';
 ///
 /// Breed has intentionally been removed from the Trading purchase flow.
 ///
-/// Purchase Amount is always calculated as:
+/// Purchase Amount is always calculated, live, as:
 /// Total Weight × Price per KG
+///
+/// Every figure on this screen comes from [PurchaseCosting] (via the draft),
+/// so it is the same number that is later shown in the summary and saved.
 class Step2PurchaseDetails extends StatefulWidget {
   final GlobalKey<FormState> formKey;
   final PurchaseDraft draft;
@@ -33,19 +36,16 @@ class Step2PurchaseDetails extends StatefulWidget {
       _Step2PurchaseDetailsState();
 }
 
-class _Step2PurchaseDetailsState
-    extends State<Step2PurchaseDetails> {
+class _Step2PurchaseDetailsState extends State<Step2PurchaseDetails> {
   late final TextEditingController _totalGoatsController;
   late final TextEditingController _weightController;
   late final TextEditingController _priceController;
 
-  String _currency(num value) {
-    return NumberFormat.currency(
-      locale: 'en_IN',
-      symbol: '₹',
-      decimalDigits: 2,
-    ).format(value);
-  }
+  /// Goats outside this average live weight are almost certainly a typo
+  /// (an extra digit, or weight typed in grams). Only a warning — never
+  /// blocks, because unusual lots do exist.
+  static const double _minPlausibleKgPerGoat = 3;
+  static const double _maxPlausibleKgPerGoat = 120;
 
   @override
   void initState() {
@@ -54,28 +54,20 @@ class _Step2PurchaseDetailsState
     final draft = widget.draft;
 
     _totalGoatsController = TextEditingController(
-      text: draft.totalGoats == 0
-          ? ''
-          : draft.totalGoats.toString(),
+      text: draft.totalGoats == 0 ? '' : draft.totalGoats.toString(),
     );
 
     _weightController = TextEditingController(
       text: draft.totalWeightAtPurchase == 0
           ? ''
-          : _trimZero(draft.totalWeightAtPurchase),
+          : PurchaseCosting.formatNumber(draft.totalWeightAtPurchase),
     );
 
     _priceController = TextEditingController(
       text: draft.pricePerKg == 0
           ? ''
-          : _trimZero(draft.pricePerKg),
+          : PurchaseCosting.formatNumber(draft.pricePerKg),
     );
-  }
-
-  String _trimZero(double value) {
-    return value == value.roundToDouble()
-        ? value.toStringAsFixed(0)
-        : value.toString();
   }
 
   @override
@@ -86,59 +78,56 @@ class _Step2PurchaseDetailsState
     super.dispose();
   }
 
+  /// Pushes what is typed into the draft on EVERY keystroke and rebuilds,
+  /// so the Purchase Amount card is always live.
   void _recalculate() {
     final draft = widget.draft;
 
-    draft.totalGoats =
-        int.tryParse(_totalGoatsController.text.trim()) ?? 0;
+    draft.totalGoats = int.tryParse(_totalGoatsController.text.trim()) ?? 0;
 
     draft.totalWeightAtPurchase =
         double.tryParse(_weightController.text.trim()) ?? 0;
 
-    draft.pricePerKg =
-        double.tryParse(_priceController.text.trim()) ?? 0;
+    draft.pricePerKg = double.tryParse(_priceController.text.trim()) ?? 0;
 
     setState(() {});
   }
 
   void _setPaymentMethod(String method) {
     setState(() {
-      widget.draft.paymentMethod = method;
+      widget.draft.setPaymentMethod(method);
     });
   }
 
   @override
   Widget build(BuildContext context) {
     final draft = widget.draft;
+    final costing = draft.costing;
 
     return Form(
       key: widget.formKey,
       child: ListView(
-        padding: const EdgeInsets.fromLTRB(
-          16,
-          16,
-          16,
-          24,
-        ),
+        keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+        padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
         children: [
           WizardSectionCard(
             title: 'Purchase Details',
             icon: Icons.shopping_cart_outlined,
             children: [
-              _buildField(
+              wizardField(
                 controller: _totalGoatsController,
-                label: 'Total Goats',
-                hint: 'Number of goats',
+                label: 'Total Number of Goats',
+                hint: 'e.g. 20',
                 icon: Icons.pets_outlined,
+                suffix: 'goats',
                 keyboardType: TextInputType.number,
                 inputFormatters: [
                   FilteringTextInputFormatter.digitsOnly,
+                  LengthLimitingTextInputFormatter(5),
                 ],
                 onChanged: (_) => _recalculate(),
                 validator: (value) {
-                  final number = int.tryParse(
-                    value?.trim() ?? '',
-                  );
+                  final number = int.tryParse(value?.trim() ?? '');
 
                   if (number == null || number <= 0) {
                     return 'Enter a valid goat count';
@@ -150,26 +139,17 @@ class _Step2PurchaseDetailsState
 
               const SizedBox(height: 14),
 
-              _buildField(
+              wizardField(
                 controller: _weightController,
                 label: 'Total Weight at Purchase',
                 hint: '0.00',
                 icon: Icons.scale_outlined,
                 suffix: 'KG',
-                keyboardType:
-                const TextInputType.numberWithOptions(
-                  decimal: true,
-                ),
-                inputFormatters: [
-                  FilteringTextInputFormatter.allow(
-                    RegExp(r'^\d*\.?\d{0,2}'),
-                  ),
-                ],
+                keyboardType: wizardDecimalKeyboard,
+                inputFormatters: wizardDecimalFormatters(),
                 onChanged: (_) => _recalculate(),
                 validator: (value) {
-                  final number = double.tryParse(
-                    value?.trim() ?? '',
-                  );
+                  final number = double.tryParse(value?.trim() ?? '');
 
                   if (number == null || number <= 0) {
                     return 'Enter a valid weight';
@@ -181,27 +161,18 @@ class _Step2PurchaseDetailsState
 
               const SizedBox(height: 14),
 
-              _buildField(
+              wizardField(
                 controller: _priceController,
                 label: 'Price per KG',
                 hint: '0.00',
                 icon: Icons.currency_rupee_rounded,
-                prefix: '₹ ',
                 suffix: '/ KG',
-                keyboardType:
-                const TextInputType.numberWithOptions(
-                  decimal: true,
-                ),
-                inputFormatters: [
-                  FilteringTextInputFormatter.allow(
-                    RegExp(r'^\d*\.?\d{0,2}'),
-                  ),
-                ],
+                keyboardType: wizardDecimalKeyboard,
+                inputFormatters: wizardDecimalFormatters(),
+                textInputAction: TextInputAction.done,
                 onChanged: (_) => _recalculate(),
                 validator: (value) {
-                  final number = double.tryParse(
-                    value?.trim() ?? '',
-                  );
+                  final number = double.tryParse(value?.trim() ?? '');
 
                   if (number == null || number <= 0) {
                     return 'Enter a valid price';
@@ -215,49 +186,91 @@ class _Step2PurchaseDetailsState
 
           const SizedBox(height: 14),
 
-          _buildPurchaseAmountCard(
-            draft.purchaseAmount,
+          // -------------------------------------------------------------
+          // LIVE PURCHASE AMOUNT
+          // -------------------------------------------------------------
+
+          WizardResultCard(
+            icon: Icons.calculate_outlined,
+            title: 'Purchase Amount',
+            formula: costing.weightAtPurchase > 0 && costing.pricePerKg > 0
+                ? '${PurchaseCosting.formatNumber(costing.weightAtPurchase)} kg × '
+                '${wizardCurrency(costing.pricePerKg)} / kg'
+                : 'Total Weight × Price per KG',
+            value: wizardCurrency(costing.purchaseAmount),
           ),
 
-          const SizedBox(height: 16),
+          const SizedBox(height: 10),
+
+          Row(
+            children: [
+              Expanded(
+                child: WizardStatTile(
+                  icon: Icons.monitor_weight_outlined,
+                  label: 'Avg weight / goat',
+                  value: costing.totalGoats > 0 &&
+                      costing.weightAtPurchase > 0
+                      ? '${PurchaseCosting.formatNumber(costing.avgWeightPerGoatAtPurchase)} kg'
+                      : '—',
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: WizardStatTile(
+                  icon: Icons.sell_outlined,
+                  label: 'Avg price / goat',
+                  value: costing.totalGoats > 0 &&
+                      costing.purchaseAmount > 0
+                      ? wizardCurrency(costing.purchaseAmountPerGoat)
+                      : '—',
+                ),
+              ),
+            ],
+          ),
+
+          if (_looksImplausible(costing)) ...[
+            const SizedBox(height: 10),
+            WizardNote(
+              'That works out to '
+                  '${PurchaseCosting.formatNumber(costing.avgWeightPerGoatAtPurchase)} kg '
+                  'per goat. Please double-check the goat count and '
+                  'total weight.',
+              tone: WizardNoteTone.warning,
+            ),
+          ],
+
+          const SizedBox(height: 14),
+
+          // -------------------------------------------------------------
+          // PAYMENT METHOD
+          // -------------------------------------------------------------
 
           WizardSectionCard(
             title: 'Payment Method',
             icon: Icons.payments_outlined,
             children: [
               Text(
-                'Select how the seller is being paid.',
-                style: AppTheme.body(
-                  size: 11,
-                  color: AppColors.textGrey,
-                ),
+                'How is the seller being paid?',
+                style: AppTheme.body(size: 11),
               ),
               const SizedBox(height: 12),
-
               Row(
                 children: [
                   Expanded(
-                    child: _paymentOption(
+                    child: _PaymentOption(
                       title: 'Cash',
                       icon: Icons.money_rounded,
-                      selected:
-                      draft.paymentMethod == 'Cash',
-                      onTap: () {
-                        _setPaymentMethod('Cash');
-                      },
+                      selected: draft.paymentMethod == 'Cash',
+                      onTap: () => _setPaymentMethod('Cash'),
                     ),
                   ),
                   const SizedBox(width: 12),
                   Expanded(
-                    child: _paymentOption(
+                    child: _PaymentOption(
                       title: 'Online',
-                      icon:
-                      Icons.account_balance_wallet_outlined,
-                      selected:
-                      draft.paymentMethod == 'Online',
-                      onTap: () {
-                        _setPaymentMethod('Online');
-                      },
+                      icon: Icons.account_balance_wallet_outlined,
+                      selected: draft.paymentMethod == 'Online',
+                      onTap: () => _setPaymentMethod('Online'),
                     ),
                   ),
                 ],
@@ -269,105 +282,53 @@ class _Step2PurchaseDetailsState
     );
   }
 
-  Widget _buildPurchaseAmountCard(double amount) {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: AppColors.lightGreen,
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(
-          color: AppColors.primaryGreen.withOpacity(0.22),
-        ),
-      ),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.center,
-        children: [
-          Container(
-            width: 44,
-            height: 44,
-            decoration: BoxDecoration(
-              color: AppColors.primaryGreen.withOpacity(0.12),
-              borderRadius: BorderRadius.circular(13),
-            ),
-            child: const Icon(
-              Icons.calculate_outlined,
-              color: AppColors.darkGreen,
-              size: 22,
-            ),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment:
-              CrossAxisAlignment.start,
-              children: [
-                Text(
-                  'Purchase Amount',
-                  style: AppTheme.heading(
-                    size: 12,
-                    color: AppColors.textDark,
-                  ),
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  'Total Weight × Price per KG',
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  style: AppTheme.body(
-                    size: 10,
-                    color: AppColors.textGrey,
-                  ),
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(width: 12),
-          Flexible(
-            child: Text(
-              _currency(amount),
-              textAlign: TextAlign.right,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: AppTheme.heading(
-                size: 18,
-                color: AppColors.darkGreen,
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
+  bool _looksImplausible(PurchaseCosting costing) {
+    if (costing.totalGoats <= 0 || costing.weightAtPurchase <= 0) {
+      return false;
+    }
 
-  Widget _paymentOption({
-    required String title,
-    required IconData icon,
-    required bool selected,
-    required VoidCallback onTap,
-  }) {
+    final avg = costing.avgWeightPerGoatAtPurchase;
+
+    return avg < _minPlausibleKgPerGoat || avg > _maxPlausibleKgPerGoat;
+  }
+}
+
+// ============================================================================
+// PAYMENT OPTION
+// ============================================================================
+
+class _PaymentOption extends StatelessWidget {
+  final String title;
+  final IconData icon;
+  final bool selected;
+  final VoidCallback onTap;
+
+  const _PaymentOption({
+    required this.title,
+    required this.icon,
+    required this.selected,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
     return Material(
       color: Colors.transparent,
       child: InkWell(
         onTap: onTap,
         borderRadius: BorderRadius.circular(15),
-        child: Container(
-          constraints: const BoxConstraints(
-            minHeight: 58,
-          ),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 160),
+          constraints: const BoxConstraints(minHeight: 58),
           padding: const EdgeInsets.symmetric(
             horizontal: 13,
             vertical: 12,
           ),
           decoration: BoxDecoration(
-            color: selected
-                ? AppColors.lightGreen
-                : Colors.white,
+            color: selected ? AppColors.lightGreen : Colors.white,
             borderRadius: BorderRadius.circular(15),
             border: Border.all(
-              color: selected
-                  ? AppColors.primaryGreen
-                  : AppColors.divider,
+              color: selected ? AppColors.primaryGreen : AppColors.divider,
               width: selected ? 1.4 : 1,
             ),
           ),
@@ -376,9 +337,8 @@ class _Step2PurchaseDetailsState
               Icon(
                 icon,
                 size: 21,
-                color: selected
-                    ? AppColors.darkGreen
-                    : AppColors.textGrey,
+                color:
+                selected ? AppColors.darkGreen : AppColors.textGrey,
               ),
               const SizedBox(width: 8),
               Expanded(
@@ -387,81 +347,20 @@ class _Step2PurchaseDetailsState
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: AppTheme.heading(
-                    size: 12,
+                    size: 13,
                     color: selected
                         ? AppColors.darkGreen
                         : AppColors.textDark,
                   ),
                 ),
               ),
-              if (selected) ...[
-                const SizedBox(width: 5),
+              if (selected)
                 const Icon(
                   Icons.check_circle_rounded,
                   size: 19,
                   color: AppColors.primaryGreen,
                 ),
-              ],
             ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildField({
-    required TextEditingController controller,
-    required String label,
-    required String hint,
-    required IconData icon,
-    required ValueChanged<String> onChanged,
-    FormFieldValidator<String>? validator,
-    TextInputType? keyboardType,
-    List<TextInputFormatter>? inputFormatters,
-    String? prefix,
-    String? suffix,
-  }) {
-    return TextFormField(
-      controller: controller,
-      keyboardType: keyboardType,
-      inputFormatters: inputFormatters,
-      onChanged: onChanged,
-      validator: validator,
-      decoration: InputDecoration(
-        labelText: label,
-        hintText: hint,
-        prefixIcon: Icon(icon),
-        prefixText: prefix,
-        suffixText: suffix,
-        filled: true,
-        fillColor: Colors.white,
-        border: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(14),
-        ),
-        enabledBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(14),
-          borderSide: const BorderSide(
-            color: AppColors.divider,
-          ),
-        ),
-        focusedBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(14),
-          borderSide: const BorderSide(
-            color: AppColors.primaryGreen,
-            width: 1.4,
-          ),
-        ),
-        errorBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(14),
-          borderSide: const BorderSide(
-            color: AppColors.error,
-          ),
-        ),
-        focusedErrorBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(14),
-          borderSide: const BorderSide(
-            color: AppColors.error,
-            width: 1.4,
           ),
         ),
       ),

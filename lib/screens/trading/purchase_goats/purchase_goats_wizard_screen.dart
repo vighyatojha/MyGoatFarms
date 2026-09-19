@@ -4,34 +4,30 @@ import '../../../app_theme.dart';
 import '../../../models/trading_purchase_draft.dart';
 import '../../../models/trading_purchase_model.dart';
 import '../../../widgets/fast_route.dart';
-import 'purchase_wizard_widgets.dart';
-import 'purchase_success_screen.dart';
 import '../steps/step1_seller_details.dart';
 import '../steps/step2_purchase_details.dart';
 import '../steps/step3_receiving_transport.dart';
 import '../steps/step4_summary.dart';
+import 'purchase_success_screen.dart';
+import 'purchase_wizard_widgets.dart';
 
-/// Purchase Goat wizard.
+/// Purchase Goats wizard.
 ///
 /// Flow:
 /// Step 1  -> Seller Details
 /// Step 2  -> Purchase Details
-///          -> Fill Receiving Details Now
-///          -> Later
+///          -> popup: Fill Receiving Details Now / Save now, receive later
 ///
-/// If receiving is done now:
-/// Step 3  -> Receiving + Transport
-/// Step 4  -> Summary
-///          -> Save
+/// Receiving now:
+/// Step 3  -> Receiving + Transport (live cost after mortality/arrival)
+/// Step 4  -> Summary -> Save
 ///
-/// If receiving is done later:
-/// Step 4  -> Summary
-///          -> Save
-///          -> Pending Receiving appears on Trading Dashboard.
+/// Receiving later:
+/// Step 3 is skipped (the progress bar drops to 3 steps so it never says
+/// "Step 4 of 4" after only three screens) -> Summary -> Save
+///          -> Pending Receiving appears on the Trading Dashboard.
 class PurchaseGoatsWizardScreen extends StatefulWidget {
-  const PurchaseGoatsWizardScreen({
-    super.key,
-  });
+  const PurchaseGoatsWizardScreen({super.key});
 
   @override
   State<PurchaseGoatsWizardScreen> createState() =>
@@ -40,55 +36,72 @@ class PurchaseGoatsWizardScreen extends StatefulWidget {
 
 class _PurchaseGoatsWizardScreenState
     extends State<PurchaseGoatsWizardScreen> {
+  static const int _sellerPage = 0;
+  static const int _purchasePage = 1;
+  static const int _receivingPage = 2;
+  static const int _summaryPage = 3;
+
   final PageController _pageController = PageController();
 
-  final GlobalKey<FormState> _sellerFormKey =
-  GlobalKey<FormState>();
-
-  final GlobalKey<FormState> _purchaseFormKey =
-  GlobalKey<FormState>();
-
-  final GlobalKey<FormState> _receivingFormKey =
-  GlobalKey<FormState>();
-
+  final GlobalKey<FormState> _sellerFormKey = GlobalKey<FormState>();
+  final GlobalKey<FormState> _purchaseFormKey = GlobalKey<FormState>();
+  final GlobalKey<FormState> _receivingFormKey = GlobalKey<FormState>();
   final GlobalKey<Step4SummaryState> _summaryKey =
   GlobalKey<Step4SummaryState>();
 
   final PurchaseDraft _draft = PurchaseDraft();
 
-  int _currentStep = 0;
+  /// Drives the bottom bar's spinner / disabled state while saving.
+  final ValueNotifier<bool> _saving = ValueNotifier<bool>(false);
+
+  int _currentStep = _sellerPage;
 
   bool _moving = false;
 
-  static const List<String> _stepLabels = [
-    'Seller',
-    'Purchase',
-    'Receiving',
-    'Summary',
-  ];
+  /// True when "receive later" was chosen — Step 3 is then skipped.
+  bool _receivingSkipped = false;
+
+  static const Map<int, String> _stepLabels = {
+    _sellerPage: 'Seller',
+    _purchasePage: 'Purchase',
+    _receivingPage: 'Receiving',
+    _summaryPage: 'Summary',
+  };
 
   @override
   void dispose() {
     _pageController.dispose();
+    _saving.dispose();
     super.dispose();
   }
 
   // ===========================================================================
-  // STEP TITLE
+  // STEP FLOW
   // ===========================================================================
+
+  /// The pages the person will actually visit.
+  List<int> get _flow => _receivingSkipped
+      ? const [_sellerPage, _purchasePage, _summaryPage]
+      : const [_sellerPage, _purchasePage, _receivingPage, _summaryPage];
+
+  int get _flowPosition {
+    final index = _flow.indexOf(_currentStep);
+
+    return index < 0 ? 0 : index;
+  }
 
   String get _stepTitle {
     switch (_currentStep) {
-      case 0:
+      case _sellerPage:
         return 'Seller Details';
-      case 1:
+      case _purchasePage:
         return 'Purchase Details';
-      case 2:
-        return 'Receiving Details';
-      case 3:
+      case _receivingPage:
+        return 'Receiving & Transport';
+      case _summaryPage:
         return 'Purchase Summary';
       default:
-        return 'Purchase Goat';
+        return 'Purchase Goats';
     }
   }
 
@@ -97,256 +110,136 @@ class _PurchaseGoatsWizardScreenState
   // ===========================================================================
 
   Future<void> _next() async {
-    if (_moving) return;
+    if (_moving || _saving.value) return;
 
     FocusScope.of(context).unfocus();
 
-    // -------------------------------------------------------------------------
-    // STEP 1
-    // -------------------------------------------------------------------------
+    switch (_currentStep) {
+      case _sellerPage:
+        if (!(_sellerFormKey.currentState?.validate() ?? false)) return;
 
-    if (_currentStep == 0) {
-      final valid =
-          _sellerFormKey.currentState?.validate() ?? false;
-
-      if (!valid) {
+        await _goToStep(_purchasePage);
         return;
-      }
 
-      _sellerFormKey.currentState?.save();
+      case _purchasePage:
+        if (!(_purchaseFormKey.currentState?.validate() ?? false)) return;
 
-      await _goToStep(1);
-      return;
-    }
-
-    // -------------------------------------------------------------------------
-    // STEP 2
-    // -------------------------------------------------------------------------
-
-    if (_currentStep == 1) {
-      final valid =
-          _purchaseFormKey.currentState?.validate() ?? false;
-
-      if (!valid) {
+        await _showReceivingChoice();
         return;
-      }
 
-      _purchaseFormKey.currentState?.save();
+      case _receivingPage:
+        if (!(_receivingFormKey.currentState?.validate() ?? false)) return;
 
-      await _showReceivingChoice();
-      return;
-    }
+        _draft.markReceivingCompleted();
 
-    // -------------------------------------------------------------------------
-    // STEP 3
-    // -------------------------------------------------------------------------
-
-    if (_currentStep == 2) {
-      final valid =
-          _receivingFormKey.currentState?.validate() ?? false;
-
-      if (!valid) {
+        await _goToStep(_summaryPage);
         return;
-      }
 
-      _receivingFormKey.currentState?.save();
-
-      _draft.markReceivingCompleted();
-
-      await _goToStep(3);
-      return;
-    }
-
-    // -------------------------------------------------------------------------
-    // STEP 4
-    // -------------------------------------------------------------------------
-
-    if (_currentStep == 3) {
-      await _savePurchase();
+      case _summaryPage:
+        await _summaryKey.currentState?.save();
+        return;
     }
   }
 
   // ===========================================================================
-  // RECEIVING CHOICE
+  // RECEIVING CHOICE POPUP
   // ===========================================================================
 
   Future<void> _showReceivingChoice() async {
     final result = await showModalBottomSheet<bool>(
       context: context,
-      backgroundColor: Colors.transparent,
-      isScrollControlled: false,
+      backgroundColor: Colors.white,
+      showDragHandle: true,
+      isScrollControlled: true,
+      useSafeArea: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(26)),
+      ),
       builder: (sheetContext) {
-        return SafeArea(
-          child: Container(
-            decoration: const BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.vertical(
-                top: Radius.circular(26),
+        return SingleChildScrollView(
+          padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: 52,
+                height: 52,
+                decoration: BoxDecoration(
+                  color: AppColors.primaryGreen.withOpacity(0.10),
+                  shape: BoxShape.circle,
+                ),
+                child: const Icon(
+                  Icons.local_shipping_outlined,
+                  color: AppColors.primaryGreen,
+                  size: 27,
+                ),
               ),
-            ),
-            padding: const EdgeInsets.fromLTRB(
-              20,
-              12,
-              20,
-              20,
-            ),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Container(
-                  width: 42,
-                  height: 4,
-                  decoration: BoxDecoration(
-                    color: Colors.black12,
-                    borderRadius: BorderRadius.circular(20),
-                  ),
-                ),
-
-                const SizedBox(height: 20),
-
-                Container(
-                  width: 52,
-                  height: 52,
-                  decoration: BoxDecoration(
-                    color:
-                    AppColors.primaryGreen.withOpacity(0.10),
-                    shape: BoxShape.circle,
-                  ),
-                  child: const Icon(
-                    Icons.local_shipping_outlined,
-                    color: AppColors.primaryGreen,
-                    size: 27,
-                  ),
-                ),
-
-                const SizedBox(height: 14),
-
-                Text(
-                  'Receiving Details',
-                  style: AppTheme.heading(
-                    size: 19,
-                    color: AppColors.textDark,
-                  ),
-                ),
-
-                const SizedBox(height: 7),
-
-                Text(
-                  'Do you want to enter the goat receiving details now or complete them later?',
-                  textAlign: TextAlign.center,
+              const SizedBox(height: 14),
+              Text(
+                'Have the goats reached the farm?',
+                textAlign: TextAlign.center,
+                style: AppTheme.heading(size: 19),
+              ),
+              const SizedBox(height: 6),
+              Text(
+                'Receiving details give you the true cost per KG after '
+                    'transport, mortality and weight loss.',
+                textAlign: TextAlign.center,
+                style: AppTheme.body(size: 12),
+              ),
+              const SizedBox(height: 20),
+              _ChoiceTile(
+                icon: Icons.edit_note_rounded,
+                title: 'Fill receiving details now',
+                subtitle:
+                'Arrival weight, mortality and transport costs. '
+                    'Cost per KG is calculated straight away.',
+                highlighted: true,
+                onTap: () => Navigator.of(sheetContext).pop(true),
+              ),
+              const SizedBox(height: 10),
+              _ChoiceTile(
+                icon: Icons.schedule_outlined,
+                title: 'Save now, receive later',
+                subtitle:
+                'Saves the purchase immediately. It waits under '
+                    'Pending Receiving until the goats arrive.',
+                onTap: () => Navigator.of(sheetContext).pop(false),
+              ),
+              const SizedBox(height: 6),
+              TextButton(
+                onPressed: () => Navigator.of(sheetContext).pop(),
+                child: Text(
+                  'Keep editing',
                   style: AppTheme.body(
-                    size: 13,
+                    size: 12,
                     color: AppColors.textGrey,
+                    weight: FontWeight.w600,
                   ),
                 ),
-
-                const SizedBox(height: 22),
-
-                // ----------------------------------------------------------------
-                // FILL NOW
-                // ----------------------------------------------------------------
-
-                SizedBox(
-                  width: double.infinity,
-                  height: 52,
-                  child: ElevatedButton.icon(
-                    onPressed: () {
-                      Navigator.of(sheetContext).pop(true);
-                    },
-                    icon: const Icon(
-                      Icons.edit_note_rounded,
-                      size: 22,
-                    ),
-                    label: const Text(
-                      'Fill Receiving Details Now',
-                      style: TextStyle(
-                        fontSize: 14,
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor:
-                      AppColors.primaryGreen,
-                      foregroundColor: Colors.white,
-                      elevation: 1,
-                      shape: RoundedRectangleBorder(
-                        borderRadius:
-                        BorderRadius.circular(15),
-                      ),
-                    ),
-                  ),
-                ),
-
-                const SizedBox(height: 10),
-
-                // ----------------------------------------------------------------
-                // LATER
-                // ----------------------------------------------------------------
-
-                SizedBox(
-                  width: double.infinity,
-                  height: 52,
-                  child: OutlinedButton.icon(
-                    onPressed: () {
-                      Navigator.of(sheetContext).pop(false);
-                    },
-                    icon: const Icon(
-                      Icons.schedule_outlined,
-                      size: 21,
-                    ),
-                    label: const Text(
-                      'Later',
-                      style: TextStyle(
-                        fontSize: 14,
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                    style: OutlinedButton.styleFrom(
-                      foregroundColor:
-                      AppColors.primaryGreen,
-                      side: BorderSide(
-                        color: AppColors.primaryGreen
-                            .withOpacity(0.35),
-                      ),
-                      shape: RoundedRectangleBorder(
-                        borderRadius:
-                        BorderRadius.circular(15),
-                      ),
-                    ),
-                  ),
-                ),
-
-                const SizedBox(height: 4),
-              ],
-            ),
+              ),
+            ],
           ),
         );
       },
     );
 
-    if (!mounted || result == null) {
-      return;
-    }
-
-    // -------------------------------------------------------------------------
-    // RECEIVING NOW
-    // -------------------------------------------------------------------------
+    // Dismissed without choosing: stay on Step 2 and change nothing.
+    if (!mounted || result == null) return;
 
     if (result) {
+      _receivingSkipped = false;
       _draft.receivingNow = true;
       _draft.receivingStatus = 'pending';
 
-      await _goToStep(2);
+      await _goToStep(_receivingPage);
       return;
     }
 
-    // -------------------------------------------------------------------------
-    // RECEIVING LATER
-    // -------------------------------------------------------------------------
-
+    _receivingSkipped = true;
     _draft.markReceivingPending();
 
-    await _goToStep(3);
+    await _goToStep(_summaryPage);
   }
 
   // ===========================================================================
@@ -356,9 +249,7 @@ class _PurchaseGoatsWizardScreenState
   Future<void> _goToStep(int step) async {
     if (_moving) return;
 
-    if (step < 0 || step > 3) {
-      return;
-    }
+    if (step < _sellerPage || step > _summaryPage) return;
 
     if (!_pageController.hasClients) {
       setState(() {
@@ -367,19 +258,24 @@ class _PurchaseGoatsWizardScreenState
       return;
     }
 
+    final distance = (step - _currentStep).abs();
+
     setState(() {
       _moving = true;
       _currentStep = step;
     });
 
     try {
-      await _pageController.animateToPage(
-        step,
-        duration: const Duration(
-          milliseconds: 260,
-        ),
-        curve: Curves.easeOutCubic,
-      );
+      if (distance > 1) {
+        // Skipping the Receiving page: jump, don't slide through it.
+        _pageController.jumpToPage(step);
+      } else {
+        await _pageController.animateToPage(
+          step,
+          duration: const Duration(milliseconds: 260),
+          curve: Curves.easeOutCubic,
+        );
+      }
     } finally {
       if (mounted) {
         setState(() {
@@ -394,41 +290,17 @@ class _PurchaseGoatsWizardScreenState
   // ===========================================================================
 
   Future<void> _back() async {
-    if (_moving) return;
+    if (_moving || _saving.value) return;
 
     FocusScope.of(context).unfocus();
 
-    if (_currentStep == 0) {
-      final exit = await _confirmExit();
-
-      if (!mounted || !exit) {
-        return;
-      }
-
-      Navigator.of(context).pop();
+    if (_currentStep == _sellerPage) {
+      await _leave();
       return;
     }
 
-    // -------------------------------------------------------------------------
-    // STEP 4
-    // -------------------------------------------------------------------------
-
-    if (_currentStep == 3) {
-      if (_draft.isReceivingCompleted) {
-        await _goToStep(2);
-      } else {
-        await _goToStep(1);
-      }
-
-      return;
-    }
-
-    // -------------------------------------------------------------------------
-    // STEP 3
-    // -------------------------------------------------------------------------
-
-    if (_currentStep == 2) {
-      await _goToStep(1);
+    if (_currentStep == _summaryPage) {
+      await _goToStep(_receivingSkipped ? _purchasePage : _receivingPage);
       return;
     }
 
@@ -436,15 +308,29 @@ class _PurchaseGoatsWizardScreenState
   }
 
   // ===========================================================================
-  // SAVE
+  // EXIT
   // ===========================================================================
 
-  Future<void> _savePurchase() async {
-    if (_summaryKey.currentState?.isSaving ?? false) {
-      return;
+  /// Leaves the wizard. Only asks for confirmation when there is actually
+  /// something typed that would be lost.
+  Future<void> _leave() async {
+    if (_draft.hasAnyData) {
+      final discard = await showWizardConfirm(
+        context: context,
+        title: 'Discard this purchase?',
+        message:
+        'Nothing has been saved yet. If you leave now, everything '
+            'you entered will be lost.',
+        confirmLabel: 'Discard',
+        cancelLabel: 'Keep editing',
+        destructive: true,
+        icon: Icons.delete_outline_rounded,
+      );
+
+      if (!mounted || !discard) return;
     }
 
-    await _summaryKey.currentState?.save();
+    Navigator.of(context).pop();
   }
 
   // ===========================================================================
@@ -458,95 +344,47 @@ class _PurchaseGoatsWizardScreenState
       fastRoute(
         PurchaseSuccessScreen(
           purchaseId: purchase.id,
-          receivingPending:
-          purchase.receivingStatus != 'completed',
+          receivingPending: purchase.receivingStatus != 'completed',
         ),
       ),
     );
   }
 
   // ===========================================================================
-  // PAGE CONTENT
+  // PAGES
   // ===========================================================================
 
   Widget _buildPage(int index) {
     switch (index) {
-      case 0:
+      case _sellerPage:
         return Step1SellerDetails(
           formKey: _sellerFormKey,
           draft: _draft,
         );
 
-      case 1:
+      case _purchasePage:
         return Step2PurchaseDetails(
           formKey: _purchaseFormKey,
           draft: _draft,
         );
 
-      case 2:
+      case _receivingPage:
         return Step3ReceivingTransport(
           formKey: _receivingFormKey,
           draft: _draft,
         );
 
-      case 3:
+      case _summaryPage:
         return Step4Summary(
           key: _summaryKey,
           draft: _draft,
+          savingNotifier: _saving,
           onSaved: _onSaved,
         );
 
       default:
         return const SizedBox.shrink();
     }
-  }
-
-  // ===========================================================================
-  // EXIT CONFIRMATION
-  // ===========================================================================
-
-  Future<bool> _confirmExit() async {
-    final shouldExit = await showDialog<bool>(
-      context: context,
-      builder: (dialogContext) {
-        return AlertDialog(
-          title: const Text(
-            'Leave Purchase?',
-          ),
-          content: const Text(
-            'Your entered purchase details will be lost if you leave now.',
-          ),
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(20),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () {
-                Navigator.of(dialogContext).pop(false);
-              },
-              child: const Text(
-                'Stay',
-              ),
-            ),
-            ElevatedButton(
-              onPressed: () {
-                Navigator.of(dialogContext).pop(true);
-              },
-              style: ElevatedButton.styleFrom(
-                backgroundColor:
-                AppColors.primaryGreen,
-                foregroundColor: Colors.white,
-              ),
-              child: const Text(
-                'Leave',
-              ),
-            ),
-          ],
-        );
-      },
-    );
-
-    return shouldExit ?? false;
   }
 
   // ===========================================================================
@@ -558,269 +396,287 @@ class _PurchaseGoatsWizardScreenState
     return PopScope(
       canPop: false,
       onPopInvokedWithResult: (didPop, result) async {
-        if (didPop) {
-          return;
-        }
+        if (didPop || _saving.value) return;
 
-        if (_currentStep > 0) {
-          await _back();
-          return;
-        }
-
-        final exit = await _confirmExit();
-
-        if (!mounted || !exit) {
-          return;
-        }
-
-        Navigator.of(context).pop();
+        await _back();
       },
       child: Scaffold(
         backgroundColor: AppColors.paleGreen,
         appBar: AppBar(
           backgroundColor: AppColors.paleGreen,
+          surfaceTintColor: Colors.transparent,
           elevation: 0,
           centerTitle: false,
-          leading: IconButton(
-            onPressed: _moving ? null : _back,
-            icon: const Icon(
-              Icons.arrow_back_rounded,
-            ),
-            color: AppColors.textDark,
+          leading: ValueListenableBuilder<bool>(
+            valueListenable: _saving,
+            builder: (context, saving, _) {
+              return IconButton(
+                onPressed: (_moving || saving) ? null : _back,
+                icon: Icon(
+                  _currentStep == _sellerPage
+                      ? Icons.close_rounded
+                      : Icons.arrow_back_rounded,
+                ),
+                color: AppColors.textDark,
+                tooltip: _currentStep == _sellerPage ? 'Close' : 'Back',
+              );
+            },
           ),
           title: Text(
-            'Purchase Goat',
-            style: AppTheme.heading(
-              size: 19,
-              color: AppColors.textDark,
-            ),
+            'Purchase Goats',
+            style: AppTheme.heading(size: 19),
           ),
         ),
         body: SafeArea(
+          bottom: false,
           child: Column(
             children: [
-              // ----------------------------------------------------------------
-              // STEP INDICATOR
-              // ----------------------------------------------------------------
+              // ----------------------------------------------------------
+              // PROGRESS (one "Step x of y" only — the title row below no
+              // longer repeats it)
+              // ----------------------------------------------------------
 
               Padding(
-                padding: const EdgeInsets.fromLTRB(
-                  16,
-                  4,
-                  16,
-                  8,
-                ),
+                padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
                 child: WizardStepIndicator(
-                  currentStep: _currentStep,
-                  labels: _stepLabels,
+                  currentStep: _flowPosition,
+                  labels: _flow.map((s) => _stepLabels[s]!).toList(),
                 ),
               ),
-
-              // ----------------------------------------------------------------
-              // STEP TITLE
-              // ----------------------------------------------------------------
 
               Padding(
-                padding: const EdgeInsets.fromLTRB(
-                  18,
-                  4,
-                  18,
-                  10,
-                ),
-                child: Row(
-                  children: [
-                    Expanded(
-                      child: Text(
-                        _stepTitle,
-                        style: AppTheme.heading(
-                          size: 17,
-                          color: AppColors.textDark,
-                        ),
-                      ),
-                    ),
-                    Text(
-                      'Step ${_currentStep + 1} of 4',
-                      style: AppTheme.body(
-                        size: 11,
-                        color: AppColors.textGrey,
-                        weight: FontWeight.w600,
-                      ),
-                    ),
-                  ],
+                padding: const EdgeInsets.fromLTRB(18, 2, 18, 10),
+                child: Align(
+                  alignment: Alignment.centerLeft,
+                  child: Text(
+                    _stepTitle,
+                    style: AppTheme.heading(size: 17),
+                  ),
                 ),
               ),
-
-              // ----------------------------------------------------------------
-              // PAGE VIEW
-              // ----------------------------------------------------------------
 
               Expanded(
                 child: PageView.builder(
                   controller: _pageController,
-                  physics:
-                  const NeverScrollableScrollPhysics(),
+                  physics: const NeverScrollableScrollPhysics(),
                   itemCount: 4,
-                  onPageChanged: (index) {
-                    if (!mounted) return;
-
-                    setState(() {
-                      _currentStep = index;
-                    });
-                  },
-                  itemBuilder: (context, index) {
-                    return _buildPage(index);
-                  },
+                  itemBuilder: (context, index) => _buildPage(index),
                 ),
               ),
+            ],
+          ),
+        ),
 
-              // ----------------------------------------------------------------
-              // BOTTOM ACTION BAR
-              // ----------------------------------------------------------------
+        // A real bottomNavigationBar (rather than a widget inside the body)
+        // so floating snackbars sit ABOVE it instead of covering the
+        // Back / Next buttons.
+        bottomNavigationBar: _buildBottomBar(),
+      ),
+    );
+  }
 
-              Container(
-                padding: const EdgeInsets.fromLTRB(
-                  16,
-                  10,
-                  16,
-                  14,
-                ),
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black.withOpacity(0.05),
-                      blurRadius: 14,
-                      offset: const Offset(0, -3),
-                    ),
-                  ],
-                ),
-                child: Row(
-                  children: [
-                    if (_currentStep > 0) ...[
-                      Expanded(
-                        flex: 1,
-                        child: SizedBox(
-                          height: 52,
-                          child: OutlinedButton(
-                            onPressed:
-                            _moving ? null : _back,
-                            style:
-                            OutlinedButton.styleFrom(
-                              foregroundColor:
-                              AppColors.primaryGreen,
-                              side: BorderSide(
-                                color: AppColors
-                                    .primaryGreen
-                                    .withOpacity(0.35),
-                              ),
-                              shape:
-                              RoundedRectangleBorder(
-                                borderRadius:
-                                BorderRadius.circular(
-                                  15,
-                                ),
-                              ),
-                            ),
-                            child: const Text(
-                              'Back',
-                              style: TextStyle(
-                                fontWeight:
-                                FontWeight.w700,
-                              ),
-                            ),
-                          ),
-                        ),
-                      ),
-                      const SizedBox(width: 10),
-                    ],
+  // ===========================================================================
+  // BOTTOM BAR
+  // ===========================================================================
 
+  Widget _buildBottomBar() {
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.05),
+            blurRadius: 14,
+            offset: const Offset(0, -3),
+          ),
+        ],
+      ),
+      child: SafeArea(
+        top: false,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(16, 10, 16, 10),
+          child: ValueListenableBuilder<bool>(
+            valueListenable: _saving,
+            builder: (context, saving, _) {
+              final busy = _moving || saving;
+              final isSummary = _currentStep == _summaryPage;
+
+              return Row(
+                children: [
+                  if (_currentStep > _sellerPage) ...[
                     Expanded(
-                      flex: 2,
+                      flex: 1,
                       child: SizedBox(
                         height: 52,
-                        child: ElevatedButton(
-                          onPressed:
-                          _moving ? null : _next,
-                          style:
-                          ElevatedButton.styleFrom(
-                            backgroundColor:
-                            AppColors.primaryGreen,
-                            foregroundColor:
-                            Colors.white,
-                            elevation: 1,
-                            shape:
-                            RoundedRectangleBorder(
-                              borderRadius:
-                              BorderRadius.circular(15),
+                        child: OutlinedButton(
+                          onPressed: busy ? null : _back,
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: AppColors.primaryGreen,
+                            side: BorderSide(
+                              color: AppColors.primaryGreen
+                                  .withOpacity(busy ? 0.15 : 0.35),
+                            ),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(15),
                             ),
                           ),
-                          child: _currentStep == 3
-                              ? Row(
-                            mainAxisAlignment:
-                            MainAxisAlignment
-                                .center,
-                            children: [
-                              if (_summaryKey
-                                  .currentState
-                                  ?.isSaving ??
-                                  false)
-                                const SizedBox(
-                                  width: 19,
-                                  height: 19,
-                                  child:
-                                  CircularProgressIndicator(
-                                    strokeWidth: 2,
-                                    valueColor:
-                                    AlwaysStoppedAnimation<
-                                        Color>(
-                                      Colors.white,
-                                    ),
-                                  ),
-                                )
-                              else
-                                const Icon(
-                                  Icons.save_rounded,
-                                  size: 20,
-                                ),
-                              const SizedBox(
-                                width: 8,
-                              ),
-                              const Text(
-                                'Save Purchase',
-                                style: TextStyle(
-                                  fontWeight:
-                                  FontWeight.w700,
-                                  fontSize: 14,
-                                ),
-                              ),
-                            ],
-                          )
-                              : Row(
-                            mainAxisAlignment:
-                            MainAxisAlignment
-                                .center,
-                            children: const [
-                              Text(
-                                'Next',
-                                style: TextStyle(
-                                  fontWeight:
-                                  FontWeight.w700,
-                                  fontSize: 14,
-                                ),
-                              ),
-                              SizedBox(width: 7),
-                              Icon(
-                                Icons
-                                    .arrow_forward_rounded,
-                                size: 20,
-                              ),
-                            ],
+                          child: const Text(
+                            'Back',
+                            style: TextStyle(fontWeight: FontWeight.w700),
                           ),
                         ),
                       ),
                     ),
+                    const SizedBox(width: 10),
+                  ],
+                  Expanded(
+                    flex: 2,
+                    child: SizedBox(
+                      height: 52,
+                      child: ElevatedButton(
+                        onPressed: busy ? null : _next,
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: AppColors.primaryGreen,
+                          foregroundColor: Colors.white,
+                          disabledBackgroundColor:
+                          AppColors.primaryGreen.withOpacity(0.55),
+                          disabledForegroundColor: Colors.white,
+                          elevation: 1,
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(15),
+                          ),
+                        ),
+                        child: isSummary
+                            ? _saveLabel(saving)
+                            : _nextLabel(),
+                      ),
+                    ),
+                  ),
+                ],
+              );
+            },
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _saveLabel(bool saving) {
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.center,
+      children: [
+        if (saving)
+          const SizedBox(
+            width: 19,
+            height: 19,
+            child: CircularProgressIndicator(
+              strokeWidth: 2,
+              valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+            ),
+          )
+        else
+          const Icon(Icons.save_rounded, size: 20),
+        const SizedBox(width: 8),
+        Text(
+          saving ? 'Saving…' : 'Save Purchase',
+          style: const TextStyle(
+            fontWeight: FontWeight.w700,
+            fontSize: 14,
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _nextLabel() {
+    return const Row(
+      mainAxisAlignment: MainAxisAlignment.center,
+      children: [
+        Text(
+          'Next',
+          style: TextStyle(fontWeight: FontWeight.w700, fontSize: 14),
+        ),
+        SizedBox(width: 7),
+        Icon(Icons.arrow_forward_rounded, size: 20),
+      ],
+    );
+  }
+}
+
+// ============================================================================
+// CHOICE TILE (receiving popup)
+// ============================================================================
+
+class _ChoiceTile extends StatelessWidget {
+  final IconData icon;
+  final String title;
+  final String subtitle;
+  final bool highlighted;
+  final VoidCallback onTap;
+
+  const _ChoiceTile({
+    required this.icon,
+    required this.title,
+    required this.subtitle,
+    required this.onTap,
+    this.highlighted = false,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(16),
+        child: Container(
+          width: double.infinity,
+          padding: const EdgeInsets.all(14),
+          decoration: BoxDecoration(
+            color: highlighted ? AppColors.lightGreen : Colors.white,
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(
+              color: highlighted
+                  ? AppColors.primaryGreen
+                  : AppColors.divider,
+              width: highlighted ? 1.4 : 1,
+            ),
+          ),
+          child: Row(
+            children: [
+              Container(
+                width: 44,
+                height: 44,
+                decoration: BoxDecoration(
+                  color: AppColors.primaryGreen.withOpacity(0.12),
+                  borderRadius: BorderRadius.circular(13),
+                ),
+                child: Icon(icon, color: AppColors.darkGreen, size: 23),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      title,
+                      style: AppTheme.heading(
+                        size: 14,
+                        color: AppColors.textDark,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      subtitle,
+                      style: AppTheme.body(size: 11),
+                    ),
                   ],
                 ),
+              ),
+              const SizedBox(width: 6),
+              const Icon(
+                Icons.chevron_right_rounded,
+                color: AppColors.textGrey,
               ),
             ],
           ),

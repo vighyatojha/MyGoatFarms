@@ -1,9 +1,14 @@
+import 'purchase_costing.dart';
+
 /// Shared in-memory state for the Purchase Goats wizard.
 ///
 /// One PurchaseDraft instance is created when the wizard opens and is
 /// passed through all wizard steps.
 ///
 /// Nothing is written to Firestore until the purchase is saved.
+///
+/// All money / weight figures are derived through [PurchaseCosting], so the
+/// live numbers on screen, the summary and the saved record always agree.
 class PurchaseDraft {
   // ---------------------------------------------------------------------------
   // STEP 1 — SELLER DETAILS
@@ -65,57 +70,89 @@ class PurchaseDraft {
   double otherExpenses = 0;
 
   // ---------------------------------------------------------------------------
-  // DERIVED VALUES
+  // COSTING
   // ---------------------------------------------------------------------------
 
-  /// Purchase Amount = Total Weight × Price per KG.
+  /// Live costing from whatever is currently typed — used while the user is
+  /// still on Step 3, before receiving has been marked completed.
+  PurchaseCosting get costing => PurchaseCosting(
+    totalGoats: totalGoats,
+    weightAtPurchase: totalWeightAtPurchase,
+    pricePerKg: pricePerKg,
+    weightAfterArrival: totalWeightAfterArrival,
+    mortality: mortality,
+    transportCost: transportCost,
+    loadingCharges: loadingCharges,
+    unloadingCharges: unloadingCharges,
+    otherExpenses: otherExpenses,
+  );
+
+  /// Costing exactly as it will be SAVED.
   ///
-  /// This is always calculated live and is never manually entered.
-  double get purchaseAmount =>
-      totalWeightAtPurchase * pricePerKg;
+  /// When receiving is being done later, anything typed on Step 3 earlier
+  /// (then abandoned by going Back) is ignored, so the summary can never show
+  /// expenses that will not actually be stored.
+  PurchaseCosting get finalCosting =>
+      isReceivingCompleted ? costing : costing.withoutReceiving();
 
-  /// Weight Loss = Weight at Purchase − Weight After Arrival.
-  double get weightLoss {
-    final loss =
-        totalWeightAtPurchase - totalWeightAfterArrival;
+  // ---------------------------------------------------------------------------
+  // DERIVED VALUES (kept for existing callers)
+  // ---------------------------------------------------------------------------
 
-    return loss < 0 ? 0 : loss;
-  }
+  /// Purchase Amount = Total Weight x Price per KG. Never entered by hand.
+  double get purchaseAmount => costing.purchaseAmount;
 
-  /// Total transportation/additional expenses.
-  double get totalTransportExpenses =>
-      transportCost +
-          loadingCharges +
-          unloadingCharges +
-          otherExpenses;
+  /// Weight Loss = Weight at Purchase - Weight After Arrival.
+  ///
+  /// 0 until an arrival weight has been entered (it used to show the whole
+  /// purchase weight as "lost" before anything was typed).
+  double get weightLoss => costing.weightLoss;
+
+  /// Total transportation / additional expenses.
+  double get totalTransportExpenses => costing.totalExpenses;
 
   /// Total expenses currently attached to the purchase.
-  double get totalExpenses =>
-      totalTransportExpenses;
+  double get totalExpenses => costing.totalExpenses;
 
   /// Grand Total = Purchase Amount + Additional Expenses.
-  double get grandTotal =>
-      purchaseAmount + totalExpenses;
+  double get grandTotal => costing.grandTotal;
 
-  /// Effective Cost per KG after arrival.
-  ///
-  /// Guarded against division by zero.
-  double get effectiveCostPerKg =>
-      totalWeightAfterArrival > 0
-          ? grandTotal / totalWeightAfterArrival
-          : 0;
+  /// Grand Total / Weight After Arrival. 0 until arrival weight is entered.
+  double get effectiveCostPerKg => costing.effectiveCostPerKg;
+
+  /// Goats that actually arrived alive.
+  int get survivingGoats => costing.survivingGoats;
+
+  /// Grand Total / surviving goats.
+  double get costPerSurvivingGoat => costing.costPerSurvivingGoat;
 
   // ---------------------------------------------------------------------------
   // HELPERS
   // ---------------------------------------------------------------------------
 
   /// Whether receiving information has been completed.
-  bool get isReceivingCompleted =>
-      receivingStatus == 'completed';
+  bool get isReceivingCompleted => receivingStatus == 'completed';
 
   /// Whether the purchase is waiting for receiving information.
-  bool get isReceivingPending =>
-      receivingStatus == 'pending';
+  bool get isReceivingPending => receivingStatus == 'pending';
+
+  /// True once the person has typed anything. Lets the wizard skip the
+  /// "Leave purchase?" warning when there is nothing to lose.
+  bool get hasAnyData =>
+      sellerName.trim().isNotEmpty ||
+          mobile.trim().isNotEmpty ||
+          market.trim().isNotEmpty ||
+          vehicleNumber.trim().isNotEmpty ||
+          totalGoats > 0 ||
+          totalWeightAtPurchase > 0 ||
+          pricePerKg > 0 ||
+          totalWeightAfterArrival > 0 ||
+          mortality > 0 ||
+          transportCost > 0 ||
+          loadingCharges > 0 ||
+          unloadingCharges > 0 ||
+          otherExpenses > 0 ||
+          remarks.trim().isNotEmpty;
 
   /// Normalizes the payment method so only Cash or Online can be stored.
   void setPaymentMethod(String value) {

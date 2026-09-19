@@ -1,8 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
-import '../../../../app_theme.dart';
-import '../../../../models/trading_purchase_draft.dart';
+import '../../../models/trading_purchase_draft.dart';
 import '../purchase_goats/purchase_wizard_widgets.dart';
 
 /// Step 1 — Seller Details.
@@ -29,16 +28,19 @@ class Step1SellerDetails extends StatefulWidget {
   });
 
   @override
-  State<Step1SellerDetails> createState() =>
-      _Step1SellerDetailsState();
+  State<Step1SellerDetails> createState() => _Step1SellerDetailsState();
 }
 
-class _Step1SellerDetailsState
-    extends State<Step1SellerDetails> {
+class _Step1SellerDetailsState extends State<Step1SellerDetails> {
   late final TextEditingController _sellerNameController;
   late final TextEditingController _mobileController;
   late final TextEditingController _marketController;
   late final TextEditingController _vehicleController;
+
+  DateTime get _today {
+    final now = DateTime.now();
+    return DateTime(now.year, now.month, now.day);
+  }
 
   @override
   void initState() {
@@ -46,21 +48,10 @@ class _Step1SellerDetailsState
 
     final draft = widget.draft;
 
-    _sellerNameController = TextEditingController(
-      text: draft.sellerName,
-    );
-
-    _mobileController = TextEditingController(
-      text: draft.mobile,
-    );
-
-    _marketController = TextEditingController(
-      text: draft.market,
-    );
-
-    _vehicleController = TextEditingController(
-      text: draft.vehicleNumber,
-    );
+    _sellerNameController = TextEditingController(text: draft.sellerName);
+    _mobileController = TextEditingController(text: draft.mobile);
+    _marketController = TextEditingController(text: draft.market);
+    _vehicleController = TextEditingController(text: draft.vehicleNumber);
   }
 
   @override
@@ -69,51 +60,21 @@ class _Step1SellerDetailsState
     _mobileController.dispose();
     _marketController.dispose();
     _vehicleController.dispose();
-
     super.dispose();
   }
 
   Future<void> _pickPurchaseDate() async {
-    final picked = await showDatePicker(
+    // A purchase is something that already happened, so today is the latest
+    // date allowed (this used to allow tomorrow).
+    final picked = await showWizardDatePicker(
       context: context,
       initialDate: widget.draft.purchaseDate,
       firstDate: DateTime(2020),
-      lastDate: DateTime.now().add(
-        const Duration(days: 1),
-      ),
-      builder: (context, child) {
-        final theme = Theme.of(context);
-
-        return Theme(
-          data: theme.copyWith(
-            colorScheme: theme.colorScheme.copyWith(
-              primary: AppColors.primaryGreen,
-              onPrimary: Colors.white,
-              surface: Colors.white,
-              onSurface: AppColors.textDark,
-            ),
-            datePickerTheme: DatePickerThemeData(
-              backgroundColor: Colors.white,
-              headerBackgroundColor:
-              AppColors.primaryGreen,
-              headerForegroundColor: Colors.white,
-              todayForegroundColor:
-              const WidgetStatePropertyAll(
-                AppColors.primaryGreen,
-              ),
-              todayBorder: const BorderSide(
-                color: AppColors.primaryGreen,
-              ),
-            ),
-          ),
-          child: child!,
-        );
-      },
+      lastDate: _today,
+      helpText: 'Purchase date',
     );
 
-    if (picked == null) {
-      return;
-    }
+    if (picked == null || !mounted) return;
 
     setState(() {
       widget.draft.purchaseDate = picked;
@@ -127,12 +88,8 @@ class _Step1SellerDetailsState
     return Form(
       key: widget.formKey,
       child: ListView(
-        padding: const EdgeInsets.fromLTRB(
-          16,
-          16,
-          16,
-          24,
-        ),
+        keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+        padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
         children: [
           WizardSectionCard(
             title: 'Seller Details',
@@ -143,15 +100,15 @@ class _Step1SellerDetailsState
                 label: 'Seller Name',
                 hint: 'e.g. Ramesh Traders',
                 icon: Icons.badge_outlined,
+                textCapitalization: TextCapitalization.words,
                 onChanged: (value) {
                   draft.sellerName = value;
                 },
                 validator: (value) {
                   final v = value?.trim() ?? '';
 
-                  if (v.isEmpty) {
-                    return 'Enter seller name';
-                  }
+                  if (v.isEmpty) return 'Enter seller name';
+                  if (v.length < 2) return 'Name is too short';
 
                   return null;
                 },
@@ -175,13 +132,9 @@ class _Step1SellerDetailsState
                 validator: (value) {
                   final v = value?.trim() ?? '';
 
-                  if (v.isEmpty) {
-                    return 'Enter mobile number';
-                  }
+                  if (v.isEmpty) return 'Enter mobile number';
 
-                  if (!RegExp(
-                    r'^[0-9]{10}$',
-                  ).hasMatch(v)) {
+                  if (!RegExp(r'^[0-9]{10}$').hasMatch(v)) {
                     return 'Enter a valid 10-digit number';
                   }
 
@@ -194,9 +147,10 @@ class _Step1SellerDetailsState
               wizardField(
                 controller: _marketController,
                 label: 'Market / Location',
-                hint: 'Optional',
+                hint: 'e.g. Bakrid Mandi, Pune',
                 icon: Icons.location_on_outlined,
                 optional: true,
+                textCapitalization: TextCapitalization.words,
                 onChanged: (value) {
                   draft.market = value;
                 },
@@ -207,18 +161,26 @@ class _Step1SellerDetailsState
               wizardField(
                 controller: _vehicleController,
                 label: 'Vehicle Number',
-                hint: 'Optional',
+                hint: 'e.g. MH12AB1234',
                 icon: Icons.local_shipping_outlined,
                 optional: true,
+                textCapitalization: TextCapitalization.characters,
+                textInputAction: TextInputAction.done,
+                inputFormatters: [
+                  // Vehicle numbers have no spaces or symbols worth keeping.
+                  FilteringTextInputFormatter.allow(
+                    RegExp(r'[A-Za-z0-9 -]'),
+                  ),
+                ],
                 onChanged: (value) {
-                  draft.vehicleNumber = value;
+                  draft.vehicleNumber = value.toUpperCase();
                 },
               ),
 
               const SizedBox(height: 14),
 
               WizardDateField(
-                label: 'Purchase Date',
+                label: 'Purchase Date *',
                 date: draft.purchaseDate,
                 onTap: _pickPurchaseDate,
               ),

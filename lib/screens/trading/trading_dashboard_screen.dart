@@ -289,8 +289,12 @@ class _TradingDashboardScreenState extends State<TradingDashboardScreen> {
             label: 'Total Stock',
             value: '${s.totalStock}',
             color: AppColors.primaryGreen,
-            // Needs a "new this week" field on TradingSummary, e.g.
-            // badge: '+${s.newThisWeek} new',
+            // totalStock = goats on the farm INCLUDING received-but-not-yet-
+            // registered ones (by design, see TradingSummary). The Goat Stock
+            // list only shows registered records, so say how many are missing.
+            badge: s.pendingRegistrations > 0
+                ? '${s.pendingRegistrations} unregistered'
+                : null,
             onTap: () => _openGoatStock(),
           ),
           _StatCard(
