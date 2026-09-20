@@ -1,5 +1,6 @@
 import '../models/goat_model.dart';
 import '../services/sales_service.dart';
+import 'expense_categories.dart';
 import 'sale_model.dart';
 
 /// Shared in-memory state for the Sell Goat wizard.
@@ -185,6 +186,13 @@ class SaleDraft {
 
   bool get isPalaiTransfer =>
       deliveryType == Sale.deliveryTypePalai;
+
+  /// How the money taken now is being paid (Cash, UPI, ...). Shared by
+  /// the three branches that take a payment at the sale: Deliver Now
+  /// (amount received), Booking (booking amount) and Wait for Delivery
+  /// (advance). Saved on the sale and used as the payment method of the
+  /// Finance entry for that money.
+  String paymentMethod = FinancePaymentMethods.cash;
 
   // --- Branch A: Deliver Now (Task 3.1) --------------------------------------
 

@@ -1,5 +1,55 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 
+/// One balance payment collected against a sale after the goat was
+/// delivered (Booking / Wait for Delivery final balance, or the unpaid
+/// part of a Deliver Now sale).
+///
+/// Stored inside the sale document itself, in its `payments` list, so the
+/// receipt gets the full payment history from the one document it already
+/// loads, and a payment is recorded in the same transaction that checks
+/// the balance. Collecting a balance never creates Finance revenue: the
+/// revenue for the sale was already recorded in full at delivery.
+class SalePayment {
+  final double amount;
+  final String method;
+  final DateTime date;
+  final String note;
+
+  const SalePayment({
+    required this.amount,
+    required this.method,
+    required this.date,
+    this.note = '',
+  });
+
+  factory SalePayment.fromMap(Map<String, dynamic> data) {
+    final rawAmount = data['amount'];
+    final rawDate = data['date'];
+
+    return SalePayment(
+      amount: rawAmount is num
+          ? rawAmount.toDouble()
+          : double.tryParse(rawAmount?.toString() ?? '') ?? 0.0,
+      method: (data['method'] ?? '').toString(),
+      date: rawDate is Timestamp
+          ? rawDate.toDate()
+          : rawDate is DateTime
+          ? rawDate
+          : DateTime.fromMillisecondsSinceEpoch(0),
+      note: (data['note'] ?? '').toString(),
+    );
+  }
+
+  Map<String, dynamic> toMap() {
+    return {
+      'amount': amount,
+      'method': method,
+      'date': Timestamp.fromDate(date),
+      if (note.trim().isNotEmpty) 'note': note.trim(),
+    };
+  }
+}
+
 /// A single Sale transaction, covering one or more goats.
 ///
 /// Stored at:
@@ -79,8 +129,7 @@ class Sale {
 
   /// Set by the Complete Delivery action for Branch B: what the customer
   /// still owes at pickup — Goat Sale Amount + Holding Charges +
-  /// Transportation - Booking Amount already paid. (Sales completed
-  /// before transportation was included here stored it without.)
+  /// Transportation - Booking Amount already paid.
   final double? finalAmountAfterHolding;
 
   final DateTime? deliveryCompletedAt;
@@ -127,6 +176,23 @@ class Sale {
   final String status;
   final DateTime? createdAt;
 
+  // ---------------------------------------------------------------------
+  // BALANCE PAYMENTS
+  // ---------------------------------------------------------------------
+
+  /// Payments collected after delivery, oldest first. Empty until the
+  /// first one is received. See [SalePayment] and
+  /// SalesService.receiveBalancePayment.
+  final List<SalePayment> payments;
+
+  /// How the initial payment (amount received / booking amount /
+  /// advance) was made — Cash, UPI, Bank Transfer, ... Chosen in the
+  /// Sell Goat form and used as the payment method of the Sold Goat
+  /// Revenue entry for that money, so the Finance Cash / Online tracker
+  /// is right. Later balance payments carry their own method in
+  /// [SalePayment.method].
+  final String? paymentMethod;
+
   const Sale({
     required this.id,
     required this.goatIds,
@@ -160,6 +226,8 @@ class Sale {
     this.monthlyPalaiCharge,
     this.palaiCustomerId,
     this.createdAt,
+    this.payments = const [],
+    this.paymentMethod,
   });
 
   // ---------------------------------------------------------------------
@@ -235,16 +303,16 @@ class Sale {
   // Transportation is collected from the customer but passed on to the
   // transport team, so it is part of what the customer pays
   // ([billCustomerTotal]) and is NOT farm revenue. Sold Goat Revenue is
-  // Customer Total - Transportation = Goat Sale + Holding Charges (see
-  // SalesService._ensureSaleFinanceRevenue).
+  // Customer Total - Transportation = Goat Sale + Holding Charges, and it
+  // is recorded as the customer's money is received (see "FINANCE
+  // REVENUE" below and SalesService._recordSaleReceiptRevenue).
   //
   // These getters deliberately do not read [finalAmountAfterHolding] or
   // [finalPriceAfterPickup]: SalesService stores both as the REMAINING
   // balance (already net of the booking amount / advance). Using them as
   // the gross total and then subtracting the amount paid again would
-  // understate what is still owed. Rebuilding the gross total from its
-  // parts also keeps older sales (completed before transportation was
-  // added to those two fields) showing a correct bill.
+  // understate what is still owed, so the gross total is rebuilt here
+  // from its parts.
 
   /// True once a Wait for Delivery sale has been picked up and its pickup
   /// weight recorded.
@@ -276,9 +344,9 @@ class Sale {
     billGoatSale + billHoldingCharges + billTransportCharges,
   );
 
-  /// Money already received: amount received (Deliver Now), booking
-  /// amount (Booking) or advance (Wait for Delivery).
-  double get billAmountPaid {
+  /// Money received when the sale was made: amount received (Deliver
+  /// Now), booking amount (Booking) or advance (Wait for Delivery).
+  double get billInitialPayment {
     if (isDeliverNow) return _nonNegative(amountReceived ?? 0);
     if (isBooking) return _nonNegative(bookingAmount ?? 0);
     if (isWaitForDelivery) return _nonNegative(bookingAdvanceAmount ?? 0);
@@ -286,9 +354,83 @@ class Sale {
     return 0.0;
   }
 
+  /// Receipt label for [billInitialPayment].
+  String get billInitialPaymentLabel {
+    if (isBooking) return 'Booking Amount Paid';
+    if (isWaitForDelivery) return 'Advance Paid';
+
+    return 'Amount Received';
+  }
+
+  /// Sum of the balance payments collected after delivery.
+  double get billBalancePayments => _nonNegative(
+    payments.fold<double>(0.0, (sum, p) => sum + p.amount),
+  );
+
+  /// Everything received so far: the initial payment plus any balance
+  /// payments collected after delivery.
+  double get billAmountPaid =>
+      _round2(billInitialPayment + billBalancePayments);
+
   /// Customer Total - Amount Paid. Never negative.
   double get billBalanceDue =>
       _nonNegative(billCustomerTotal - billAmountPaid);
+
+  /// True once the goat(s) have actually left the farm: a Deliver Now
+  /// sale, a completed Booking delivery, or a completed Wait for
+  /// Delivery pickup.
+  bool get isDelivered =>
+      status == statusSold ||
+          status == statusDeliveryCompleted ||
+          status == statusPickupCompleted;
+
+  /// A balance can be collected only after delivery, and only while
+  /// something is still owed.
+  bool get canCollectBalance => isDelivered && billBalanceDue > 0;
+
+  // ---------------------------------------------------------------------
+  // FINANCE REVENUE (Sold Goat Revenue)
+  // ---------------------------------------------------------------------
+  //
+  // Finance works on money RECEIVED (Net Cash Flow, the Cash / Online
+  // tracker, Palai payments), so Sold Goat Revenue is recorded as the
+  // customer's money comes in rather than the whole sale up front. Each
+  // receipt is its own Finance entry, linked to the sale by saleId.
+  //
+  // Transportation is the LAST part of the bill to be settled and is
+  // never revenue (it is paid on to the transport team). So money
+  // received counts as revenue until Goat Sale + Holding Charges is
+  // covered; anything beyond that is transportation.
+  //
+  //   Bill: Goat Sale 20,000 + Holding 500 + Transportation 1,000
+  //         = Customer Total 21,500
+  //
+  //   Paid  5,000  -> revenue  5,000
+  //   Paid 20,500  -> revenue 20,500
+  //   Paid 21,500  -> revenue 20,500  (the last 1,000 is transportation)
+
+  /// The part of the bill that is farm revenue: Goat Sale + Holding
+  /// Charges (everything except transportation).
+  double get billRevenueTotal => _round2(billGoatSale + billHoldingCharges);
+
+  /// Revenue earned so far from the money received so far.
+  double get billRevenueReceived => revenueFromPaid(
+    paid: billAmountPaid,
+    revenueTotal: billRevenueTotal,
+  );
+
+  /// How much of [paid] counts as revenue given the sale's
+  /// [revenueTotal] (Goat Sale + Holding Charges). Money past that is
+  /// transportation, not revenue.
+  static double revenueFromPaid({
+    required double paid,
+    required double revenueTotal,
+  }) {
+    final received = _nonNegative(paid);
+    final cap = _nonNegative(revenueTotal);
+
+    return received < cap ? received : cap;
+  }
 
   /// Rounds to 2 decimals so floating-point drift (e.g.
   /// 27456.000000000004) never shows up in a figure or flips "PAID" to
@@ -424,6 +566,18 @@ class Sale {
       palaiCustomerId: data['palaiCustomerId'] as String?,
 
       createdAt: dateFrom('createdAt'),
+
+      paymentMethod: data['paymentMethod'] as String?,
+
+      payments: (data['payments'] as List?)
+          ?.whereType<Map>()
+          .map(
+            (e) => SalePayment.fromMap(
+          Map<String, dynamic>.from(e),
+        ),
+      )
+          .toList() ??
+          const [],
     );
   }
 
@@ -487,6 +641,11 @@ class Sale {
     putIfNotNull('palaiPackage', palaiPackage);
     putIfNotNull('monthlyPalaiCharge', monthlyPalaiCharge);
     putIfNotNull('palaiCustomerId', palaiCustomerId);
+    putIfNotNull('paymentMethod', paymentMethod);
+
+    if (payments.isNotEmpty) {
+      map['payments'] = payments.map((p) => p.toMap()).toList();
+    }
 
     return map;
   }

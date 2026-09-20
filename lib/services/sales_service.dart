@@ -143,74 +143,112 @@ class SalesService {
   // FINANCE INTEGRATION — SOLD GOAT REVENUE
   // -----------------------------------------------------------------------
   //
-  // A sale is linked to its Finance revenue through:
+  // Finance is cash-based: Net Cash Flow, the Cash / Online tracker and
+  // every Palai customer payment all count money when it is RECEIVED. So
+  // Sold Goat Revenue follows the customer's money too — one `transactions`
+  // income doc per receipt, each with its own amount, date and payment
+  // method — instead of booking the whole sale up front:
   //
-  // referenceType = tradingSale
-  // referenceId   = S-0001 (the saleId)
+  //   Deliver Now            -> the amount received at the sale
+  //   Booking / Wait         -> the booking amount / advance, recorded at
+  //                             Complete Delivery (the goat hasn't left
+  //                             the farm before that)
+  //   later balance payments -> one entry each, written by
+  //                             receiveBalancePayment
   //
-  // Mirrors TradingService._ensurePurchaseFinanceExpense, but writes a
-  // `transactions` doc directly (isIncome: true) instead of going through
-  // FinanceService.addExpense/addManualRevenue — the Sell Goat flow
-  // doesn't collect a Finance-style payment method, and this also needs
-  // to *update* the same doc in place (not just dedup-skip) once a
-  // Booking/Wait-for-Delivery sale's estimate becomes a real settled
-  // amount at Complete Delivery.
+  // Every entry links back to the sale:
   //
-  // Revenue amount = Goat Sale Amount (+ Holding Charges for Booking).
-  // The Transportation Charge is NOT revenue: it is collected from the
-  // customer on the bill but paid on to the transport team, so it is
-  // left out of this amount (Customer Total - Transportation). No
-  // transport expense entry is created either — the farm never books
-  // that money as income in the first place.
-  Future<void> _ensureSaleFinanceRevenue({
-    required String farmId,
+  //   referenceType = tradingSale
+  //   referenceId   = S-0001 (the saleId)
+  //
+  // and has a deterministic doc id (sale_S-0001_initial, sale_S-0001_pay1,
+  // ...), so writing the same receipt twice overwrites the same doc — it
+  // can never create a duplicate.
+  //
+  // Transportation is NEVER revenue: it is collected from the customer on
+  // the bill but paid on to the transport team. Money counts as revenue
+  // until Goat Sale + Holding Charges is covered and anything past that
+  // is transportation (see Sale.revenueFromPaid). No transport expense
+  // entry is created either.
+
+  CollectionReference<Map<String, dynamic>> _transactions(String farmId) {
+    return _farms().doc(farmId).collection('transactions');
+  }
+
+  String _saleRevenueDocId(String saleId, String receiptKey) =>
+      'sale_${saleId}_$receiptKey';
+
+  Map<String, dynamic> _saleRevenueData({
     required String saleId,
     required double amount,
     required DateTime date,
-  }) async {
-    if (amount <= 0) return;
-
-    final transactions = _db
-        .collection('farms')
-        .doc(farmId)
-        .collection('transactions');
-
-    final existing = await transactions
-        .where('referenceType', isEqualTo: 'tradingSale')
-        .where('referenceId', isEqualTo: saleId)
-        .limit(1)
-        .get()
-        .timeout(_timeout);
-
-    final data = {
+    required String paymentMethod,
+    required String customerName,
+    required String note,
+  }) {
+    return {
       'amount': amount,
       'isIncome': true,
       'category': RevenueCategories.soldGoatRevenue,
-      'note': 'Sold Goat Revenue — Sale $saleId',
-      'paymentMethod': FinancePaymentMethods.other,
+      if (customerName.trim().isNotEmpty) 'customerName': customerName.trim(),
+      'note': note,
+      'paymentMethod': paymentMethod,
       'date': Timestamp.fromDate(date),
       'status': 'active',
       'referenceType': 'tradingSale',
       'referenceId': saleId,
     };
+  }
 
-    if (existing.docs.isNotEmpty) {
-      // Update in place rather than creating a second transaction — this
-      // is what keeps a Booking/Wait-for-Delivery sale's revenue at
-      // exactly one entry as it moves from creation-time estimate to
-      // the real settled amount recorded at Complete Delivery.
-      await existing.docs.first.reference
-          .update(data)
-          .timeout(_timeout);
-      return;
-    }
+  /// Writes one Sold Goat Revenue entry for one receipt of money. Safe to
+  /// call twice for the same [receiptKey] (same doc, overwritten).
+  Future<void> _recordSaleReceiptRevenue({
+    required String farmId,
+    required String saleId,
+    required String receiptKey,
+    required double amount,
+    required DateTime date,
+    required String customerName,
+    String paymentMethod = FinancePaymentMethods.other,
+    String? note,
+  }) async {
+    final rounded = SaleDraft.round2(amount);
 
-    await transactions
-        .add({
-      ...data,
+    if (rounded <= 0) return;
+
+    await _transactions(farmId)
+        .doc(_saleRevenueDocId(saleId, receiptKey))
+        .set({
+      ..._saleRevenueData(
+        saleId: saleId,
+        amount: rounded,
+        date: date,
+        paymentMethod: paymentMethod,
+        customerName: customerName,
+        note: note ?? 'Sold Goat Revenue — Sale $saleId',
+      ),
       'createdAt': FieldValue.serverTimestamp(),
-    })
-        .timeout(_timeout);
+    }).timeout(_timeout);
+  }
+
+  /// The payment method saved on a sale, or Other when none was saved.
+  String _methodOrOther(String? method) {
+    final trimmed = (method ?? '').trim();
+
+    return trimmed.isEmpty ? FinancePaymentMethods.other : trimmed;
+  }
+
+  /// Payment status of a sale from what is still owed and what has been
+  /// received so far.
+  String _paymentStatusFor({
+    required double balanceDue,
+    required double paid,
+  }) {
+    if (SaleDraft.round2(balanceDue) <= 0) return Sale.paymentStatusPaid;
+
+    return paid > 0
+        ? Sale.paymentStatusPartial
+        : Sale.paymentStatusPending;
   }
 
   // -----------------------------------------------------------------------
@@ -332,6 +370,7 @@ class SalesService {
         transportCost:
         draft.transportCost > 0 ? draft.transportCost : null,
         amountReceived: draft.amountReceived,
+        paymentMethod: draft.paymentMethod,
         paymentStatus: draft.paymentStatusDeliverNow,
       );
 
@@ -373,16 +412,22 @@ class SalesService {
 
     // -----------------------------------------------------------------
     // FINANCE REVENUE — the goat is Sold immediately in this branch, so
-    // the revenue is recorded right away: the goat sale amount only.
-    // Transport is on the customer's bill but is not revenue — see
-    // _ensureSaleFinanceRevenue's doc comment.
+    // the money received now is recorded right away. Only the part that
+    // covers the goat sale counts; transport on the customer's bill is
+    // never revenue — see the FINANCE INTEGRATION note above.
     // -----------------------------------------------------------------
 
-    await _ensureSaleFinanceRevenue(
+    await _recordSaleReceiptRevenue(
       farmId: farmId,
       saleId: saleId,
-      amount: draft.totalSaleAmount,
+      receiptKey: 'initial',
+      amount: Sale.revenueFromPaid(
+        paid: draft.amountReceived,
+        revenueTotal: draft.totalSaleAmount,
+      ),
       date: DateTime.now(),
+      customerName: draft.customerName,
+      paymentMethod: _methodOrOther(draft.paymentMethod),
     );
 
     return saleId;
@@ -496,6 +541,7 @@ class SalesService {
         deliveryType: Sale.deliveryTypeBooking,
         status: Sale.statusBooked,
         bookingAmount: draft.bookingAmount,
+        paymentMethod: draft.paymentMethod,
         expectedDeliveryDate: draft.expectedDeliveryDate,
         holdingDays: draft.holdingDays,
         holdingChargePerDay: draft.holdingChargePerDay,
@@ -650,6 +696,7 @@ class SalesService {
         status: Sale.statusWaitForDelivery,
         bookingPricePerKg: draft.bookingPricePerKg,
         bookingAdvanceAmount: draft.bookingAdvanceAmount,
+        paymentMethod: draft.paymentMethod,
         bookingWeight: draft.bookingWeightTotal,
         transportCost: draft.waitForDeliveryTransportCost > 0
             ? draft.waitForDeliveryTransportCost
@@ -925,6 +972,9 @@ class SalesService {
     // contention, which would assign these more than once.
     double totalSaleAmount = 0;
     double actualHoldingCharges = 0;
+    double bookingAmountPaid = 0;
+    String customerName = '';
+    String initialMethod = FinancePaymentMethods.other;
 
     await _db.runTransaction((transaction) async {
       // ---------------------------------------------------------------
@@ -978,12 +1028,15 @@ class SalesService {
       final finalAmount = rawFinalAmount < 0 ? 0.0 : rawFinalAmount;
 
       // Captured for the Finance revenue write after this transaction
-      // commits — gross sale value, not net of the booking amount
-      // already paid (that's [finalAmount] above, the *remaining*
-      // balance — revenue is recognized on the full sale, same as
-      // Deliver Now does regardless of amountReceived).
+      // commits: the gross sale value (not [finalAmount], which is the
+      // remaining balance) and the booking amount already received,
+      // which is the money that becomes revenue now that the goat has
+      // left. The balance is recorded as it is collected.
       totalSaleAmount = sale.totalSaleAmount;
       actualHoldingCharges = actualHoldingChargesValue;
+      bookingAmountPaid = bookingAmount;
+      customerName = sale.customerName;
+      initialMethod = _methodOrOther(sale.paymentMethod);
 
       // ---------------------------------------------------------------
       // 3. Update the sale doc.
@@ -994,6 +1047,10 @@ class SalesService {
         'actualHoldingDays': actualHoldingDays,
         'totalHoldingCharges': actualHoldingCharges,
         'finalAmountAfterHolding': finalAmount,
+        'paymentStatus': _paymentStatusFor(
+          balanceDue: finalAmount,
+          paid: bookingAmount,
+        ),
         'deliveryCompletedAt': FieldValue.serverTimestamp(),
       });
 
@@ -1044,17 +1101,23 @@ class SalesService {
 
     // -----------------------------------------------------------------
     // FINANCE REVENUE — the goat has now actually left the farm, so
-    // this is where a Booking sale's revenue is recorded/updated (not
-    // at saveBooking, when it was only a reservation). Replaces the
-    // same referenceId if a prior write had already created one — see
-    // _ensureSaleFinanceRevenue's doc comment.
+    // this is where the booking amount already received becomes Sold
+    // Goat Revenue (not at saveBooking, when it was only a
+    // reservation). The remaining balance is recorded as it is
+    // collected — see the FINANCE INTEGRATION note above.
     // -----------------------------------------------------------------
 
-    await _ensureSaleFinanceRevenue(
+    await _recordSaleReceiptRevenue(
       farmId: farmId,
       saleId: saleId,
-      amount: totalSaleAmount + actualHoldingCharges,
+      receiptKey: 'initial',
+      amount: Sale.revenueFromPaid(
+        paid: bookingAmountPaid,
+        revenueTotal: totalSaleAmount + actualHoldingCharges,
+      ),
       date: DateTime.now(),
+      customerName: customerName,
+      paymentMethod: initialMethod,
     );
   }
 
@@ -1097,6 +1160,9 @@ class SalesService {
     // Not `late final`: Firestore may re-run the transaction closure on
     // contention, which would assign these more than once.
     double grossSaleValue = 0;
+    double advancePaid = 0;
+    String customerName = '';
+    String initialMethod = FinancePaymentMethods.other;
 
     await _db.runTransaction((transaction) async {
       // ---------------------------------------------------------------
@@ -1148,11 +1214,15 @@ class SalesService {
       final finalPrice = rawFinalPrice < 0 ? 0.0 : rawFinalPrice;
 
       // Captured for the Finance revenue write after this transaction
-      // commits — gross sale value (pickup weight × booking rate),
-      // not net of the advance already paid (that's [finalPrice]
-      // above). Revenue is recognized on the full sale, same as every
-      // other branch.
+      // commits: the gross sale value (pickup weight × booking rate, not
+      // [finalPrice], which is the remaining balance) and the advance
+      // already received, which is the money that becomes revenue now
+      // that the goat has left. The balance is recorded as it is
+      // collected.
       grossSaleValue = pickupWeight * bookingPricePerKg;
+      advancePaid = bookingAdvanceAmount;
+      customerName = sale.customerName;
+      initialMethod = _methodOrOther(sale.paymentMethod);
 
       // ---------------------------------------------------------------
       // 3. Update the sale doc.
@@ -1162,6 +1232,10 @@ class SalesService {
         'status': Sale.statusPickupCompleted,
         'pickupWeight': pickupWeight,
         'finalPriceAfterPickup': finalPrice,
+        'paymentStatus': _paymentStatusFor(
+          balanceDue: finalPrice,
+          paid: bookingAdvanceAmount,
+        ),
         'deliveryCompletedAt': FieldValue.serverTimestamp(),
       });
 
@@ -1212,18 +1286,151 @@ class SalesService {
 
     // -----------------------------------------------------------------
     // FINANCE REVENUE — the goat has now actually left the farm, so
-    // this is where a Wait-for-Delivery sale's revenue is recorded/
-    // updated: pickup weight × booking rate (transport excluded).
-    // Replaces the same referenceId if a prior write had already
-    // created one — see _ensureSaleFinanceRevenue's doc comment.
+    // this is where the advance already received becomes Sold Goat
+    // Revenue: capped at pickup weight × booking rate, transport
+    // excluded. The remaining balance is recorded as it is collected —
+    // see the FINANCE INTEGRATION note above.
     // -----------------------------------------------------------------
 
-    await _ensureSaleFinanceRevenue(
+    await _recordSaleReceiptRevenue(
       farmId: farmId,
       saleId: saleId,
-      amount: grossSaleValue,
+      receiptKey: 'initial',
+      amount: Sale.revenueFromPaid(
+        paid: advancePaid,
+        revenueTotal: grossSaleValue,
+      ),
       date: DateTime.now(),
+      customerName: customerName,
+      paymentMethod: initialMethod,
     );
+  }
+
+  // -----------------------------------------------------------------------
+  // COLLECT BALANCE — after delivery
+  // -----------------------------------------------------------------------
+
+  /// Records a payment against the balance still owed on a delivered sale:
+  /// the final amount of a completed Booking / Wait for Delivery sale, or
+  /// the unpaid part of a Deliver Now sale.
+  ///
+  /// The payment is appended to the sale's `payments` list (see
+  /// [SalePayment]) and `paymentStatus` is refreshed (Paid / Partial), all
+  /// in ONE transaction that re-reads the sale and re-checks the balance
+  /// first. That is what stops a double-tap, or two devices collecting at
+  /// the same moment, from taking more than the customer actually owes.
+  ///
+  /// The same transaction also writes the Finance entry for this money
+  /// (Sold Goat Revenue, with the payment method chosen here, dated now,
+  /// linked to [saleId]) — but only the part that covers the goat sale
+  /// and holding charges. Money that goes toward transportation is passed
+  /// on to the transport team and is never revenue, so a payment that
+  /// only settles transport writes no Finance entry at all.
+  ///
+  /// Throws a [StateError] whose message is fit to show to the person for
+  /// anything they can fix (nothing due, amount too high, goat not
+  /// delivered yet).
+  Future<void> receiveBalancePayment({
+    required String farmId,
+    required String saleId,
+    required double amount,
+    required String paymentMethod,
+    String note = '',
+  }) async {
+    final paid = SaleDraft.round2(amount);
+
+    if (paid <= 0) {
+      throw StateError('Enter an amount greater than zero.');
+    }
+
+    final method = paymentMethod.trim().isEmpty
+        ? FinancePaymentMethods.cash
+        : paymentMethod.trim();
+
+    await _db.runTransaction((transaction) async {
+      final saleRef = _sales(farmId).doc(saleId);
+      final saleSnap = await transaction.get(saleRef);
+
+      if (!saleSnap.exists) {
+        throw StateError('This sale could not be found.');
+      }
+
+      final sale = Sale.fromDoc(saleSnap);
+
+      if (!sale.isDelivered) {
+        throw StateError(
+          'A balance can only be collected after the goat has been '
+              'delivered.',
+        );
+      }
+
+      final due = sale.billBalanceDue;
+
+      if (due <= 0) {
+        throw StateError('This sale has no balance due.');
+      }
+
+      if (paid > due) {
+        throw StateError(
+          'That is more than the balance due '
+              '(₹${due.toStringAsFixed(2)}).',
+        );
+      }
+
+      final payment = SalePayment(
+        amount: paid,
+        method: method,
+        date: DateTime.now(),
+        note: note,
+      );
+
+      // Rewrite the raw list (rather than arrayUnion) so the new entry is
+      // always appended, even if an identical payment already exists.
+      final existing = (saleSnap.data()?['payments'] as List?) ?? const [];
+      final dueAfter = SaleDraft.round2(due - paid);
+
+      // Revenue = the part of this payment that covers goat sale +
+      // holding charges; anything past that is transportation.
+      final revenueDelta = SaleDraft.round2(
+        Sale.revenueFromPaid(
+          paid: sale.billAmountPaid + paid,
+          revenueTotal: sale.billRevenueTotal,
+        ) -
+            sale.billRevenueReceived,
+      );
+
+      transaction.update(saleRef, {
+        'payments': [...existing, payment.toMap()],
+        'paymentStatus': _paymentStatusFor(
+          balanceDue: dueAfter,
+          paid: sale.billAmountPaid + paid,
+        ),
+      });
+
+      if (revenueDelta > 0) {
+        final trimmedNote = note.trim();
+
+        transaction.set(
+          _transactions(farmId).doc(
+            _saleRevenueDocId(saleId, 'pay${existing.length + 1}'),
+          ),
+          {
+            ..._saleRevenueData(
+              saleId: saleId,
+              amount: revenueDelta,
+              date: payment.date,
+              paymentMethod: method,
+              customerName: sale.customerName,
+              note: trimmedNote.isEmpty
+                  ? 'Sold Goat Revenue — balance payment, Sale $saleId'
+                  : 'Sold Goat Revenue — balance payment, Sale $saleId '
+                  '· $trimmedNote',
+            ),
+            'createdAt': FieldValue.serverTimestamp(),
+          },
+        );
+      }
+    }).timeout(_timeout * 2);
   }
 
   // -----------------------------------------------------------------------

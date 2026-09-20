@@ -49,11 +49,13 @@ class RevenueCategories {
   static const String otherFarmIncome = 'Other Farm Income';
   static const String miscellaneous = 'Miscellaneous Income';
 
-  /// Revenue created automatically when a Trading sale is saved/settled
-  /// through the Sell Goat flow. Covers the goat sale amount (plus
-  /// holding charges on Booking sales). Any transportation charge billed
-  /// to the customer is paid on to the transport team and is NOT
-  /// included — see SalesService._ensureSaleFinanceRevenue.
+  /// Revenue created automatically from Trading sales, recorded as the
+  /// customer's money is received (one entry per receipt, each with its
+  /// own payment method) and linked to the sale by saleId. Covers the
+  /// goat sale amount (plus holding charges on Booking sales). Any
+  /// transportation charge billed to the customer is paid on to the
+  /// transport team and is NOT included — see
+  /// SalesService._recordSaleReceiptRevenue.
   ///
   /// Kept separate from [goatSale] (which is for manually-entered
   /// revenue outside the Trading flow) so Finance can tell "the app

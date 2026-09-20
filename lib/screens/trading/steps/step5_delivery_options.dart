@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
 
 import '../../../app_theme.dart';
+import '../../../models/expense_categories.dart';
 import '../../../models/sale_draft.dart';
 import '../../../models/sale_model.dart';
 import '../purchase_goats/purchase_wizard_widgets.dart';
@@ -308,6 +309,67 @@ class Step5DeliveryOptionsState extends State<Step5DeliveryOptions> {
   }
 
   // ---------------------------------------------------------------------------
+  // PAYMENT METHOD (shared by Deliver Now, Booking and Wait for Delivery)
+  // ---------------------------------------------------------------------------
+  //
+  // How the money taken now is being paid. It is saved on the sale and
+  // becomes the payment method of the Sold Goat Revenue entry for that
+  // money, which is what keeps the Finance Cash / Online tracker right.
+  // Only one branch's form is on screen at a time, so they all share
+  // [SaleDraft.paymentMethod].
+
+  Widget _paymentMethodPicker(SaleDraft draft) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'Payment Method',
+          style: AppTheme.body(
+            size: 12,
+            color: AppColors.textGrey,
+            weight: FontWeight.w600,
+          ),
+        ),
+        const SizedBox(height: 8),
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: FinancePaymentMethods.all.map((method) {
+            final selected = draft.paymentMethod == method;
+
+            return ChoiceChip(
+              label: Text(method),
+              selected: selected,
+              onSelected: (_) {
+                setState(() {
+                  draft.paymentMethod = method;
+                });
+              },
+              selectedColor: AppColors.primaryGreen.withOpacity(0.15),
+              labelStyle: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+                color: selected ? AppColors.darkGreen : AppColors.textDark,
+              ),
+              side: BorderSide(
+                color: selected ? AppColors.primaryGreen : AppColors.divider,
+              ),
+            );
+          }).toList(),
+        ),
+        const SizedBox(height: 4),
+        Text(
+          'How the amount above is being paid now.',
+          style: AppTheme.body(
+            size: 10,
+            color: AppColors.textGrey,
+          ),
+        ),
+      ],
+    );
+  }
+
+  // ---------------------------------------------------------------------------
   // BRANCH A — DELIVER NOW
   // ---------------------------------------------------------------------------
 
@@ -363,6 +425,8 @@ class Step5DeliveryOptionsState extends State<Step5DeliveryOptions> {
                   return null;
                 },
               ),
+              const SizedBox(height: 14),
+              _paymentMethodPicker(draft),
             ],
           ),
 
@@ -474,6 +538,8 @@ class Step5DeliveryOptionsState extends State<Step5DeliveryOptions> {
                   return null;
                 },
               ),
+              const SizedBox(height: 14),
+              _paymentMethodPicker(draft),
               const SizedBox(height: 14),
               WizardDateField(
                 label: 'Expected Delivery Date',
@@ -826,6 +892,8 @@ class Step5DeliveryOptionsState extends State<Step5DeliveryOptions> {
                   return null;
                 },
               ),
+              const SizedBox(height: 14),
+              _paymentMethodPicker(draft),
               const SizedBox(height: 14),
               wizardField(
                 controller: _waitForDeliveryTransportCostController,

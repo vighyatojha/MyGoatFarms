@@ -8,6 +8,7 @@ import '../models/expense_categories.dart';
 import '../models/expense_model.dart';
 import '../models/final_checkout_report_model.dart';
 import '../models/finance_summary_model.dart';
+import '../models/sale_model.dart';
 import '../models/supplier_ledger_entry_model.dart';
 import 'firestore_service.dart';
 
@@ -69,6 +70,9 @@ class FinanceService {
 
   CollectionReference<Map<String, dynamic>> _customers(String farmId) =>
       _farms().doc(farmId).collection('palaiCustomers');
+
+  CollectionReference<Map<String, dynamic>> _sales(String farmId) =>
+      _farms().doc(farmId).collection('sales');
 
   CollectionReference<Map<String, dynamic>> _activities(String farmId) =>
       _farms().doc(farmId).collection('activities');
@@ -604,6 +608,29 @@ class FinanceService {
       final data = doc.data();
       totalOutstanding += ((data['pendingAmount'] ?? 0) as num).toDouble();
       totalAdvance += ((data['advanceAmount'] ?? 0) as num).toDouble();
+    }
+
+    // Goat-sale balances customers still owe (Trading). A delivered sale
+    // with money still owed carries a Partial / Pending paymentStatus, so
+    // this reads only the unsettled ones. Collecting a balance
+    // (SalesService.receiveBalancePayment) brings this figure down.
+    final unpaidSalesSnap = await _sales(farmId)
+        .where(
+      'paymentStatus',
+      whereIn: [
+        Sale.paymentStatusPartial,
+        Sale.paymentStatusPending,
+      ],
+    )
+        .get()
+        .timeout(_timeout);
+
+    for (final doc in unpaidSalesSnap.docs) {
+      final sale = Sale.fromDoc(doc);
+
+      if (sale.canCollectBalance) {
+        totalOutstanding += sale.billBalanceDue;
+      }
     }
 
     return FinanceSummary(

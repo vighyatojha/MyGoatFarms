@@ -864,6 +864,29 @@ class SaleReceiptPdfService {
     final total = sale.billCustomerTotal;
     final remaining = sale.billBalanceDue;
 
+    // The receipt is ONE fixed A4 page (pw.Page, not MultiPage), so an
+    // unbounded payment list would overflow it and fail PDF generation.
+    // List only the most recent balance payments and fold anything older
+    // into a single row; the totals below stay exact either way.
+    const maxListedPayments = 2;
+
+    final payments = sale.payments;
+    final hiddenCount = payments.length > maxListedPayments
+        ? payments.length - maxListedPayments
+        : 0;
+    final earlier = payments.take(hiddenCount).toList();
+    final listed = payments.skip(hiddenCount).toList();
+    final earlierTotal = earlier.fold<double>(
+      0.0,
+          (sum, payment) => sum + payment.amount,
+    );
+
+    final initialMethod = (sale.paymentMethod ?? '').trim();
+    final initialLabel =
+    sale.billInitialPayment > 0 && initialMethod.isNotEmpty
+        ? '${sale.billInitialPaymentLabel} ($initialMethod)'
+        : sale.billInitialPaymentLabel;
+
     final status = remaining <= 0
         ? 'PAID'
         : paid > 0
@@ -937,10 +960,31 @@ class SaleReceiptPdfService {
             _currency(total),
           ),
 
-          _calculationRow(
-            'Amount Paid',
-            _currency(paid),
-          ),
+          if (payments.isEmpty)
+            _calculationRow(
+              'Amount Paid',
+              _currency(paid),
+            )
+          else ...[
+            _calculationRow(
+              initialLabel,
+              _currency(sale.billInitialPayment),
+            ),
+            if (earlier.isNotEmpty)
+              _calculationRow(
+                'Earlier balance payments (${earlier.length})',
+                _currency(earlierTotal),
+              ),
+            for (final payment in listed)
+              _calculationRow(
+                _balancePaymentLabel(payment),
+                _currency(payment.amount),
+              ),
+            _calculationRow(
+              'Total Paid',
+              _currency(paid),
+            ),
+          ],
 
           pw.Divider(
             color: PdfColors.green300,
@@ -955,6 +999,16 @@ class SaleReceiptPdfService {
         ],
       ),
     );
+  }
+
+  /// One compact line per balance payment: date and method are folded
+  /// into the label so no extra note line is needed on the fixed page.
+  String _balancePaymentLabel(SalePayment payment) {
+    final method = payment.method.trim();
+
+    return 'Balance payment · '
+        '${DateFormat('dd MMM yyyy').format(payment.date)}'
+        '${method.isEmpty ? '' : ' · $method'}';
   }
 
   // ---------------------------------------------------------------------------
