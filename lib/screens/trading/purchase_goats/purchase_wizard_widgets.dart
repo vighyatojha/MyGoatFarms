@@ -463,6 +463,52 @@ Widget wizardField({
 // ============================================================================
 
 /// Tappable date field used throughout the Trading wizards.
+/// Dropdown styled like [wizardField] — same border, label and icon — so
+/// a fixed list of choices looks like the rest of the wizard's inputs.
+///
+/// [value] must be one of [options].
+Widget wizardDropdown({
+  required String label,
+  required String value,
+  required List<String> options,
+  required IconData icon,
+  required ValueChanged<String> onChanged,
+  String? helper,
+}) {
+  return InputDecorator(
+    decoration: _wizardDecoration(
+      label: label,
+      icon: icon,
+      helper: helper,
+    ),
+    child: DropdownButtonHideUnderline(
+      child: DropdownButton<String>(
+        value: options.contains(value) ? value : null,
+        isExpanded: true,
+        isDense: true,
+        borderRadius: BorderRadius.circular(13),
+        icon: const Icon(
+          Icons.expand_more_rounded,
+          color: AppColors.textGrey,
+        ),
+        style: AppTheme.body(size: 13, color: AppColors.textDark),
+        dropdownColor: Colors.white,
+        items: options
+            .map(
+              (option) => DropdownMenuItem<String>(
+            value: option,
+            child: Text(option),
+          ),
+        )
+            .toList(),
+        onChanged: (selected) {
+          if (selected != null) onChanged(selected);
+        },
+      ),
+    ),
+  );
+}
+
 class WizardDateField extends StatelessWidget {
   final String label;
   final DateTime date;

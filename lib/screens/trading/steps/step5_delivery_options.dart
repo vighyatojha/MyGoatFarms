@@ -54,14 +54,10 @@ class Step5DeliveryOptionsState extends State<Step5DeliveryOptions> {
   late final TextEditingController _amountReceivedController;
 
   late final TextEditingController _bookingAmountController;
-  late final TextEditingController _holdingDaysController;
   late final TextEditingController _holdingChargePerDayController;
-  late final TextEditingController _bookingTransportCostController;
 
   late final TextEditingController _bookingAdvanceController;
-  late final TextEditingController _waitForDeliveryTransportCostController;
 
-  late final TextEditingController _palaiPackageController;
   late final TextEditingController _monthlyChargeController;
 
   String _currency(num value) {
@@ -96,31 +92,25 @@ class Step5DeliveryOptionsState extends State<Step5DeliveryOptions> {
     _bookingAmountController = TextEditingController(
       text: _trimZero(draft.bookingAmount),
     );
-    _holdingDaysController = TextEditingController(
-      text: draft.holdingDays == 0 ? '' : draft.holdingDays.toString(),
-    );
     _holdingChargePerDayController = TextEditingController(
       text: _trimZero(draft.holdingChargePerDay),
-    );
-    _bookingTransportCostController = TextEditingController(
-      text: _trimZero(draft.bookingTransportCost),
     );
 
     _bookingAdvanceController = TextEditingController(
       text: _trimZero(draft.bookingAdvanceAmount),
     );
-    _waitForDeliveryTransportCostController = TextEditingController(
-      text: _trimZero(draft.waitForDeliveryTransportCost),
-    );
 
-    _palaiPackageController = TextEditingController(
-      text: draft.palaiPackage,
-    );
     _monthlyChargeController = TextEditingController(
       text: _trimZero(draft.monthlyPalaiCharge),
     );
 
     draft.transferDate ??= DateTime.now();
+
+    // The package is picked from a fixed list, so it always holds one of
+    // them — the first until the person chooses another.
+    if (!SaleDraft.palaiPackages.contains(draft.palaiPackage)) {
+      draft.palaiPackage = SaleDraft.palaiPackages.first;
+    }
   }
 
   @override
@@ -128,12 +118,8 @@ class Step5DeliveryOptionsState extends State<Step5DeliveryOptions> {
     _transportCostController.dispose();
     _amountReceivedController.dispose();
     _bookingAmountController.dispose();
-    _holdingDaysController.dispose();
     _holdingChargePerDayController.dispose();
-    _bookingTransportCostController.dispose();
     _bookingAdvanceController.dispose();
-    _waitForDeliveryTransportCostController.dispose();
-    _palaiPackageController.dispose();
     _monthlyChargeController.dispose();
     super.dispose();
   }
@@ -160,24 +146,18 @@ class Step5DeliveryOptionsState extends State<Step5DeliveryOptions> {
     final draft = widget.draft;
 
     draft.bookingAmount = _money(_bookingAmountController);
-    draft.holdingDays =
-        int.tryParse(_holdingDaysController.text.trim()) ?? 0;
     draft.holdingChargePerDay = _money(_holdingChargePerDayController);
-    draft.bookingTransportCost = _money(_bookingTransportCostController);
   }
 
   void _syncWaitForDelivery() {
     final draft = widget.draft;
 
     draft.bookingAdvanceAmount = _money(_bookingAdvanceController);
-    draft.waitForDeliveryTransportCost =
-        _money(_waitForDeliveryTransportCostController);
   }
 
   void _syncPalai() {
     final draft = widget.draft;
 
-    draft.palaiPackage = _palaiPackageController.text.trim();
     draft.monthlyPalaiCharge = _money(_monthlyChargeController);
   }
 
@@ -550,6 +530,8 @@ class Step5DeliveryOptionsState extends State<Step5DeliveryOptions> {
               const SizedBox(height: 14),
               WizardDateField(
                 label: 'Expected Delivery Date',
+                helper: 'For reference only — holding charges are counted '
+                    'until the day the goat is actually delivered.',
                 date: draft.expectedDeliveryDate ?? DateTime.now(),
                 onTap: () async {
                   final picked = await showWizardDatePicker(
@@ -567,33 +549,6 @@ class Step5DeliveryOptionsState extends State<Step5DeliveryOptions> {
                   setState(() {
                     draft.expectedDeliveryDate = picked;
                   });
-                },
-              ),
-              const SizedBox(height: 14),
-              wizardField(
-                controller: _holdingDaysController,
-                label: 'Holding Days',
-                optional: true,
-                hint: '0 if none',
-                icon: Icons.today_outlined,
-                keyboardType: TextInputType.number,
-                inputFormatters: [
-                  FilteringTextInputFormatter.digitsOnly,
-                ],
-                onChanged: (_) => setState(_syncBooking),
-                validator: (value) {
-                  final text = value?.trim() ?? '';
-
-                  // Blank counts as 0 (the draft reads it that way).
-                  if (text.isEmpty) return null;
-
-                  final number = int.tryParse(text);
-
-                  if (number == null || number < 0) {
-                    return 'Enter valid days';
-                  }
-
-                  return null;
                 },
               ),
               const SizedBox(height: 14),
@@ -628,25 +583,6 @@ class Step5DeliveryOptionsState extends State<Step5DeliveryOptions> {
                   return null;
                 },
               ),
-              const SizedBox(height: 14),
-              wizardField(
-                controller: _bookingTransportCostController,
-                label: 'Transportation Charge',
-                hint: '0.00',
-                icon: Icons.directions_car_outlined,
-                suffix: 'Added to bill',
-                optional: true,
-                keyboardType: const TextInputType.numberWithOptions(
-                  decimal: true,
-                ),
-                inputFormatters: [
-                  FilteringTextInputFormatter.allow(
-                    RegExp(r'^\d*\.?\d{0,2}'),
-                  ),
-                ],
-                onChanged: (_) => setState(_syncBooking),
-                validator: (_) => null,
-              ),
             ],
           ),
 
@@ -659,57 +595,45 @@ class Step5DeliveryOptionsState extends State<Step5DeliveryOptions> {
                 _currency(draft.totalSaleAmount),
               ),
               _SummaryRow(
-                'Holding Charges '
-                    '(${draft.holdingDays} '
-                    'day${draft.holdingDays == 1 ? '' : 's'} × '
-                    '${_currency(draft.holdingChargePerDay)})',
-                _currency(draft.totalHoldingCharges),
-              ),
-              if (draft.bookingTransportCost > 0)
-                _SummaryRow(
-                  'Transportation',
-                  _currency(draft.bookingTransportCost),
-                ),
-              _SummaryRow(
-                'Total Payable',
-                _currency(draft.totalPayableBooking),
-              ),
-              _SummaryRow(
                 'Booking Amount Paid',
                 _currency(draft.bookingAmount),
               ),
               _SummaryRow(
-                'Remaining Balance',
+                'Balance (before holding charges)',
                 _currency(draft.remainingBalanceBooking),
                 emphasized: true,
               ),
+              if (draft.holdingChargePerDay > 0)
+                _SummaryRow(
+                  'Holding Charge',
+                  '${_currency(draft.holdingChargePerDay)} / day',
+                ),
             ],
             title: 'Booking Summary',
             notes: [
-              if (draft.bookingAmount > draft.totalPayableBooking)
+              if (draft.bookingAmount > draft.totalSaleAmount)
                 _SummaryNote(
-                  'The booking amount is more than the total payable '
-                      '(${_currency(draft.totalPayableBooking)}). '
+                  'The booking amount is more than the goat sale '
+                      '(${_currency(draft.totalSaleAmount)}). '
                       'Check the amount before saving.',
                   color: AppColors.warning,
                   icon: Icons.warning_amber_rounded,
                 ),
               _SummaryNote(
-                'This is an estimate using the holding days entered '
-                    'above. The final amount is recalculated from the '
-                    'actual holding days when delivery is completed.',
+                'Holding is counted from today until the day the goat is '
+                    'delivered, both days included (booked 20 Sept, '
+                    'delivered 23 Sept = 4 days). The holding charges are '
+                    'calculated and added when the delivery is completed.',
                 color: AppColors.textGrey,
                 icon: Icons.info_outline_rounded,
               ),
-              if (draft.bookingTransportCost > 0)
-                _SummaryNote(
-                  'Transportation charge '
-                      '(${_currency(draft.bookingTransportCost)}) is '
-                      'added to the customer\'s bill. It is not recorded '
-                      'as a farm expense.',
-                  color: AppColors.textGrey,
-                  icon: Icons.info_outline_rounded,
-                ),
+              _SummaryNote(
+                'No receipt is generated now — this booking is only kept '
+                    'as a record. The receipt is generated when the '
+                    'delivery is completed.',
+                color: AppColors.textGrey,
+                icon: Icons.receipt_long_outlined,
+              ),
             ],
           ),
         ],
@@ -914,25 +838,6 @@ class Step5DeliveryOptionsState extends State<Step5DeliveryOptions> {
               ),
               const SizedBox(height: 14),
               _paymentMethodPicker(draft),
-              const SizedBox(height: 14),
-              wizardField(
-                controller: _waitForDeliveryTransportCostController,
-                label: 'Transportation Charge',
-                hint: '0.00',
-                icon: Icons.directions_car_outlined,
-                suffix: 'Added to bill',
-                optional: true,
-                keyboardType: const TextInputType.numberWithOptions(
-                  decimal: true,
-                ),
-                inputFormatters: [
-                  FilteringTextInputFormatter.allow(
-                    RegExp(r'^\d*\.?\d{0,2}'),
-                  ),
-                ],
-                onChanged: (_) => setState(_syncWaitForDelivery),
-                validator: (_) => null,
-              ),
             ],
           ),
 
@@ -952,11 +857,6 @@ class Step5DeliveryOptionsState extends State<Step5DeliveryOptions> {
                 'Goat Sale (Estimated)',
                 _currency(draft.totalSaleAmount),
               ),
-              if (draft.waitForDeliveryTransportCost > 0)
-                _SummaryRow(
-                  'Transportation',
-                  _currency(draft.waitForDeliveryTransportCost),
-                ),
               _SummaryRow(
                 'Estimated Customer Total',
                 _currency(draft.customerTotalWaitForDelivery),
@@ -985,20 +885,17 @@ class Step5DeliveryOptionsState extends State<Step5DeliveryOptions> {
               _SummaryNote(
                 'Estimated at today\'s weight. At pickup the goat is '
                     'weighed again and the final amount is: pickup weight '
-                    '× ${_currency(draft.bookingPricePerKg)}/kg + '
-                    'transportation − advance.',
+                    '× ${_currency(draft.bookingPricePerKg)}/kg − advance.',
                 color: AppColors.textGrey,
                 icon: Icons.info_outline_rounded,
               ),
-              if (draft.waitForDeliveryTransportCost > 0)
-                _SummaryNote(
-                  'Transportation charge '
-                      '(${_currency(draft.waitForDeliveryTransportCost)}) '
-                      'is added to the customer\'s bill. It is not '
-                      'recorded as a farm expense.',
-                  color: AppColors.textGrey,
-                  icon: Icons.info_outline_rounded,
-                ),
+              _SummaryNote(
+                'No receipt is generated now — this sale is only kept as '
+                    'a record. The receipt is generated when the delivery '
+                    'is completed.',
+                color: AppColors.textGrey,
+                icon: Icons.receipt_long_outlined,
+              ),
             ],
           ),
         ],
@@ -1047,16 +944,15 @@ class Step5DeliveryOptionsState extends State<Step5DeliveryOptions> {
 
           const SizedBox(height: 14),
 
-          wizardField(
-            controller: _palaiPackageController,
+          wizardDropdown(
             label: 'Palai Package',
-            hint: 'e.g. Standard Monthly Care',
             icon: Icons.card_giftcard_outlined,
-            onChanged: (_) => _syncPalai(),
-            validator: (value) {
-              final v = value?.trim() ?? '';
-              if (v.isEmpty) return 'Enter the Palai package';
-              return null;
+            value: draft.palaiPackage,
+            options: SaleDraft.palaiPackages,
+            onChanged: (value) {
+              setState(() {
+                draft.palaiPackage = value;
+              });
             },
           ),
 

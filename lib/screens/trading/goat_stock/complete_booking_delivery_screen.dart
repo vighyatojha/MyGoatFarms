@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
 
 import '../../../app_theme.dart';
@@ -12,11 +11,12 @@ import '../purchase_goats/purchase_wizard_widgets.dart';
 /// Complete Delivery — Booking (Phase 5, Section 1).
 ///
 /// Reached from [GoatStockDetailScreen] for a goat whose
-/// `currentStatus` is [Goat.statusBooked]. Recomputes the final
-/// settlement using the *actual* elapsed holding days rather than the
-/// estimate made at booking time (Phase 4, Step 5) — see the plan's
-/// Task 1.2 note — then hands off to
-/// [SalesService.completeBookingDelivery] to save it.
+/// `currentStatus` is [Goat.statusBooked]. This is where the holding
+/// days and holding charges are worked out: from the day the holding
+/// started to the delivery date, both days counted (booked 20 Sept,
+/// delivered 23 Sept = 4 days). Booking carries no transportation
+/// charge. It then hands off to [SalesService.completeBookingDelivery]
+/// to save it, and the sale receipt is generated once it is completed.
 class CompleteBookingDeliveryScreen extends StatefulWidget {
   final String farmId;
   final Goat goat;
@@ -34,13 +34,15 @@ class CompleteBookingDeliveryScreen extends StatefulWidget {
 
 class _CompleteBookingDeliveryScreenState
     extends State<CompleteBookingDeliveryScreen> {
-  final GlobalKey<FormState> _formKey = GlobalKey<FormState>();
-  late final TextEditingController _actualHoldingDaysController;
+  /// The day the goat is actually delivered. Defaults to today.
+  DateTime _deliveryDate = _dayOnly(DateTime.now());
 
   bool _loadingSale = true;
   bool _saving = false;
   String? _loadError;
   Sale? _sale;
+
+  static DateTime _dayOnly(DateTime d) => DateTime(d.year, d.month, d.day);
 
   String _currency(num value) {
     return NumberFormat.currency(
@@ -53,14 +55,7 @@ class _CompleteBookingDeliveryScreenState
   @override
   void initState() {
     super.initState();
-    _actualHoldingDaysController = TextEditingController();
     _loadSale();
-  }
-
-  @override
-  void dispose() {
-    _actualHoldingDaysController.dispose();
-    super.dispose();
   }
 
   // ===========================================================================
@@ -110,8 +105,13 @@ class _CompleteBookingDeliveryScreenState
       setState(() {
         _sale = sale;
         _loadingSale = false;
-        _actualHoldingDaysController.text =
-            (sale.holdingDays ?? 0).toString();
+
+        // Today, unless the holding started later than that (which
+        // can't normally happen).
+        final start = _dayOnly(sale.holdingStart);
+        final today = _dayOnly(DateTime.now());
+
+        _deliveryDate = today.isBefore(start) ? start : today;
       });
     } catch (e) {
       if (!mounted) return;
@@ -127,8 +127,14 @@ class _CompleteBookingDeliveryScreenState
   // LIVE CALCULATION
   // ===========================================================================
 
-  int get _actualHoldingDays =>
-      int.tryParse(_actualHoldingDaysController.text.trim()) ?? 0;
+  /// Holding days from the day holding started to the delivery date,
+  /// both days counted. Same rule SalesService applies when saving.
+  int get _actualHoldingDays {
+    final sale = _sale;
+    if (sale == null) return 0;
+
+    return Sale.holdingDaysBetween(sale.holdingStart, _deliveryDate);
+  }
 
   double get _actualHoldingCharges {
     final sale = _sale;
@@ -136,20 +142,34 @@ class _CompleteBookingDeliveryScreenState
     return _actualHoldingDays * (sale.holdingChargePerDay ?? 0);
   }
 
-  /// What the customer still owes at pickup: goat sale + actual holding
-  /// charges + the transportation charge billed to them - the booking
-  /// amount already paid. Same figure SalesService stores as
-  /// finalAmountAfterHolding.
+  /// What the customer still owes at pickup: goat sale + holding charges
+  /// - the booking amount already paid. Same figure SalesService stores
+  /// as finalAmountAfterHolding. (No transportation on a booking.)
   double get _finalAmount {
     final sale = _sale;
     if (sale == null) return 0;
 
     final raw = sale.totalSaleAmount +
-        _actualHoldingCharges +
-        (sale.transportCost ?? 0) -
+        _actualHoldingCharges -
         (sale.bookingAmount ?? 0);
 
     return raw < 0 ? 0 : raw;
+  }
+
+  Future<void> _pickDeliveryDate(Sale sale) async {
+    final picked = await showWizardDatePicker(
+      context: context,
+      initialDate: _deliveryDate,
+      firstDate: _dayOnly(sale.holdingStart),
+      lastDate: _dayOnly(DateTime.now()),
+      helpText: 'Delivery date',
+    );
+
+    if (picked == null || !mounted) return;
+
+    setState(() {
+      _deliveryDate = _dayOnly(picked);
+    });
   }
 
   // ===========================================================================
@@ -159,9 +179,6 @@ class _CompleteBookingDeliveryScreenState
   Future<void> _save() async {
     if (_saving) return;
 
-    final valid = _formKey.currentState?.validate() ?? false;
-    if (!valid) return;
-
     setState(() {
       _saving = true;
     });
@@ -170,7 +187,7 @@ class _CompleteBookingDeliveryScreenState
       await SalesService.instance.completeBookingDelivery(
         farmId: widget.farmId,
         saleId: _sale!.id,
-        actualHoldingDays: _actualHoldingDays,
+        deliveryDate: _deliveryDate,
       );
 
       if (!mounted) return;
@@ -265,141 +282,126 @@ class _CompleteBookingDeliveryScreenState
   }
 
   Widget _buildForm(Sale sale) {
-    return Form(
-      key: _formKey,
-      child: ListView(
-        padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
-        children: [
-          WizardSectionCard(
-            title: 'Booking Summary',
-            icon: Icons.bookmark_outline_rounded,
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
+      children: [
+        WizardSectionCard(
+          title: 'Booking Summary',
+          icon: Icons.bookmark_outline_rounded,
+          children: [
+            WizardComputedRow(
+              label: 'Customer',
+              value: sale.customerName,
+            ),
+            WizardComputedRow(
+              label: 'Goat Sale Amount',
+              value: _currency(sale.totalSaleAmount),
+            ),
+            WizardComputedRow(
+              label: 'Booking Amount Paid',
+              value: _currency(sale.bookingAmount ?? 0),
+            ),
+            WizardComputedRow(
+              label: 'Holding Charge / Day',
+              value: _currency(sale.holdingChargePerDay ?? 0),
+            ),
+            WizardComputedRow(
+              label: 'Holding Started',
+              value: DateFormat('dd MMM yyyy')
+                  .format(sale.holdingStart),
+            ),
+          ],
+        ),
+
+        const SizedBox(height: 12),
+
+        WizardSectionCard(
+          title: 'Delivery',
+          icon: Icons.today_outlined,
+          children: [
+            WizardDateField(
+              label: 'Delivery Date',
+              helper: 'The day the goat is handed over.',
+              date: _deliveryDate,
+              onTap: () => _pickDeliveryDate(sale),
+            ),
+            const SizedBox(height: 12),
+            WizardComputedRow(
+              label: 'Holding Days',
+              value: '$_actualHoldingDays '
+                  'day${_actualHoldingDays == 1 ? '' : 's'}',
+            ),
+            Text(
+              '${DateFormat('dd MMM').format(sale.holdingStart)} to '
+                  '${DateFormat('dd MMM').format(_deliveryDate)}, '
+                  'both days counted.',
+              style: AppTheme.body(size: 10, color: AppColors.textGrey),
+            ),
+          ],
+        ),
+
+        const SizedBox(height: 12),
+
+        Container(
+          width: double.infinity,
+          padding: const EdgeInsets.all(14),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(color: AppColors.divider),
+          ),
+          child: Column(
             children: [
-              WizardComputedRow(
-                label: 'Customer',
-                value: sale.customerName,
+              _summaryRow(
+                'Holding Charges '
+                    '($_actualHoldingDays × '
+                    '${_currency(sale.holdingChargePerDay ?? 0)})',
+                _currency(_actualHoldingCharges),
               ),
-              WizardComputedRow(
-                label: 'Goat Sale Amount',
-                value: _currency(sale.totalSaleAmount),
+              const SizedBox(height: 8),
+              _summaryRow(
+                'Final Amount Due',
+                _currency(_finalAmount),
+                emphasized: true,
               ),
-              WizardComputedRow(
-                label: 'Booking Amount Paid',
-                value: _currency(sale.bookingAmount ?? 0),
-              ),
-              WizardComputedRow(
-                label: 'Holding Charge / Day',
-                value: _currency(sale.holdingChargePerDay ?? 0),
-              ),
-              WizardComputedRow(
-                label: 'Originally Estimated Days',
-                value: '${sale.holdingDays ?? 0}',
-              ),
-              if (sale.expectedDeliveryDate != null)
-                WizardComputedRow(
-                  label: 'Expected Delivery Date',
-                  value: DateFormat('dd MMM yyyy')
-                      .format(sale.expectedDeliveryDate!),
-                ),
             ],
           ),
+        ),
 
-          const SizedBox(height: 12),
+        const SizedBox(height: 20),
 
-          WizardSectionCard(
-            title: 'Actual Pickup',
-            icon: Icons.today_outlined,
-            children: [
-              wizardField(
-                controller: _actualHoldingDaysController,
-                label: 'Actual Holding Days',
-                hint: 'e.g. 5',
-                icon: Icons.event_repeat_outlined,
-                keyboardType: TextInputType.number,
-                inputFormatters: [
-                  FilteringTextInputFormatter.digitsOnly,
-                ],
-                onChanged: (_) => setState(() {}),
-                validator: (value) {
-                  final number = int.tryParse(value?.trim() ?? '');
-
-                  if (number == null || number < 0) {
-                    return 'Enter valid days';
-                  }
-
-                  return null;
-                },
+        SizedBox(
+          width: double.infinity,
+          height: 52,
+          child: ElevatedButton(
+            onPressed: _saving ? null : _save,
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppColors.primaryGreen,
+              foregroundColor: Colors.white,
+              elevation: 1,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(15),
               ),
-            ],
-          ),
-
-          const SizedBox(height: 12),
-
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.all(14),
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(14),
-              border: Border.all(color: AppColors.divider),
             ),
-            child: Column(
-              children: [
-                _summaryRow(
-                  'Actual Holding Charges',
-                  _currency(_actualHoldingCharges),
-                ),
-                const SizedBox(height: 8),
-                if ((sale.transportCost ?? 0) > 0) ...[
-                  _summaryRow(
-                    'Transportation',
-                    _currency(sale.transportCost!),
-                  ),
-                  const SizedBox(height: 8),
-                ],
-                _summaryRow(
-                  'Final Amount Due',
-                  _currency(_finalAmount),
-                  emphasized: true,
-                ),
-              ],
-            ),
-          ),
-
-          const SizedBox(height: 20),
-
-          SizedBox(
-            width: double.infinity,
-            height: 52,
-            child: ElevatedButton(
-              onPressed: _saving ? null : _save,
-              style: ElevatedButton.styleFrom(
-                backgroundColor: AppColors.primaryGreen,
-                foregroundColor: Colors.white,
-                elevation: 1,
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(15),
-                ),
+            child: _saving
+                ? const SizedBox(
+              width: 22,
+              height: 22,
+              child: CircularProgressIndicator(
+                strokeWidth: 2.4,
+                color: Colors.white,
               ),
-              child: _saving
-                  ? const SizedBox(
-                width: 22,
-                height: 22,
-                child: CircularProgressIndicator(
-                  strokeWidth: 2.4,
-                  color: Colors.white,
-                ),
-              )
-                  : const Text(
-                'Complete Delivery',
-                style: TextStyle(
-                  fontWeight: FontWeight.w700,
-                  fontSize: 14,
-                ),
+            )
+                : const Text(
+              'Complete Delivery',
+              style: TextStyle(
+                fontWeight: FontWeight.w700,
+                fontSize: 14,
               ),
             ),
           ),
-        ],
-      ),
+        ),
+      ],
     );
   }
 

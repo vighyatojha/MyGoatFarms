@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_core/firebase_core.dart' show FirebaseException;
 
 import '../models/customer_model.dart';
 import '../models/expense_categories.dart';
@@ -438,10 +439,14 @@ class SalesService {
   // -----------------------------------------------------------------------
 
   /// Saves a "Booking / Holding" sale: goat(s) kept here after an initial
-  /// payment, picked up later. Only the creation form (Pair 5 of the
-  /// plan's build order) — the "Complete Delivery" action that later
-  /// recomputes `Goat Sale Amount + Holding Charges - Amount Already Paid`
-  /// is out of scope for this phase (Pair 7 / Phase 5).
+  /// payment, picked up later. Only the creation form — the "Complete
+  /// Delivery" action ([completeBookingDelivery]) later works out
+  /// `Goat Sale Amount + Holding Charges - Amount Already Paid`.
+  ///
+  /// No transportation charge is taken, and no holding days or holding
+  /// charges are stored now: the start day is recorded, and the days are
+  /// counted up to the delivery day when the delivery is completed. No
+  /// receipt is generated here either — it comes with the delivery.
   ///
   /// Same re-check-then-write-in-one-transaction shape as
   /// [saveDeliverNow], for the same status-consistency reason.
@@ -543,12 +548,15 @@ class SalesService {
         bookingAmount: draft.bookingAmount,
         paymentMethod: draft.paymentMethod,
         expectedDeliveryDate: draft.expectedDeliveryDate,
-        holdingDays: draft.holdingDays,
         holdingChargePerDay: draft.holdingChargePerDay,
-        totalHoldingCharges: draft.totalHoldingCharges,
-        transportCost: draft.bookingTransportCost > 0
-            ? draft.bookingTransportCost
-            : null,
+        // Holding starts today (the booking day) and counts this day.
+        // The days and the charges are worked out when the delivery is
+        // completed, not now.
+        holdingStartDate: DateTime(
+          DateTime.now().year,
+          DateTime.now().month,
+          DateTime.now().day,
+        ),
       );
 
       transaction.set(_sales(farmId).doc(saleId), {
@@ -596,9 +604,13 @@ class SalesService {
   /// Saves a "Wait for Delivery" sale: price/kg and an advance are fixed
   /// now, at today's weight; the goat is weighed again and handed over
   /// later. Only the creation form — the "Complete Delivery" action
-  /// (`Final Price = Current Weight x Booking Price/KG - advance`, always
+  /// (`Final Price = Pickup Weight x Booking Price/KG - advance`, always
   /// using [Sale.bookingPricePerKg], never the market rate on pickup day)
-  /// is out of scope for this phase, same as Branch B.
+  /// is [completeWaitForDeliveryPickup].
+  ///
+  /// No transportation charge is taken on this option, and no receipt is
+  /// generated here: the sale record is only kept. The receipt is
+  /// generated when the delivery is completed.
   Future<String> saveWaitForDelivery({
     required String farmId,
     required SaleDraft draft,
@@ -698,9 +710,6 @@ class SalesService {
         bookingAdvanceAmount: draft.bookingAdvanceAmount,
         paymentMethod: draft.paymentMethod,
         bookingWeight: draft.bookingWeightTotal,
-        transportCost: draft.waitForDeliveryTransportCost > 0
-            ? draft.waitForDeliveryTransportCost
-            : null,
       );
 
       transaction.set(_sales(farmId).doc(saleId), {
@@ -924,9 +933,63 @@ class SalesService {
   // doc a Booked/Wait-for-Delivery goat is linked to via Goat.saleId)
   // -----------------------------------------------------------------------
 
+  /// Reads one sale.
+  ///
+  /// Firestore reports `unavailable` (or a timeout) when the phone's
+  /// connection to it blips for a moment — typically right after a save,
+  /// when the receipt is opened straight away. Its own error message says
+  /// to retry with a backoff, so that is what happens here: up to three
+  /// more attempts, waiting a little longer each time. If the server
+  /// still can't be reached, the local cache is tried as a last resort
+  /// before the error is given up on.
   Future<Sale?> getSale(String farmId, String saleId) async {
-    final doc =
-    await _sales(farmId).doc(saleId).get().timeout(_timeout);
+    final ref = _sales(farmId).doc(saleId);
+
+    const backoff = [
+      Duration(milliseconds: 500),
+      Duration(milliseconds: 1500),
+      Duration(milliseconds: 3000),
+    ];
+
+    Object? lastError;
+    DocumentSnapshot<Map<String, dynamic>>? doc;
+
+    for (var attempt = 0; attempt <= backoff.length; attempt++) {
+      try {
+        doc = await ref.get().timeout(_timeout);
+        break;
+      } on FirebaseException catch (e) {
+        if (e.code != 'unavailable' && e.code != 'deadline-exceeded') {
+          rethrow;
+        }
+
+        lastError = e;
+      } on TimeoutException catch (e) {
+        lastError = e;
+      }
+
+      if (attempt < backoff.length) {
+        await Future<void>.delayed(backoff[attempt]);
+      }
+    }
+
+    if (doc == null) {
+      try {
+        final cached = await ref.get(
+          const GetOptions(source: Source.cache),
+        );
+
+        if (cached.exists) {
+          doc = cached;
+        }
+      } catch (_) {
+        // Nothing cached — fall through and report the real error.
+      }
+    }
+
+    if (doc == null) {
+      throw lastError ?? StateError('Could not load sale $saleId.');
+    }
 
     if (!doc.exists) {
       return null;
@@ -942,19 +1005,18 @@ class SalesService {
   /// Finishes a Branch B (Booking/Holding) sale once the customer
   /// actually picks the goat up.
   ///
-  /// Recomputes the final settlement using the *actual* elapsed holding
-  /// days the caller supplies — never the original estimate made at
-  /// booking time — per the plan's Task 1.2 note that a customer may
-  /// pick up later or earlier than first expected:
+  /// The holding days and holding charges are worked out HERE, when the
+  /// delivery is completed — not at booking time. The days run from the
+  /// booking day to [deliveryDate], both days counted (booked 20 Sept,
+  /// delivered 23 Sept = 20, 21, 22, 23 = 4 days):
   ///
-  ///   Final Amount = Goat Sale Amount + (actualHoldingDays x Daily
-  ///                  Charge) + Transportation Charge - Booking Amount
-  ///                  already paid
+  ///   Holding Charges = holding days x Daily Charge
+  ///   Final Amount    = Goat Sale Amount + Holding Charges
+  ///                     - Booking Amount already paid
   ///
-  /// The stored [Sale.finalAmountAfterHolding] is what the customer
-  /// still owes at pickup, so it includes the transportation charge
-  /// billed to them. (Transportation is left out of the Finance
-  /// revenue below — it is paid on to the transport team.)
+  /// Booking carries no transportation charge. The stored
+  /// [Sale.finalAmountAfterHolding] is what the customer still owes at
+  /// pickup.
   ///
   /// Same reads-then-writes transaction shape as the Phase 4 branch
   /// save methods, extended to also verify the sale is still in the
@@ -962,11 +1024,13 @@ class SalesService {
   Future<void> completeBookingDelivery({
     required String farmId,
     required String saleId,
-    required int actualHoldingDays,
+    required DateTime deliveryDate,
   }) async {
-    if (actualHoldingDays < 0) {
-      throw StateError('Holding days cannot be negative.');
-    }
+    final deliveryDay = DateTime(
+      deliveryDate.year,
+      deliveryDate.month,
+      deliveryDate.day,
+    );
 
     // Not `late final`: Firestore may re-run the transaction closure on
     // contention, which would assign these more than once.
@@ -1014,17 +1078,32 @@ class SalesService {
       // 2. Compute the final settlement.
       // ---------------------------------------------------------------
 
+      final holdingStart = sale.holdingStart;
+      final startDay = DateTime(
+        holdingStart.year,
+        holdingStart.month,
+        holdingStart.day,
+      );
+
+      if (deliveryDay.isBefore(startDay)) {
+        throw StateError(
+          'The delivery date cannot be before the day the holding '
+              'started (${startDay.day}/${startDay.month}/${startDay.year}).',
+        );
+      }
+
+      final actualHoldingDays =
+      Sale.holdingDaysBetween(startDay, deliveryDay);
+
       final holdingChargePerDay = sale.holdingChargePerDay ?? 0;
       final bookingAmount = sale.bookingAmount ?? 0;
-      final actualHoldingChargesValue =
-          actualHoldingDays * holdingChargePerDay;
+      final actualHoldingChargesValue = SaleDraft.round2(
+        actualHoldingDays * holdingChargePerDay,
+      );
 
-      final transportCost = sale.transportCost ?? 0;
-
-      final rawFinalAmount = sale.totalSaleAmount +
-          actualHoldingChargesValue +
-          transportCost -
-          bookingAmount;
+      final rawFinalAmount = SaleDraft.round2(
+        sale.totalSaleAmount + actualHoldingChargesValue - bookingAmount,
+      );
       final finalAmount = rawFinalAmount < 0 ? 0.0 : rawFinalAmount;
 
       // Captured for the Finance revenue write after this transaction
@@ -1044,6 +1123,8 @@ class SalesService {
 
       transaction.update(saleRef, {
         'status': Sale.statusDeliveryCompleted,
+        'holdingStartDate': Timestamp.fromDate(startDay),
+        'holdingEndDate': Timestamp.fromDate(deliveryDay),
         'actualHoldingDays': actualHoldingDays,
         'totalHoldingCharges': actualHoldingCharges,
         'finalAmountAfterHolding': finalAmount,
@@ -1135,19 +1216,15 @@ class SalesService {
   /// current market rate is the easiest mistake to make here. Only
   /// the weight is taken fresh, at pickup:
   ///
-  ///   Final Price = Pickup Weight x Booking Price/Kg
-  ///                 + Transportation Charge - Advance Paid
+  ///   Final Price = Pickup Weight x Booking Price/Kg - Advance Paid
   ///
-  /// The stored [Sale.finalPriceAfterPickup] is what the customer still
-  /// owes at pickup, so it includes the transportation charge billed to
-  /// them. (Transportation is left out of the Finance revenue below —
-  /// it is paid on to the transport team.)
+  /// Wait for Delivery has no transportation charge. The stored
+  /// [Sale.finalPriceAfterPickup] is what the customer still owes at
+  /// pickup.
   ///
-  /// Worked example from the plan (Section 2, Task 2.2), with no
-  /// transportation charge: 34kg booked, 38kg at delivery, ₹520/kg
-  /// fixed, ₹5,000 advance -> ₹14,760 remaining.
-  /// 38 x 520 = 19,760; 19,760 - 5,000 = 14,760. ✓ With a ₹1,000
-  /// transportation charge the customer owes ₹15,760.
+  /// Worked example from the plan (Section 2, Task 2.2): 34kg booked,
+  /// 38kg at delivery, ₹520/kg fixed, ₹5,000 advance -> ₹14,760
+  /// remaining. 38 x 520 = 19,760; 19,760 - 5,000 = 14,760. ✓
   Future<void> completeWaitForDeliveryPickup({
     required String farmId,
     required String saleId,
@@ -1206,11 +1283,8 @@ class SalesService {
       final bookingPricePerKg = sale.bookingPricePerKg ?? 0;
       final bookingAdvanceAmount = sale.bookingAdvanceAmount ?? 0;
 
-      final transportCost = sale.transportCost ?? 0;
-
-      final rawFinalPrice = pickupWeight * bookingPricePerKg +
-          transportCost -
-          bookingAdvanceAmount;
+      final rawFinalPrice =
+          pickupWeight * bookingPricePerKg - bookingAdvanceAmount;
       final finalPrice = rawFinalPrice < 0 ? 0.0 : rawFinalPrice;
 
       // Captured for the Finance revenue write after this transaction
@@ -1287,9 +1361,9 @@ class SalesService {
     // -----------------------------------------------------------------
     // FINANCE REVENUE — the goat has now actually left the farm, so
     // this is where the advance already received becomes Sold Goat
-    // Revenue: capped at pickup weight × booking rate, transport
-    // excluded. The remaining balance is recorded as it is collected —
-    // see the FINANCE INTEGRATION note above.
+    // Revenue, capped at pickup weight × booking rate. The remaining
+    // balance is recorded as it is collected — see the FINANCE
+    // INTEGRATION note above.
     // -----------------------------------------------------------------
 
     await _recordSaleReceiptRevenue(

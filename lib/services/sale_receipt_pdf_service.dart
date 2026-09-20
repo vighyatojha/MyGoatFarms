@@ -730,6 +730,22 @@ class SaleReceiptPdfService {
 
       rows.add(
         _detailRow(
+          'Holding From',
+          DateFormat('dd MMM yyyy').format(sale.holdingStart),
+        ),
+      );
+
+      if (sale.holdingEndDate != null) {
+        rows.add(
+          _detailRow(
+            'Holding Until',
+            DateFormat('dd MMM yyyy').format(sale.holdingEndDate!),
+          ),
+        );
+      }
+
+      rows.add(
+        _detailRow(
           'Holding Period',
           '${sale.actualHoldingDays ?? sale.holdingDays ?? 0} days',
         ),
@@ -741,17 +757,6 @@ class SaleReceiptPdfService {
           '${_currency(sale.holdingChargePerDay ?? 0)} / day',
         ),
       );
-
-      if (sale.expectedDeliveryDate != null) {
-        rows.add(
-          _detailRow(
-            'Expected Delivery',
-            DateFormat(
-              'dd MMM yyyy',
-            ).format(sale.expectedDeliveryDate!),
-          ),
-        );
-      }
 
       if (sale.deliveryCompletedAt != null) {
         rows.add(

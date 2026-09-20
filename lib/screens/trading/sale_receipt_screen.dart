@@ -266,7 +266,47 @@ class _SaleReceiptScreenState extends State<SaleReceiptScreen> {
         )
             : _error != null
             ? _errorState()
+            : ((_sale!.isWaitForDelivery || _sale!.isBooking) &&
+            !_completed(_sale!))
+            ? _receiptPendingState(_sale!)
             : _receipt(_sale!),
+      ),
+    );
+  }
+
+  /// A Booking or Wait for Delivery sale has no receipt until the
+  /// delivery is completed (holding charges / pickup weight and the final
+  /// amount aren't known before that).
+  Widget _receiptPendingState(Sale sale) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(
+              Icons.schedule_outlined,
+              size: 42,
+              color: AppColors.warning,
+            ),
+            const SizedBox(height: 12),
+            Text(
+              'Receipt not generated yet',
+              textAlign: TextAlign.center,
+              style: AppTheme.heading(size: 16),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'Sale ${sale.id} has not been delivered yet. The receipt is '
+                  'generated when the delivery is completed.',
+              textAlign: TextAlign.center,
+              style: AppTheme.body(
+                size: 13,
+                color: AppColors.textDark,
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -701,6 +741,15 @@ class _SaleReceiptScreenState extends State<SaleReceiptScreen> {
       [
         if (sale.isBooking) ...[
           _row(
+            'Holding From',
+            DateFormat('dd MMM yyyy').format(sale.holdingStart),
+          ),
+          if (sale.holdingEndDate != null)
+            _row(
+              'Holding Until',
+              DateFormat('dd MMM yyyy').format(sale.holdingEndDate!),
+            ),
+          _row(
             'Holding Days',
             '${sale.actualHoldingDays ?? sale.holdingDays ?? 0} days',
           ),
@@ -708,12 +757,6 @@ class _SaleReceiptScreenState extends State<SaleReceiptScreen> {
             'Holding Rate',
             '${_currency(sale.holdingChargePerDay ?? 0)} / day',
           ),
-          if (sale.expectedDeliveryDate != null)
-            _row(
-              'Expected Delivery',
-              DateFormat('dd MMM yyyy')
-                  .format(sale.expectedDeliveryDate!),
-            ),
           if (sale.deliveryCompletedAt != null)
             _row(
               'Delivery Completed',

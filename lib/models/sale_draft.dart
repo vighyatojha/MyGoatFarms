@@ -227,35 +227,22 @@ class SaleDraft {
   // --- Branch B: Booking / Holding (Task 3.2) ---------------------------------
 
   double bookingAmount = 0;
+
+  /// Only for reference — nothing is calculated from it.
   DateTime? expectedDeliveryDate;
-  int holdingDays = 0;
+
+  /// Charge per day of holding. The holding DAYS are not asked for here:
+  /// they are counted from the booking day to the delivery day when the
+  /// delivery is completed (both days included), and the holding charges
+  /// are calculated then.
   double holdingChargePerDay = 0;
 
-  /// Transportation charge for this booking, billed to the customer —
-  /// same rule as Branch A. Typically collected/confirmed when the
-  /// goat is actually handed over (Complete Delivery), but can be
-  /// estimated here at booking time too. Named distinctly from Branch
-  /// A's [transportCost] since both live flat on the same draft.
-  double bookingTransportCost = 0;
+  // Booking carries no transportation charge.
 
-  /// Auto-calculated: Holding Days x Daily Charge — never entered
-  /// directly, same "derived field" rule as totalSaleAmount.
-  double get totalHoldingCharges =>
-      round2(holdingDays * holdingChargePerDay);
-
-  /// Sale amount + holding charges + transport — what the customer owes
-  /// in total before the booking amount is deducted.
-  double get totalPayableBooking =>
-      round2(totalSaleAmount + totalHoldingCharges + bookingTransportCost);
-
-  /// What's left to collect once holding charges and transport are added
-  /// on top of the sale amount and the booking amount already paid is
-  /// deducted. The actual "Complete Delivery" recompute redoes this same
-  /// sum later using whatever holding days actually elapse and whatever
-  /// transport is confirmed then — this is just the creation-time
-  /// estimate shown on Step 5.
+  /// What's left of the goat sale after the booking amount, BEFORE any
+  /// holding charges — those are added when the delivery is completed.
   double get remainingBalanceBooking =>
-      _nonNegative(totalPayableBooking - bookingAmount);
+      _nonNegative(totalSaleAmount - bookingAmount);
 
   // --- Branch C: Wait for Delivery (Task 3.3) --------------------------------
 
@@ -272,27 +259,36 @@ class SaleDraft {
 
   double bookingAdvanceAmount = 0;
 
-  /// Transportation charge for this booking, billed to the customer —
-  /// same rule as Branch A. Confirmed for real at pickup (Complete
-  /// Delivery), but can be estimated here at booking time too. Named
-  /// distinctly from the other two branches' transport fields since
-  /// all three live flat on the same draft.
-  double waitForDeliveryTransportCost = 0;
-
-  /// Customer total at today's estimate: sale amount + transport. The
-  /// real payable amount is settled at pickup using pickup weight x
-  /// booking rate + whatever transport is confirmed then.
-  double get customerTotalWaitForDelivery =>
-      round2(totalSaleAmount + waitForDeliveryTransportCost);
+  /// Wait for Delivery carries NO transportation charge — it is not
+  /// asked for, not billed and not stored. The customer total is the
+  /// goat sale value only.
+  ///
+  /// This is today's estimate. The real payable amount is settled at
+  /// pickup using pickup weight x booking rate.
+  double get customerTotalWaitForDelivery => round2(totalSaleAmount);
 
   /// Estimate at BOOKING weight. The real amount is settled at pickup
-  /// (pickup weight x this same booking rate + transport - advance).
+  /// (pickup weight x this same booking rate - advance).
   double get remainingAdvanceBalanceWaitForDelivery =>
       _nonNegative(customerTotalWaitForDelivery - bookingAdvanceAmount);
 
   // --- Branch D: Transfer to Palai (Task 3.4) --------------------------------
 
+  /// The packages a goat can be transferred into. Same names the
+  /// Customer Palai module uses when it registers a goat, so what is
+  /// chosen here matches what Palai shows afterwards.
+  static const List<String> palaiPackages = [
+    'Basic Palai',
+    'Standard Palai',
+    'Special Palai',
+  ];
+
   DateTime? transferDate;
+
+  /// One of [palaiPackages]. Step 5 fills in the first one until the
+  /// person picks another.
   String palaiPackage = '';
   double monthlyPalaiCharge = 0;
+
+// Transfer to Palai carries no transportation charge.
 }

@@ -751,6 +751,11 @@ class _GoatStockDetailScreenState
       ) {
     final awaitingPickup = _awaitingPickup(goat);
 
+    // A Booking or Wait for Delivery sale has no receipt until its
+    // delivery is completed — the holding charges / final weight and
+    // amount aren't known before that.
+    final receiptPending = awaitingPickup;
+
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.fromLTRB(
@@ -863,36 +868,70 @@ class _GoatStockDetailScreenState
           // RECEIPT
           // -------------------------------------------------------------------
 
-          SizedBox(
-            width: double.infinity,
-            height: 46,
-            child: OutlinedButton.icon(
-              onPressed: _openSaleReceipt,
-              icon: const Icon(
-                Icons.receipt_long_outlined,
-                size: 18,
-              ),
-              label: const Text(
-                'View Sale Receipt',
-                style: TextStyle(
-                  fontWeight: FontWeight.w700,
-                  fontSize: 12,
+          if (receiptPending)
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(11),
+              decoration: BoxDecoration(
+                color: AppColors.warning.withOpacity(0.08),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(
+                  color: AppColors.warning.withOpacity(0.30),
                 ),
               ),
-              style: OutlinedButton.styleFrom(
-                foregroundColor: AppColors.primaryGreen,
-                side: BorderSide(
-                  color: AppColors.primaryGreen.withOpacity(0.65),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Icon(
+                    Icons.receipt_long_outlined,
+                    size: 16,
+                    color: AppColors.warning,
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      'The sale receipt is generated when the delivery '
+                          'is completed.',
+                      style: AppTheme.body(
+                        size: 10,
+                        color: AppColors.textDark,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            )
+          else
+            SizedBox(
+              width: double.infinity,
+              height: 46,
+              child: OutlinedButton.icon(
+                onPressed: _openSaleReceipt,
+                icon: const Icon(
+                  Icons.receipt_long_outlined,
+                  size: 18,
                 ),
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 14,
+                label: const Text(
+                  'View Sale Receipt',
+                  style: TextStyle(
+                    fontWeight: FontWeight.w700,
+                    fontSize: 12,
+                  ),
                 ),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12),
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: AppColors.primaryGreen,
+                  side: BorderSide(
+                    color: AppColors.primaryGreen.withOpacity(0.65),
+                  ),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 14,
+                  ),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
                 ),
               ),
             ),
-          ),
         ],
       ),
     );

@@ -112,19 +112,35 @@ class Sale {
   // ---------------------------------------------------------------------
 
   final double? bookingAmount;
+
+  /// Only for reference — when the customer said they would collect. It
+  /// is NOT used to calculate anything: holding charges run until the
+  /// day the delivery is actually completed.
   final DateTime? expectedDeliveryDate;
+
+  /// Estimated holding days. Older bookings only — new bookings no longer
+  /// ask for an estimate, because the days are counted from
+  /// [holdingStartDate] to the delivery date when the delivery is
+  /// completed.
   final int? holdingDays;
   final double? holdingChargePerDay;
 
-  /// Auto-calculated: holdingDays * holdingChargePerDay.
+  /// The day the goat's holding began (the booking day). Holding days are
+  /// counted from here, this day included. Bookings made before this
+  /// field existed fall back to their creation date — see [holdingStart].
+  final DateTime? holdingStartDate;
+
+  /// The delivery date the holding charges were counted up to (this day
+  /// included). Set by the Complete Delivery action.
+  final DateTime? holdingEndDate;
+
+  /// Holding charges: [actualHoldingDays] x [holdingChargePerDay].
+  /// Null until the delivery is completed — it is not known before then.
   final double? totalHoldingCharges;
 
-  /// Actual elapsed holding days, recorded by the Complete Delivery
-  /// action (Phase 5, Section 1). Kept separate from [holdingDays] (the
-  /// original estimate made at booking time in Step 5) because the
-  /// customer may pick up later or earlier than expected — the plan's
-  /// Task 1.2 requires the final settlement to use real elapsed time,
-  /// not the original quote.
+  /// Holding days counted when the delivery was completed: start day and
+  /// delivery day both included (booked 20 Sept, delivered 23 Sept = 4
+  /// days). See [holdingDaysBetween].
   final int? actualHoldingDays;
 
   /// Set by the Complete Delivery action for Branch B: what the customer
@@ -212,6 +228,8 @@ class Sale {
     this.expectedDeliveryDate,
     this.holdingDays,
     this.holdingChargePerDay,
+    this.holdingStartDate,
+    this.holdingEndDate,
     this.totalHoldingCharges,
     this.actualHoldingDays,
     this.finalAmountAfterHolding,
@@ -283,6 +301,24 @@ class Sale {
 
   bool get isMultiGoat => goatIds.length > 1;
 
+  /// The first day of a Booking's holding: the saved start date, or the
+  /// day the sale was created for bookings saved before that date was
+  /// stored.
+  DateTime get holdingStart => holdingStartDate ?? createdAt ?? DateTime.now();
+
+  /// Holding days from [start] to [end], BOTH days counted: booked on the
+  /// 20th and delivered on the 23rd = 20, 21, 22, 23 = 4 days. Booked and
+  /// delivered on the same day = 1 day. Only the calendar day matters,
+  /// not the time. Returns 0 if [end] is before [start].
+  static int holdingDaysBetween(DateTime start, DateTime end) {
+    final from = DateTime.utc(start.year, start.month, start.day);
+    final to = DateTime.utc(end.year, end.month, end.day);
+
+    if (to.isBefore(from)) return 0;
+
+    return to.difference(from).inDays + 1;
+  }
+
   @override
   bool operator ==(Object other) =>
       other is Sale && other.id == id;
@@ -296,7 +332,7 @@ class Sale {
   //
   //   Goat Sale              ₹20,000
   //   Holding Charges           ₹500   (Booking only)
-  //   Transportation          ₹1,000
+  //   Transportation          ₹1,000   (Deliver Now only)
   //   ------------------------------
   //   Customer Total         ₹21,500
   //
@@ -337,7 +373,13 @@ class Sale {
 
   /// Transportation charge collected from the customer for the transport
   /// team. 0 when there is none.
-  double get billTransportCharges => _nonNegative(transportCost ?? 0);
+  ///
+  /// Only Deliver Now sales carry a transportation charge. Booking, Wait
+  /// for Delivery and Transfer to Palai never do, so this is always 0 for
+  /// them — even if an older record happens to have a `transportCost`
+  /// stored on it.
+  double get billTransportCharges =>
+      isDeliverNow ? _nonNegative(transportCost ?? 0) : 0.0;
 
   /// Goat Sale + Holding Charges + Transportation.
   double get billCustomerTotal => _round2(
@@ -548,6 +590,8 @@ class Sale {
       expectedDeliveryDate: dateFrom('expectedDeliveryDate'),
       holdingDays: nullableIntFrom('holdingDays'),
       holdingChargePerDay: nullableNumFrom('holdingChargePerDay'),
+      holdingStartDate: dateFrom('holdingStartDate'),
+      holdingEndDate: dateFrom('holdingEndDate'),
       totalHoldingCharges: nullableNumFrom('totalHoldingCharges'),
       actualHoldingDays: nullableIntFrom('actualHoldingDays'),
       finalAmountAfterHolding:
@@ -614,6 +658,8 @@ class Sale {
     putIfNotNull('expectedDeliveryDate', expectedDeliveryDate);
     putIfNotNull('holdingDays', holdingDays);
     putIfNotNull('holdingChargePerDay', holdingChargePerDay);
+    putIfNotNull('holdingStartDate', holdingStartDate);
+    putIfNotNull('holdingEndDate', holdingEndDate);
     putIfNotNull('totalHoldingCharges', totalHoldingCharges);
     putIfNotNull('actualHoldingDays', actualHoldingDays);
     putIfNotNull(

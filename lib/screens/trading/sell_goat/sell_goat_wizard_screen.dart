@@ -25,6 +25,11 @@ import '../steps/step5_delivery_options.dart';
 ///
 /// After a successful save, the user is taken to the Sale Receipt screen
 /// instead of immediately being returned to the Trading dashboard.
+///
+/// The exceptions are Booking / Holding and Wait for Delivery: their
+/// receipts are generated when the delivery is completed (the holding
+/// charges / pickup weight aren't known before that), so saving them just
+/// keeps the record and returns to the previous screen.
 class SellGoatWizardScreen extends StatefulWidget {
   const SellGoatWizardScreen({super.key});
 
@@ -280,6 +285,45 @@ class _SellGoatWizardScreenState extends State<SellGoatWizardScreen> {
       }
 
       if (!mounted) return;
+
+      // -----------------------------------------------------------------------
+      // BOOKING / WAIT FOR DELIVERY — keep the record, no receipt yet.
+      //
+      // The receipt is generated when the delivery is completed (goat stock
+      // > Complete Delivery), when the holding charges / final weight and
+      // the final amount are known.
+      // -----------------------------------------------------------------------
+
+      if (_draft.isWaitForDelivery || _draft.isBooking) {
+        final messenger = ScaffoldMessenger.of(context);
+
+        Navigator.of(context).pop();
+
+        messenger
+          ..hideCurrentSnackBar()
+          ..showSnackBar(
+            SnackBar(
+              behavior: SnackBarBehavior.floating,
+              backgroundColor: AppColors.darkGreen,
+              margin: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(14),
+              ),
+              duration: const Duration(seconds: 5),
+              content: Text(
+                'Sale $saleId saved. The receipt will be generated when '
+                    'the delivery is completed.',
+                style: AppTheme.body(
+                  size: 12,
+                  color: Colors.white,
+                  weight: FontWeight.w500,
+                ),
+              ),
+            ),
+          );
+
+        return;
+      }
 
       // -----------------------------------------------------------------------
       // OPEN RECEIPT
