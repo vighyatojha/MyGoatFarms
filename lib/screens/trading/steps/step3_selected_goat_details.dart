@@ -1,9 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
-import '../../../../app_theme.dart';
-import '../../../../models/goat_model.dart';
-import '../../../../models/sale_draft.dart';
+import '../../../app_theme.dart';
+import '../../../models/goat_model.dart';
+import '../../../models/sale_draft.dart';
+import '../purchase_goats/purchase_wizard_widgets.dart';
 
 /// Step 3 — Selected Goat Details.
 ///
@@ -99,15 +100,11 @@ class Step3SelectedGoatDetailsState
       // If the visible fields were fine, the invalid one is off-screen —
       // the inline error text can't help, so say which goat it is.
       if (formValid) {
-        ScaffoldMessenger.of(context)
-          ..hideCurrentSnackBar()
-          ..showSnackBar(
-            SnackBar(
-              content: Text(
-                'Enter a valid selling weight for $firstInvalidGoatId.',
-              ),
-            ),
-          );
+        wizardSnack(
+          context,
+          'Enter a valid selling weight for $firstInvalidGoatId.',
+          error: true,
+        );
       }
 
       return false;

@@ -3,13 +3,8 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 /// A single farm-wide expense record, stored at
 /// `farms/{farmId}/expenses/{id}`.
 ///
-/// This is intentionally separate from [OwnFarmExpense]
-/// (models/own_farm_models.dart), which is a per-goat expense log scoped
-/// to the "Own Farm" module. Merging the two would require migrating
-/// existing Own Farm data and touching an unrelated, already-working
-/// module — out of scope for this integration. If Own Farm expenses
-/// should ever roll into the Finance totals, that is a deliberate
-/// follow-up, not an automatic side effect of this model.
+/// (The old per-goat "Own Farm" expense log was removed with the Own Farm
+/// module; farm-owned goats are managed in Trading -> Own Palai.)
 class ExpenseModel {
   final String id;
 

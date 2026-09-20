@@ -10,7 +10,6 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 /// IMPORTANT:
 /// - Existing PalaiCustomer remains in palai_models.dart.
 /// - Existing PalaiGoat remains in palai_models.dart.
-/// - Existing OwnFarmGoat remains in own_farm_models.dart.
 /// - We are NOT replacing those models in this step.
 ///
 /// The purpose of this file is to separate historical records properly.

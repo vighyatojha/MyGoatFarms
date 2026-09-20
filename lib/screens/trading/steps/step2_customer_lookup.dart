@@ -3,9 +3,9 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
-import '../../../../app_theme.dart';
-import '../../../../models/sale_draft.dart';
-import '../../../../services/sales_service.dart';
+import '../../../app_theme.dart';
+import '../../../models/sale_draft.dart';
+import '../../../services/sales_service.dart';
 import '../purchase_goats/purchase_wizard_widgets.dart';
 
 /// Step 2 — Customer Mobile Lookup.
@@ -163,12 +163,10 @@ class Step2CustomerLookupState extends State<Step2CustomerLookup> {
 
   bool validate() {
     if (!_detailsMode) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text(
-            'Search and select a customer, or add a new one first.',
-          ),
-        ),
+      wizardSnack(
+        context,
+        'Search and select a customer, or add a new one first.',
+        error: true,
       );
       return false;
     }

@@ -189,10 +189,10 @@ class Step5DeliveryOptionsState extends State<Step5DeliveryOptions> {
     final draft = widget.draft;
 
     if (draft.deliveryType.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Choose a delivery option to continue.'),
-        ),
+      wizardSnack(
+        context,
+        'Choose a delivery option to continue.',
+        error: true,
       );
       return false;
     }
@@ -404,6 +404,8 @@ class Step5DeliveryOptionsState extends State<Step5DeliveryOptions> {
               wizardField(
                 controller: _amountReceivedController,
                 label: 'Amount Received',
+                optional: true,
+                helper: 'Leave blank if nothing was received yet (status: Pending)',
                 hint: '0.00',
                 icon: Icons.payments_outlined,
                 keyboardType: const TextInputType.numberWithOptions(
@@ -416,7 +418,12 @@ class Step5DeliveryOptionsState extends State<Step5DeliveryOptions> {
                 ],
                 onChanged: (_) => setState(_syncDeliverNow),
                 validator: (value) {
-                  final number = double.tryParse(value?.trim() ?? '');
+                  final text = value?.trim() ?? '';
+
+                  // Blank counts as 0 (the draft reads it that way).
+                  if (text.isEmpty) return null;
+
+                  final number = double.tryParse(text);
 
                   if (number == null || number < 0) {
                     return 'Enter a valid amount';
@@ -545,13 +552,14 @@ class Step5DeliveryOptionsState extends State<Step5DeliveryOptions> {
                 label: 'Expected Delivery Date',
                 date: draft.expectedDeliveryDate ?? DateTime.now(),
                 onTap: () async {
-                  final picked = await showDatePicker(
+                  final picked = await showWizardDatePicker(
                     context: context,
                     initialDate: draft.expectedDeliveryDate ?? DateTime.now(),
                     firstDate: DateTime.now(),
                     lastDate: DateTime.now().add(
                       const Duration(days: 365),
                     ),
+                    helpText: 'Expected delivery date',
                   );
 
                   if (picked == null) return;
@@ -565,7 +573,8 @@ class Step5DeliveryOptionsState extends State<Step5DeliveryOptions> {
               wizardField(
                 controller: _holdingDaysController,
                 label: 'Holding Days',
-                hint: 'e.g. 5',
+                optional: true,
+                hint: '0 if none',
                 icon: Icons.today_outlined,
                 keyboardType: TextInputType.number,
                 inputFormatters: [
@@ -573,7 +582,12 @@ class Step5DeliveryOptionsState extends State<Step5DeliveryOptions> {
                 ],
                 onChanged: (_) => setState(_syncBooking),
                 validator: (value) {
-                  final number = int.tryParse(value?.trim() ?? '');
+                  final text = value?.trim() ?? '';
+
+                  // Blank counts as 0 (the draft reads it that way).
+                  if (text.isEmpty) return null;
+
+                  final number = int.tryParse(text);
 
                   if (number == null || number < 0) {
                     return 'Enter valid days';
@@ -586,6 +600,7 @@ class Step5DeliveryOptionsState extends State<Step5DeliveryOptions> {
               wizardField(
                 controller: _holdingChargePerDayController,
                 label: 'Holding Charge / Day',
+                optional: true,
                 hint: '0.00',
                 icon: Icons.currency_rupee_rounded,
                 suffix: '/ day',
@@ -599,7 +614,12 @@ class Step5DeliveryOptionsState extends State<Step5DeliveryOptions> {
                 ],
                 onChanged: (_) => setState(_syncBooking),
                 validator: (value) {
-                  final number = double.tryParse(value?.trim() ?? '');
+                  final text = value?.trim() ?? '';
+
+                  // Blank counts as 0 (the draft reads it that way).
+                  if (text.isEmpty) return null;
+
+                  final number = double.tryParse(text);
 
                   if (number == null || number < 0) {
                     return 'Enter a valid charge';
@@ -1009,11 +1029,12 @@ class Step5DeliveryOptionsState extends State<Step5DeliveryOptions> {
             label: 'Transfer Date',
             date: draft.transferDate ?? DateTime.now(),
             onTap: () async {
-              final picked = await showDatePicker(
+              final picked = await showWizardDatePicker(
                 context: context,
                 initialDate: draft.transferDate ?? DateTime.now(),
                 firstDate: DateTime(2015),
                 lastDate: DateTime.now(),
+                helpText: 'Transfer date',
               );
 
               if (picked == null) return;

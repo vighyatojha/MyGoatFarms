@@ -15,18 +15,10 @@ import '../finance/customer_ledger_screen.dart';
 import 'add_customer_screen.dart';
 import 'customer_palai/customer_goat_registration_screen.dart';
 import 'goat_list_screen.dart';
-import 'own_farm/own_farm_palai_content.dart';
 import '../../widgets/farm_not_linked_state.dart';
 
-/// Which kind of Palai this screen is showing.
-enum PalaiType {
-  customer,
-  ownFarm,
-}
-
-/// Palai module dashboard.
+/// Palai module dashboard (Customer Palai).
 ///
-/// Customer Palai:
 /// - Customer management
 /// - Goat registration
 /// - Goat check-in/check-out
@@ -34,12 +26,8 @@ enum PalaiType {
 /// - Monthly billing
 /// - Payments
 ///
-/// Own Farm Palai:
-/// - Farm-owned goat lifecycle
-/// - Growth
-/// - Health
-/// - Breeding
-/// - Expenses
+/// Farm-owned goats are managed in Trading -> Own Palai, so there is no
+/// separate "Own Farm" mode here any more.
 class PalaiScreen extends StatefulWidget {
   const PalaiScreen({super.key});
 
@@ -50,8 +38,6 @@ class PalaiScreen extends StatefulWidget {
 class _PalaiScreenState extends State<PalaiScreen> {
   String? _farmId;
   bool _loadingFarm = true;
-
-  PalaiType _palaiType = PalaiType.customer;
 
   Stream<List<PalaiCustomer>>? _customersStream;
   Stream<double>? _pendingStream;
@@ -212,36 +198,24 @@ class _PalaiScreenState extends State<PalaiScreen> {
                   duration: const Duration(milliseconds: 220),
                   child: _buildHeader(),
                 ),
-                const SizedBox(height: 14),
-                FadeInUp(
-                  delay: const Duration(milliseconds: 25),
-                  duration: const Duration(milliseconds: 220),
-                  child: _buildPalaiTypeToggle(),
+                const SizedBox(height: 16),
+                _buildDashboard(),
+                const SizedBox(height: 24),
+                _buildSectionHeader(
+                  'Quick Actions',
+                  'Manage your Palai operations',
                 ),
-                const SizedBox(height: 18),
-                if (_palaiType == PalaiType.customer) ...[
-                  _buildDashboard(),
-                  const SizedBox(height: 24),
-                  _buildSectionHeader(
-                    'Quick Actions',
-                    'Manage your Palai operations',
-                  ),
-                  const SizedBox(height: 12),
-                  _buildQuickActions(),
-                  const SizedBox(height: 24),
-                  _buildSectionHeader(
-                    'Recent Activities',
-                    'Latest Palai updates',
-                    actionLabel: 'View All',
-                    onAction: () =>
-                        _comingSoon('Full activity list'),
-                  ),
-                  const SizedBox(height: 12),
-                  _buildActivities(),
-                ] else
-                  OwnFarmPalaiContent(
-                    farmId: _farmId!,
-                  ),
+                const SizedBox(height: 12),
+                _buildQuickActions(),
+                const SizedBox(height: 24),
+                _buildSectionHeader(
+                  'Recent Activities',
+                  'Latest Palai updates',
+                  actionLabel: 'View All',
+                  onAction: () => _comingSoon('Full activity list'),
+                ),
+                const SizedBox(height: 12),
+                _buildActivities(),
               ],
             ),
           ),
@@ -304,181 +278,58 @@ class _PalaiScreenState extends State<PalaiScreen> {
   }
 
   // ===========================================================================
-  // PALAI TYPE TOGGLE
-  // ===========================================================================
-
-  Widget _buildPalaiTypeToggle() {
-    Widget segment(String label, PalaiType type, IconData icon) {
-      final selected = _palaiType == type;
-
-      return Expanded(
-        child: GestureDetector(
-          onTap: () {
-            if (_palaiType == type) return;
-            setState(() => _palaiType = type);
-          },
-          child: AnimatedContainer(
-            duration: const Duration(milliseconds: 180),
-            curve: Curves.easeOut,
-            padding: const EdgeInsets.symmetric(
-              horizontal: 10,
-              vertical: 11,
-            ),
-            decoration: BoxDecoration(
-              color: selected ? Colors.white : Colors.transparent,
-              borderRadius: BorderRadius.circular(12),
-              boxShadow: selected
-                  ? [
-                BoxShadow(
-                  color: AppColors.primaryGreen.withOpacity(0.10),
-                  blurRadius: 10,
-                  offset: const Offset(0, 3),
-                ),
-              ]
-                  : null,
-            ),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Icon(
-                  icon,
-                  size: 17,
-                  color: selected
-                      ? AppColors.primaryGreen
-                      : AppColors.textGrey,
-                ),
-                const SizedBox(width: 7),
-                Flexible(
-                  child: Text(
-                    label,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: AppTheme.body(
-                      size: 12,
-                      color: selected
-                          ? AppColors.darkGreen
-                          : AppColors.textGrey,
-                      weight: FontWeight.w700,
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
-      );
-    }
-
-    return Container(
-      padding: const EdgeInsets.all(5),
-      decoration: BoxDecoration(
-        color: AppColors.lightGreen,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(
-          color: AppColors.primaryGreen.withOpacity(0.08),
-        ),
-      ),
-      child: Row(
-        children: [
-          segment(
-            'Customer Palai',
-            PalaiType.customer,
-            Icons.people_alt_outlined,
-          ),
-          const SizedBox(width: 4),
-          segment(
-            'Own Farm',
-            PalaiType.ownFarm,
-            Icons.home_work_outlined,
-          ),
-        ],
-      ),
-    );
-  }
-
-  // ===========================================================================
   // HEADER
   // ===========================================================================
 
   Widget _buildHeader() {
-    return Container(
-      padding: const EdgeInsets.fromLTRB(14, 14, 12, 14),
-      decoration: AppTheme.card(radius: 20),
-      child: Row(
-        children: [
-          Container(
-            width: 48,
-            height: 48,
-            decoration: BoxDecoration(
-              color: AppColors.lightGreen,
-              borderRadius: BorderRadius.circular(15),
+    // Same layout as the Trading screen's header: logo, screen name and
+    // the primary action — no card behind it.
+    return Row(
+      children: [
+        Container(
+          width: 38,
+          height: 38,
+          decoration: BoxDecoration(
+            color: AppColors.primaryGreen.withOpacity(0.10),
+            borderRadius: BorderRadius.circular(11),
+          ),
+          child: const Icon(
+            Icons.home_work_rounded,
+            color: AppColors.primaryGreen,
+            size: 21,
+          ),
+        ),
+        const SizedBox(width: 10),
+        Expanded(
+          child: Text(
+            'Palai',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: AppTheme.heading(size: 20),
+          ),
+        ),
+        ElevatedButton.icon(
+          onPressed: _openGoatRegistration,
+          icon: const Icon(Icons.add_rounded, size: 17),
+          label: const Text('Add Goat'),
+          style: ElevatedButton.styleFrom(
+            elevation: 0,
+            backgroundColor: AppColors.primaryGreen,
+            foregroundColor: Colors.white,
+            padding: const EdgeInsets.symmetric(
+              horizontal: 12,
+              vertical: 11,
             ),
-            child: const Icon(
-              Icons.home_work_rounded,
-              color: AppColors.primaryGreen,
-              size: 25,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(12),
+            ),
+            textStyle: const TextStyle(
+              fontSize: 11.5,
+              fontWeight: FontWeight.w700,
             ),
           ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  'Palai',
-                  style: AppTheme.heading(size: 19),
-                ),
-                const SizedBox(height: 3),
-                Text(
-                  'Goat Boarding & Care',
-                  style: AppTheme.body(
-                    size: 11.5,
-                    color: AppColors.textGrey,
-                  ),
-                ),
-              ],
-            ),
-          ),
-          if (_palaiType == PalaiType.customer)
-            ElevatedButton.icon(
-              onPressed: _openGoatRegistration,
-              icon: const Icon(Icons.add_rounded, size: 17),
-              label: const Text('Add Goat'),
-              style: ElevatedButton.styleFrom(
-                elevation: 0,
-                backgroundColor: AppColors.primaryGreen,
-                foregroundColor: Colors.white,
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 12,
-                  vertical: 11,
-                ),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                textStyle: const TextStyle(
-                  fontSize: 11.5,
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
-            )
-          else
-            Container(
-              padding: const EdgeInsets.symmetric(
-                horizontal: 10,
-                vertical: 9,
-              ),
-              decoration: BoxDecoration(
-                color: AppColors.lightGreen,
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: const Icon(
-                Icons.home_work_outlined,
-                color: AppColors.darkGreen,
-                size: 19,
-              ),
-            ),
-        ],
-      ),
+        ),
+      ],
     );
   }
 
@@ -857,22 +708,37 @@ class _PalaiLoadingState extends StatelessWidget {
       padding: const EdgeInsets.fromLTRB(16, 12, 16, 28),
       child: Column(
         children: [
-          Container(
-            height: 78,
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(20),
-            ),
+          Row(
+            children: [
+              Container(
+                width: 38,
+                height: 38,
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(11),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Container(
+                width: 90,
+                height: 20,
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(8),
+                ),
+              ),
+              const Spacer(),
+              Container(
+                width: 96,
+                height: 38,
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(12),
+                ),
+              ),
+            ],
           ),
-          const SizedBox(height: 14),
-          Container(
-            height: 54,
-            decoration: BoxDecoration(
-              color: AppColors.lightGreen,
-              borderRadius: BorderRadius.circular(16),
-            ),
-          ),
-          const SizedBox(height: 18),
+          const SizedBox(height: 16),
           Row(
             children: [
               Expanded(child: _SkeletonCard()),

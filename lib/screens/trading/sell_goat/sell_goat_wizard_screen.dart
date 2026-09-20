@@ -331,13 +331,8 @@ class _SellGoatWizardScreenState extends State<SellGoatWizardScreen> {
   void _showMessage(String message) {
     if (!mounted) return;
 
-    ScaffoldMessenger.of(context)
-      ..hideCurrentSnackBar()
-      ..showSnackBar(
-        SnackBar(
-          content: Text(message),
-        ),
-      );
+    // Every message here is a blocker (validation or a failed save).
+    wizardSnack(context, message, error: true);
   }
 
   // ===========================================================================
@@ -388,11 +383,7 @@ class _SellGoatWizardScreenState extends State<SellGoatWizardScreen> {
     FocusScope.of(context).unfocus();
 
     if (_currentStep == 0) {
-      final exit = await _confirmExit();
-
-      if (!mounted || !exit) return;
-
-      Navigator.of(context).pop();
+      await _leave();
       return;
     }
 
@@ -403,41 +394,30 @@ class _SellGoatWizardScreenState extends State<SellGoatWizardScreen> {
   // EXIT CONFIRMATION
   // ===========================================================================
 
-  Future<bool> _confirmExit() async {
-    final shouldExit = await showDialog<bool>(
-      context: context,
-      builder: (dialogContext) {
-        return AlertDialog(
-          title: const Text('Leave Sale?'),
-          content: const Text(
-            'Your entered sale details will be lost if you leave now.',
-          ),
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(20),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () {
-                Navigator.of(dialogContext).pop(false);
-              },
-              child: const Text('Stay'),
-            ),
-            ElevatedButton(
-              onPressed: () {
-                Navigator.of(dialogContext).pop(true);
-              },
-              style: ElevatedButton.styleFrom(
-                backgroundColor: AppColors.primaryGreen,
-                foregroundColor: Colors.white,
-              ),
-              child: const Text('Leave'),
-            ),
-          ],
-        );
-      },
-    );
+  /// Leaves the wizard. Only asks for confirmation when there is actually
+  /// something selected or typed that would be lost.
+  Future<void> _leave() async {
+    final hasData = _draft.selectedGoats.isNotEmpty ||
+        _draft.mobile.trim().isNotEmpty ||
+        _draft.customerName.trim().isNotEmpty;
 
-    return shouldExit ?? false;
+    if (hasData) {
+      final discard = await showWizardConfirm(
+        context: context,
+        title: 'Discard this sale?',
+        message:
+        'Nothing has been saved yet. If you leave now, the goats you '
+            'selected and everything you entered will be lost.',
+        confirmLabel: 'Discard',
+        cancelLabel: 'Keep editing',
+        destructive: true,
+        icon: Icons.delete_outline_rounded,
+      );
+
+      if (!mounted || !discard) return;
+    }
+
+    Navigator.of(context).pop();
   }
 
   // ===========================================================================
@@ -497,30 +477,26 @@ class _SellGoatWizardScreenState extends State<SellGoatWizardScreen> {
     return PopScope(
       canPop: false,
       onPopInvokedWithResult: (didPop, result) async {
-        if (didPop) return;
+        if (didPop || _saving) return;
 
-        if (_currentStep > 0) {
-          await _back();
-          return;
-        }
-
-        final exit = await _confirmExit();
-
-        if (!mounted || !exit) return;
-
-        Navigator.of(context).pop();
+        // _back() walks back a step, or (on step 1) asks before leaving.
+        await _back();
       },
       child: Scaffold(
         backgroundColor: AppColors.paleGreen,
         appBar: AppBar(
           backgroundColor: AppColors.paleGreen,
+          surfaceTintColor: Colors.transparent,
           elevation: 0,
           centerTitle: false,
           leading: IconButton(
             onPressed: (_moving || _saving) ? null : _back,
-            icon: const Icon(
-              Icons.arrow_back_rounded,
+            icon: Icon(
+              _currentStep == 0
+                  ? Icons.close_rounded
+                  : Icons.arrow_back_rounded,
             ),
+            tooltip: _currentStep == 0 ? 'Close' : 'Back',
             color: AppColors.textDark,
           ),
           title: Text(
@@ -532,6 +508,7 @@ class _SellGoatWizardScreenState extends State<SellGoatWizardScreen> {
           ),
         ),
         body: SafeArea(
+          bottom: false,
           child: _loadingFarm
               ? const Center(
             child: CircularProgressIndicator(
@@ -545,6 +522,12 @@ class _SellGoatWizardScreenState extends State<SellGoatWizardScreen> {
           )
               : _buildWizardBody(),
         ),
+
+        // A real bottomNavigationBar (not a widget inside the body) so
+        // floating snackbars sit ABOVE it instead of covering Back / Next.
+        bottomNavigationBar: (_loadingFarm || _farmId == null)
+            ? null
+            : _buildBottomBar(),
       ),
     );
   }
@@ -570,36 +553,20 @@ class _SellGoatWizardScreenState extends State<SellGoatWizardScreen> {
         ),
 
         // ---------------------------------------------------------------------
-        // STEP TITLE
+        // STEP TITLE (the indicator above already says "Step x of y")
         // ---------------------------------------------------------------------
 
         Padding(
-          padding: const EdgeInsets.fromLTRB(
-            18,
-            4,
-            18,
-            10,
-          ),
-          child: Row(
-            children: [
-              Expanded(
-                child: Text(
-                  _stepTitle,
-                  style: AppTheme.heading(
-                    size: 17,
-                    color: AppColors.textDark,
-                  ),
-                ),
+          padding: const EdgeInsets.fromLTRB(18, 2, 18, 10),
+          child: Align(
+            alignment: Alignment.centerLeft,
+            child: Text(
+              _stepTitle,
+              style: AppTheme.heading(
+                size: 17,
+                color: AppColors.textDark,
               ),
-              Text(
-                'Step ${_currentStep + 1} of ${_stepLabels.length}',
-                style: AppTheme.body(
-                  size: 11,
-                  color: AppColors.textGrey,
-                  weight: FontWeight.w600,
-                ),
-              ),
-            ],
+            ),
           ),
         ),
 
@@ -624,55 +591,54 @@ class _SellGoatWizardScreenState extends State<SellGoatWizardScreen> {
             },
           ),
         ),
+      ],
+    );
+  }
 
-        // ---------------------------------------------------------------------
-        // ACTION BAR
-        // ---------------------------------------------------------------------
+  // ===========================================================================
+  // BOTTOM BAR
+  // ===========================================================================
 
-        Container(
-          padding: const EdgeInsets.fromLTRB(
-            16,
-            10,
-            16,
-            14,
+  Widget _buildBottomBar() {
+    final busy = _moving || _saving;
+
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.05),
+            blurRadius: 14,
+            offset: const Offset(0, -3),
           ),
-          decoration: BoxDecoration(
-            color: Colors.white,
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withOpacity(0.05),
-                blurRadius: 14,
-                offset: const Offset(0, -3),
-              ),
-            ],
-          ),
+        ],
+      ),
+      child: SafeArea(
+        top: false,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(16, 10, 16, 10),
           child: Row(
             children: [
               if (_currentStep > 0) ...[
                 Expanded(
                   flex: 1,
                   child: SizedBox(
-                    height: 50,
+                    height: 52,
                     child: OutlinedButton(
-                      onPressed:
-                      (_moving || _saving) ? null : _back,
+                      onPressed: busy ? null : _back,
                       style: OutlinedButton.styleFrom(
-                        foregroundColor:
-                        AppColors.primaryGreen,
+                        foregroundColor: AppColors.primaryGreen,
                         side: BorderSide(
                           color: AppColors.primaryGreen
-                              .withOpacity(0.35),
+                              .withOpacity(busy ? 0.15 : 0.35),
                         ),
                         shape: RoundedRectangleBorder(
-                          borderRadius:
-                          BorderRadius.circular(14),
+                          borderRadius: BorderRadius.circular(15),
                         ),
                       ),
                       child: const Text(
                         'Back',
-                        style: TextStyle(
-                          fontWeight: FontWeight.w700,
-                        ),
+                        style: TextStyle(fontWeight: FontWeight.w700),
                       ),
                     ),
                   ),
@@ -682,53 +648,52 @@ class _SellGoatWizardScreenState extends State<SellGoatWizardScreen> {
               Expanded(
                 flex: 2,
                 child: SizedBox(
-                  height: 50,
+                  height: 52,
                   child: ElevatedButton(
-                    onPressed:
-                    (_moving || _saving) ? null : _next,
+                    onPressed: busy ? null : _next,
                     style: ElevatedButton.styleFrom(
-                      backgroundColor:
-                      AppColors.primaryGreen,
+                      backgroundColor: AppColors.primaryGreen,
                       foregroundColor: Colors.white,
+                      disabledBackgroundColor:
+                      AppColors.primaryGreen.withOpacity(0.55),
+                      disabledForegroundColor: Colors.white,
                       elevation: 1,
                       shape: RoundedRectangleBorder(
-                        borderRadius:
-                        BorderRadius.circular(14),
+                        borderRadius: BorderRadius.circular(15),
                       ),
                     ),
-                    child: _saving
-                        ? const SizedBox(
-                      width: 22,
-                      height: 22,
-                      child:
-                      CircularProgressIndicator(
-                        strokeWidth: 2.4,
-                        color: Colors.white,
-                      ),
-                    )
-                        : Row(
-                      mainAxisAlignment:
-                      MainAxisAlignment.center,
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
                       children: [
+                        if (_saving) ...[
+                          const SizedBox(
+                            width: 19,
+                            height: 19,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              color: Colors.white,
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                        ],
                         Text(
-                          _isLastStep
-                              ? 'Complete Sale'
-                              : 'Next',
+                          _saving
+                              ? 'Saving…'
+                              : (_isLastStep ? 'Complete Sale' : 'Next'),
                           style: const TextStyle(
-                            fontWeight:
-                            FontWeight.w700,
+                            fontWeight: FontWeight.w700,
                             fontSize: 14,
                           ),
                         ),
-                        const SizedBox(width: 7),
-                        Icon(
-                          _isLastStep
-                              ? Icons
-                              .check_circle_outline_rounded
-                              : Icons
-                              .arrow_forward_rounded,
-                          size: 20,
-                        ),
+                        if (!_saving) ...[
+                          const SizedBox(width: 7),
+                          Icon(
+                            _isLastStep
+                                ? Icons.check_circle_outline_rounded
+                                : Icons.arrow_forward_rounded,
+                            size: 20,
+                          ),
+                        ],
                       ],
                     ),
                   ),
@@ -737,7 +702,7 @@ class _SellGoatWizardScreenState extends State<SellGoatWizardScreen> {
             ],
           ),
         ),
-      ],
+      ),
     );
   }
 }

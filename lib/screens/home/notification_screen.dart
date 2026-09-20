@@ -14,8 +14,6 @@ import '../finance/expense_list_screen.dart';
 import '../finance/revenue_list_screen.dart';
 import '../palai/customer_palai/goat_profile_screen.dart';
 import '../palai/goat_list_screen.dart';
-import '../palai/own_farm/own_farm_goat_detail_screen.dart';
-import '../palai/own_farm/own_farm_goat_list_screen.dart';
 import '../stocks/stock_screen.dart';
 
 /// Notification center — reads from `farms/{farmId}/notifications`.
@@ -74,8 +72,8 @@ class _NotificationScreenState extends State<NotificationScreen> {
         return Icons.pets_outlined;
       case 'inventory':
         return Icons.warning_amber_outlined;
-      // A partner's action, mirrored from the Activity feed — see
-      // FirestoreService.notifyPartnerActivity.
+    // A partner's action, mirrored from the Activity feed — see
+    // FirestoreService.notifyPartnerActivity.
       case 'activity':
         return Icons.groups_outlined;
       default:
@@ -117,8 +115,7 @@ class _NotificationScreenState extends State<NotificationScreen> {
     // Customer-Palai health records (vaccination/hoof-cutting/hair-
     // trimming/medicine) additionally carry a customerId, and land on
     // GoatProfileScreen at the tab matching what the notification was
-    // about; Own-Farm health events go to OwnFarmGoatDetailScreen as
-    // before.
+    // about.
     final goatId = n.reference['goatId'];
     final customerId = n.reference['customerId'];
     if (n.category == 'health' && goatId != null && mounted) {
@@ -135,14 +132,11 @@ class _NotificationScreenState extends State<NotificationScreen> {
             ),
           );
         }
-      } else {
-        final goat = await FirestoreService.instance.getOwnFarmGoat(farmId, goatId);
-        if (goat != null && mounted) {
-          Navigator.of(context).push(
-            MaterialPageRoute(builder: (_) => OwnFarmGoatDetailScreen(goat: goat)),
-          );
-        }
       }
+      // Legacy Own Farm health notifications (no customerId) have no
+      // screen any more — the Own Farm module was removed (farm-owned
+      // goats live in Trading -> Own Palai). They are still marked read
+      // above; tapping one simply does nothing further.
     }
   }
 
@@ -178,9 +172,11 @@ class _NotificationScreenState extends State<NotificationScreen> {
         }
         break;
       case 'ownFarm':
+      // Legacy activities from the removed Own Farm module: expenses
+      // still open the expense list, the rest have no destination.
         destination = activityType == 'ownFarmExpenseAdded'
             ? const ExpenseListScreen()
-            : const OwnFarmGoatListScreen();
+            : null;
         break;
       default:
         destination = null;

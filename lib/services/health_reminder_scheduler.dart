@@ -2,7 +2,6 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:timezone/timezone.dart' as tz;
 
-import '../models/own_farm_models.dart';
 import '../models/trading_goat_health_record.dart';
 import 'firestore_service.dart';
 import 'notification_service.dart';
@@ -11,11 +10,9 @@ import 'notification_service.dart';
 ///
 /// reminder notifications described in the notification design doc.
 ///
-/// Covers three record shapes:
-///   * Own Farm's unified [HealthEvent] model (`scheduleForEvent`).
+/// Covers two record shapes:
 ///   * Customer Palai's separate vaccination / hoof-cutting /
-///     hair-trimming / medicine records, which don't share a model with
-///     Own Farm (`scheduleCustomerHealthReminder`).
+///     hair-trimming / medicine records (`scheduleCustomerHealthReminder`).
 ///   * Trading module's Own Palai goats — vaccination / hoof-cutting /
 ///     hair-trimming / medicine kept in one `healthRecords`
 ///     subcollection distinguished by a `type` field
@@ -37,43 +34,12 @@ class HealthReminderScheduler {
       NotificationService.instance.localNotificationsPlugin;
 
   // ---------------------------------------------------------------------
-  // Own Farm
+  // Farm-wide: re-schedule + due-check across every module
   // ---------------------------------------------------------------------
 
-  /// Schedules (or, if called again for the same event, replaces) the
-  /// due-date reminders for one health event.
-  ///
-  /// Call this right after [FirestoreService.addHealthEvent] succeeds,
-  /// passing the event id it returned. [goatCode] is the goat's display
-  /// code (e.g. "OF-1001"), used in the notification text.
-  Future<void> scheduleForEvent({
-    required String farmId,
-    required String goatId,
-    required String goatCode,
-    required String eventId,
-    required HealthEvent event,
-  }) async {
-    await _scheduleThreeStageReminders(
-      farmId: farmId,
-      key: eventId,
-      label: event.label,
-      dueDate: event.nextDueDate,
-      payloadExtras: {
-        'category': 'health',
-        'type': '${event.type.name}_due',
-        'goatId': goatId,
-        'eventId': eventId,
-      },
-      goatCode: goatCode,
-      notificationTypePrefix: event.type.name,
-      goatId: goatId,
-      recordId: eventId,
-    );
-  }
-
-  /// Re-derives and re-schedules reminders for every Own-Farm goat's
-  /// open health events, and every Customer-Palai goat's vaccination /
-  /// hoof-cutting / hair-trimming records, across the farm.
+  /// Re-derives and re-schedules reminders for every Customer-Palai goat's
+  /// vaccination / hoof-cutting / hair-trimming records and every Own-Palai
+  /// (Trading) goat's health records, across the farm.
   ///
   /// flutter_local_notifications' scheduled alarms are cleared by
   /// Android when the phone reboots and are NOT automatically
@@ -81,26 +47,6 @@ class HealthReminderScheduler {
   /// addition to scheduling at creation time) so a reboot doesn't
   /// silently drop upcoming reminders.
   Future<void> rescheduleAllForFarm(String farmId) async {
-    try {
-      final upcoming = await FirestoreService.instance.upcomingHealthReminders(
-        farmId,
-        withinDays: 60,
-      );
-      for (final entry in upcoming) {
-        final goat = entry.key;
-        final event = entry.value;
-        await scheduleForEvent(
-          farmId: farmId,
-          goatId: goat.id,
-          goatCode: goat.goatCode,
-          eventId: event.id,
-          event: event,
-        );
-      }
-    } catch (e) {
-      debugPrint('HealthReminderScheduler: reschedule-all (own farm) failed: $e');
-    }
-
     try {
       final upcomingCustomer =
       await FirestoreService.instance.upcomingCustomerHealthReminders(farmId, withinDays: 60);
@@ -140,38 +86,12 @@ class HealthReminderScheduler {
   }
 
   /// Writes/updates a Firestore notification record for anything due
-  /// today or already overdue — Own Farm health events AND Customer
-  /// Palai vaccination/hoof-cutting/hair-trimming records — so
+  /// today or already overdue — Customer Palai and Own Palai (Trading)
+  /// health records — so
   /// NotificationScreen has something to show even if a scheduled OS
   /// alarm was missed (e.g. a reboot before [rescheduleAllForFarm] ran).
   /// Idempotent — safe to call every time the app opens.
   Future<void> runDueCheck(String farmId) async {
-    try {
-      final upcoming = await FirestoreService.instance.upcomingHealthReminders(
-        farmId,
-        withinDays: 0, // due today or already overdue only
-      );
-
-      for (final entry in upcoming) {
-        final goat = entry.key;
-        final event = entry.value;
-        final dueDate = event.nextDueDate;
-        if (dueDate == null) continue;
-
-        await _writeDueOrOverdueNotification(
-          farmId: farmId,
-          docKey: 'health_${goat.id}_${event.id}',
-          notificationType: event.type.name,
-          label: event.label,
-          goatCode: goat.goatCode,
-          dueDate: dueDate,
-          reference: {'goatId': goat.id, 'eventId': event.id},
-        );
-      }
-    } catch (e) {
-      debugPrint('HealthReminderScheduler: due-check (own farm) failed: $e');
-    }
-
     try {
       final upcomingCustomer =
       await FirestoreService.instance.upcomingCustomerHealthReminders(farmId, withinDays: 0);
@@ -331,8 +251,8 @@ class HealthReminderScheduler {
   // Shared internals
   // ---------------------------------------------------------------------
 
-  /// Cancels all reminders previously scheduled under [key] — the raw
-  /// event id for Own Farm, or the composite key for Customer Palai.
+  /// Cancels all reminders previously scheduled under [key] — the
+  /// composite key of a Customer Palai or Trading (Own Palai) record.
   Future<void> cancelForEvent(String key) async {
     for (final stage in _ReminderStage.values) {
       await _plugin.cancel(_notificationId(key, stage));
@@ -340,7 +260,8 @@ class HealthReminderScheduler {
   }
 
   /// Shared 7-days-before / 1-day-before / due-today scheduling used by
-  /// both [scheduleForEvent] and [scheduleCustomerHealthReminder].
+  /// both [scheduleCustomerHealthReminder] and
+  /// [scheduleTradingHealthReminder].
   Future<void> _scheduleThreeStageReminders({
     required String farmId,
     required String key,
@@ -352,10 +273,8 @@ class HealthReminderScheduler {
     required String goatId,
     required String recordId,
     String? customerId,
-    // Overrides the notification-feed doc key prefix for sources other
-    // than Own Farm / Customer Palai (e.g. 'health_trading' for Trading
-    // module records). When null, falls back to the existing
-    // customerId-based derivation below.
+    // Notification-feed doc key prefix. Defaults to 'health' (Customer
+    // Palai); Trading (Own Palai) records pass 'health_trading'.
     String? notificationDocKeyPrefix,
   }) async {
     // Cancel any existing schedule for this record first, so editing a
@@ -429,11 +348,8 @@ class HealthReminderScheduler {
       if (customerId != null) reference['customerId'] = customerId;
       await _writeDueOrOverdueNotification(
         farmId: farmId,
-        docKey: notificationDocKeyPrefix != null
-            ? '${notificationDocKeyPrefix}_${goatId}_${notificationTypePrefix}_$recordId'
-            : (customerId != null
-            ? 'health_${goatId}_${notificationTypePrefix}_$recordId'
-            : 'health_${goatId}_$recordId'),
+        docKey:
+        '${notificationDocKeyPrefix ?? 'health'}_${goatId}_${notificationTypePrefix}_$recordId',
         notificationType: notificationTypePrefix,
         label: label,
         goatCode: goatCode,

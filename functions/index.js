@@ -30,12 +30,12 @@
  *     device). This runs every 30 minutes, re-derives the same "is
  *     anything entering its 7-day/1-day window right now" check the
  *     Flutter app does client-side (HealthReminderScheduler /
- *     upcomingHealthReminders / upcomingCustomerHealthReminders), and
+ *     upcomingCustomerHealthReminders / upcomingTradingHealthReminders), and
  *     writes a notification doc the first time a record crosses into
  *     that window — which then triggers function #1 above to fan it out
- *     to every device. Covers three sources: Own Farm `healthEvents`,
- *     Customer Palai's three `*Records` collections, and (Phase 3)
- *     Trading's single `healthRecords` collection for Own Palai goats.
+ *     to every device. Covers two sources: Customer Palai's three
+ *     `*Records` collections and Trading's single `healthRecords`
+ *     collection for Own Palai goats.
  *
  * IDEMPOTENCY
  * -----------
@@ -201,38 +201,6 @@ function isInStageWindow(dueDate, daysBefore) {
 exports.scheduledHealthReminderSweep = onSchedule('every 30 minutes', async () => {
   const horizon = Timestamp.fromDate(new Date(Date.now() + 8 * 24 * 60 * 60 * 1000)); // 8 days out
 
-  // -- Own Farm: farms/{farmId}/ownFarmGoats/{goatId}/healthEvents/{eventId}
-  const eventsSnap = await db.collectionGroup('healthEvents')
-      .where('nextDueDate', '<=', horizon)
-      .get();
-
-  for (const doc of eventsSnap.docs) {
-    const data = doc.data();
-    const dueDate = data.nextDueDate;
-    if (!dueDate) continue;
-
-    for (const stage of STAGE_WINDOWS) {
-      if (!isInStageWindow(dueDate, stage.daysBefore)) continue;
-
-      // Path: farms/{farmId}/ownFarmGoats/{goatId}/healthEvents/{eventId}
-      const goatRef = doc.ref.parent.parent;
-      const farmId = goatRef.parent.parent.id;
-      const goatSnap = await goatRef.get();
-      const goatCode = goatSnap.data()?.goatCode || 'A goat';
-      const label = String(data.type || 'health').replace(/([A-Z])/g, ' $1').trim();
-      const labelTitled = label.charAt(0).toUpperCase() + label.slice(1);
-
-      await writeAdvanceReminder({
-        farmId,
-        docKey: `health_${goatRef.id}_${doc.id}_${stage.suffix}`,
-        type: `${data.type}_${stage.suffix}`,
-        title: stage.label(labelTitled),
-        message: stage.body(goatCode, labelTitled),
-        reference: {goatId: goatRef.id, eventId: doc.id},
-      });
-    }
-  }
-
   // -- Customer Palai: farms/{farmId}/palaiCustomers/{customerId}/goats/{goatId}/{type}Records/{recordId}
   const recordTypes = [
     {collection: 'vaccinationRecords', type: 'vaccination', label: 'Vaccination'},
@@ -279,10 +247,7 @@ exports.scheduledHealthReminderSweep = onSchedule('every 30 minutes', async () =
   // medicine) in ONE `healthRecords` collection per goat, distinguished
   // by a `type` field — see the phase 3 plan (Section 1) and
   // GoatHealthRecord in the Flutter app. So this is a single
-  // collectionGroup query rather than one per type, matching the
-  // Own Farm block above (`healthEvents`) which uses the same
-  // one-collection-many-types shape and sits at the same path depth
-  // (goat doc → farm doc), just with a different collection name.
+  // collectionGroup query rather than one per type.
   //
   // Trading goat docs have no separate `goatCode` field — the document
   // ID itself IS the display code (e.g. "G-0001"), so this skips the

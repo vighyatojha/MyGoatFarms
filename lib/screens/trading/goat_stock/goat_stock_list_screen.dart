@@ -37,9 +37,6 @@ Color _statusColor(String status) {
     case Goat.statusSold:
       return AppColors.error;
 
-    case Goat.statusInCustomerPalai:
-      return AppColors.info;
-
     case Goat.statusOwnPalai:
       return AppColors.tradingBlue;
 
@@ -120,7 +117,8 @@ class _SortFilterResult {
 /// - Compact stock summary (tap a stat to filter)
 /// - Search
 /// - Pinned status filter chips with counts
-/// - Status-aware goat cards
+/// - Status-aware goat cards (Customer Palai goats are not shown here —
+///   they are managed in the Customer Palai module)
 /// - Floating "+" button to purchase an individual goat
 /// - Skeleton loading
 ///
@@ -156,7 +154,10 @@ class _GoatStockListScreenState
 
   String _search = '';
 
-  late String? _statusFilter = widget.initialStatusFilter;
+  late String? _statusFilter =
+  widget.initialStatusFilter == Goat.statusInCustomerPalai
+      ? null
+      : widget.initialStatusFilter;
 
   _StockSort _sort = _StockSort.newest;
 
@@ -745,7 +746,11 @@ class _GoatStockListScreenState
           return const _GoatStockSkeleton();
         }
 
-        final allGoats = snapshot.data ?? [];
+        // Goats kept for a customer live in the Customer Palai module, not
+        // in Trading stock — they are left out of the list AND the counts.
+        final allGoats = (snapshot.data ?? <Goat>[])
+            .where((goat) => !goat.isInCustomerPalai)
+            .toList();
 
         return _buildContent(allGoats);
       },
@@ -1119,7 +1124,9 @@ class _GoatStockListScreenState
           count: allGoats.length,
         ),
 
-        ...Goat.statusValues.map((status) {
+        ...Goat.statusValues
+            .where((status) => status != Goat.statusInCustomerPalai)
+            .map((status) {
           return Padding(
             padding: const EdgeInsets.only(left: 6),
             child: _filterChip(

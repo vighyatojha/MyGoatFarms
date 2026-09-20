@@ -17,7 +17,6 @@ import '../models/report_models.dart';
 import '../models/stock_model.dart';
 import '../models/activity_model.dart';
 import '../models/partner_model.dart';
-import '../models/own_farm_models.dart';
 import '../models/notification_model.dart';
 import '../models/supplier_model.dart';
 import '../models/goat_model.dart';
@@ -2316,37 +2315,6 @@ class FirestoreService {
   }
 
   // ---------------------------------------------------------------------
-  // Palai — health events (vaccination, deworming, hoof cutting / khud
-  // cutting, hair trimming, medicine, checkup) with reminder due-dates.
-  // Reuses the same [HealthEvent] model as the Own Farm herd so the two
-  // modules stay consistent.
-  // ---------------------------------------------------------------------
-
-  CollectionReference<Map<String, dynamic>> _palaiHealthEvents(
-      String farmId, String customerId, String goatId) =>
-      _goats(farmId, customerId).doc(goatId).collection('healthEvents');
-
-  Future<void> addPalaiHealthEvent(
-      String farmId,
-      String customerId,
-      String goatId,
-      HealthEvent event,
-      ) async {
-    await _palaiHealthEvents(farmId, customerId, goatId).add(event.toMap()).timeout(timeout);
-  }
-
-  Stream<List<HealthEvent>> palaiHealthEventsStream(
-      String farmId,
-      String customerId,
-      String goatId,
-      ) {
-    return _palaiHealthEvents(farmId, customerId, goatId)
-        .orderBy('date', descending: true)
-        .snapshots()
-        .map((s) => s.docs.map(HealthEvent.fromDoc).toList());
-  }
-
-  // ---------------------------------------------------------------------
   // Palai — monthly progress photos
   // ---------------------------------------------------------------------
 
@@ -3534,136 +3502,15 @@ class FirestoreService {
     });
   }
 
-
-  // ---------------------------------------------------------------------
-  // Own Farm Palai — goats owned by the farm itself
-  // ---------------------------------------------------------------------
-
-  CollectionReference<Map<String, dynamic>> _ownFarmGoats(String farmId) =>
-      _farms.doc(farmId).collection('ownFarmGoats');
-
-  CollectionReference<Map<String, dynamic>> _growthRecords(String farmId, String goatId) =>
-      _ownFarmGoats(farmId).doc(goatId).collection('growthRecords');
-
-  CollectionReference<Map<String, dynamic>> _healthEvents(String farmId, String goatId) =>
-      _ownFarmGoats(farmId).doc(goatId).collection('healthEvents');
-
-  CollectionReference<Map<String, dynamic>> _breedingRecords(String farmId, String goatId) =>
-      _ownFarmGoats(farmId).doc(goatId).collection('breedingRecords');
-
-  /// Flat, farm-level expense log — mirrors the stockMovements pattern so
-  /// "all expenses this month" can be queried with a single `orderBy`
-  /// instead of a collectionGroup query across every goat.
-  CollectionReference<Map<String, dynamic>> _ownFarmExpenses(String farmId) =>
-      _farms.doc(farmId).collection('ownFarmExpenses');
-
-  Future<String> addOwnFarmGoat(String farmId, OwnFarmGoat goat) async {
-    final ref = await _ownFarmGoats(farmId).add(goat.toMap()).timeout(timeout);
-    return ref.id;
-  }
-
-  Stream<List<OwnFarmGoat>> ownFarmGoatsStream(String farmId, {bool activeOnly = true}) {
-    Query<Map<String, dynamic>> q = _ownFarmGoats(farmId);
-    if (activeOnly) {
-      q = q.where('isActive', isEqualTo: true);
-    }
-    return q
-        .orderBy('registeredAt', descending: true)
-        .snapshots()
-        .map((s) => s.docs.map(OwnFarmGoat.fromDoc).toList());
-  }
-
-  Future<OwnFarmGoat?> getOwnFarmGoat(String farmId, String goatId) async {
-    final doc = await _ownFarmGoats(farmId).doc(goatId).get().timeout(timeout);
-    if (!doc.exists) return null;
-    return OwnFarmGoat.fromDoc(doc);
-  }
-
-  Future<void> updateOwnFarmGoat(String farmId, OwnFarmGoat goat) {
-    return _ownFarmGoats(farmId).doc(goat.id).update(goat.toUpdateMap()).timeout(timeout);
-  }
-
-  Future<void> removeOwnFarmGoat(String farmId, String goatId) {
-    // Soft-delete: keeps growth/health/breeding/expense history intact for
-    // reporting even after a goat is sold or leaves the herd.
-    return _ownFarmGoats(farmId).doc(goatId).update({'isActive': false}).timeout(timeout);
-  }
-
-  // -- Weight / growth tracking -------------------------------------------
-
-  Future<void> addGrowthRecord(String farmId, String goatId, GrowthRecord record) async {
-    await _growthRecords(farmId, goatId).add(record.toMap()).timeout(timeout);
-    await _ownFarmGoats(farmId).doc(goatId).update({'currentWeight': record.weight}).timeout(timeout);
-  }
-
-  Stream<List<GrowthRecord>> growthRecordsStream(String farmId, String goatId) {
-    return _growthRecords(farmId, goatId)
-        .orderBy('recordedAt', descending: true)
-        .snapshots()
-        .map((s) => s.docs.map(GrowthRecord.fromDoc).toList());
-  }
-
-  // -- Health, vaccination, hoof cutting, hair trimming --------------------
-
-  /// Returns the new event's document id so the caller can schedule
-  /// local reminder notifications tied to it (see
-  /// HealthReminderScheduler.scheduleForEvent).
-  Future<String> addHealthEvent(String farmId, String goatId, HealthEvent event) async {
-    final ref = await _healthEvents(farmId, goatId).add(event.toMap()).timeout(timeout);
-    return ref.id;
-  }
-
-  Stream<List<HealthEvent>> healthEventsStream(String farmId, String goatId) {
-    return _healthEvents(farmId, goatId)
-        .orderBy('date', descending: true)
-        .snapshots()
-        .map((s) => s.docs.map(HealthEvent.fromDoc).toList());
-  }
-
-  /// All farm goats with a hoof-cutting (khud cutting) reminder due within
-  /// [withinDays] days (default 45 — matches the 30/45-day khud cutting
-  /// cadence) or already overdue. Reminders for other event types
-  /// (vaccination, hair trimming) follow the same `nextDueDate` field and
-  /// can reuse this same query with a different [type].
-  Future<List<MapEntry<OwnFarmGoat, HealthEvent>>> upcomingHealthReminders(
-      String farmId, {
-        HealthEventType? type,
-        int withinDays = 45,
-      }) async {
-    final goatsSnap = await _ownFarmGoats(farmId).where('isActive', isEqualTo: true).get().timeout(timeout);
-    final cutoff = DateTime.now().add(Duration(days: withinDays));
-    final results = <MapEntry<OwnFarmGoat, HealthEvent>>[];
-
-    for (final goatDoc in goatsSnap.docs) {
-      final goat = OwnFarmGoat.fromDoc(goatDoc);
-      Query<Map<String, dynamic>> q = _healthEvents(farmId, goat.id).orderBy('date', descending: true);
-      if (type != null) {
-        q = q.where('type', isEqualTo: type.name);
-      }
-      final eventsSnap = await q.limit(5).get().timeout(timeout);
-      for (final eventDoc in eventsSnap.docs) {
-        final event = HealthEvent.fromDoc(eventDoc);
-        if (event.nextDueDate != null && event.nextDueDate!.isBefore(cutoff)) {
-          results.add(MapEntry(goat, event));
-        }
-      }
-    }
-    results.sort((a, b) => a.value.nextDueDate!.compareTo(b.value.nextDueDate!));
-    return results;
-  }
-
   /// Every Customer-Palai goat, across every customer on this farm, with
   /// a vaccination / hoof-cutting / hair-trimming `nextDueDate` due
   /// within [withinDays] days (default 45) or already overdue.
   ///
-  /// This is the Customer-Palai counterpart to [upcomingHealthReminders]
-  /// (which only covers Own-Farm goats' [HealthEvent]s) — Customer Palai
-  /// stores vaccination/hoof-cutting/hair-trimming as three separate
-  /// per-type subcollections (see VaccinationRecord / HoofCuttingRecord /
-  /// HairTrimmingRecord) rather than the unified HealthEvent model, so it
-  /// needs its own query. Used by HealthReminderScheduler to schedule
-  /// on-device reminders and populate the notification feed the same way
-  /// it does for Own Farm.
+  /// Customer Palai stores vaccination/hoof-cutting/hair-trimming as three
+  /// separate per-type subcollections (see VaccinationRecord /
+  /// HoofCuttingRecord / HairTrimmingRecord). Used by
+  /// HealthReminderScheduler to schedule on-device reminders and populate
+  /// the notification feed.
   Future<List<CustomerHealthReminder>> upcomingCustomerHealthReminders(
       String farmId, {
         int withinDays = 45,
@@ -3750,14 +3597,14 @@ class FirestoreService {
   /// [withinDays] days (default 45) or already overdue.
   ///
   /// This is the Trading-module counterpart to
-  /// [upcomingCustomerHealthReminders] and [upcomingHealthReminders] —
+  /// [upcomingCustomerHealthReminders] —
   /// Trading keeps all four record types in one `healthRecords`
   /// subcollection distinguished by a `type` field (see
   /// GoatHealthRecord) instead of four separate per-type
   /// subcollections, so this only needs one subcollection read per
   /// goat rather than four. Used by HealthReminderScheduler to
   /// schedule on-device reminders and populate the same farm-wide
-  /// notification feed it already uses for Own Farm and Customer
+  /// notification feed it already uses for Customer
   /// Palai — deliberately reusing that mechanism rather than building
   /// a separate one for Trading (see the phase 3 plan's Task 1.3).
   Future<List<TradingHealthReminder>> upcomingTradingHealthReminders(
@@ -3892,42 +3739,6 @@ class FirestoreService {
 
     final perTypeResults = await Future.wait(reads);
     return perTypeResults.expand((r) => r).toList();
-  }
-
-  // -- Breeding --------------------------------------------------------
-
-  Future<void> addBreedingRecord(String farmId, String goatId, BreedingRecord record) async {
-    await _breedingRecords(farmId, goatId).add(record.toMap()).timeout(timeout);
-  }
-
-  Stream<List<BreedingRecord>> breedingRecordsStream(String farmId, String goatId) {
-    return _breedingRecords(farmId, goatId)
-        .orderBy('matingDate', descending: true)
-        .snapshots()
-        .map((s) => s.docs.map(BreedingRecord.fromDoc).toList());
-  }
-
-  // -- Feed / health expense tracking --------------------------------------
-
-  Future<void> addOwnFarmExpense(String farmId, OwnFarmExpense expense) async {
-    await _ownFarmExpenses(farmId).add(expense.toMap()).timeout(timeout);
-  }
-
-  Stream<List<OwnFarmExpense>> ownFarmExpensesStream(String farmId, {String? goatId}) {
-    Query<Map<String, dynamic>> q = _ownFarmExpenses(farmId).orderBy('date', descending: true);
-    if (goatId != null) {
-      q = q.where('goatId', isEqualTo: goatId);
-    }
-    return q.snapshots().map((s) => s.docs.map(OwnFarmExpense.fromDoc).toList());
-  }
-
-  Stream<double> ownFarmExpensesThisMonthStream(String farmId) {
-    final now = DateTime.now();
-    final monthStart = DateTime(now.year, now.month, 1);
-    return _ownFarmExpenses(farmId)
-        .where('date', isGreaterThanOrEqualTo: Timestamp.fromDate(monthStart))
-        .snapshots()
-        .map((s) => s.docs.fold<double>(0, (total, d) => total + ((d.data()['amount'] ?? 0) as num).toDouble()));
   }
 
   // ---------------------------------------------------------------------

@@ -1,9 +1,9 @@
 import 'package:flutter/material.dart';
 
-import '../../../../app_theme.dart';
-import '../../../../models/goat_model.dart';
-import '../../../../models/sale_draft.dart';
-import '../../../../services/goat_service.dart';
+import '../../../app_theme.dart';
+import '../../../models/goat_model.dart';
+import '../../../models/sale_draft.dart';
+import '../../../services/goat_service.dart';
 
 /// Step 1 — Select Goat(s).
 ///
