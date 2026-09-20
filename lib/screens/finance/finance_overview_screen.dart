@@ -9,6 +9,7 @@ import '../../services/firestore_service.dart';
 import '../../widgets/fast_route.dart';
 import '../../widgets/farm_not_linked_state.dart';
 import '../../widgets/finance/finance_transaction_tile.dart';
+import '../../widgets/goat_credit_cards.dart';
 import 'add_edit_expense_screen.dart';
 import 'add_edit_revenue_screen.dart';
 import 'customer_ledger_screen.dart';
@@ -54,11 +55,11 @@ class _FinanceOverviewScreenState extends State<FinanceOverviewScreen> {
     final now = DateTime.now();
     switch (preset) {
       case _RangePreset.all:
-        // Wide enough to include every record ever entered (and a
-        // little future headroom for backdated/forward entries), while
-        // still reusing the exact same "date >= start && date < end"
-        // Firestore query the other presets use — no separate
-        // "unbounded" code path needed.
+      // Wide enough to include every record ever entered (and a
+      // little future headroom for backdated/forward entries), while
+      // still reusing the exact same "date >= start && date < end"
+      // Firestore query the other presets use — no separate
+      // "unbounded" code path needed.
         return (start: DateTime(2000, 1, 1), end: DateTime(now.year + 1, 1, 1));
       case _RangePreset.today:
         final start = DateTime(now.year, now.month, now.day);
@@ -197,7 +198,7 @@ class _FinanceOverviewScreenState extends State<FinanceOverviewScreen> {
                 'assets/images/logo.png',
                 fit: BoxFit.cover,
                 errorBuilder: (_, __, ___) =>
-                    const Icon(Icons.savings_rounded, color: AppColors.primaryGreen, size: 22),
+                const Icon(Icons.savings_rounded, color: AppColors.primaryGreen, size: 22),
               ),
             ),
           ),
@@ -332,6 +333,12 @@ class _FinanceOverviewScreenState extends State<FinanceOverviewScreen> {
             ),
           ],
         ),
+        // Goat-sale credit: customers whose payment is still pending.
+        // Part of the Receivables figure above; hidden when there is none.
+        if (_farmId != null) ...[
+          const SizedBox(height: 10),
+          GoatCreditSummaryCard(farmId: _farmId!),
+        ],
       ],
     );
   }

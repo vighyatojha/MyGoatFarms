@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 
 import '../../../app_theme.dart';
+import '../../../goat_icons.dart';
 import '../../../models/palai_models.dart';
 import '../../../services/firestore_service.dart';
 import 'customer_goat_hair_screen.dart';
@@ -292,7 +293,7 @@ class _GoatProfileScreenState extends State<GoatProfileScreen>
               width: 64,
               height: 64,
               color: AppColors.lightGreen,
-              child: const Icon(Icons.pets, color: AppColors.primaryGreen, size: 26),
+              child: const Icon(GoatIcons.paw, color: AppColors.primaryGreen, size: 26),
             ),
           ),
           const SizedBox(width: 12),

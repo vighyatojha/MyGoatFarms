@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 
 import '../../../app_theme.dart';
+import '../../../goat_icons.dart';
 import '../../../models/health_reminder_settings_model.dart';
 import '../../../models/trading_goat_health_record.dart';
 import '../../../services/firestore_service.dart';
@@ -831,7 +832,7 @@ class _AddHealthRecordScreenState extends State<AddHealthRecordScreen>
       case GoatHealthRecordType.vaccination:
         return Icons.vaccines_outlined;
       case GoatHealthRecordType.hoofCutting:
-        return Icons.pets_outlined;
+        return GoatIcons.paw;
       case GoatHealthRecordType.hairTrimming:
         return Icons.content_cut_outlined;
       case GoatHealthRecordType.medicine:

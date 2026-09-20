@@ -8,6 +8,7 @@ import '../../models/activity_model.dart';
 import '../../models/palai_models.dart';
 import '../../services/firestore_service.dart';
 import '../../widgets/fast_route.dart';
+import '../../widgets/goat_credit_cards.dart';
 import '../palai/add_customer_screen.dart';
 import '../../widgets/farm_not_linked_state.dart';
 import 'customer_profile_screen.dart';
@@ -421,6 +422,23 @@ class _CustomerManagementScreenState
                     ),
                     child: _buildSummary(
                       allCustomers,
+                    ),
+                  ),
+                ),
+
+                // Goat-sale credit: customers who still owe money on goat
+                // sales. Hidden when nobody does.
+                SliverToBoxAdapter(
+                  child: Padding(
+                    padding:
+                    const EdgeInsets.fromLTRB(
+                      16,
+                      10,
+                      16,
+                      0,
+                    ),
+                    child: GoatCreditSummaryCard(
+                      farmId: _farmId!,
                     ),
                   ),
                 ),

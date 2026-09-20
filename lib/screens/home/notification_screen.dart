@@ -5,6 +5,7 @@ import 'package:animate_do/animate_do.dart';
 import 'package:intl/intl.dart';
 
 import '../../app_theme.dart';
+import '../../goat_icons.dart';
 import '../../models/notification_model.dart';
 import '../../services/firestore_service.dart';
 import '../../widgets/farm_not_linked_state.dart';
@@ -69,7 +70,7 @@ class _NotificationScreenState extends State<NotificationScreen> {
       case 'finance':
         return Icons.payments_outlined;
       case 'palai':
-        return Icons.pets_outlined;
+        return GoatIcons.paw;
       case 'inventory':
         return Icons.warning_amber_outlined;
     // A partner's action, mirrored from the Activity feed — see

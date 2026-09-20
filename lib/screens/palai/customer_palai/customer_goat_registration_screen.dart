@@ -6,6 +6,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
 import '../../../app_theme.dart';
+import '../../../goat_icons.dart';
 import '../../../models/activity_model.dart';
 import '../../../models/health_reminder_settings_model.dart';
 import '../../../models/palai_models.dart';
@@ -960,7 +961,7 @@ class _CustomerGoatRegistrationScreenState
             ),
 
             child: const Icon(
-              Icons.pets_outlined,
+              GoatIcons.paw,
               color:
               AppColors.primaryGreen,
               size: 27,

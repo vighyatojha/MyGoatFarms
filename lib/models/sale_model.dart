@@ -209,6 +209,18 @@ class Sale {
   /// [SalePayment.method].
   final String? paymentMethod;
 
+  /// True when the sale was made on credit: the customer did not pay the
+  /// full amount and the unpaid part is their outstanding balance.
+  ///
+  /// Deliver Now and Transfer to Palai only set it when something is
+  /// actually left unpaid at the sale. For Booking / Wait for Delivery the
+  /// balance is not known until the delivery is completed, so the choice
+  /// is kept as made and the unpaid balance after delivery is the credit.
+  /// Either way the amount owed itself is never stored here: it is always
+  /// worked out from the payments ([billBalanceDue]), so it can never go
+  /// out of step with them.
+  final bool onCredit;
+
   const Sale({
     required this.id,
     required this.goatIds,
@@ -246,6 +258,7 @@ class Sale {
     this.createdAt,
     this.payments = const [],
     this.paymentMethod,
+    this.onCredit = false,
   });
 
   // ---------------------------------------------------------------------
@@ -393,6 +406,11 @@ class Sale {
     if (isBooking) return _nonNegative(bookingAmount ?? 0);
     if (isWaitForDelivery) return _nonNegative(bookingAdvanceAmount ?? 0);
 
+    // Transfer to Palai: what was paid toward the goat's price. Transfers
+    // saved before this was asked for have no amount, so nothing is
+    // claimed as received for them.
+    if (isPalaiTransfer) return _nonNegative(amountReceived ?? 0);
+
     return 0.0;
   }
 
@@ -421,14 +439,25 @@ class Sale {
   /// True once the goat(s) have actually left the farm: a Deliver Now
   /// sale, a completed Booking delivery, or a completed Wait for
   /// Delivery pickup.
+  ///
+  /// A goat transferred to Palai has also left the sale: the customer
+  /// owns it and it is only boarded here.
   bool get isDelivered =>
       status == statusSold ||
           status == statusDeliveryCompleted ||
-          status == statusPickupCompleted;
+          status == statusPickupCompleted ||
+          status == statusTransferredToPalai;
+
+  /// True for a Transfer to Palai sale saved before the goat's price
+  /// payment was asked for. Nothing was recorded as received for it, so it
+  /// is not treated as a debt the customer owes.
+  bool get _isUntrackedPalaiTransfer =>
+      isPalaiTransfer && amountReceived == null;
 
   /// A balance can be collected only after delivery, and only while
   /// something is still owed.
-  bool get canCollectBalance => isDelivered && billBalanceDue > 0;
+  bool get canCollectBalance =>
+      isDelivered && !_isUntrackedPalaiTransfer && billBalanceDue > 0;
 
   // ---------------------------------------------------------------------
   // FINANCE REVENUE (Sold Goat Revenue)
@@ -473,6 +502,10 @@ class Sale {
 
     return received < cap ? received : cap;
   }
+
+  /// Public form of the money rounding below, for code that adds several
+  /// sales' balances together (see CustomerCredit).
+  static double roundMoney(double value) => _round2(value);
 
   /// Rounds to 2 decimals so floating-point drift (e.g.
   /// 27456.000000000004) never shows up in a figure or flips "PAID" to
@@ -613,6 +646,8 @@ class Sale {
 
       paymentMethod: data['paymentMethod'] as String?,
 
+      onCredit: data['onCredit'] == true,
+
       payments: (data['payments'] as List?)
           ?.whereType<Map>()
           .map(
@@ -688,6 +723,10 @@ class Sale {
     putIfNotNull('monthlyPalaiCharge', monthlyPalaiCharge);
     putIfNotNull('palaiCustomerId', palaiCustomerId);
     putIfNotNull('paymentMethod', paymentMethod);
+
+    if (onCredit) {
+      map['onCredit'] = true;
+    }
 
     if (payments.isNotEmpty) {
       map['payments'] = payments.map((p) => p.toMap()).toList();

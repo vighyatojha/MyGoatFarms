@@ -1,5 +1,6 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
+import '../../../goat_icons.dart';
 import 'customer_settings_screen.dart';
 
 class CustomerProfileScreen extends StatefulWidget {
@@ -859,7 +860,7 @@ class _CustomerProfileScreenState
     final items = [
       _ManagementItem(
         icon:
-        Icons.pets_outlined,
+        GoatIcons.paw,
         title: 'Goats',
         subtitle:
         'Register and manage goats',

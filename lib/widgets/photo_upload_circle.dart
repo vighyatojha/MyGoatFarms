@@ -3,6 +3,7 @@ import 'dart:typed_data';
 import 'package:flutter/material.dart';
 
 import '../app_theme.dart';
+import '../goat_icons.dart';
 
 /// Circular photo tile with a small camera badge — the same visual
 /// pattern as the Profile farm-photo picker, reused for the Palai
@@ -43,7 +44,7 @@ class PhotoUploadCircle extends StatelessWidget {
                 child: ClipOval(
                   child: imageBytes != null
                       ? Image.memory(imageBytes!, fit: BoxFit.cover, width: size, height: size)
-                      : Icon(Icons.pets, color: AppColors.primaryGreen, size: size * 0.42),
+                      : Icon(GoatIcons.paw, color: AppColors.primaryGreen, size: size * 0.42),
                 ),
               ),
               if (isUploading)

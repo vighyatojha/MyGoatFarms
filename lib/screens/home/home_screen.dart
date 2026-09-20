@@ -5,6 +5,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:animate_do/animate_do.dart';
 
 import '../../app_theme.dart';
+import '../../goat_icons.dart';
 import '../../models/farm_model.dart';
 import '../../models/activity_model.dart';
 import '../../models/partner_model.dart';
@@ -438,7 +439,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 child: GoatCountBuilder(
                   farmId: farmId,
                   builder: (context, count) => StatCard(
-                    icon: Icons.pets,
+                    icon: GoatIcons.paw,
                     label: 'Total Goats',
                     value: count != null ? '$count' : '—',
                     color: AppColors.primaryGreen,

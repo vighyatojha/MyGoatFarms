@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 
 import '../../app_theme.dart';
+import '../../goat_icons.dart';
 import '../../models/goat_model.dart';
 import '../../models/trading_purchase_model.dart';
 import '../../models/trading_summary_model.dart';
@@ -285,7 +286,7 @@ class _TradingDashboardScreenState extends State<TradingDashboardScreen> {
       children: [
         _pair(
           _StatCard(
-            icon: Icons.pets_rounded,
+            icon: GoatIcons.paw,
             label: 'Total Stock',
             value: '${s.totalStock}',
             color: AppColors.primaryGreen,
@@ -727,7 +728,7 @@ class _TradingDashboardScreenState extends State<TradingDashboardScreen> {
   Widget _pendingCard(TradingPurchase p) {
     final rows = <Widget>[
       _InfoRow(Icons.person_outline, 'Seller', p.sellerName),
-      _InfoRow(Icons.pets_outlined, 'Goats', '${p.totalGoats}'),
+      _InfoRow(GoatIcons.paw, 'Goats', '${p.totalGoats}'),
       _InfoRow(
         Icons.monitor_weight_outlined,
         'Weight',

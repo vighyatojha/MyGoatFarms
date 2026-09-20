@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 
 import '../../app_theme.dart';
+import '../../goat_icons.dart';
 import '../../models/bill_settings_model.dart';
 import '../../models/monthly_bill_model.dart' show MonthlyBill, GoatBillingLine;
 import '../../models/palai_models.dart';
@@ -629,7 +630,7 @@ class _CustomerGoatsReportScreenState
                 shape: BoxShape.circle,
               ),
               child: const Icon(
-                Icons.pets_outlined,
+                GoatIcons.paw,
                 size: 35,
                 color: AppColors.primaryGreen,
               ),

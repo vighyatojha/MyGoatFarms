@@ -3,6 +3,7 @@ import 'dart:typed_data';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 
+import '../../../goat_icons.dart';
 import '../../../models/palai_models.dart';
 import '../../../services/image_service.dart';
 
@@ -130,7 +131,7 @@ class _CustomerGoatMonthlyPhotosScreenState
                 color: colors.primaryContainer,
               ),
               child: Icon(
-                Icons.pets_outlined,
+                GoatIcons.paw,
                 size: 32,
                 color: colors.onPrimaryContainer,
               ),

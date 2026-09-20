@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../../../app_theme.dart';
+import '../../../goat_icons.dart';
 import '../../../models/purchase_costing.dart';
 import '../../../models/trading_purchase_draft.dart';
 import '../purchase_goats/purchase_cost_card.dart';
@@ -296,7 +297,7 @@ class _Step3ReceivingTransportState
             const SizedBox(width: 10),
             Expanded(
               child: WizardStatTile(
-                icon: Icons.pets_outlined,
+                icon: GoatIcons.paw,
                 label: 'Goats arrived',
                 value: costing.totalGoats > 0
                     ? '${costing.survivingGoats} of ${costing.totalGoats}'

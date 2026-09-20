@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 
 import '../../../app_theme.dart';
+import '../../../goat_icons.dart';
 import '../../../models/goat_model.dart';
 import '../../../models/trading_purchase_model.dart';
 import '../../../services/firestore_service.dart';
@@ -454,7 +455,7 @@ class _GoatStockDetailScreenState
 
               _sectionCard(
                 title: 'Goat Information',
-                icon: Icons.pets_outlined,
+                icon: GoatIcons.paw,
                 children: [
                   _infoRow('Breed', goat.breed),
                   _infoRow('Color', goat.color),
@@ -554,7 +555,7 @@ class _GoatStockDetailScreenState
               child: hasPhoto
                   ? null
                   : const Icon(
-                Icons.pets_outlined,
+                GoatIcons.paw,
                 color: AppColors.stockTeal,
                 size: 29,
               ),

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 
 import '../../app_theme.dart';
+import '../../goat_icons.dart';
 import '../../models/palai_models.dart';
 import '../../services/firestore_service.dart';
 import '../../widgets/farm_not_linked_state.dart';
@@ -832,7 +833,7 @@ class _HealthStatusRecordsScreenState
           shape: BoxShape.circle,
         ),
         child: Icon(
-          Icons.pets,
+          GoatIcons.paw,
           color: _color,
         ),
       );
@@ -853,7 +854,7 @@ class _HealthStatusRecordsScreenState
               shape: BoxShape.circle,
             ),
             child: Icon(
-              Icons.pets,
+              GoatIcons.paw,
               color: _color,
             ),
           );

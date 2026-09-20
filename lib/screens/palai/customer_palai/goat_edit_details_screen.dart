@@ -3,6 +3,7 @@ import 'dart:typed_data';
 import 'package:flutter/material.dart';
 
 import '../../../app_theme.dart';
+import '../../../goat_icons.dart';
 import '../../../models/palai_models.dart';
 import '../../../services/firestore_service.dart';
 import '../../../services/image_service.dart';
@@ -214,7 +215,7 @@ class _GoatEditDetailsScreenState extends State<GoatEditDetailsScreen> {
               controller: _breedController,
               label: 'Breed',
               hint: 'e.g. Boer, Sirohi',
-              icon: Icons.pets_outlined,
+              icon: GoatIcons.paw,
             ),
             const SizedBox(height: 16),
             Row(

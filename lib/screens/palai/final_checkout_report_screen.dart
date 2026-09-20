@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 
 import '../../app_theme.dart';
+import '../../goat_icons.dart';
 import '../../models/bill_settings_model.dart';
 import '../../models/farm_model.dart';
 import '../../models/final_checkout_report_model.dart';
@@ -817,7 +818,7 @@ class _FinalCheckoutReportScreenState
               const SizedBox(height: 14),
 
               _sectionTitle(
-                Icons.pets_outlined,
+                GoatIcons.paw,
                 'Goats',
               ),
 
@@ -967,7 +968,7 @@ class _FinalCheckoutReportScreenState
                 radius: 22,
                 backgroundColor: AppColors.lightGreen,
                 child: const Icon(
-                  Icons.pets,
+                  GoatIcons.paw,
                   color: AppColors.darkGreen,
                 ),
               ),
@@ -1412,7 +1413,7 @@ class _FinalCheckoutReportScreenState
                 'Customer & checkout details',
               ),
               _progressItem(
-                Icons.pets_outlined,
+                GoatIcons.paw,
                 'Goat records',
               ),
               _progressItem(

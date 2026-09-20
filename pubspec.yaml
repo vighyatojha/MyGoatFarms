@@ -79,3 +79,9 @@ flutter:
           weight: 600
         - asset: assets/fonts/Baloo2-Bold.ttf
           weight: 700
+
+    # Goat hoof icon (GoatIcons.paw) — built from
+    # assets/icon/goat_paw_green_vector.svg. Replaces the Material dog paw.
+    - family: GoatIcons
+      fonts:
+        - asset: assets/fonts/GoatIcons.ttf

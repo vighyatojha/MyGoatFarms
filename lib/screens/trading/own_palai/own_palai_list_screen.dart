@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../../app_theme.dart';
+import '../../../goat_icons.dart';
 import '../../../models/goat_model.dart';
 import '../../../services/firestore_service.dart';
 import '../../../services/goat_service.dart';
@@ -376,7 +377,7 @@ class _OwnPalaiListScreenState extends State<OwnPalaiListScreen> {
         fit: BoxFit.cover,
       )
           : const Icon(
-        Icons.pets,
+        GoatIcons.paw,
         size: 27,
         color: AppColors.primaryGreen,
       ),
@@ -449,7 +450,7 @@ class _OwnPalaiListScreenState extends State<OwnPalaiListScreen> {
                 borderRadius: BorderRadius.circular(20),
               ),
               child: const Icon(
-                Icons.pets_outlined,
+                GoatIcons.paw,
                 size: 32,
                 color: AppColors.primaryGreen,
               ),

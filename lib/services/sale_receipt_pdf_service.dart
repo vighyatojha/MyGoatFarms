@@ -894,13 +894,15 @@ class SaleReceiptPdfService {
 
     final status = remaining <= 0
         ? 'PAID'
+        : sale.onCredit
+        ? 'ON CREDIT'
         : paid > 0
         ? 'PARTIALLY PAID'
         : 'PENDING';
 
     final statusColor = status == 'PAID'
         ? PdfColors.green800
-        : status == 'PARTIALLY PAID'
+        : (status == 'PARTIALLY PAID' || status == 'ON CREDIT')
         ? PdfColors.orange800
         : PdfColors.red800;
 

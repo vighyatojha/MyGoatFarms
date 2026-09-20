@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../../app_theme.dart';
+import '../../../goat_icons.dart';
 import '../../../models/goat_model.dart';
 import '../../../services/goat_service.dart';
 
@@ -385,7 +386,7 @@ class _MoveToOwnPalaiScreenState extends State<MoveToOwnPalaiScreen> {
         fit: BoxFit.cover,
       )
           : const Icon(
-        Icons.pets,
+        GoatIcons.paw,
         size: 26,
         color: AppColors.primaryGreen,
       ),

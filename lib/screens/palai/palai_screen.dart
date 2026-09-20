@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:animate_do/animate_do.dart';
 import 'package:mygoatfarms/screens/finance/finance_overview_screen.dart';
 
+import '../../goat_icons.dart';
 import '../customers/customer_management_screen.dart';
 import '../../app_theme.dart';
 import '../../models/activity_model.dart';
@@ -350,7 +351,7 @@ class _PalaiScreenState extends State<PalaiScreen> {
                   farmId: _farmId!,
                   builder: (context, count) {
                     return _buildDashboardStat(
-                      icon: Icons.pets_rounded,
+                      icon: GoatIcons.paw,
                       label: 'Total Goats',
                       value: count != null ? '$count' : '—',
                       color: AppColors.primaryGreen,

@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
 
 import '../../../app_theme.dart';
+import '../../../goat_icons.dart';
 import '../../../models/purchase_costing.dart';
 import '../../../models/trading_purchase_model.dart';
 import '../../../services/trading_service.dart';
@@ -296,7 +297,7 @@ class _CompleteReceivingScreenState
                 label: 'Mortality',
                 hint: 'Enter mortality count',
                 suffix: 'Goats',
-                icon: Icons.pets_outlined,
+                icon: GoatIcons.paw,
                 keyboardType: TextInputType.number,
                 inputFormatters: [
                   FilteringTextInputFormatter.digitsOnly,

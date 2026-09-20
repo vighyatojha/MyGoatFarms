@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../../app_theme.dart';
+import '../../../goat_icons.dart';
 import '../../../models/goat_model.dart';
 import '../../../models/sale_draft.dart';
 import '../../../services/goat_service.dart';
@@ -253,7 +254,7 @@ class _Step1SelectGoatsState extends State<Step1SelectGoats> {
                       mainAxisSize: MainAxisSize.min,
                       children: [
                         Icon(
-                          Icons.pets_outlined,
+                          GoatIcons.paw,
                           size: 40,
                           color: AppColors.textGrey.withOpacity(0.5),
                         ),
@@ -401,7 +402,7 @@ class _GoatSelectTile extends StatelessWidget {
                 child: goat.photo != null
                     ? Image.memory(goat.photo!, fit: BoxFit.cover)
                     : const Icon(
-                  Icons.pets_outlined,
+                  GoatIcons.paw,
                   color: AppColors.stockTeal,
                   size: 24,
                 ),

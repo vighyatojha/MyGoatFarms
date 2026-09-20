@@ -1,4 +1,5 @@
 import 'dart:typed_data';
+import '../../goat_icons.dart';
 import '../../widgets/fast_route.dart';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
@@ -606,7 +607,7 @@ class _MultiGoatCheckoutScreenState
           child: Row(
             children: [
               const Icon(
-                Icons.pets,
+                GoatIcons.paw,
                 color: Colors.white,
                 size: 28,
               ),
@@ -1403,7 +1404,7 @@ class _MultiGoatCheckoutScreenState
         fit: BoxFit.cover,
       )
           : const Icon(
-        Icons.pets,
+        GoatIcons.paw,
         color: AppColors.primaryGreen,
         size: 28,
       ),

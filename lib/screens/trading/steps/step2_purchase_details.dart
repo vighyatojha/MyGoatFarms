@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../../../app_theme.dart';
+import '../../../goat_icons.dart';
 import '../../../models/purchase_costing.dart';
 import '../../../models/trading_purchase_draft.dart';
 import '../purchase_goats/purchase_wizard_widgets.dart';
@@ -118,7 +119,7 @@ class _Step2PurchaseDetailsState extends State<Step2PurchaseDetails> {
                 controller: _totalGoatsController,
                 label: 'Total Number of Goats',
                 hint: 'e.g. 20',
-                icon: Icons.pets_outlined,
+                icon: GoatIcons.paw,
                 suffix: 'goats',
                 keyboardType: TextInputType.number,
                 inputFormatters: [

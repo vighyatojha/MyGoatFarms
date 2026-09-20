@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 
 import '../../../app_theme.dart';
+import '../../../goat_icons.dart';
 import '../../../models/goat_model.dart';
 import '../../../models/trading_goat_health_record.dart';
 import '../../../models/trading_goat_weight_entry.dart';
@@ -172,7 +173,7 @@ class _OwnPalaiGoatProfileScreenState
                 Row(
                   children: [
                     _badge(
-                      Icons.pets_outlined,
+                      GoatIcons.paw,
                       'Own Palai',
                       AppColors.stockTeal,
                     ),
@@ -231,7 +232,7 @@ class _OwnPalaiGoatProfileScreenState
         child: hasPhoto
             ? null
             : const Icon(
-          Icons.pets,
+          GoatIcons.paw,
           size: 29,
           color: AppColors.stockTeal,
         ),
@@ -286,7 +287,7 @@ class _OwnPalaiGoatProfileScreenState
   Widget _buildBasicDetails(Goat goat) {
     return _sectionCard(
       title: 'Basic Details',
-      icon: Icons.pets_outlined,
+      icon: GoatIcons.paw,
       color: AppColors.stockTeal,
       child: Column(
         children: [

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../goat_icons.dart';
 import '../models/monthly_report_model.dart';
 import '../services/monthly_report_service.dart';
 
@@ -393,7 +394,7 @@ class _MonthlyReportScreenState
               child: Column(
                 children: [
                   const Icon(
-                    Icons.pets_outlined,
+                    GoatIcons.paw,
                     size: 48,
                   ),
                   const SizedBox(height: 12),
@@ -436,7 +437,7 @@ class _MonthlyReportScreenState
       ),
       child: ExpansionTile(
         leading: const CircleAvatar(
-          child: Icon(Icons.pets),
+          child: Icon(GoatIcons.paw),
         ),
         title: Text(
           goat.goatName.isEmpty

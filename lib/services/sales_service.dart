@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_core/firebase_core.dart' show FirebaseException;
 
+import '../models/customer_credit.dart';
 import '../models/customer_model.dart';
 import '../models/expense_categories.dart';
 import '../models/goat_model.dart';
@@ -373,6 +374,8 @@ class SalesService {
         amountReceived: draft.amountReceived,
         paymentMethod: draft.paymentMethod,
         paymentStatus: draft.paymentStatusDeliverNow,
+        // Only a credit sale if something is really left unpaid.
+        onCredit: draft.onCredit && draft.remainingBalanceDeliverNow > 0,
       );
 
       transaction.set(_sales(farmId).doc(saleId), {
@@ -547,6 +550,7 @@ class SalesService {
         status: Sale.statusBooked,
         bookingAmount: draft.bookingAmount,
         paymentMethod: draft.paymentMethod,
+        onCredit: draft.onCredit,
         expectedDeliveryDate: draft.expectedDeliveryDate,
         holdingChargePerDay: draft.holdingChargePerDay,
         // Holding starts today (the booking day) and counts this day.
@@ -709,6 +713,7 @@ class SalesService {
         bookingPricePerKg: draft.bookingPricePerKg,
         bookingAdvanceAmount: draft.bookingAdvanceAmount,
         paymentMethod: draft.paymentMethod,
+        onCredit: draft.onCredit,
         bookingWeight: draft.bookingWeightTotal,
       );
 
@@ -868,6 +873,12 @@ class SalesService {
         palaiPackage: draft.palaiPackage.trim(),
         monthlyPalaiCharge: draft.monthlyPalaiCharge,
         palaiCustomerId: palaiCustomerId,
+        // What was paid toward the goat's price, and how. Anything short
+        // of the total is the customer's outstanding balance.
+        amountReceived: draft.palaiAmountReceived,
+        paymentMethod: draft.paymentMethod,
+        paymentStatus: draft.paymentStatusPalai,
+        onCredit: draft.onCredit && draft.remainingBalancePalai > 0,
       );
 
       transaction.set(_sales(farmId).doc(saleId), {
@@ -897,6 +908,27 @@ class SalesService {
         SetOptions(merge: true),
       );
     }).timeout(_timeout * 2);
+
+    // -----------------------------------------------------------------
+    // FINANCE REVENUE — the money received toward the goat's price is
+    // Sold Goat Revenue, recorded now that the sale is saved. Whatever
+    // is left unpaid is the customer's credit and is recorded as it is
+    // collected (SalesService.receiveBalancePayment). The monthly Palai
+    // charge is not part of this: the Palai module bills it later.
+    // -----------------------------------------------------------------
+
+    await _recordSaleReceiptRevenue(
+      farmId: farmId,
+      saleId: saleId,
+      receiptKey: 'initial',
+      amount: Sale.revenueFromPaid(
+        paid: draft.palaiAmountReceived,
+        revenueTotal: draft.totalSaleAmount,
+      ),
+      date: DateTime.now(),
+      customerName: draft.customerName,
+      paymentMethod: _methodOrOther(draft.paymentMethod),
+    );
 
     // -----------------------------------------------------------------
     // 3. Actually check each goat into the Customer Palai module.
@@ -1438,7 +1470,10 @@ class SalesService {
         );
       }
 
-      final due = sale.billBalanceDue;
+      // canCollectBalance also rules out a Transfer to Palai saved before
+      // the goat's price payment was tracked: nothing was recorded as
+      // received for it, so no balance is claimed.
+      final due = sale.canCollectBalance ? sale.billBalanceDue : 0.0;
 
       if (due <= 0) {
         throw StateError('This sale has no balance due.');
@@ -1505,6 +1540,39 @@ class SalesService {
         );
       }
     }).timeout(_timeout * 2);
+  }
+
+  // -----------------------------------------------------------------------
+  // CUSTOMERS ON CREDIT — who still owes money on goat sales
+  // -----------------------------------------------------------------------
+
+  /// Live list of every customer who still owes money on goat sales,
+  /// biggest balance first.
+  ///
+  /// Nothing extra is stored for this. A sale that is delivered and not
+  /// paid in full carries a Partial / Pending `paymentStatus` (set when a
+  /// Deliver Now or Transfer to Palai sale is saved, and when a Booking /
+  /// Wait for Delivery is completed), so this reads only those and adds
+  /// their balances up per customer ([CustomerCredit.group]). Because the
+  /// balance is worked out from the payments themselves, receiving a
+  /// payment ([receiveBalancePayment]) is all it takes to bring it down —
+  /// there is no second figure to keep in step. It is the same source the
+  /// Finance Receivables total uses.
+  Stream<List<CustomerCredit>> creditCustomersStream(String farmId) {
+    return _sales(farmId)
+        .where(
+      'paymentStatus',
+      whereIn: [
+        Sale.paymentStatusPartial,
+        Sale.paymentStatusPending,
+      ],
+    )
+        .snapshots()
+        .map(
+          (snap) => CustomerCredit.group(
+        snap.docs.map(Sale.fromDoc),
+      ),
+    );
   }
 
   // -----------------------------------------------------------------------

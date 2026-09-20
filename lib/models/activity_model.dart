@@ -1,6 +1,7 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import '../app_theme.dart';
+import '../goat_icons.dart';
 
 enum ActivityType {
   paymentReceived,
@@ -124,7 +125,7 @@ class ActivityLog {
       case ActivityType.customerDeleted:
         return Icons.person_remove_alt_1_outlined;
       case ActivityType.ownFarmGoatAdded:
-        return Icons.pets;
+        return GoatIcons.paw;
       case ActivityType.ownFarmExpenseAdded:
         return Icons.remove_circle_outline;
       case ActivityType.expenseVoided:

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 
 import '../../../app_theme.dart';
+import '../../../goat_icons.dart';
 import '../../../models/farm_model.dart';
 import '../../../models/goat_model.dart';
 import '../../../services/firestore_service.dart';
@@ -1653,7 +1654,7 @@ class _GoatStockCard extends StatelessWidget {
           else
             const Center(
               child: Icon(
-                Icons.pets_outlined,
+                GoatIcons.paw,
                 size: 24,
                 color: AppColors.stockTeal,
               ),

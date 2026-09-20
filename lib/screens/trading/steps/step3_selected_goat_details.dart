@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../../../app_theme.dart';
+import '../../../goat_icons.dart';
 import '../../../models/goat_model.dart';
 import '../../../models/sale_draft.dart';
 import '../purchase_goats/purchase_wizard_widgets.dart';
@@ -278,7 +279,7 @@ class _GoatDetailCard extends StatelessWidget {
                 child: goat.photo != null
                     ? Image.memory(goat.photo!, fit: BoxFit.cover)
                     : const Icon(
-                  Icons.pets_outlined,
+                  GoatIcons.paw,
                   color: AppColors.stockTeal,
                   size: 26,
                 ),

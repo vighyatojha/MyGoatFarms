@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
 
 import '../../../app_theme.dart';
+import '../../../goat_icons.dart';
 import '../../../models/goat_model.dart';
 import '../../../models/trading_purchase_model.dart';
 import '../../../services/firestore_service.dart';
@@ -423,7 +424,7 @@ class _IndividualGoatPurchaseScreenState
   Widget _goatCard() {
     return WizardSectionCard(
       title: 'Goat Details',
-      icon: Icons.pets_outlined,
+      icon: GoatIcons.paw,
       children: [
         Center(
           child: PhotoUploadCircle(

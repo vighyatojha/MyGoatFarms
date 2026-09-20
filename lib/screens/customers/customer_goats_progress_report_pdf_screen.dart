@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 
 import '../../app_theme.dart';
+import '../../goat_icons.dart';
 import '../../models/bill_settings_model.dart';
 import '../../models/monthly_bill_model.dart' show MonthlyBill, GoatBillingLine;
 import '../../models/palai_models.dart';
@@ -1006,7 +1007,7 @@ class _CustomerGoatsProgressReportScreenState
             Container(
               padding: const EdgeInsets.all(18),
               decoration: BoxDecoration(color: AppColors.primaryGreen.withOpacity(0.10), shape: BoxShape.circle),
-              child: const Icon(Icons.pets_outlined, size: 35, color: AppColors.primaryGreen),
+              child: const Icon(GoatIcons.paw, size: 35, color: AppColors.primaryGreen),
             ),
             const SizedBox(height: 14),
             Text(allCheckedOut ? 'No active goats' : 'No goats found', style: AppTheme.heading(size: 15)),

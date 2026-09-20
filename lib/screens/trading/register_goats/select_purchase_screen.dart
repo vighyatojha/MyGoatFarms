@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 
 import '../../../app_theme.dart';
+import '../../../goat_icons.dart';
 import '../../../models/trading_purchase_model.dart';
 import '../../../services/firestore_service.dart';
 import '../../../services/trading_service.dart';
@@ -311,7 +312,7 @@ class _PurchaseCard extends StatelessWidget {
                 children: [
                   Expanded(
                     child: _InfoItem(
-                      icon: Icons.pets_outlined,
+                      icon: GoatIcons.paw,
                       label: 'Goats',
                       value: '${purchase.totalGoats}',
                       color: AppColors.primaryGreen,

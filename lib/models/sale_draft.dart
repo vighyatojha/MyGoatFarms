@@ -194,6 +194,21 @@ class SaleDraft {
   /// Finance entry for that money.
   String paymentMethod = FinancePaymentMethods.cash;
 
+  /// "Sell on Credit": the customer does not pay everything now and the
+  /// unpaid part becomes their outstanding balance.
+  ///
+  /// One switch shared by all four branches (only one branch's form is on
+  /// screen at a time). Step 5 clears it whenever the branch changes, so
+  /// credit is never carried over into another option by accident.
+  ///
+  /// - Deliver Now and Transfer to Palai: with it OFF the full amount must
+  ///   be received now; with it ON any amount short of the total is left
+  ///   as credit.
+  /// - Booking and Wait for Delivery: the balance is not known until the
+  ///   delivery is completed, so the choice is saved as made and whatever
+  ///   is still unpaid after delivery is the credit.
+  bool onCredit = false;
+
   // --- Branch A: Deliver Now (Task 3.1) --------------------------------------
 
   double transportCost = 0;
@@ -290,5 +305,29 @@ class SaleDraft {
   String palaiPackage = '';
   double monthlyPalaiCharge = 0;
 
-// Transfer to Palai carries no transportation charge.
+  // Transfer to Palai carries no transportation charge.
+
+  /// Paid so far toward the goat's price (the sale amount from Step 4 —
+  /// separate from the monthly Palai charge, which is billed later by the
+  /// Palai module).
+  double palaiAmountReceived = 0;
+
+  /// What the customer owes for the goat itself.
+  double get customerTotalPalai => round2(totalSaleAmount);
+
+  double get remainingBalancePalai =>
+      _nonNegative(customerTotalPalai - palaiAmountReceived);
+
+  /// More than the goat's price entered as received. Not blocked, but
+  /// Step 5 points it out so a typo is obvious before saving.
+  double get extraReceivedPalai =>
+      _nonNegative(palaiAmountReceived - customerTotalPalai);
+
+  String get paymentStatusPalai {
+    final received = round2(palaiAmountReceived);
+
+    if (received <= 0) return Sale.paymentStatusPending;
+    if (received >= customerTotalPalai) return Sale.paymentStatusPaid;
+    return Sale.paymentStatusPartial;
+  }
 }

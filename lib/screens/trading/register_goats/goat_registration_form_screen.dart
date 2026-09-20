@@ -3,6 +3,7 @@ import 'dart:typed_data';
 import 'package:flutter/material.dart';
 
 import '../../../app_theme.dart';
+import '../../../goat_icons.dart';
 import '../../../models/goat_model.dart';
 import '../../../models/trading_purchase_model.dart';
 import '../../../services/firestore_service.dart';
@@ -521,7 +522,7 @@ class _GoatRegistrationFormScreenState
                   borderRadius: BorderRadius.circular(10),
                 ),
                 child: const Icon(
-                  Icons.pets_outlined,
+                  GoatIcons.paw,
                   color: AppColors.tradingBlue,
                   size: 18,
                 ),

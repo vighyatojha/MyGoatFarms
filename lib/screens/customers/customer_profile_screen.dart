@@ -5,12 +5,14 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 
 import '../../app_theme.dart';
+import '../../goat_icons.dart';
 import '../../models/monthly_bill_model.dart';
 import '../../models/palai_models.dart';
 import '../../services/firestore_service.dart';
 import '../../services/monthly_billing_service.dart';
 import '../../widgets/fast_route.dart';
 
+import '../../widgets/goat_credit_cards.dart';
 import '../finance/customer_ledger_screen.dart';
 import '../palai/add_customer_screen.dart';
 import '../palai/customer_palai/customer_goat_registration_screen.dart';
@@ -375,6 +377,15 @@ class _CustomerProfileScreenState extends State<CustomerProfileScreen> {
 
                 _buildFinancialActions(),
 
+                // What this customer still owes on goat sales (sold on
+                // credit). Hidden when they owe nothing.
+                GoatCreditProfileCard(
+                  farmId: widget.farmId,
+                  customerId: _customer.id,
+                  mobile: _customer.mobileNumber,
+                  name: _customer.name,
+                ),
+
                 const SizedBox(height: 14),
 
                 _buildMonthlyBillingButton(),
@@ -399,7 +410,7 @@ class _CustomerProfileScreenState extends State<CustomerProfileScreen> {
 
                 _buildSectionHeader(
                   title: 'Goats',
-                  icon: Icons.pets,
+                  icon: GoatIcons.paw,
                   trailing: TextButton.icon(
                     onPressed: _openRegisterGoat,
                     icon: const Icon(
@@ -1015,7 +1026,7 @@ class _CustomerProfileScreenState extends State<CustomerProfileScreen> {
       children: [
         Expanded(
           child: _statCard(
-            icon: Icons.pets,
+            icon: GoatIcons.paw,
             label: 'Total Goats',
             value: '$total',
             color: AppColors.primaryGreen,
@@ -1256,14 +1267,14 @@ class _CustomerProfileScreenState extends State<CustomerProfileScreen> {
 
           errorBuilder: (_, __, ___) {
             return const Icon(
-              Icons.pets,
+              GoatIcons.paw,
               color: AppColors.primaryGreen,
               size: 22,
             );
           },
         )
             : const Icon(
-          Icons.pets,
+          GoatIcons.paw,
           color: AppColors.primaryGreen,
           size: 22,
         ),
@@ -1295,7 +1306,7 @@ class _CustomerProfileScreenState extends State<CustomerProfileScreen> {
               shape: BoxShape.circle,
             ),
             child: const Icon(
-              Icons.pets,
+              GoatIcons.paw,
               size: 29,
               color: AppColors.primaryGreen,
             ),

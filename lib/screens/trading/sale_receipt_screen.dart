@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
 
 import '../../app_theme.dart';
+import '../../goat_icons.dart';
 import '../../models/bill_settings_model.dart';
 import '../../models/expense_categories.dart';
 import '../../models/farm_model.dart';
@@ -377,7 +378,7 @@ class _SaleReceiptScreenState extends State<SaleReceiptScreen> {
         const SizedBox(height: 12),
         _section(
           'Goat Details',
-          Icons.pets_outlined,
+          GoatIcons.paw,
           [
             _row(
               'Goat(s)',
@@ -658,6 +659,34 @@ class _SaleReceiptScreenState extends State<SaleReceiptScreen> {
           emphasized: true,
         ),
 
+        // A sale on credit: say so, and where the balance can be found.
+        if (sale.onCredit && sale.billBalanceDue > 0)
+          Padding(
+            padding: const EdgeInsets.only(top: 4),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Icon(
+                  Icons.account_balance_wallet_outlined,
+                  size: 14,
+                  color: AppColors.warning,
+                ),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: Text(
+                    'Sold on credit — this balance is on '
+                        '${sale.customerName}\'s outstanding balance '
+                        '(Finance > Customers on Credit).',
+                    style: AppTheme.body(
+                      size: 10.5,
+                      color: AppColors.textGrey,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+
         // Only once the goat has been delivered and something is owed.
         if (sale.canCollectBalance) ...[
           const SizedBox(height: 6),
@@ -715,7 +744,7 @@ class _SaleReceiptScreenState extends State<SaleReceiptScreen> {
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
-      builder: (_) => _ReceivePaymentSheet(
+      builder: (_) => SaleReceivePaymentSheet(
         farmId: widget.farmId,
         sale: sale,
       ),
@@ -997,20 +1026,24 @@ class _SaleReceiptScreenState extends State<SaleReceiptScreen> {
 // RECEIVE BALANCE PAYMENT — bottom sheet
 // =============================================================================
 
-class _ReceivePaymentSheet extends StatefulWidget {
+/// Public so the Customers on Credit screens can open the same sheet to
+/// receive a payment on a sale. Pops `true` once the payment is recorded.
+class SaleReceivePaymentSheet extends StatefulWidget {
   final String farmId;
   final Sale sale;
 
-  const _ReceivePaymentSheet({
+  const SaleReceivePaymentSheet({
+    super.key,
     required this.farmId,
     required this.sale,
   });
 
   @override
-  State<_ReceivePaymentSheet> createState() => _ReceivePaymentSheetState();
+  State<SaleReceivePaymentSheet> createState() =>
+      _SaleReceivePaymentSheetState();
 }
 
-class _ReceivePaymentSheetState extends State<_ReceivePaymentSheet> {
+class _SaleReceivePaymentSheetState extends State<SaleReceivePaymentSheet> {
   late final TextEditingController _amountController;
   final TextEditingController _noteController = TextEditingController();
 

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 
 import '../../../app_theme.dart';
+import '../../../goat_icons.dart';
 import '../../../models/trading_purchase_model.dart';
 import '../../../widgets/fast_route.dart';
 import '../goat_stock/goat_stock_list_screen.dart';
@@ -448,7 +449,7 @@ class RegistrationCompletedScreen extends StatelessWidget {
               Expanded(
                 child: _summaryStat(
                   icon:
-                  Icons.pets_outlined,
+                  GoatIcons.paw,
                   label: 'Total Goats',
                   value:
                   '${purchase.totalGoats}',

@@ -5,6 +5,8 @@ import '../../models/palai_models.dart';
 import '../../services/firestore_service.dart';
 import '../../widgets/fast_route.dart';
 import '../../widgets/farm_not_linked_state.dart';
+
+import '../../widgets/goat_credit_cards.dart';
 import 'customer_ledger_detail_screen.dart';
 
 class CustomerLedgerScreen extends StatefulWidget {
@@ -66,60 +68,66 @@ class _CustomerLedgerScreenState extends State<CustomerLedgerScreen> {
         child: _loadingFarm
             ? const Center(child: CircularProgressIndicator(color: AppColors.primaryGreen))
             : _farmId == null
-                ? FarmNotLinkedState(
-                    buttonColor: AppColors.primaryGreen,
-                    onRetry: () {
-                      setState(() => _loadingFarm = true);
-                      _loadFarm();
-                    },
-                  )
-                : Column(
-                    children: [
-                      Padding(
-                        padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
-                        child: TextField(
-                          controller: _searchController,
-                          onChanged: (v) => setState(() => _search = v),
-                          style: AppTheme.body(size: 13),
-                          decoration: InputDecoration(
-                            hintText: 'Search name or mobile number...',
-                            prefixIcon: const Icon(Icons.search, size: 20, color: AppColors.textGrey),
-                            filled: true,
-                            fillColor: Colors.white,
-                            contentPadding: const EdgeInsets.symmetric(vertical: 4),
-                            border: OutlineInputBorder(
-                              borderRadius: BorderRadius.circular(13),
-                              borderSide: BorderSide(color: AppColors.divider),
-                            ),
-                          ),
-                        ),
-                      ),
-                      Expanded(
-                        child: StreamBuilder<List<PalaiCustomer>>(
-                          stream: FirestoreService.instance.customersStream(_farmId!),
-                          builder: (context, snapshot) {
-                            if (!snapshot.hasData) {
-                              return const Center(
-                                child: CircularProgressIndicator(color: AppColors.primaryGreen),
-                              );
-                            }
-                            final customers = _filter(snapshot.data!);
-                            if (customers.isEmpty) {
-                              return Center(
-                                child: Text('No customers found.', style: AppTheme.body(size: 13)),
-                              );
-                            }
-
-                            return ListView.builder(
-                              padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
-                              itemCount: customers.length,
-                              itemBuilder: (context, index) => _customerCard(customers[index]),
-                            );
-                          },
-                        ),
-                      ),
-                    ],
+            ? FarmNotLinkedState(
+          buttonColor: AppColors.primaryGreen,
+          onRetry: () {
+            setState(() => _loadingFarm = true);
+            _loadFarm();
+          },
+        )
+            : Column(
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
+              child: TextField(
+                controller: _searchController,
+                onChanged: (v) => setState(() => _search = v),
+                style: AppTheme.body(size: 13),
+                decoration: InputDecoration(
+                  hintText: 'Search name or mobile number...',
+                  prefixIcon: const Icon(Icons.search, size: 20, color: AppColors.textGrey),
+                  filled: true,
+                  fillColor: Colors.white,
+                  contentPadding: const EdgeInsets.symmetric(vertical: 4),
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(13),
+                    borderSide: BorderSide(color: AppColors.divider),
                   ),
+                ),
+              ),
+            ),
+            // Customers who owe money on goat sales (sold on
+            // credit). Hidden when nobody does.
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
+              child: GoatCreditSummaryCard(farmId: _farmId!),
+            ),
+            Expanded(
+              child: StreamBuilder<List<PalaiCustomer>>(
+                stream: FirestoreService.instance.customersStream(_farmId!),
+                builder: (context, snapshot) {
+                  if (!snapshot.hasData) {
+                    return const Center(
+                      child: CircularProgressIndicator(color: AppColors.primaryGreen),
+                    );
+                  }
+                  final customers = _filter(snapshot.data!);
+                  if (customers.isEmpty) {
+                    return Center(
+                      child: Text('No customers found.', style: AppTheme.body(size: 13)),
+                    );
+                  }
+
+                  return ListView.builder(
+                    padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
+                    itemCount: customers.length,
+                    itemBuilder: (context, index) => _customerCard(customers[index]),
+                  );
+                },
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

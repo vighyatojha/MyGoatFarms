@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
 
 import '../../../app_theme.dart';
+import '../../../goat_icons.dart';
 import '../../../models/sale_draft.dart';
 import '../purchase_goats/purchase_wizard_widgets.dart';
 
@@ -80,7 +81,7 @@ class _Step4SaleDetailsState extends State<Step4SaleDetails> {
             icon: Icons.sell_outlined,
             children: [
               _ReadOnlyRow(
-                icon: Icons.pets_outlined,
+                icon: GoatIcons.paw,
                 label: 'Goats in this Sale',
                 value: '${draft.selectedGoats.length}',
               ),

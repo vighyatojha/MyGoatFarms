@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../../app_theme.dart';
+import '../../goat_icons.dart';
 import '../../models/palai_models.dart';
 import '../../services/firestore_service.dart';
 import '../../widgets/fast_route.dart';
@@ -1221,7 +1222,7 @@ class _GoatListScreenState extends State<GoatListScreen> {
                       ),
                       child:
                       const Icon(
-                        Icons.pets,
+                        GoatIcons.paw,
                         color:
                         AppColors.primaryGreen,
                       ),
@@ -1633,14 +1634,14 @@ class _GoatListScreenState extends State<GoatListScreen> {
           height: 58,
           errorBuilder: (_, __, ___) {
             return const Icon(
-              Icons.pets,
+              GoatIcons.paw,
               color: AppColors.primaryGreen,
               size: 26,
             );
           },
         )
             : const Icon(
-          Icons.pets,
+          GoatIcons.paw,
           color: AppColors.primaryGreen,
           size: 26,
         ),
@@ -1829,7 +1830,7 @@ class _GoatListScreenState extends State<GoatListScreen> {
                     ),
                     child:
                     const Icon(
-                      Icons.pets,
+                      GoatIcons.paw,
                       size: 42,
                       color:
                       AppColors

@@ -28,6 +28,12 @@ import '../purchase_goats/purchase_wizard_widgets.dart';
 /// typing is exactly what gets saved — there is no second copy of the
 /// maths on this screen.
 ///
+/// SELL ON CREDIT: every branch has a "Sell on Credit" switch. The unpaid
+/// part of the sale becomes the customer's outstanding balance (see
+/// [SaleDraft.onCredit]). Deliver Now and Transfer to Palai require the
+/// full amount unless it is on; Booking and Wait for Delivery keep the
+/// choice and the balance left after delivery is the credit.
+///
 /// Exposes [validate] via its State (same pattern as earlier steps) so
 /// the wizard's Save action can block until the selected branch's
 /// required fields are filled in.
@@ -59,6 +65,7 @@ class Step5DeliveryOptionsState extends State<Step5DeliveryOptions> {
   late final TextEditingController _bookingAdvanceController;
 
   late final TextEditingController _monthlyChargeController;
+  late final TextEditingController _palaiAmountReceivedController;
 
   String _currency(num value) {
     return NumberFormat.currency(
@@ -103,6 +110,9 @@ class Step5DeliveryOptionsState extends State<Step5DeliveryOptions> {
     _monthlyChargeController = TextEditingController(
       text: _trimZero(draft.monthlyPalaiCharge),
     );
+    _palaiAmountReceivedController = TextEditingController(
+      text: _trimZero(draft.palaiAmountReceived),
+    );
 
     draft.transferDate ??= DateTime.now();
 
@@ -121,6 +131,7 @@ class Step5DeliveryOptionsState extends State<Step5DeliveryOptions> {
     _holdingChargePerDayController.dispose();
     _bookingAdvanceController.dispose();
     _monthlyChargeController.dispose();
+    _palaiAmountReceivedController.dispose();
     super.dispose();
   }
 
@@ -159,6 +170,7 @@ class Step5DeliveryOptionsState extends State<Step5DeliveryOptions> {
     final draft = widget.draft;
 
     draft.monthlyPalaiCharge = _money(_monthlyChargeController);
+    draft.palaiAmountReceived = _money(_palaiAmountReceivedController);
   }
 
   // ===========================================================================
@@ -224,6 +236,11 @@ class Step5DeliveryOptionsState extends State<Step5DeliveryOptions> {
 
   void _selectBranch(String type) {
     setState(() {
+      // Credit is chosen per option — never carried over from another.
+      if (widget.draft.deliveryType != type) {
+        widget.draft.onCredit = false;
+      }
+
       widget.draft.deliveryType = type;
     });
   }
@@ -289,7 +306,67 @@ class Step5DeliveryOptionsState extends State<Step5DeliveryOptions> {
   }
 
   // ---------------------------------------------------------------------------
-  // PAYMENT METHOD (shared by Deliver Now, Booking and Wait for Delivery)
+  // SELL ON CREDIT (shared by all four branches)
+  // ---------------------------------------------------------------------------
+  //
+  // Same look as the "Buy on Credit" switch in the stock screens. Only one
+  // branch's form is on screen at a time, so they all share
+  // [SaleDraft.onCredit].
+
+  Widget _creditSwitch(
+      SaleDraft draft, {
+        required String onText,
+        required String offText,
+      }) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+      decoration: BoxDecoration(
+        color: draft.onCredit
+            ? AppColors.error.withOpacity(0.06)
+            : AppColors.paleGreen,
+        borderRadius: BorderRadius.circular(13),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Sell on Credit',
+                  style: AppTheme.body(
+                    size: 12,
+                    color: AppColors.textDark,
+                    weight: FontWeight.w700,
+                  ),
+                ),
+                Text(
+                  draft.onCredit ? onText : offText,
+                  style: AppTheme.body(
+                    size: 10,
+                    color: AppColors.textGrey,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          Switch(
+            value: draft.onCredit,
+            activeColor: AppColors.error,
+            onChanged: (value) {
+              setState(() {
+                draft.onCredit = value;
+              });
+            },
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ---------------------------------------------------------------------------
+  // PAYMENT METHOD (shared by Deliver Now, Booking, Wait for Delivery and
+  // Transfer to Palai)
   // ---------------------------------------------------------------------------
   //
   // How the money taken now is being paid. It is saved on the sale and
@@ -381,11 +458,21 @@ class Step5DeliveryOptionsState extends State<Step5DeliveryOptions> {
                 validator: (_) => null,
               ),
               const SizedBox(height: 14),
+              _creditSwitch(
+                draft,
+                onText: 'Whatever is not paid now is added to '
+                    '${_buyer(draft)}\'s outstanding balance.',
+                offText: 'Off — the full amount is received now.',
+              ),
+              const SizedBox(height: 14),
               wizardField(
                 controller: _amountReceivedController,
                 label: 'Amount Received',
-                optional: true,
-                helper: 'Leave blank if nothing was received yet (status: Pending)',
+                optional: draft.onCredit,
+                helper: draft.onCredit
+                    ? 'Leave blank if nothing was received — the whole '
+                    'amount stays on credit'
+                    : 'The full customer total must be received',
                 hint: '0.00',
                 icon: Icons.payments_outlined,
                 keyboardType: const TextInputType.numberWithOptions(
@@ -401,12 +488,19 @@ class Step5DeliveryOptionsState extends State<Step5DeliveryOptions> {
                   final text = value?.trim() ?? '';
 
                   // Blank counts as 0 (the draft reads it that way).
-                  if (text.isEmpty) return null;
-
-                  final number = double.tryParse(text);
+                  final number = text.isEmpty ? 0.0 : double.tryParse(text);
 
                   if (number == null || number < 0) {
                     return 'Enter a valid amount';
+                  }
+
+                  // Not on credit -> everything is paid now.
+                  if (!draft.onCredit &&
+                      SaleDraft.round2(number) <
+                          draft.customerTotalDeliverNow) {
+                    return 'Enter the full '
+                        '${_currency(draft.customerTotalDeliverNow)}, or '
+                        'turn on Sell on Credit';
                   }
 
                   return null;
@@ -436,9 +530,18 @@ class Step5DeliveryOptionsState extends State<Step5DeliveryOptions> {
     }
   }
 
+  /// The customer name for messages, or "the customer" if not known.
+  String _buyer(SaleDraft draft) {
+    final name = draft.customerName.trim();
+
+    return name.isEmpty ? 'the customer' : name;
+  }
+
   Widget _buildDeliverNowSummary(SaleDraft draft) {
     final status = draft.paymentStatusDeliverNow;
     final extra = draft.extraReceivedDeliverNow;
+    final remaining = draft.remainingBalanceDeliverNow;
+    final onCreditBalance = draft.onCredit && remaining > 0;
 
     return _buildSummaryCard(
       [
@@ -460,15 +563,31 @@ class Step5DeliveryOptionsState extends State<Step5DeliveryOptions> {
           _currency(draft.amountReceived),
         ),
         _SummaryRow(
-          'Remaining Balance',
-          _currency(draft.remainingBalanceDeliverNow),
+          onCreditBalance ? 'Outstanding (On Credit)' : 'Remaining Balance',
+          _currency(remaining),
           emphasized: true,
         ),
       ],
       title: 'Payment Summary',
-      statusLabel: status,
+      statusLabel: onCreditBalance ? 'On Credit' : status,
       statusColor: _statusColor(status),
       notes: [
+        if (onCreditBalance)
+          _SummaryNote(
+            '${_currency(remaining)} will be added to ${_buyer(draft)}\'s '
+                'outstanding balance. It shows in Finance under customers on '
+                'credit, where the payment can be received later.',
+            color: AppColors.warning,
+            icon: Icons.account_balance_wallet_outlined,
+          ),
+        if (!draft.onCredit && remaining > 0)
+          _SummaryNote(
+            'The customer total is not fully received. Enter the full '
+                'amount, or turn on Sell on Credit to keep '
+                '${_currency(remaining)} as outstanding.',
+            color: AppColors.warning,
+            icon: Icons.warning_amber_rounded,
+          ),
         if (extra > 0)
           _SummaryNote(
             'You entered ${_currency(extra)} more than the customer '
@@ -527,6 +646,14 @@ class Step5DeliveryOptionsState extends State<Step5DeliveryOptions> {
               ),
               const SizedBox(height: 14),
               _paymentMethodPicker(draft),
+              const SizedBox(height: 14),
+              _creditSwitch(
+                draft,
+                onText: '${_buyer(draft)} takes the goat and pays the '
+                    'remaining balance later. What is unpaid after the '
+                    'delivery is added to their outstanding balance.',
+                offText: 'Off — the remaining balance is paid at pickup.',
+              ),
               const SizedBox(height: 14),
               WizardDateField(
                 label: 'Expected Delivery Date',
@@ -618,6 +745,15 @@ class Step5DeliveryOptionsState extends State<Step5DeliveryOptions> {
                       'Check the amount before saving.',
                   color: AppColors.warning,
                   icon: Icons.warning_amber_rounded,
+                ),
+              if (draft.onCredit)
+                _SummaryNote(
+                  'On credit: the balance is worked out when the delivery '
+                      'is completed (goat sale + holding charges - booking '
+                      'amount). Whatever is unpaid then is added to '
+                      '${_buyer(draft)}\'s outstanding balance.',
+                  color: AppColors.warning,
+                  icon: Icons.account_balance_wallet_outlined,
                 ),
               _SummaryNote(
                 'Holding is counted from today until the day the goat is '
@@ -838,6 +974,14 @@ class Step5DeliveryOptionsState extends State<Step5DeliveryOptions> {
               ),
               const SizedBox(height: 14),
               _paymentMethodPicker(draft),
+              const SizedBox(height: 14),
+              _creditSwitch(
+                draft,
+                onText: '${_buyer(draft)} takes the goat and pays the '
+                    'remaining balance later. What is unpaid after the '
+                    'pickup is added to their outstanding balance.',
+                offText: 'Off — the remaining balance is paid at pickup.',
+              ),
             ],
           ),
 
@@ -882,6 +1026,15 @@ class Step5DeliveryOptionsState extends State<Step5DeliveryOptions> {
                   color: AppColors.warning,
                   icon: Icons.warning_amber_rounded,
                 ),
+              if (draft.onCredit)
+                _SummaryNote(
+                  'On credit: the final amount is worked out at pickup '
+                      '(pickup weight × rate - advance). Whatever is unpaid '
+                      'then is added to ${_buyer(draft)}\'s outstanding '
+                      'balance.',
+                  color: AppColors.warning,
+                  icon: Icons.account_balance_wallet_outlined,
+                ),
               _SummaryNote(
                 'Estimated at today\'s weight. At pickup the goat is '
                     'weighed again and the final amount is: pickup weight '
@@ -910,81 +1063,209 @@ class Step5DeliveryOptionsState extends State<Step5DeliveryOptions> {
   Widget _buildPalaiTransferForm(SaleDraft draft) {
     return Form(
       key: _palaiFormKey,
-      child: WizardSectionCard(
-        title: 'Transfer to Palai',
-        icon: Icons.holiday_village_outlined,
+      child: Column(
         children: [
-          Text(
-            'The ongoing monthly billing and health tracking for this '
-                'goat is handled by the Customer Palai module from here on — '
-                'this just captures the handoff.',
-            style: AppTheme.body(size: 11, color: AppColors.textGrey),
-          ),
-          const SizedBox(height: 14),
+          WizardSectionCard(
+            title: 'Transfer to Palai',
+            icon: Icons.holiday_village_outlined,
+            children: [
+              Text(
+                'The ongoing monthly billing and health tracking for this '
+                    'goat is handled by the Customer Palai module from here on — '
+                    'this just captures the handoff.',
+                style: AppTheme.body(size: 11, color: AppColors.textGrey),
+              ),
+              const SizedBox(height: 14),
 
-          WizardDateField(
-            label: 'Transfer Date',
-            date: draft.transferDate ?? DateTime.now(),
-            onTap: () async {
-              final picked = await showWizardDatePicker(
-                context: context,
-                initialDate: draft.transferDate ?? DateTime.now(),
-                firstDate: DateTime(2015),
-                lastDate: DateTime.now(),
-                helpText: 'Transfer date',
-              );
+              WizardDateField(
+                label: 'Transfer Date',
+                date: draft.transferDate ?? DateTime.now(),
+                onTap: () async {
+                  final picked = await showWizardDatePicker(
+                    context: context,
+                    initialDate: draft.transferDate ?? DateTime.now(),
+                    firstDate: DateTime(2015),
+                    lastDate: DateTime.now(),
+                    helpText: 'Transfer date',
+                  );
 
-              if (picked == null) return;
+                  if (picked == null) return;
 
-              setState(() {
-                draft.transferDate = picked;
-              });
-            },
-          ),
+                  setState(() {
+                    draft.transferDate = picked;
+                  });
+                },
+              ),
 
-          const SizedBox(height: 14),
+              const SizedBox(height: 14),
 
-          wizardDropdown(
-            label: 'Palai Package',
-            icon: Icons.card_giftcard_outlined,
-            value: draft.palaiPackage,
-            options: SaleDraft.palaiPackages,
-            onChanged: (value) {
-              setState(() {
-                draft.palaiPackage = value;
-              });
-            },
-          ),
+              wizardDropdown(
+                label: 'Palai Package',
+                icon: Icons.card_giftcard_outlined,
+                value: draft.palaiPackage,
+                options: SaleDraft.palaiPackages,
+                onChanged: (value) {
+                  setState(() {
+                    draft.palaiPackage = value;
+                  });
+                },
+              ),
 
-          const SizedBox(height: 14),
+              const SizedBox(height: 14),
 
-          wizardField(
-            controller: _monthlyChargeController,
-            label: 'Monthly Palai Charge',
-            hint: '0.00',
-            icon: Icons.currency_rupee_rounded,
-            suffix: '/ month',
-            keyboardType: const TextInputType.numberWithOptions(
-              decimal: true,
-            ),
-            inputFormatters: [
-              FilteringTextInputFormatter.allow(
-                RegExp(r'^\d*\.?\d{0,2}'),
+              wizardField(
+                controller: _monthlyChargeController,
+                label: 'Monthly Palai Charge',
+                hint: '0.00',
+                icon: Icons.currency_rupee_rounded,
+                suffix: '/ month',
+                keyboardType: const TextInputType.numberWithOptions(
+                  decimal: true,
+                ),
+                inputFormatters: [
+                  FilteringTextInputFormatter.allow(
+                    RegExp(r'^\d*\.?\d{0,2}'),
+                  ),
+                ],
+                onChanged: (_) => _syncPalai(),
+                validator: (value) {
+                  final number = double.tryParse(value?.trim() ?? '');
+
+                  if (number == null || number <= 0) {
+                    return 'Enter a valid monthly charge';
+                  }
+
+                  return null;
+                },
               ),
             ],
-            onChanged: (_) => _syncPalai(),
-            validator: (value) {
-              final number = double.tryParse(value?.trim() ?? '');
-
-              if (number == null || number <= 0) {
-                return 'Enter a valid monthly charge';
-              }
-
-              return null;
-            },
           ),
+
+          const SizedBox(height: 12),
+
+          // The goat itself is being sold to the customer too, at the
+          // price from Step 4, so what was paid for it is captured here.
+          WizardSectionCard(
+            title: 'Goat Price Payment',
+            icon: Icons.payments_outlined,
+            children: [
+              Text(
+                'The goat is sold to the customer at ${_currency(draft.totalSaleAmount)} '
+                    '(from the sale details). This is separate from the '
+                    'monthly Palai charge above.',
+                style: AppTheme.body(size: 11, color: AppColors.textGrey),
+              ),
+              const SizedBox(height: 14),
+              _creditSwitch(
+                draft,
+                onText: 'Whatever is not paid now is added to '
+                    '${_buyer(draft)}\'s outstanding balance.',
+                offText: 'Off — the full goat price is received now.',
+              ),
+              const SizedBox(height: 14),
+              wizardField(
+                controller: _palaiAmountReceivedController,
+                label: 'Amount Received',
+                optional: draft.onCredit,
+                helper: draft.onCredit
+                    ? 'Leave blank if nothing was received — the whole '
+                    'goat price stays on credit'
+                    : 'The full goat price must be received',
+                hint: '0.00',
+                icon: Icons.payments_outlined,
+                keyboardType: const TextInputType.numberWithOptions(
+                  decimal: true,
+                ),
+                inputFormatters: [
+                  FilteringTextInputFormatter.allow(
+                    RegExp(r'^\d*\.?\d{0,2}'),
+                  ),
+                ],
+                onChanged: (_) => setState(_syncPalai),
+                validator: (value) {
+                  final text = value?.trim() ?? '';
+
+                  // Blank counts as 0 (the draft reads it that way).
+                  final number = text.isEmpty ? 0.0 : double.tryParse(text);
+
+                  if (number == null || number < 0) {
+                    return 'Enter a valid amount';
+                  }
+
+                  // Not on credit -> the whole goat price is paid now.
+                  if (!draft.onCredit &&
+                      SaleDraft.round2(number) < draft.customerTotalPalai) {
+                    return 'Enter the full '
+                        '${_currency(draft.customerTotalPalai)}, or turn on '
+                        'Sell on Credit';
+                  }
+
+                  return null;
+                },
+              ),
+              const SizedBox(height: 14),
+              _paymentMethodPicker(draft),
+            ],
+          ),
+
+          const SizedBox(height: 12),
+
+          _buildPalaiSummary(draft),
         ],
       ),
+    );
+  }
+
+  Widget _buildPalaiSummary(SaleDraft draft) {
+    final status = draft.paymentStatusPalai;
+    final extra = draft.extraReceivedPalai;
+    final remaining = draft.remainingBalancePalai;
+    final onCreditBalance = draft.onCredit && remaining > 0;
+
+    return _buildSummaryCard(
+      [
+        _SummaryRow(
+          'Goat Sale',
+          _currency(draft.customerTotalPalai),
+        ),
+        _SummaryRow(
+          'Amount Received',
+          _currency(draft.palaiAmountReceived),
+        ),
+        _SummaryRow(
+          onCreditBalance ? 'Outstanding (On Credit)' : 'Remaining Balance',
+          _currency(remaining),
+          emphasized: true,
+        ),
+      ],
+      title: 'Goat Price Summary',
+      statusLabel: onCreditBalance ? 'On Credit' : status,
+      statusColor: _statusColor(status),
+      notes: [
+        if (extra > 0)
+          _SummaryNote(
+            'You entered ${_currency(extra)} more than the goat price. '
+                'Check the amount received before saving.',
+            color: AppColors.warning,
+            icon: Icons.warning_amber_rounded,
+          ),
+        if (onCreditBalance)
+          _SummaryNote(
+            '${_currency(remaining)} will be added to ${_buyer(draft)}\'s '
+                'outstanding balance. It shows in Finance under customers on '
+                'credit, where the payment can be received later.',
+            color: AppColors.warning,
+            icon: Icons.account_balance_wallet_outlined,
+          ),
+        if (!draft.onCredit && remaining > 0)
+          _SummaryNote(
+            'The goat price is not fully received. Enter the full amount, '
+                'or turn on Sell on Credit to keep ${_currency(remaining)} '
+                'as outstanding.',
+            color: AppColors.warning,
+            icon: Icons.warning_amber_rounded,
+          ),
+      ],
     );
   }
 }
