@@ -946,6 +946,7 @@ class SalesService {
           breed: goat.breed,
           gender: gender.isEmpty ? 'Male' : gender,
           weightAtCheckIn: draft.weightFor(goat),
+          heightAtCheckIn: goat.height,
           healthStatus:
           goat.healthStatus.isEmpty ? 'Healthy' : goat.healthStatus,
           checkInDate: draft.transferDate ?? DateTime.now(),

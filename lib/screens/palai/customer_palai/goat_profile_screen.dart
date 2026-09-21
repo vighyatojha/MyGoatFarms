@@ -386,6 +386,7 @@ class _GoatOverviewTab extends StatelessWidget {
             ('Arrival Weight', '${goat.weightAtCheckIn.toStringAsFixed(1)} kg'),
             ('Current Weight', '${currentWeight.toStringAsFixed(1)} kg'),
             ('Weight Gain', '${gain >= 0 ? '+' : ''}${gain.toStringAsFixed(1)} kg'),
+            ('Arrival Height', goat.hasHeight ? goat.heightLabel : 'Not recorded'),
             ('Days at Farm', '$daysAtFarm days'),
             ('Health Status', goat.healthStatus.isNotEmpty ? goat.healthStatus : 'Not recorded'),
           ]),

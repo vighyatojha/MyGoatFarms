@@ -45,6 +45,7 @@ class _CustomerGoatRegistrationScreenState
   final _breedController = TextEditingController();
   final _colorController = TextEditingController();
   final _weightController = TextEditingController();
+  final _heightController = TextEditingController();
   final _pricingController = TextEditingController();
   final _checkInTransportController = TextEditingController();
   final _notesController = TextEditingController();
@@ -284,6 +285,7 @@ class _CustomerGoatRegistrationScreenState
     _breedController.dispose();
     _colorController.dispose();
     _weightController.dispose();
+    _heightController.dispose();
     _pricingController.dispose();
     _checkInTransportController.dispose();
     _notesController.dispose();
@@ -386,6 +388,24 @@ class _CustomerGoatRegistrationScreenState
       return;
     }
 
+    // Height is optional — blank means "not recorded" (0).
+    final heightText = _heightController.text.trim();
+
+    final height = heightText.isEmpty
+        ? 0.0
+        : double.tryParse(heightText);
+
+    if (height == null ||
+        height < 0 ||
+        height > PalaiGoat.maxHeightCm) {
+      _showSnack(
+        'Please enter a valid goat height '
+            '(up to ${PalaiGoat.maxHeightCm.toStringAsFixed(0)} cm).',
+        isError: true,
+      );
+      return;
+    }
+
     // When opened without a preset customer, the picker's selection is
     // the source of truth for the owner.
     if (_needsCustomerPicker && _selectedCustomer == null) {
@@ -477,6 +497,10 @@ class _CustomerGoatRegistrationScreenState
 
         currentWeight:
         weight,
+
+        // Height (optional, cm — 0 = not recorded)
+        heightAtCheckIn:
+        height,
 
         // Health
         healthStatus:
@@ -810,6 +834,10 @@ class _CustomerGoatRegistrationScreenState
             const SizedBox(height: 12),
 
             _buildWeightField(),
+
+            const SizedBox(height: 16),
+
+            _buildHeightField(),
 
             const SizedBox(height: 16),
 
@@ -1171,6 +1199,51 @@ class _CustomerGoatRegistrationScreenState
 
         if (weight > 300) {
           return 'Please check the weight';
+        }
+
+        return null;
+      },
+    );
+  }
+
+  // ===========================================================================
+  // HEIGHT (optional)
+  // ===========================================================================
+
+  Widget _buildHeightField() {
+    return _textField(
+      controller:
+      _heightController,
+      label:
+      'Height at Check-In (cm)',
+      hint:
+      'Example: 65',
+      icon:
+      Icons.height,
+      keyboardType:
+      const TextInputType.numberWithOptions(
+        decimal: true,
+      ),
+      optional:
+      true,
+      validator: (value) {
+        final text =
+            value?.trim() ?? '';
+
+        // Optional — blank is fine.
+        if (text.isEmpty) {
+          return null;
+        }
+
+        final height =
+        double.tryParse(text);
+
+        if (height == null || height <= 0) {
+          return 'Enter a valid height';
+        }
+
+        if (height > PalaiGoat.maxHeightCm) {
+          return 'Please check the height';
         }
 
         return null;

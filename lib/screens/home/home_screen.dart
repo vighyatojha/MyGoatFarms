@@ -19,14 +19,15 @@ import '../finance/finance_overview_screen.dart';
 import '../finance/add_edit_expense_screen.dart';
 import '../finance/customer_ledger_screen.dart';
 import 'widgets/home_widgets.dart';
-import '../palai/customer_palai/customer_goat_registration_screen.dart';
 import '../stocks/stock_screen.dart';
 import '../stocks/add_feed_stock_screen.dart';
+import '../profile/farm_activity_screen.dart';
 import '../profile/profile_screen.dart';
 import 'notification_screen.dart';
 import 'health_records_screen.dart';
 import '../palai/goat_list_screen.dart';
 import '../palai/receive_payment_screen.dart';
+import '../trading/own_palai/own_palai_list_screen.dart';
 import '../../widgets/goat_count_builder.dart';
 
 /// Home / dashboard screen. Quick, at-a-glance view of the whole farm —
@@ -140,12 +141,6 @@ class _HomeScreenState extends State<HomeScreen> {
     });
   }
 
-  void _comingSoon(String feature) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('$feature module coming soon'), backgroundColor: AppColors.darkGreen),
-    );
-  }
-
   void _showMessage(String message, {bool isError = false}) {
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
@@ -174,33 +169,23 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   // ===========================================================================
-  // QUICK ACTION: ADD GOAT
+  // RECENT ACTIVITIES: VIEW ALL
   // ===========================================================================
   //
-  // Same pattern as PalaiScreen's "Add Goat" button: the person first
-  // picks which customer the goat belongs to (via the shared, timeout
-  // /retry-safe `showCustomerSelectionSheet`), then we open the same
-  // register-goat screen the Palai screen uses, passing that customer's id.
+  // Opens the farm-wide activity feed (the same screen Profile links to),
+  // which shows every recorded action in one place instead of just the
+  // latest five shown here.
   // ===========================================================================
 
-  Future<void> _openAddGoat() async {
+  void _openAllActivities() {
     final farmId = _farmId;
     if (farmId == null) {
       _showMessage('Farm information is still loading. Please try again.', isError: true);
       return;
     }
 
-    final PalaiCustomer? customer = await showCustomerSelectionSheet(
-      context,
-      farmId: farmId,
-      title: 'Select Customer',
-      subtitle: 'Choose a customer to register a goat',
-    );
-
-    if (customer == null || !mounted) return;
-
     Navigator.of(context).push(
-      fastRoute(CustomerGoatRegistrationScreen(customerId: customer.id)),
+      fastRoute(FarmActivityScreen(farmId: farmId)),
     );
   }
 
@@ -345,7 +330,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   children: [
                     Text('Recent Activities', style: AppTheme.heading(size: 16)),
                     GestureDetector(
-                      onTap: () => _comingSoon('Activities'),
+                      onTap: _openAllActivities,
                       child: Text(
                         'View All',
                         style: AppTheme.body(size: 13, color: AppColors.darkGreen, weight: FontWeight.w600),
@@ -520,10 +505,10 @@ class _HomeScreenState extends State<HomeScreen> {
         child: Row(
           children: [
             QuickAction(
-              icon: Icons.add,
-              label: 'Add Goat',
+              icon: Icons.holiday_village_outlined,
+              label: 'Own\nPalai',
               color: AppColors.primaryGreen,
-              onTap: _openAddGoat,
+              onTap: () => Navigator.of(context).push(fastRoute(const OwnPalaiListScreen())),
             ),
             const SizedBox(width: 18),
             QuickAction(

@@ -5,11 +5,14 @@ import '../../../app_theme.dart';
 import '../../../goat_icons.dart';
 import '../../../models/farm_model.dart';
 import '../../../models/goat_model.dart';
+import '../../../models/trading_purchase_model.dart';
 import '../../../services/firestore_service.dart';
 import '../../../services/goat_service.dart';
+import '../../../services/trading_service.dart';
 import '../../../widgets/fast_route.dart';
 import '../../../widgets/farm_not_linked_state.dart';
 import '../own_palai/add_weight_entry_screen.dart';
+import '../register_goats/goat_registration_form_screen.dart';
 import 'complete_booking_delivery_screen.dart';
 import 'complete_wait_for_delivery_screen.dart';
 import 'goat_stock_detail_screen.dart';
@@ -18,6 +21,25 @@ import '../purchase_goats/individual_goat_purchase_screen.dart';
 // ============================================================================
 // SHARED STATUS HELPERS
 // ============================================================================
+
+/// Pseudo-status for the "Unregistered" tab. Unregistered goats have no goat
+/// record (they only exist as a count on their purchase), so this is never
+/// stored on a [Goat] — it only drives the tab / filter.
+const String _kUnregistered = GoatStockListScreen.statusUnregistered;
+
+/// Tabs shown after "All", in display order.
+const List<String> _stockTabs = [
+  Goat.statusAvailable,
+  _kUnregistered,
+  Goat.statusBooked,
+  Goat.statusWaitOnDelivery,
+  Goat.statusOwnPalai,
+  Goat.statusSold,
+];
+
+/// The "All" tab shows Available goats (plus the unregistered batches).
+/// Booked, Wait on Delivery, Own Palai and Sold goats live in their own tabs.
+bool _showInAll(Goat goat) => _hasStatus(goat, Goat.statusAvailable);
 
 bool _hasStatus(Goat goat, String status) {
   return goat.currentStatus.trim().toLowerCase() ==
@@ -40,6 +62,9 @@ Color _statusColor(String status) {
 
     case Goat.statusOwnPalai:
       return AppColors.tradingBlue;
+
+    case _kUnregistered:
+      return AppColors.warning;
 
     default:
       return AppColors.textGrey;
@@ -117,7 +142,12 @@ class _SortFilterResult {
 /// - Header with farm name and sort / filter
 /// - Compact stock summary (tap a stat to filter)
 /// - Search
-/// - Pinned status filter chips with counts
+/// - Pinned filter tabs with counts: All, Available, Unregistered, Booked,
+///   Wait on Delivery, Own Palai, Sold Out
+///
+/// "All" shows Available goats plus Unregistered goats. Unregistered goats
+/// (received but not yet tagged/weighed) have no goat record yet, so they
+/// appear as one card per purchase with a "Register Goats" action.
 /// - Status-aware goat cards (Customer Palai goats are not shown here —
 ///   they are managed in the Customer Palai module)
 /// - Floating "+" button to purchase an individual goat
@@ -126,6 +156,9 @@ class _SortFilterResult {
 /// Farm ID is resolved internally, so this screen does not require a
 /// farmId constructor parameter.
 class GoatStockListScreen extends StatefulWidget {
+  /// Value for [initialStatusFilter] that opens the "Unregistered" tab.
+  static const String statusUnregistered = 'Unregistered';
+
   /// Pre-selects a status filter chip on open — lets other screens
   /// (like the Trading Dashboard's stat cards) deep-link straight to
   /// a filtered view instead of landing on the unfiltered list.
@@ -150,6 +183,9 @@ class _GoatStockListScreenState
   Stream<List<Goat>>? _goatsStream;
   Stream<FarmModel?>? _farmStream;
 
+  /// Purchases (receiving completed) that still have goats to register.
+  Stream<List<TradingPurchase>>? _unregisteredStream;
+
   final TextEditingController _searchController =
   TextEditingController();
 
@@ -166,6 +202,19 @@ class _GoatStockListScreenState
 
   bool get _hasSortOrGender =>
       _sort != _StockSort.newest || _genderFilter != null;
+
+  // There are more tabs than fit on a phone screen, so the selected one is
+  // scrolled into view (deep links and summary taps can select a tab that is
+  // off-screen).
+  final Map<String?, GlobalKey> _chipKeys = <String?, GlobalKey>{};
+  bool _centerSelectedChip = true;
+
+  void _setStatusFilter(String? status) {
+    setState(() {
+      _statusFilter = status;
+      _centerSelectedChip = true;
+    });
+  }
 
   @override
   void initState() {
@@ -198,6 +247,10 @@ class _GoatStockListScreenState
       _farmStream = farmId == null
           ? null
           : FirestoreService.instance.farmDocStream(farmId);
+
+      _unregisteredStream = farmId == null
+          ? null
+          : TradingService.instance.pendingRegistrationStream(farmId);
 
       _loadingFarm = false;
     });
@@ -258,6 +311,21 @@ class _GoatStockListScreenState
         AddWeightEntryScreen(
           farmId: farmId,
           goatId: goat.id,
+        ),
+      ),
+    );
+  }
+
+  void _openRegister(TradingPurchase purchase) {
+    final farmId = _farmId;
+
+    if (farmId == null) return;
+
+    Navigator.of(context).push(
+      fastRoute(
+        GoatRegistrationFormScreen(
+          farmId: farmId,
+          purchase: purchase,
         ),
       ),
     );
@@ -420,7 +488,8 @@ class _GoatStockListScreenState
                       const SizedBox(height: 5),
 
                       Text(
-                        'Only goats with a recorded gender match.',
+                        'Only goats with a recorded gender match. Unregistered goats '
+                            'have none yet, so they are hidden.',
                         style: AppTheme.body(size: 9.5),
                       ),
 
@@ -753,7 +822,25 @@ class _GoatStockListScreenState
             .where((goat) => !goat.isInCustomerPalai)
             .toList();
 
-        return _buildContent(allGoats);
+        // Second source: purchases that still have goats waiting to be
+        // registered. Those goats have no goat record yet.
+        return StreamBuilder<List<TradingPurchase>>(
+          stream: _unregisteredStream,
+          builder: (context, batchSnapshot) {
+            if (batchSnapshot.connectionState ==
+                ConnectionState.waiting &&
+                !batchSnapshot.hasData) {
+              return const _GoatStockSkeleton();
+            }
+
+            // If this stream fails, the registered goats are still shown
+            // rather than blocking the whole screen.
+            final batches =
+                batchSnapshot.data ?? const <TradingPurchase>[];
+
+            return _buildContent(allGoats, batches);
+          },
+        );
       },
     );
   }
@@ -762,20 +849,39 @@ class _GoatStockListScreenState
   // CONTENT
   // ===========================================================================
 
-  int _count(List<Goat> goats, String? status) {
-    if (status == null) return goats.length;
+  /// Goats waiting to be registered, across all purchases.
+  int _unregisteredTotal(List<TradingPurchase> batches) {
+    return batches.fold<int>(0, (sum, p) => sum + p.pendingCount);
+  }
+
+  /// Number shown on a tab / summary stat. [status] null = "All".
+  int _count(
+      List<Goat> goats,
+      List<TradingPurchase> batches,
+      String? status,
+      ) {
+    if (status == null) {
+      return goats.where(_showInAll).length +
+          _unregisteredTotal(batches);
+    }
+
+    if (status == _kUnregistered) {
+      return _unregisteredTotal(batches);
+    }
 
     return goats.where((goat) => _hasStatus(goat, status)).length;
   }
 
   List<Goat> _visibleGoats(List<Goat> allGoats) {
-    var goats = List<Goat>.from(allGoats);
-
     final status = _statusFilter;
 
-    if (status != null) {
-      goats = goats.where((g) => _hasStatus(g, status)).toList();
-    }
+    // "All" = Available only (unregistered batches are added separately).
+    // The Unregistered tab has no registered goats at all.
+    var goats = status == null
+        ? allGoats.where(_showInAll).toList()
+        : status == _kUnregistered
+        ? <Goat>[]
+        : allGoats.where((g) => _hasStatus(g, status)).toList();
 
     final gender = _genderFilter;
 
@@ -820,8 +926,48 @@ class _GoatStockListScreenState
     return goats;
   }
 
-  Widget _buildContent(List<Goat> allGoats) {
+  /// Unregistered batches that pass the current tab / search / sort.
+  List<TradingPurchase> _visibleBatches(List<TradingPurchase> batches) {
+    final status = _statusFilter;
+
+    // Batches belong to "All" and "Unregistered" only.
+    if (status != null && status != _kUnregistered) {
+      return const <TradingPurchase>[];
+    }
+
+    // No gender is recorded for unregistered goats.
+    if (_genderFilter != null) {
+      return const <TradingPurchase>[];
+    }
+
+    var result = List<TradingPurchase>.from(batches);
+
+    if (_search.isNotEmpty) {
+      result = result
+          .where(
+            (p) =>
+        p.id.toLowerCase().contains(_search) ||
+            p.sellerName.toLowerCase().contains(_search),
+      )
+          .toList();
+    }
+
+    // Weight / age sorts don't apply to a batch, so those keep the stream
+    // order (newest first). Only "Oldest first" flips it.
+    if (_sort == _StockSort.oldest) {
+      result = result.reversed.toList();
+    }
+
+    return result;
+  }
+
+  Widget _buildContent(
+      List<Goat> allGoats,
+      List<TradingPurchase> batches,
+      ) {
     final goats = _visibleGoats(allGoats);
+    final visibleBatches = _visibleBatches(batches);
+    final itemCount = goats.length + visibleBatches.length;
 
     return CustomScrollView(
       keyboardDismissBehavior:
@@ -830,7 +976,7 @@ class _GoatStockListScreenState
         SliverToBoxAdapter(
           child: Padding(
             padding: const EdgeInsets.fromLTRB(14, 1, 14, 10),
-            child: _summary(allGoats),
+            child: _summary(allGoats, batches),
           ),
         ),
 
@@ -845,25 +991,37 @@ class _GoatStockListScreenState
           pinned: true,
           delegate: _PinnedBarDelegate(
             height: 56,
-            child: _filters(allGoats),
+            child: _filters(allGoats, batches),
           ),
         ),
 
-        if (goats.isEmpty)
+        if (itemCount == 0)
           SliverFillRemaining(
             hasScrollBody: false,
             child: _emptyState(
-              hasAnyGoats: allGoats.isNotEmpty,
+              hasAnyGoats:
+              allGoats.isNotEmpty || batches.isNotEmpty,
             ),
           )
         else
           SliverPadding(
             padding: const EdgeInsets.fromLTRB(14, 2, 14, 94),
             sliver: SliverList.separated(
-              itemCount: goats.length,
+              itemCount: itemCount,
               separatorBuilder: (_, __) =>
               const SizedBox(height: 9),
               itemBuilder: (context, index) {
+                // Registered goats first, unregistered batches after.
+                if (index >= goats.length) {
+                  final purchase =
+                  visibleBatches[index - goats.length];
+
+                  return _UnregisteredBatchCard(
+                    purchase: purchase,
+                    onRegister: () => _openRegister(purchase),
+                  );
+                }
+
                 final goat = goats[index];
 
                 final canCompleteDelivery =
@@ -898,7 +1056,10 @@ class _GoatStockListScreenState
   // SUMMARY
   // ===========================================================================
 
-  Widget _summary(List<Goat> allGoats) {
+  Widget _summary(
+      List<Goat> allGoats,
+      List<TradingPurchase> batches,
+      ) {
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.symmetric(
@@ -916,22 +1077,11 @@ class _GoatStockListScreenState
           children: [
             Expanded(
               child: _summaryItem(
-                icon: Icons.inventory_2_outlined,
-                label: 'Total Herd',
-                value: allGoats.length,
-                color: AppColors.stockTeal,
-                status: null,
-              ),
-            ),
-
-            _divider(),
-
-            Expanded(
-              child: _summaryItem(
                 icon: Icons.check_circle_outline_rounded,
                 label: 'Available',
                 value: _count(
                   allGoats,
+                  batches,
                   Goat.statusAvailable,
                 ),
                 color: AppColors.success,
@@ -943,10 +1093,27 @@ class _GoatStockListScreenState
 
             Expanded(
               child: _summaryItem(
+                icon: Icons.how_to_reg_outlined,
+                label: 'Unregistered',
+                value: _count(
+                  allGoats,
+                  batches,
+                  _kUnregistered,
+                ),
+                color: AppColors.warning,
+                status: _kUnregistered,
+              ),
+            ),
+
+            _divider(),
+
+            Expanded(
+              child: _summaryItem(
                 icon: Icons.bookmark_border_rounded,
                 label: 'Booked',
                 value: _count(
                   allGoats,
+                  batches,
                   Goat.statusBooked,
                 ),
                 color: AppColors.warning,
@@ -962,6 +1129,7 @@ class _GoatStockListScreenState
                 label: 'Sold Out',
                 value: _count(
                   allGoats,
+                  batches,
                   Goat.statusSold,
                 ),
                 color: AppColors.error,
@@ -982,11 +1150,7 @@ class _GoatStockListScreenState
     required String? status,
   }) {
     return InkWell(
-      onTap: () {
-        setState(() {
-          _statusFilter = status;
-        });
-      },
+      onTap: () => _setStatusFilter(status),
       borderRadius: BorderRadius.circular(14),
       child: Padding(
         padding: const EdgeInsets.symmetric(
@@ -1068,7 +1232,7 @@ class _GoatStockListScreenState
           color: AppColors.textDark,
         ),
         decoration: InputDecoration(
-          hintText: 'Search ID, breed or color',
+          hintText: 'Search ID, breed, color or seller',
           hintStyle: AppTheme.body(
             size: 12,
             color: AppColors.textGrey,
@@ -1111,32 +1275,55 @@ class _GoatStockListScreenState
   // FILTERS
   // ===========================================================================
 
-  Widget _filters(List<Goat> allGoats) {
+  Widget _filters(
+      List<Goat> allGoats,
+      List<TradingPurchase> batches,
+      ) {
+    // After this frame, scroll the selected tab into view (a deep link or a
+    // summary tap can select a tab that is off-screen).
+    if (_centerSelectedChip) {
+      _centerSelectedChip = false;
+
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+
+        final chipContext = _chipKeys[_statusFilter]?.currentContext;
+        if (chipContext == null) return;
+
+        Scrollable.ensureVisible(
+          chipContext,
+          alignment: 0.5,
+          duration: const Duration(milliseconds: 220),
+          curve: Curves.easeOut,
+        );
+      });
+    }
+
     return ListView(
       padding: const EdgeInsets.symmetric(
         horizontal: 14,
         vertical: 8,
       ),
       scrollDirection: Axis.horizontal,
+      // Build every tab up front so an off-screen selected tab can be
+      // scrolled to (there are only a handful).
+      cacheExtent: 1500,
       children: [
         _filterChip(
           label: 'All',
           status: null,
-          count: allGoats.length,
+          count: _count(allGoats, batches, null),
         ),
 
-        ...Goat.statusValues
-            .where((status) => status != Goat.statusInCustomerPalai)
-            .map((status) {
-          return Padding(
+        for (final status in _stockTabs)
+          Padding(
             padding: const EdgeInsets.only(left: 6),
             child: _filterChip(
               label: _statusLabel(status),
               status: status,
-              count: _count(allGoats, status),
+              count: _count(allGoats, batches, status),
             ),
-          );
-        }),
+          ),
       ],
     );
   }
@@ -1149,13 +1336,10 @@ class _GoatStockListScreenState
     final selected = _statusFilter == status;
 
     return Material(
+      key: _chipKeys.putIfAbsent(status, () => GlobalKey()),
       color: Colors.transparent,
       child: InkWell(
-        onTap: () {
-          setState(() {
-            _statusFilter = status;
-          });
-        },
+        onTap: () => _setStatusFilter(status),
         borderRadius: BorderRadius.circular(18),
         child: AnimatedContainer(
           duration: const Duration(milliseconds: 160),
@@ -1241,7 +1425,7 @@ class _GoatStockListScreenState
   // ===========================================================================
 
   Widget _emptyState({required bool hasAnyGoats}) {
-    final hasStatusFilter = _statusFilter != null;
+    final status = _statusFilter;
     final hasSearch = _search.isNotEmpty;
     final hasGender = _genderFilter != null;
 
@@ -1250,14 +1434,25 @@ class _GoatStockListScreenState
 
     if (hasSearch) {
       title = 'No matching goats';
-      subtitle = 'Try a different ID, breed or color.';
-    } else if (hasStatusFilter || hasGender) {
+      subtitle = 'Try a different ID, breed, color or seller.';
+    } else if (hasGender) {
       title = 'No goats match these filters';
-      subtitle = hasStatusFilter
+      subtitle = status != null && status != _kUnregistered
           ? 'There are no goats marked as '
-          '"${_statusLabel(_statusFilter!)}"'
-          '${hasGender ? ' with that gender' : ''}.'
+          '"${_statusLabel(status)}" with that gender.'
           : 'No goats have the selected gender recorded.';
+    } else if (status == _kUnregistered) {
+      title = 'No unregistered goats';
+      subtitle = 'Every received goat has been registered.';
+    } else if (status != null) {
+      title = 'No goats match these filters';
+      subtitle = 'There are no goats marked as '
+          '"${_statusLabel(status)}".';
+    } else if (hasAnyGoats) {
+      // "All" only lists Available + Unregistered goats.
+      title = 'No available or unregistered goats';
+      subtitle =
+      'Booked, sold and other goats are under their own tabs.';
     } else {
       title = 'No goats registered';
       subtitle =
@@ -2023,6 +2218,266 @@ class _GoatStockCard extends StatelessWidget {
             ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+// ============================================================================
+// UNREGISTERED BATCH CARD
+// ============================================================================
+
+/// One card per purchase that still has goats waiting to be registered.
+///
+/// Unregistered goats have no goat record yet — they exist only as a count
+/// on their purchase — so they are shown as a batch ("8 goats") instead of
+/// one identical card per goat. The whole card and the button open the
+/// registration form for that purchase.
+class _UnregisteredBatchCard extends StatelessWidget {
+  final TradingPurchase purchase;
+  final VoidCallback onRegister;
+
+  const _UnregisteredBatchCard({
+    required this.purchase,
+    required this.onRegister,
+  });
+
+  static final DateFormat _dateFormat =
+  DateFormat('d MMM yyyy');
+
+  @override
+  Widget build(BuildContext context) {
+    final color = _statusColor(_kUnregistered);
+    final pending = purchase.pendingCount;
+    final registered = purchase.registeredCount;
+    final seller = purchase.sellerName.trim();
+    final received =
+        purchase.dateReceivedAtFarm ?? purchase.purchaseDate;
+
+    final reference = seller.isEmpty
+        ? 'Purchase ${purchase.id}'
+        : 'Purchase ${purchase.id} · $seller';
+
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onRegister,
+        borderRadius: BorderRadius.circular(18),
+        child: Container(
+          padding: const EdgeInsets.all(11),
+          decoration: AppTheme.card(radius: 18).copyWith(
+            border: Border.all(
+              color: AppColors.divider.withOpacity(0.6),
+            ),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Container(
+                    width: 62,
+                    height: 62,
+                    decoration: BoxDecoration(
+                      color: color.withOpacity(0.12),
+                      borderRadius: BorderRadius.circular(15),
+                    ),
+                    child: Icon(
+                      Icons.how_to_reg_outlined,
+                      size: 26,
+                      color: _statusTextColor(color),
+                    ),
+                  ),
+
+                  const SizedBox(width: 10),
+
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment:
+                      CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            Expanded(
+                              child: Text(
+                                pending == 1
+                                    ? '1 goat'
+                                    : '$pending goats',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: AppTheme.heading(
+                                  size: 15.5,
+                                  color: AppColors.textDark,
+                                ),
+                              ),
+                            ),
+
+                            const SizedBox(width: 6),
+
+                            _statusPill(color),
+                          ],
+                        ),
+
+                        const SizedBox(height: 1),
+
+                        Text(
+                          reference,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: AppTheme.body(
+                            size: 11.5,
+                            color: AppColors.textGrey,
+                          ),
+                        ),
+
+                        const SizedBox(height: 7),
+
+                        Wrap(
+                          spacing: 5,
+                          runSpacing: 5,
+                          children: [
+                            _infoChip(
+                              Icons.calendar_month_outlined,
+                              'Received '
+                                  '${_dateFormat.format(received)}',
+                            ),
+                            _infoChip(
+                              Icons.checklist_rounded,
+                              '$registered of '
+                                  '${registered + pending} '
+                                  'registered',
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+
+              const SizedBox(height: 9),
+              const Divider(
+                height: 1,
+                color: AppColors.divider,
+              ),
+              const SizedBox(height: 9),
+
+              SizedBox(
+                height: 40,
+                child: ElevatedButton.icon(
+                  onPressed: onRegister,
+                  icon: const Icon(
+                    Icons.how_to_reg_outlined,
+                    size: 17,
+                  ),
+                  label: Text(
+                    'Register Goats',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: AppTheme.heading(
+                      size: 12.5,
+                      color: Colors.white,
+                    ),
+                  ),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: AppColors.darkGreen,
+                    foregroundColor: Colors.white,
+                    elevation: 0,
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 10,
+                    ),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(11),
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _statusPill(Color color) {
+    return Container(
+      padding: const EdgeInsets.symmetric(
+        horizontal: 8,
+        vertical: 4,
+      ),
+      decoration: BoxDecoration(
+        color: color.withOpacity(0.12),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+          color: color.withOpacity(0.30),
+        ),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            width: 5,
+            height: 5,
+            decoration: BoxDecoration(
+              color: color,
+              shape: BoxShape.circle,
+            ),
+          ),
+
+          const SizedBox(width: 4),
+
+          Text(
+            _statusLabel(_kUnregistered),
+            maxLines: 1,
+            softWrap: false,
+            style: TextStyle(
+              color: _statusTextColor(color),
+              fontSize: 9.5,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _infoChip(
+      IconData icon,
+      String text,
+      ) {
+    return Container(
+      padding: const EdgeInsets.symmetric(
+        horizontal: 7,
+        vertical: 4,
+      ),
+      decoration: BoxDecoration(
+        color: AppColors.paleGreen,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(
+          color: AppColors.divider,
+        ),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(
+            icon,
+            size: 12,
+            color: AppColors.textGrey,
+          ),
+
+          const SizedBox(width: 4),
+
+          Text(
+            text,
+            style: AppTheme.body(
+              size: 10,
+              color: AppColors.textDark,
+              weight: FontWeight.w500,
+            ),
+          ),
+        ],
       ),
     );
   }

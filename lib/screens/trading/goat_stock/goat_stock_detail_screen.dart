@@ -460,6 +460,10 @@ class _GoatStockDetailScreenState
                   _infoRow('Breed', goat.breed),
                   _infoRow('Color', goat.color),
                   _infoRow(
+                    'Height',
+                    goat.hasHeight ? goat.heightLabel : 'Not recorded',
+                  ),
+                  _infoRow(
                     'Health Status',
                     goat.healthStatus,
                   ),

@@ -60,6 +60,7 @@ class _IndividualGoatPurchaseScreenState
   final _breedController = TextEditingController();
   final _ageController = TextEditingController();
   final _weightController = TextEditingController();
+  final _heightController = TextEditingController();
   final _colorController = TextEditingController();
   final _notesController = TextEditingController();
 
@@ -92,6 +93,7 @@ class _IndividualGoatPurchaseScreenState
     _breedController.dispose();
     _ageController.dispose();
     _weightController.dispose();
+    _heightController.dispose();
     _colorController.dispose();
     _notesController.dispose();
     _sellerNameController.dispose();
@@ -107,6 +109,10 @@ class _IndividualGoatPurchaseScreenState
 
   double get _weight =>
       double.tryParse(_weightController.text.trim()) ?? 0;
+
+  /// Optional — 0 means "not recorded".
+  double get _height =>
+      double.tryParse(_heightController.text.trim()) ?? 0;
 
   double get _pricePerKg =>
       double.tryParse(_priceController.text.trim()) ?? 0;
@@ -264,6 +270,7 @@ class _IndividualGoatPurchaseScreenState
         breed: _breedController.text,
         ageMonths: int.tryParse(_ageController.text.trim()) ?? 0,
         weight: _weight,
+        height: _height,
         color: _colorController.text,
         healthStatus: _healthStatus,
         notes: _notesController.text,
@@ -514,17 +521,61 @@ class _IndividualGoatPurchaseScreenState
 
         const SizedBox(height: 14),
 
-        wizardField(
-          controller: _colorController,
-          label: 'Color',
-          hint: 'e.g. Brown & White',
-          icon: Icons.palette_outlined,
-          validator: (value) {
-            if ((value ?? '').trim().isEmpty) {
-              return 'Enter color';
-            }
-            return null;
-          },
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Expanded(
+              child: wizardField(
+                controller: _heightController,
+                label: 'Height (cm)',
+                hint: 'e.g. 65',
+                icon: Icons.height,
+                optional: true,
+                keyboardType:
+                const TextInputType.numberWithOptions(
+                  decimal: true,
+                ),
+                inputFormatters: [
+                  FilteringTextInputFormatter.allow(
+                    RegExp(r'^\d*\.?\d{0,1}'),
+                  ),
+                ],
+                validator: (value) {
+                  final text = (value ?? '').trim();
+
+                  // Optional — blank is fine.
+                  if (text.isEmpty) return null;
+
+                  final cm = double.tryParse(text);
+
+                  if (cm == null || cm <= 0) {
+                    return 'Enter height';
+                  }
+
+                  if (cm > Goat.maxHeightCm) {
+                    return 'Max ${Goat.maxHeightCm.toStringAsFixed(0)} cm';
+                  }
+
+                  return null;
+                },
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: wizardField(
+                controller: _colorController,
+                label: 'Color',
+                hint: 'e.g. Brown',
+                icon: Icons.palette_outlined,
+                validator: (value) {
+                  if ((value ?? '').trim().isEmpty) {
+                    return 'Enter color';
+                  }
+                  return null;
+                },
+              ),
+            ),
+          ],
         ),
 
         const SizedBox(height: 14),

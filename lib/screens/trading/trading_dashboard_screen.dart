@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 
@@ -7,6 +9,7 @@ import '../../models/goat_model.dart';
 import '../../models/trading_purchase_model.dart';
 import '../../models/trading_summary_model.dart';
 import '../../services/firestore_service.dart';
+import '../../services/goat_service.dart';
 import '../../services/trading_service.dart';
 import '../../widgets/farm_not_linked_state.dart';
 import '../../widgets/fast_route.dart';
@@ -21,7 +24,8 @@ import 'sell_goat/sell_goat_wizard_screen.dart';
 ///
 /// Layout (top to bottom):
 ///  1. Header (back, title, recalculate)
-///  2. 2x2 stat cards + compact secondary stats list
+///  2. 2x2 stat cards (Available Stock, Booking, Wait on Delivery,
+///     Total Sold) + compact secondary stats list
 ///  3. Quick actions (Register Goats hero + 2x2 action tiles)
 ///  4. Pending receiving (empty state card or list of pending purchases)
 class TradingDashboardScreen extends StatefulWidget {
@@ -47,10 +51,29 @@ class _TradingDashboardScreenState extends State<TradingDashboardScreen> {
   Stream<TradingSummary>? _summaryStream;
   Stream<List<TradingPurchase>>? _pendingStream;
 
+  // "Available Stock" = registered goats whose status is Available.
+  //
+  // It deliberately does NOT come from TradingSummary.totalStock, because
+  // that number also includes received-but-unregistered goats and goats
+  // that are Booked / Wait on Delivery / in Own Palai. It is read with a
+  // cheap count query instead, and re-read whenever the summary doc
+  // changes (a sale, booking or registration touches it), when the user
+  // returns from another screen, and on pull-to-refresh.
+  int? _availableCount;
+  bool _availableBusy = false;
+  bool _availableDirty = false;
+  StreamSubscription<TradingSummary>? _summarySignal;
+
   @override
   void initState() {
     super.initState();
     _loadFarm();
+  }
+
+  @override
+  void dispose() {
+    _summarySignal?.cancel();
+    super.dispose();
   }
 
   // ===========================================================================
@@ -69,6 +92,57 @@ class _TradingDashboardScreenState extends State<TradingDashboardScreen> {
     _pendingStream = next == null
         ? null
         : TradingService.instance.pendingReceivingStream(next);
+
+    // New farm: forget the old count and use the summary doc purely as a
+    // "something changed" signal. Its first emission also triggers the
+    // initial load of the Available count.
+    _availableCount = null;
+    _summarySignal?.cancel();
+    _summarySignal = next == null
+        ? null
+        : TradingService.instance.dashboardSummaryStream(next).listen(
+          (_) => _refreshAvailable(),
+      onError: (_) {},
+    );
+  }
+
+  /// Re-reads the Available goat count. Overlapping calls are coalesced:
+  /// if one is already running, it simply runs once more when it finishes.
+  /// On failure the last known number stays on screen.
+  Future<void> _refreshAvailable() async {
+    if (_farmId == null) return;
+
+    if (_availableBusy) {
+      _availableDirty = true;
+      return;
+    }
+
+    _availableBusy = true;
+
+    try {
+      do {
+        _availableDirty = false;
+
+        final farmId = _farmId;
+        if (!mounted || farmId == null) return;
+
+        final count = await GoatService.instance.availableGoatCount(farmId);
+
+        if (!mounted) return;
+
+        if (farmId != _farmId) {
+          // Farm changed while counting; count again for the new one.
+          _availableDirty = true;
+          continue;
+        }
+
+        setState(() => _availableCount = count);
+      } while (_availableDirty);
+    } catch (_) {
+      // Keep showing the last known number.
+    } finally {
+      _availableBusy = false;
+    }
   }
 
   /// [silent] = pull-to-refresh: keeps the current farm/streams on failure
@@ -120,19 +194,25 @@ class _TradingDashboardScreenState extends State<TradingDashboardScreen> {
   /// Pull-to-refresh: re-check the farm, then re-derive the counts.
   Future<void> _onRefresh() async {
     await _loadFarm(silent: true);
-    await _recalculateDashboard(quiet: true);
+    await Future.wait([
+      _recalculateDashboard(quiet: true),
+      _refreshAvailable(),
+    ]);
   }
 
   // ===========================================================================
   // HELPERS
   // ===========================================================================
 
-  void _push(Widget screen) {
-    Navigator.of(context).push(fastRoute(screen));
+  /// Opens [screen]; when the user comes back, the Available count is
+  /// re-read (a sale or status change may have happened in there).
+  Future<void> _push(Widget screen) async {
+    await Navigator.of(context).push(fastRoute(screen));
+    if (mounted) _refreshAvailable();
   }
 
-  void _openGoatStock({String? statusFilter}) {
-    _push(GoatStockListScreen(initialStatusFilter: statusFilter));
+  Future<void> _openGoatStock({String? statusFilter}) {
+    return _push(GoatStockListScreen(initialStatusFilter: statusFilter));
   }
 
   void _snack(String message, Color color) {
@@ -287,16 +367,12 @@ class _TradingDashboardScreenState extends State<TradingDashboardScreen> {
         _pair(
           _StatCard(
             icon: GoatIcons.paw,
-            label: 'Total Stock',
-            value: '${s.totalStock}',
+            label: 'Available Stock',
+            // Registered goats marked Available only. Unregistered goats
+            // are tracked under "Pending Registrations" below.
+            value: _availableCount?.toString() ?? '—',
             color: AppColors.primaryGreen,
-            // totalStock = goats on the farm INCLUDING received-but-not-yet-
-            // registered ones (by design, see TradingSummary). The Goat Stock
-            // list only shows registered records, so say how many are missing.
-            badge: s.pendingRegistrations > 0
-                ? '${s.pendingRegistrations} unregistered'
-                : null,
-            onTap: () => _openGoatStock(),
+            onTap: () => _openGoatStock(statusFilter: Goat.statusAvailable),
           ),
           _StatCard(
             icon: Icons.event_available_outlined,

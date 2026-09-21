@@ -18,7 +18,8 @@ import 'registration_completed_screen.dart';
 /// Single goat registration form.
 ///
 /// The UI is intentionally compact and symmetrical:
-/// - Equal-width Age / Weight fields.
+/// - Equal-width Age / Weight fields, and Height / Color below them.
+///   Height (cm) is optional; it is validated only when filled in.
 /// - Consistent label and field spacing.
 /// - Age explanation is placed below the complete row instead of only
 ///   below the Age field.
@@ -46,6 +47,7 @@ class _GoatRegistrationFormScreenState
   final _breedController = TextEditingController();
   final _ageController = TextEditingController();
   final _weightController = TextEditingController();
+  final _heightController = TextEditingController();
   final _colorController = TextEditingController();
   final _notesController = TextEditingController();
 
@@ -69,6 +71,7 @@ class _GoatRegistrationFormScreenState
     _breedController.dispose();
     _ageController.dispose();
     _weightController.dispose();
+    _heightController.dispose();
     _colorController.dispose();
     _notesController.dispose();
     super.dispose();
@@ -142,6 +145,7 @@ class _GoatRegistrationFormScreenState
     _breedController.clear();
     _ageController.clear();
     _weightController.clear();
+    _heightController.clear();
     _colorController.clear();
     _notesController.clear();
 
@@ -167,6 +171,10 @@ class _GoatRegistrationFormScreenState
     final weight =
         double.tryParse(_weightController.text.trim()) ?? 0;
 
+    // Optional: blank means "not recorded" (0).
+    final height =
+        double.tryParse(_heightController.text.trim()) ?? 0;
+
     setState(() {
       _saving = true;
     });
@@ -178,6 +186,7 @@ class _GoatRegistrationFormScreenState
         breed: _breedController.text,
         ageMonths: ageMonths,
         weight: weight,
+        height: height,
         color: _colorController.text,
         healthStatus: _healthStatus,
         notes: _notesController.text,
@@ -422,11 +431,58 @@ class _GoatRegistrationFormScreenState
                 // COLOR
                 // -----------------------------------------------------------
 
-                _label('Color'),
+                // -----------------------------------------------------------
+                // HEIGHT + COLOR
+                // -----------------------------------------------------------
 
-                _textField(
-                  _colorController,
-                  hint: 'e.g. Brown & White',
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Expanded(
+                      child: _fieldColumn(
+                        label: 'Height (cm)',
+                        child: _textField(
+                          _heightController,
+                          hint: 'e.g. 65',
+                          keyboardType:
+                          const TextInputType.numberWithOptions(
+                            decimal: true,
+                          ),
+                          optional: true,
+                          validator: (value) {
+                            final text = (value ?? '').trim();
+
+                            // Optional — blank is fine.
+                            if (text.isEmpty) return null;
+
+                            final cm = double.tryParse(text);
+
+                            if (cm == null || cm <= 0) {
+                              return 'Enter valid height';
+                            }
+
+                            if (cm > Goat.maxHeightCm) {
+                              return 'Max ${Goat.maxHeightCm.toStringAsFixed(0)} cm';
+                            }
+
+                            return null;
+                          },
+                        ),
+                      ),
+                    ),
+
+                    const SizedBox(width: 14),
+
+                    Expanded(
+                      child: _fieldColumn(
+                        label: 'Color',
+                        child: _textField(
+                          _colorController,
+                          hint: 'e.g. Brown & White',
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
 
                 const SizedBox(height: 18),

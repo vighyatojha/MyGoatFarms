@@ -43,6 +43,7 @@ class _GoatEditDetailsScreenState extends State<GoatEditDetailsScreen> {
   late final TextEditingController _breedController;
   late final TextEditingController _colorController;
   late final TextEditingController _weightController;
+  late final TextEditingController _heightController;
   late final TextEditingController _pricingController;
   late final TextEditingController _notesController;
 
@@ -68,6 +69,9 @@ class _GoatEditDetailsScreenState extends State<GoatEditDetailsScreen> {
     _breedController = TextEditingController(text: goat.breed);
     _colorController = TextEditingController(text: goat.color);
     _weightController = TextEditingController(text: goat.weightAtCheckIn.toStringAsFixed(1));
+    _heightController = TextEditingController(
+      text: goat.hasHeight ? goat.heightAtCheckIn.toStringAsFixed(1) : '',
+    );
     _pricingController = TextEditingController(text: goat.pricing.toStringAsFixed(2));
     _notesController = TextEditingController(text: goat.notes);
     _gender = _genders.contains(goat.gender) ? goat.gender : 'Male';
@@ -84,6 +88,7 @@ class _GoatEditDetailsScreenState extends State<GoatEditDetailsScreen> {
     _breedController.dispose();
     _colorController.dispose();
     _weightController.dispose();
+    _heightController.dispose();
     _pricingController.dispose();
     _notesController.dispose();
     super.dispose();
@@ -141,6 +146,17 @@ class _GoatEditDetailsScreenState extends State<GoatEditDetailsScreen> {
       return;
     }
 
+    // Height is optional — blank clears it (0 = not recorded).
+    final heightText = _heightController.text.trim();
+    final height = heightText.isEmpty ? 0.0 : double.tryParse(heightText);
+    if (height == null || height < 0 || height > PalaiGoat.maxHeightCm) {
+      _showSnack(
+        'Please enter a valid goat height (up to ${PalaiGoat.maxHeightCm.toStringAsFixed(0)} cm).',
+        isError: true,
+      );
+      return;
+    }
+
     final pricingText = _pricingController.text.trim();
     final pricing = pricingText.isEmpty ? 0.0 : double.tryParse(pricingText);
     if (pricing == null || pricing < 0) {
@@ -157,6 +173,7 @@ class _GoatEditDetailsScreenState extends State<GoatEditDetailsScreen> {
         gender: _gender,
         color: _colorController.text.trim(),
         weightAtCheckIn: weight,
+        heightAtCheckIn: height,
         healthStatus: _healthStatus,
         farmArrivalDate: _farmArrivalDate,
         monthlyPackage: _monthlyPackage,
@@ -251,6 +268,15 @@ class _GoatEditDetailsScreenState extends State<GoatEditDetailsScreen> {
               hint: 'e.g. 24.5',
               icon: Icons.monitor_weight_outlined,
               keyboardType: const TextInputType.numberWithOptions(decimal: true),
+            ),
+            const SizedBox(height: 16),
+            _textField(
+              controller: _heightController,
+              label: 'Height (cm)',
+              hint: 'e.g. 65',
+              icon: Icons.height,
+              keyboardType: const TextInputType.numberWithOptions(decimal: true),
+              optional: true,
             ),
             const SizedBox(height: 16),
             _dropdownField(

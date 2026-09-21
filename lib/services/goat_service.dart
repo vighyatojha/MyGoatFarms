@@ -167,6 +167,31 @@ class GoatService {
     );
   }
 
+  /// Number of registered goats whose status is exactly Available.
+  ///
+  /// Used by the Trading Dashboard's "Available Stock" card. This is NOT
+  /// the same as TradingSummary.totalStock, which also counts received-
+  /// but-unregistered goats and goats that are Booked / Wait on Delivery /
+  /// in Own Palai.
+  ///
+  /// Uses a server-side count aggregate, so no goat documents (and none
+  /// of their photo blobs) are downloaded. It is a one-shot read, not a
+  /// live stream — callers re-run it when something may have changed.
+  Future<int> availableGoatCount(
+      String farmId,
+      ) async {
+    final snapshot = await _goats(farmId)
+        .where(
+      'currentStatus',
+      isEqualTo: Goat.statusAvailable,
+    )
+        .count()
+        .get()
+        .timeout(_timeout);
+
+    return snapshot.count ?? 0;
+  }
+
   // -----------------------------------------------------------------------
   // OWN PALAI
   // -----------------------------------------------------------------------
@@ -391,6 +416,9 @@ class GoatService {
     required double weight,
     required String color,
     required String healthStatus,
+
+    /// Height in cm. Optional — 0 means "not recorded".
+    double height = 0,
     String notes = '',
     Uint8List? photo,
     String? photoContentType,
@@ -414,6 +442,13 @@ class GoatService {
     if (weight <= 0) {
       throw ArgumentError(
         'Weight must be greater than zero.',
+      );
+    }
+
+    if (height < 0 || height > Goat.maxHeightCm) {
+      throw ArgumentError(
+        'Height must be between 0 and '
+            '${Goat.maxHeightCm.toStringAsFixed(0)} cm.',
       );
     }
 
@@ -499,6 +534,9 @@ class GoatService {
 
           weight:
           weight,
+
+          height:
+          height,
 
           color:
           color.trim(),

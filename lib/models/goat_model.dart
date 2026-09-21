@@ -29,6 +29,18 @@ class Goat {
   final DateTime ageRecordedAt;
 
   final double weight;
+
+  /// Height at the withers, in centimetres, as recorded at registration.
+  ///
+  /// 0 means "not recorded" — height is optional, and every goat registered
+  /// before this field existed has none. Use [hasHeight] / [heightLabel]
+  /// rather than checking for 0 directly.
+  final double height;
+
+  /// Upper bound accepted by the registration forms and
+  /// GoatService.registerGoat (a sanity check against typos such as 650).
+  static const double maxHeightCm = 200;
+
   final String color;
 
   /// One of [healthStatusValues].
@@ -105,6 +117,7 @@ class Goat {
     this.movedToOwnPalaiAt,
     this.saleId,
     this.gender = '',
+    this.height = 0,
   });
 
   // ---------------------------------------------------------------------
@@ -311,6 +324,18 @@ class Goat {
       currentStatus.trim().toLowerCase() ==
           statusInCustomerPalai.toLowerCase();
 
+  /// Whether a height was recorded for this goat.
+  bool get hasHeight => height > 0;
+
+  /// e.g. "65 cm" or "65.5 cm"; empty when no height was recorded.
+  String get heightLabel {
+    if (!hasHeight) return '';
+
+    final text = height.toStringAsFixed(1);
+
+    return '${text.endsWith('.0') ? text.substring(0, text.length - 2) : text} cm';
+  }
+
   /// True for goats Step 1 of the Sale wizard (Task 2.1) should list:
   /// plain farm stock, or a goat already living in Own Palai. This is
   /// the "Own Palai -> Sell" tie-in from PDF section 13 — one query,
@@ -414,6 +439,9 @@ class Goat {
       weight:
       numFrom('weight'),
 
+      height:
+      numFrom('height'),
+
       color:
       (data['color'] ?? '').toString(),
 
@@ -489,6 +517,12 @@ class Goat {
       'currentStatus':
       currentStatus,
     };
+
+    // Only written when recorded, so a goat without a height never gets a
+    // meaningless 0 stored on its document.
+    if (hasHeight) {
+      map['height'] = height;
+    }
 
     if (photo != null) {
       map['photo'] = Blob(photo!);

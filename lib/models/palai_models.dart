@@ -200,6 +200,20 @@ class PalaiGoat {
   final double? currentWeight;
 
   // --------------------------------------------------------------------------
+  // HEIGHT
+  // --------------------------------------------------------------------------
+
+  /// Height at the withers, in centimetres, when the goat entered Palai.
+  ///
+  /// 0 means "not recorded" — height is optional, and goats checked in
+  /// before this field existed have none. Use [hasHeight] / [heightLabel]
+  /// rather than checking for 0 directly.
+  final double heightAtCheckIn;
+
+  /// Upper bound accepted by the Palai forms (a typo sanity check).
+  static const double maxHeightCm = 200;
+
+  // --------------------------------------------------------------------------
   // HEALTH
   // --------------------------------------------------------------------------
 
@@ -375,6 +389,9 @@ class PalaiGoat {
     this.weightAtCheckIn = 0,
     this.currentWeight,
 
+    // Height (cm, 0 = not recorded)
+    this.heightAtCheckIn = 0,
+
     // Health
     this.healthStatus = 'Healthy',
 
@@ -490,6 +507,11 @@ class PalaiGoat {
       currentWeight:
       _readNullableDouble(
         data['currentWeight'],
+      ),
+
+      heightAtCheckIn:
+      _readDouble(
+        data['heightAtCheckIn'],
       ),
 
       // ----------------------------------------------------------------------
@@ -678,6 +700,11 @@ class PalaiGoat {
         data['currentWeight'],
       ),
 
+      heightAtCheckIn:
+      _readDouble(
+        data['heightAtCheckIn'],
+      ),
+
       healthStatus:
       _readString(
         data['healthStatus'],
@@ -799,6 +826,9 @@ class PalaiGoat {
       'weightAtCheckIn': weightAtCheckIn,
       'currentWeight': currentWeight,
 
+      // Height (cm, 0 = not recorded)
+      'heightAtCheckIn': heightAtCheckIn,
+
       // Health
       'healthStatus': healthStatus,
 
@@ -909,6 +939,9 @@ class PalaiGoat {
       'weightAtCheckIn': weightAtCheckIn,
       'currentWeight': currentWeight,
 
+      // Height (cm, 0 = not recorded)
+      'heightAtCheckIn': heightAtCheckIn,
+
       // Health
       'healthStatus': healthStatus,
 
@@ -1001,6 +1034,7 @@ class PalaiGoat {
 
     double? weightAtCheckIn,
     double? currentWeight,
+    double? heightAtCheckIn,
 
     String? healthStatus,
 
@@ -1069,6 +1103,10 @@ class PalaiGoat {
       currentWeight ??
           this.currentWeight,
 
+      heightAtCheckIn:
+      heightAtCheckIn ??
+          this.heightAtCheckIn,
+
       healthStatus:
       healthStatus ??
           this.healthStatus,
@@ -1076,6 +1114,13 @@ class PalaiGoat {
       checkInDate:
       checkInDate ??
           this.checkInDate,
+
+      // Was accepted by copyWith() but never passed on, so every copy
+      // silently lost its farm arrival date (and Edit Goat Details then
+      // wrote null back to Firestore).
+      farmArrivalDate:
+      farmArrivalDate ??
+          this.farmArrivalDate,
 
       checkOutDate:
       checkOutDate ??
@@ -1149,6 +1194,22 @@ class PalaiGoat {
       nextHealthCheckDate ??
           this.nextHealthCheckDate,
     );
+  }
+
+  // ==========================================================================
+  // HEIGHT HELPERS
+  // ==========================================================================
+
+  /// Whether a height was recorded for this goat.
+  bool get hasHeight => heightAtCheckIn > 0;
+
+  /// e.g. "65 cm" or "65.5 cm"; empty when no height was recorded.
+  String get heightLabel {
+    if (!hasHeight) return '';
+
+    final text = heightAtCheckIn.toStringAsFixed(1);
+
+    return '${text.endsWith('.0') ? text.substring(0, text.length - 2) : text} cm';
   }
 
   // ==========================================================================
