@@ -15,7 +15,7 @@ import '../../services/firestore_service.dart';
 import '../../widgets/fast_route.dart';
 import '../../widgets/profile_completion_dialog.dart';
 import '../../widgets/customer_selection_sheet.dart';
-import '../finance/finance_overview_screen.dart';
+import '../finance/finance_home_screen.dart';
 import '../finance/add_edit_expense_screen.dart';
 import '../finance/customer_ledger_screen.dart';
 import 'widgets/home_widgets.dart';
@@ -445,7 +445,7 @@ class _HomeScreenState extends State<HomeScreen> {
                       value: snap.hasData ? '₹${value.toStringAsFixed(0)}' : '—',
                       color: AppColors.warning,
                       onTap: () => Navigator.of(context)
-                          .push(fastRoute(const FinanceOverviewScreen())),
+                          .push(fastRoute(const FinanceHomeScreen())),
                     );
                   },
                 ),

@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:animate_do/animate_do.dart';
-import 'package:mygoatfarms/screens/finance/finance_overview_screen.dart';
+import 'package:mygoatfarms/screens/finance/finance_home_screen.dart';
 
 import '../../goat_icons.dart';
 import '../customers/customer_management_screen.dart';
@@ -402,7 +402,7 @@ class _PalaiScreenState extends State<PalaiScreen> {
                       color: AppColors.warning,
                       onTap: () {
                         Navigator.of(context).push(
-                          fastRoute(const FinanceOverviewScreen()),
+                          fastRoute(const FinanceHomeScreen()),
                         );
                       },
                     );

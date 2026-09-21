@@ -12,7 +12,7 @@ import 'home/home_screen.dart';
 import 'palai/palai_screen.dart';
 import 'stocks/stock_screen.dart';
 import 'customers/customer_management_screen.dart';
-import 'finance/finance_overview_screen.dart';
+import 'finance/finance_home_screen.dart';
 import '../screens/trading/trading_dashboard_screen.dart';
 
 /// Main application shell.
@@ -131,7 +131,7 @@ class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
     const PalaiScreen(),                               // 1
     const StockScreen(),                                // 2
     const CustomerManagementScreen(),                   // 3 - internal only
-    const FinanceOverviewScreen(),                       // 4
+    const FinanceHomeScreen(),                           // 4
     const TradingDashboardScreen(),                      // 5
   ];
 

@@ -5,6 +5,7 @@ import 'package:intl/intl.dart';
 
 import '../../app_theme.dart';
 import '../../models/expense_categories.dart';
+import '../../models/finance_scope.dart';
 import '../../models/expense_model.dart';
 import '../../services/finance_service.dart';
 import '../../services/firestore_service.dart';
@@ -14,7 +15,13 @@ import '../../widgets/finance/expense_category_chip.dart';
 import 'add_edit_expense_screen.dart';
 
 class ExpenseListScreen extends StatefulWidget {
-  const ExpenseListScreen({super.key});
+  /// Which side of the Finance tab this list belongs to. Null shows every
+  /// expense (old behaviour). Palai hides goat purchases; Trading shows
+  /// only goat purchases (which are created by the Trading purchase flow,
+  /// so there is no manual "add" button there).
+  final FinanceScope? scope;
+
+  const ExpenseListScreen({super.key, this.scope});
 
   @override
   State<ExpenseListScreen> createState() => _ExpenseListScreenState();
@@ -133,9 +140,14 @@ class _ExpenseListScreenState extends State<ExpenseListScreen> {
         elevation: 0,
         foregroundColor: AppColors.textDark,
         titleSpacing: 4,
-        title: Text('Expenses', style: AppTheme.heading(size: 18)),
+        title: Text(
+          widget.scope == FinanceScope.trading ? 'Goat Purchases' : 'Expenses',
+          style: AppTheme.heading(size: 18),
+        ),
       ),
-      floatingActionButton: FloatingActionButton(
+      floatingActionButton: widget.scope == FinanceScope.trading
+          ? null
+          : FloatingActionButton(
         onPressed: _openAdd,
         backgroundColor: AppColors.primaryGreen,
         child: const Icon(Icons.add, color: Colors.white),
@@ -144,86 +156,95 @@ class _ExpenseListScreenState extends State<ExpenseListScreen> {
         child: _loadingFarm
             ? const Center(child: CircularProgressIndicator(color: AppColors.primaryGreen))
             : _farmId == null
-                ? FarmNotLinkedState(
-                    buttonColor: AppColors.primaryGreen,
-                    onRetry: () {
-                      setState(() => _loadingFarm = true);
-                      _loadFarm();
-                    },
-                  )
-                : Column(
-                    children: [
-                      Padding(
-                        padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
-                        child: TextField(
-                          controller: _searchController,
-                          onChanged: (v) => setState(() => _search = v),
-                          style: AppTheme.body(size: 13),
-                          decoration: InputDecoration(
-                            hintText: 'Search title, supplier, invoice...',
-                            prefixIcon: const Icon(Icons.search, size: 20, color: AppColors.textGrey),
-                            filled: true,
-                            fillColor: Colors.white,
-                            contentPadding: const EdgeInsets.symmetric(vertical: 4),
-                            border: OutlineInputBorder(
-                              borderRadius: BorderRadius.circular(13),
-                              borderSide: BorderSide(color: AppColors.divider),
-                            ),
-                          ),
-                        ),
-                      ),
-                      Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 12),
-                        child: CategoryChipRow(
-                          categories: ExpenseCategories.all,
-                          selected: _category,
-                          onSelected: (v) => setState(() => _category = v),
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                      Expanded(
-                        child: StreamBuilder<List<ExpenseModel>>(
-                          stream: FinanceService.instance.expensesStream(
-                            _farmId!,
-                            category: _category,
-                          ),
-                          builder: (context, snapshot) {
-                            if (!snapshot.hasData) {
-                              return const Center(
-                                child: CircularProgressIndicator(color: AppColors.primaryGreen),
-                              );
-                            }
-                            final items = _filter(snapshot.data!);
-                            if (items.isEmpty) {
-                              return Center(
-                                child: Text('No expenses found.', style: AppTheme.body(size: 13)),
-                              );
-                            }
-
-                            final total = items.fold<double>(0, (sum, e) => sum + e.amount);
-
-                            return ListView.builder(
-                              padding: const EdgeInsets.fromLTRB(16, 0, 16, 90),
-                              itemCount: items.length + 1,
-                              itemBuilder: (context, index) {
-                                if (index == 0) {
-                                  return Padding(
-                                    padding: const EdgeInsets.symmetric(vertical: 10),
-                                    child: Text(
-                                      'Total: ₹${total.toStringAsFixed(0)}',
-                                      style: AppTheme.heading(size: 16),
-                                    ),
-                                  );
-                                }
-                                final expense = items[index - 1];
-                                return _expenseCard(expense);
-                              },
-                            );
-                          },
-                        ),
-                      ),
-                    ],
+            ? FarmNotLinkedState(
+          buttonColor: AppColors.primaryGreen,
+          onRetry: () {
+            setState(() => _loadingFarm = true);
+            _loadFarm();
+          },
+        )
+            : Column(
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
+              child: TextField(
+                controller: _searchController,
+                onChanged: (v) => setState(() => _search = v),
+                style: AppTheme.body(size: 13),
+                decoration: InputDecoration(
+                  hintText: 'Search title, supplier, invoice...',
+                  prefixIcon: const Icon(Icons.search, size: 20, color: AppColors.textGrey),
+                  filled: true,
+                  fillColor: Colors.white,
+                  contentPadding: const EdgeInsets.symmetric(vertical: 4),
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(13),
+                    borderSide: BorderSide(color: AppColors.divider),
                   ),
+                ),
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 12),
+              child: CategoryChipRow(
+                categories: switch (widget.scope) {
+                  FinanceScope.trading => const [
+                    ExpenseCategories.goatPurchase,
+                  ],
+                  FinanceScope.palai => ExpenseCategories.all
+                      .where((c) => c != ExpenseCategories.goatPurchase)
+                      .toList(),
+                  null => ExpenseCategories.all,
+                },
+                selected: _category,
+                onSelected: (v) => setState(() => _category = v),
+              ),
+            ),
+            const SizedBox(height: 8),
+            Expanded(
+              child: StreamBuilder<List<ExpenseModel>>(
+                stream: FinanceService.instance.expensesStream(
+                  _farmId!,
+                  category: _category,
+                  scope: widget.scope,
+                ),
+                builder: (context, snapshot) {
+                  if (!snapshot.hasData) {
+                    return const Center(
+                      child: CircularProgressIndicator(color: AppColors.primaryGreen),
+                    );
+                  }
+                  final items = _filter(snapshot.data!);
+                  if (items.isEmpty) {
+                    return Center(
+                      child: Text('No expenses found.', style: AppTheme.body(size: 13)),
+                    );
+                  }
+
+                  final total = items.fold<double>(0, (sum, e) => sum + e.amount);
+
+                  return ListView.builder(
+                    padding: const EdgeInsets.fromLTRB(16, 0, 16, 90),
+                    itemCount: items.length + 1,
+                    itemBuilder: (context, index) {
+                      if (index == 0) {
+                        return Padding(
+                          padding: const EdgeInsets.symmetric(vertical: 10),
+                          child: Text(
+                            'Total: ₹${total.toStringAsFixed(0)}',
+                            style: AppTheme.heading(size: 16),
+                          ),
+                        );
+                      }
+                      final expense = items[index - 1];
+                      return _expenseCard(expense);
+                    },
+                  );
+                },
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

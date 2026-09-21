@@ -6,6 +6,7 @@ import 'package:intl/intl.dart';
 
 import '../../app_theme.dart';
 import '../../models/expense_categories.dart';
+import '../../models/finance_scope.dart';
 import '../../models/finance_summary_model.dart';
 import '../../services/finance_service.dart';
 import '../../services/firestore_service.dart';
@@ -25,7 +26,13 @@ import 'add_edit_revenue_screen.dart';
 /// is one income view instead of two that each showed a slightly
 /// different slice of the same data.
 class RevenueListScreen extends StatefulWidget {
-  const RevenueListScreen({super.key});
+  /// Which side of the Finance tab this list belongs to. Null shows all
+  /// revenue (old behaviour). Palai hides goat-sale revenue; Trading shows
+  /// only goat-sale revenue (created by the Trading sale flow, so there is
+  /// no manual "add" button there).
+  final FinanceScope? scope;
+
+  const RevenueListScreen({super.key, this.scope});
 
   @override
   State<RevenueListScreen> createState() => _RevenueListScreenState();
@@ -322,7 +329,20 @@ class _RevenueListScreenState extends State<RevenueListScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final allRevenueCategories = [...RevenueCategories.all];
+    final allRevenueCategories = switch (widget.scope) {
+      FinanceScope.trading => [
+        RevenueCategories.soldGoatRevenue,
+        RevenueCategories.goatSale,
+      ],
+      FinanceScope.palai => RevenueCategories.all
+          .where(
+            (c) =>
+        c != RevenueCategories.soldGoatRevenue &&
+            c != RevenueCategories.goatSale,
+      )
+          .toList(),
+      null => [...RevenueCategories.all],
+    };
 
     return Scaffold(
       backgroundColor: AppColors.paleGreen,
@@ -331,7 +351,10 @@ class _RevenueListScreenState extends State<RevenueListScreen> {
         elevation: 0,
         foregroundColor: AppColors.textDark,
         titleSpacing: 4,
-        title: Text('Revenue', style: AppTheme.heading(size: 18)),
+        title: Text(
+          widget.scope == FinanceScope.trading ? 'Goat Sale Revenue' : 'Revenue',
+          style: AppTheme.heading(size: 18),
+        ),
         actions: [
           IconButton(
             tooltip: 'Browse by date',
@@ -343,7 +366,9 @@ class _RevenueListScreenState extends State<RevenueListScreen> {
           ),
         ],
       ),
-      floatingActionButton: FloatingActionButton(
+      floatingActionButton: widget.scope == FinanceScope.trading
+          ? null
+          : FloatingActionButton(
         onPressed: _openAdd,
         backgroundColor: AppColors.primaryGreen,
         child: const Icon(Icons.add, color: Colors.white),
@@ -442,6 +467,7 @@ class _RevenueListScreenState extends State<RevenueListScreen> {
                 stream: FinanceService.instance.revenueStream(
                   _farmId!,
                   category: _category,
+                  scope: widget.scope,
                 ),
                 builder: (context, snapshot) {
                   if (!snapshot.hasData) {
