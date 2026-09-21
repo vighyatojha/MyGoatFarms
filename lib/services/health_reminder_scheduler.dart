@@ -2,6 +2,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:timezone/timezone.dart' as tz;
 
+import '../models/health_reminder_settings_model.dart';
 import '../models/trading_goat_health_record.dart';
 import 'firestore_service.dart';
 import 'notification_service.dart';
@@ -34,6 +35,115 @@ class HealthReminderScheduler {
       NotificationService.instance.localNotificationsPlugin;
 
   // ---------------------------------------------------------------------
+  // Own Palai: apply the farm's Health Reminder Settings to every goat
+  // ---------------------------------------------------------------------
+
+  /// Sync passes currently running, keyed by `farmId|goatId-or-*`, so two
+  /// callers that overlap (app start fires [rescheduleAllForFarm] and
+  /// [runDueCheck] together) share one pass instead of racing.
+  final Map<String, Future<void>> _syncInFlight = {};
+
+  /// When each key last finished, used to skip redundant non-forced passes
+  /// (app resume, opening a list) that would find nothing new to do.
+  final Map<String, DateTime> _syncFinishedAt = {};
+
+  static const Duration _syncCooldown = Duration(seconds: 30);
+
+  /// Puts the farm's Health Reminder Settings (Profile > Health Reminder
+  /// Settings) onto every Own Palai goat's Vaccination / Hoof Cutting /
+  /// Hair Trimming schedule, then (re)schedules the on-device alarms for
+  /// whatever changed and cancels the ones that were switched off.
+  ///
+  /// This is what makes a date the owner picks in Health Reminder Settings
+  /// actually appear on an Own Palai goat's profile, in the Notifications
+  /// feed, and in the Pending / Upcoming health lists — see
+  /// [FirestoreService.syncOwnPalaiFarmReminders] for the rules.
+  ///
+  /// Safe to call as often as you like: it is idempotent, overlapping
+  /// calls share one pass, and a non-[force]d call within 30 seconds of the
+  /// previous one for the same scope is skipped.
+  ///
+  ///  * [goatId] — sync just that goat (after moving it to Own Palai, or
+  ///    when its profile opens). Omit for the whole farm.
+  ///  * [force] — bypass the cooldown. Use right after the settings were
+  ///    saved or a goat was moved, when there is definitely something new.
+  ///    If a pass is already running it finishes first and a fresh one
+  ///    follows, so the latest settings always win.
+  ///  * [settings] — the just-saved values, to avoid re-reading them.
+  ///
+  /// Never throws.
+  Future<void> syncOwnPalaiFarmReminders(
+      String farmId, {
+        String? goatId,
+        bool force = false,
+        HealthReminderSettings? settings,
+      }) {
+    final key = '$farmId|${goatId ?? '*'}';
+
+    final running = _syncInFlight[key];
+    if (running != null) {
+      if (!force) return running;
+      return running.then((_) => syncOwnPalaiFarmReminders(
+        farmId,
+        goatId: goatId,
+        force: true,
+        settings: settings,
+      ));
+    }
+
+    if (!force) {
+      final finished = _syncFinishedAt[key];
+      if (finished != null &&
+          DateTime.now().difference(finished) < _syncCooldown) {
+        return Future.value();
+      }
+    }
+
+    final future = _runOwnPalaiSync(farmId, goatId, settings).whenComplete(() {
+      _syncInFlight.remove(key);
+      _syncFinishedAt[key] = DateTime.now();
+    });
+    _syncInFlight[key] = future;
+    return future;
+  }
+
+  Future<void> _runOwnPalaiSync(
+      String farmId,
+      String? goatId,
+      HealthReminderSettings? settings,
+      ) async {
+    try {
+      final result = await FirestoreService.instance.syncOwnPalaiFarmReminders(
+        farmId,
+        onlyGoatId: goatId,
+        settings: settings,
+      );
+
+      for (final ref in result.cleared) {
+        await cancelForTradingRecord(
+          goatId: ref.goatId,
+          recordType: ref.recordType.name,
+          recordId: ref.recordId,
+        );
+      }
+
+      for (final reminder in result.armed) {
+        await scheduleTradingHealthReminder(
+          farmId: farmId,
+          goatId: reminder.goat.id,
+          goatCode: reminder.goat.id, // trading goat id doubles as its code
+          recordType: reminder.recordType.name,
+          recordId: reminder.recordId,
+          label: reminder.recordType.label,
+          dueDate: reminder.dueDate,
+        );
+      }
+    } catch (e) {
+      debugPrint('HealthReminderScheduler: own-palai farm sync failed: $e');
+    }
+  }
+
+  // ---------------------------------------------------------------------
   // Farm-wide: re-schedule + due-check across every module
   // ---------------------------------------------------------------------
 
@@ -47,6 +157,10 @@ class HealthReminderScheduler {
   /// addition to scheduling at creation time) so a reboot doesn't
   /// silently drop upcoming reminders.
   Future<void> rescheduleAllForFarm(String farmId) async {
+    // Make sure every Own Palai goat carries the farm's current Health
+    // Reminder Settings before its reminders are read back and scheduled.
+    await syncOwnPalaiFarmReminders(farmId);
+
     try {
       final upcomingCustomer =
       await FirestoreService.instance.upcomingCustomerHealthReminders(farmId, withinDays: 60);
@@ -92,6 +206,10 @@ class HealthReminderScheduler {
   /// alarm was missed (e.g. a reboot before [rescheduleAllForFarm] ran).
   /// Idempotent — safe to call every time the app opens.
   Future<void> runDueCheck(String farmId) async {
+    // Same reasoning as rescheduleAllForFarm: arm the farm's schedule on
+    // every Own Palai goat first, so a due/overdue one gets a notification.
+    await syncOwnPalaiFarmReminders(farmId);
+
     try {
       final upcomingCustomer =
       await FirestoreService.instance.upcomingCustomerHealthReminders(farmId, withinDays: 0);

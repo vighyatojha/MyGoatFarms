@@ -62,6 +62,42 @@ class TradingHealthReminder {
   });
 }
 
+/// A reminder record [FirestoreService.syncOwnPalaiFarmReminders] switched
+/// OFF (its `nextDueDate` was cleared) — returned so the caller can cancel
+/// the on-device alarms that were scheduled for it.
+class OwnPalaiReminderRef {
+  final String goatId;
+  final GoatHealthRecordType recordType;
+  final String recordId;
+
+  const OwnPalaiReminderRef({
+    required this.goatId,
+    required this.recordType,
+    required this.recordId,
+  });
+}
+
+/// What one [FirestoreService.syncOwnPalaiFarmReminders] pass changed.
+///
+/// The sync only writes Firestore. Turning that into on-device alarms is
+/// `HealthReminderScheduler`'s job (it already depends on this service, so
+/// this service can't call it) — see
+/// `HealthReminderScheduler.syncOwnPalaiFarmReminders`.
+class OwnPalaiReminderSyncResult {
+  /// Schedules that were (re-)armed with a due date → schedule alarms.
+  final List<TradingHealthReminder> armed;
+
+  /// Reminder records that were switched off → cancel their alarms.
+  final List<OwnPalaiReminderRef> cleared;
+
+  const OwnPalaiReminderSyncResult({
+    this.armed = const [],
+    this.cleared = const [],
+  });
+
+  bool get isEmpty => armed.isEmpty && cleared.isEmpty;
+}
+
 /// One reminder record seeded automatically for a newly-registered
 /// goat by [FirestoreService.seedHealthRemindersForNewGoat] — see that
 /// method for details. Returned so the caller (Customer Goat
@@ -125,6 +161,13 @@ HealthRecordStatus _classifyHealthRecordStatus(DateTime? dueDate, DateTime now) 
 class HealthRecordSummary {
   final PalaiGoat goat;
 
+  /// Set only for an Own Palai (Trading) goat's record — the real
+  /// [Goat] the record belongs to. Null for Customer Palai records. When
+  /// set, [goat] is just a minimal stand-in carrying the id / code / breed
+  /// so the shared list UI can render it, and a tap must open the Own Palai
+  /// profile (with this [Goat]) rather than the customer goat profile.
+  final Goat? ownPalaiGoat;
+
   /// 'vaccination' | 'hoofCutting' | 'hairTrimming'
   final String recordType;
   final String recordId;
@@ -135,6 +178,7 @@ class HealthRecordSummary {
 
   HealthRecordSummary({
     required this.goat,
+    this.ownPalaiGoat,
     required this.recordType,
     required this.recordId,
     required this.label,
@@ -142,6 +186,37 @@ class HealthRecordSummary {
     required this.dueDate,
     required this.status,
   });
+
+  /// Summary for an Own Palai goat's health record. See [ownPalaiGoat].
+  factory HealthRecordSummary.ownPalai({
+    required Goat goat,
+    required String recordType,
+    required String recordId,
+    required String label,
+    required DateTime recordDate,
+    required DateTime? dueDate,
+    required HealthRecordStatus status,
+  }) {
+    return HealthRecordSummary(
+      goat: PalaiGoat(
+        id: goat.id,
+        customerId: '',
+        goatCode: goat.id, // the trading goat's id doubles as its code
+        breed: goat.breed,
+        gender: goat.gender,
+        checkInDate: goat.movedToOwnPalaiAt ?? goat.purchaseDate,
+      ),
+      ownPalaiGoat: goat,
+      recordType: recordType,
+      recordId: recordId,
+      label: label,
+      recordDate: recordDate,
+      dueDate: dueDate,
+      status: status,
+    );
+  }
+
+  bool get isOwnPalai => ownPalaiGoat != null;
 }
 
 /// Config for one of the four per-goat health record subcollections —
@@ -3644,6 +3719,345 @@ class FirestoreService {
 
     results.sort((a, b) => a.dueDate.compareTo(b.dueDate));
     return results;
+  }
+
+  // ---------------------------------------------------------------------
+  // Trading — Own Palai: farm Health Reminder Settings → goat schedules
+  // ---------------------------------------------------------------------
+
+  /// Reads the farm's Health Reminder Settings, but — unlike
+  /// [getHealthReminderSettings] — lets a read failure THROW instead of
+  /// quietly returning [HealthReminderSettings.defaults].
+  ///
+  /// The fallback is harmless for a form that only pre-fills a due date,
+  /// but the sync below must never mistake "the network blipped" for "the
+  /// farm switched vaccination reminders off" and wipe every goat's
+  /// schedule. A farm that has genuinely never saved the settings (no
+  /// `healthReminderSettings` map on its doc) still gets the defaults.
+  Future<HealthReminderSettings> _readHealthReminderSettingsStrict(
+      String farmId,
+      ) async {
+    final doc = await _farms.doc(farmId).get().timeout(timeout);
+    if (!doc.exists) return HealthReminderSettings.defaults;
+    return HealthReminderSettings.fromMap(
+      doc.data()?['healthReminderSettings'] as Map<String, dynamic>?,
+    );
+  }
+
+  static String _ymd(DateTime d) =>
+      '${d.year.toString().padLeft(4, '0')}-'
+          '${d.month.toString().padLeft(2, '0')}-'
+          '${d.day.toString().padLeft(2, '0')}';
+
+  /// Puts the farm's Health Reminder Settings (Profile > Health Reminder
+  /// Settings) onto every Own Palai goat's Vaccination / Hoof Cutting /
+  /// Hair Trimming schedule, so the dates the farm owner picked show up on
+  /// each goat's profile — and in Notifications and the Pending / Upcoming
+  /// health lists — WITHOUT anyone having to log a record first.
+  ///
+  /// Before this existed the settings were only ever read while logging a
+  /// new record, so a goat that was moved to Own Palai (or a date the
+  /// owner changed afterwards) never appeared on the goat at all. Customer
+  /// Palai solves the same problem at registration with
+  /// [seedHealthRemindersForNewGoat]; this is the Own Palai counterpart,
+  /// and it also re-applies later changes.
+  ///
+  /// For each Own Palai goat and each of the three care types it maintains
+  /// ONE farm-schedule record (`healthRecords/farm_<type>`, see
+  /// [GoatHealthRecord.isAuto]):
+  ///   * **Vaccination / Hair Trimming** — `nextDueDate` is the farm-wide
+  ///     date, exactly as Log Vaccination / Log Hair Trimming apply it.
+  ///   * **Hoof Cutting** — a day-cadence, so `nextDueDate` is
+  ///     (the goat's last logged hoof cutting, or else the day it entered
+  ///     Own Palai) + `hoofCuttingReminderDays`.
+  ///
+  /// It is idempotent and cheap to call repeatedly: each schedule record
+  /// stores the setting it was armed for (`seededFor`), and a goat whose
+  /// record already matches the current setting is left alone — so a
+  /// schedule the owner marked as completed is NOT resurrected every time
+  /// the app opens. It is only re-armed when the farm's setting actually
+  /// CHANGES, which is precisely the "new date updated in Health Reminder
+  /// Settings" case. When re-arming, the same care type's older logged
+  /// records that still carry a `nextDueDate` have that reminder date
+  /// cleared (the same field "Mark as Completed" clears) because the farm's
+  /// new setting supersedes it — otherwise each goat would show two
+  /// competing due dates. Nothing else on those records is touched.
+  ///
+  /// Turning a reminder OFF in the settings clears the goats' matching
+  /// reminders the same way.
+  ///
+  /// Pass [onlyGoatId] to sync a single goat (used when a goat is moved to
+  /// Own Palai and when its profile opens). Pass [settings] when the caller
+  /// already holds the just-saved values, to skip a read.
+  ///
+  /// Never throws for one bad goat — that goat is skipped (logged) and the
+  /// rest still sync. A failure to read the settings themselves aborts the
+  /// pass with an empty result and changes nothing.
+  Future<OwnPalaiReminderSyncResult> syncOwnPalaiFarmReminders(
+      String farmId, {
+        String? onlyGoatId,
+        HealthReminderSettings? settings,
+      }) async {
+    final HealthReminderSettings s;
+    final List<DocumentSnapshot<Map<String, dynamic>>> goatDocs;
+
+    try {
+      s = settings ?? await _readHealthReminderSettingsStrict(farmId);
+
+      if (onlyGoatId != null) {
+        goatDocs = [
+          await _tradingGoats(farmId).doc(onlyGoatId).get().timeout(timeout),
+        ];
+      } else {
+        goatDocs = (await _tradingGoats(farmId)
+            .where('currentStatus', isEqualTo: Goat.statusOwnPalai)
+            .get()
+            .timeout(timeout))
+            .docs;
+      }
+    } catch (e) {
+      debugPrint('FirestoreService.syncOwnPalaiFarmReminders aborted: $e');
+      return const OwnPalaiReminderSyncResult();
+    }
+
+    final armed = <TradingHealthReminder>[];
+    final cleared = <OwnPalaiReminderRef>[];
+
+    await Future.wait(goatDocs.map((doc) async {
+      if (!doc.exists) return;
+
+      final Goat goat;
+      try {
+        goat = Goat.fromDoc(doc);
+      } catch (e) {
+        debugPrint('syncOwnPalaiFarmReminders: unreadable goat ${doc.id}: $e');
+        return;
+      }
+
+      // A goat that has since been sold / moved on no longer has a
+      // schedule to maintain.
+      if (goat.currentStatus.trim().toLowerCase() !=
+          Goat.statusOwnPalai.toLowerCase()) {
+        return;
+      }
+
+      for (final type in const [
+        GoatHealthRecordType.vaccination,
+        GoatHealthRecordType.hoofCutting,
+        GoatHealthRecordType.hairTrimming,
+      ]) {
+        try {
+          await _syncOwnPalaiGoatSchedule(
+            farmId: farmId,
+            goat: goat,
+            type: type,
+            settings: s,
+            armed: armed,
+            cleared: cleared,
+          );
+        } catch (e) {
+          debugPrint(
+              'syncOwnPalaiFarmReminders: ${goat.id}/${type.name} failed: $e');
+        }
+      }
+    }));
+
+    return OwnPalaiReminderSyncResult(armed: armed, cleared: cleared);
+  }
+
+  /// One (goat × care type) step of [syncOwnPalaiFarmReminders].
+  Future<void> _syncOwnPalaiGoatSchedule({
+    required String farmId,
+    required Goat goat,
+    required GoatHealthRecordType type,
+    required HealthReminderSettings settings,
+    required List<TradingHealthReminder> armed,
+    required List<OwnPalaiReminderRef> cleared,
+  }) async {
+    // What the farm currently asks for, as a fingerprint + its value.
+    final DateTime? farmDate;
+    final int? farmDays;
+    switch (type) {
+      case GoatHealthRecordType.vaccination:
+        farmDate = settings.vaccinationNextDueDate;
+        farmDays = null;
+        break;
+      case GoatHealthRecordType.hairTrimming:
+        farmDate = settings.hairTrimmingNextDueDate;
+        farmDays = null;
+        break;
+      case GoatHealthRecordType.hoofCutting:
+        farmDate = null;
+        farmDays = settings.hoofCuttingReminderDays;
+        break;
+      case GoatHealthRecordType.medicine:
+        return; // no farm-wide schedule for medicine
+    }
+
+    final bool isOff = type == GoatHealthRecordType.hoofCutting
+        ? farmDays == null
+        : farmDate == null;
+    final String key = isOff
+        ? 'off'
+        : (type == GoatHealthRecordType.hoofCutting
+        ? 'n:$farmDays'
+        : 'd:${_ymd(farmDate!)}');
+
+    final records = _tradingHealthRecords(farmId, goat.id);
+    final autoId = GoatHealthRecord.farmScheduleId(type);
+    final autoRef = records.doc(autoId);
+
+    final autoSnap = await autoRef.get().timeout(timeout);
+    final currentKey = autoSnap.data()?['seededFor']?.toString();
+
+    // Already armed for exactly this setting → nothing to do. (Also: a farm
+    // with the reminder off and no schedule record has nothing to clear.)
+    if (autoSnap.exists ? currentKey == key : isOff) return;
+
+    // Every existing record of this care type. Single-field equality query,
+    // so no composite index is needed; the rest is filtered here.
+    final sameType = (await records
+        .where('type', isEqualTo: type.name)
+        .get()
+        .timeout(timeout))
+        .docs
+        .map(GoatHealthRecord.fromDoc)
+        .toList();
+
+    final logged = sameType.where((r) => !r.isAuto).toList()
+      ..sort((a, b) => b.date.compareTo(a.date));
+
+    // The day the schedule is counted from: the goat's last real hoof
+    // cutting if there is one, otherwise the day it entered Own Palai.
+    final DateTime startDay =
+    (type == GoatHealthRecordType.hoofCutting && logged.isNotEmpty)
+        ? logged.first.date
+        : (goat.movedToOwnPalaiAt ?? goat.purchaseDate);
+
+    final DateTime? due = isOff
+        ? null
+        : (type == GoatHealthRecordType.hoofCutting
+        ? startDay.add(Duration(days: farmDays!))
+        : farmDate);
+
+    final batch = _db.batch();
+
+    // The schedule record itself (merge: keeps createdAt if it exists).
+    batch.set(
+      autoRef,
+      {
+        'type': type.name,
+        'date': Timestamp.fromDate(startDay),
+        'notes': 'Auto-scheduled from farm Health Reminder Settings.',
+        'nextDueDate': due != null ? Timestamp.fromDate(due) : null,
+        'auto': true,
+        'seededFor': key,
+        if (!autoSnap.exists) 'createdAt': FieldValue.serverTimestamp(),
+      },
+      SetOptions(merge: true),
+    );
+
+    // The farm's new setting supersedes any still-active reminder date on
+    // older logged records of this type.
+    final supersededIds = <String>[];
+    for (final r in logged) {
+      if (r.nextDueDate == null) continue;
+      batch.update(records.doc(r.id), {'nextDueDate': null});
+      supersededIds.add(r.id);
+    }
+
+    await batch.commit().timeout(timeout);
+
+    for (final id in supersededIds) {
+      cleared.add(OwnPalaiReminderRef(
+        goatId: goat.id,
+        recordType: type,
+        recordId: id,
+      ));
+    }
+
+    if (due != null) {
+      armed.add(TradingHealthReminder(
+        goat: goat,
+        recordType: type,
+        recordId: autoId,
+        dueDate: due,
+      ));
+    } else if (autoSnap.exists) {
+      cleared.add(OwnPalaiReminderRef(
+        goatId: goat.id,
+        recordType: type,
+        recordId: autoId,
+      ));
+    }
+  }
+
+  /// Clears the reminder date on one Own Palai health record — the Own
+  /// Palai counterpart of [markHealthCareRecordCompleted]. Used by the
+  /// Health Records screen's "Mark as Completed" button.
+  Future<void> markOwnPalaiHealthRecordCompleted(
+      String farmId,
+      String goatId,
+      String recordId,
+      ) async {
+    await _tradingHealthRecords(farmId, goatId)
+        .doc(recordId)
+        .update({'nextDueDate': null}).timeout(timeout);
+  }
+
+  /// Every Own Palai vaccination / hoof-cutting / hair-trimming record,
+  /// classified Complete / Pending / Upcoming with the SAME rule
+  /// ([_classifyHealthRecordStatus]) the Customer Palai list uses, so the
+  /// Health Records screen can show Own Palai goats alongside customer
+  /// goats. Each summary carries the Own Palai [Goat] so a tap can open its
+  /// Own Palai profile.
+  ///
+  /// Does not sync first — call
+  /// `HealthReminderScheduler.syncOwnPalaiFarmReminders` beforehand so
+  /// goats that have not had their farm schedule armed yet are included.
+  Future<List<HealthRecordSummary>> allOwnPalaiHealthRecordSummaries(
+      String farmId, {
+        int perGoatLimit = 60,
+      }) async {
+    final goatsSnap = await _tradingGoats(farmId)
+        .where('currentStatus', isEqualTo: Goat.statusOwnPalai)
+        .get()
+        .timeout(timeout);
+
+    final now = DateTime.now();
+
+    final perGoat = await Future.wait(goatsSnap.docs.map((goatDoc) async {
+      final goat = Goat.fromDoc(goatDoc);
+      final snap = await _tradingHealthRecords(farmId, goat.id)
+          .orderBy('date', descending: true)
+          .limit(perGoatLimit)
+          .get()
+          .timeout(timeout);
+
+      final out = <HealthRecordSummary>[];
+      for (final doc in snap.docs) {
+        final record = GoatHealthRecord.fromDoc(doc);
+        if (!GoatHealthRecord.followsFarmSettings(record.type)) continue;
+
+        // A farm-schedule record with no due date is just an inactive
+        // placeholder (completed / switched off), not something that was
+        // ever performed — don't list it under "Already Completed".
+        if (record.isAuto && record.nextDueDate == null) continue;
+
+        out.add(HealthRecordSummary.ownPalai(
+          goat: goat,
+          recordType: record.type.name,
+          recordId: record.id,
+          label: record.type.label,
+          recordDate: record.date,
+          dueDate: record.nextDueDate,
+          status: _classifyHealthRecordStatus(record.nextDueDate, now),
+        ));
+      }
+      return out;
+    }));
+
+    return perGoat.expand((r) => r).toList();
   }
 
   /// Every health checkup / vaccination / hoof-cutting / hair-trimming

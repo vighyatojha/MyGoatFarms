@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 
@@ -10,6 +12,7 @@ import '../../../models/trading_goat_weight_entry.dart';
 import '../../../models/trading_purchase_model.dart';
 import '../../../services/firestore_service.dart';
 import '../../../services/goat_service.dart';
+import '../../../services/health_reminder_scheduler.dart';
 import '../../../services/trading_service.dart';
 import '../../../widgets/fast_route.dart';
 import '../../palai/fullscreen_image_viewer.dart';
@@ -34,6 +37,35 @@ class OwnPalaiGoatProfileScreen extends StatefulWidget {
     required this.goat,
     this.initialTabIndex = 0,
   });
+
+  // -------------------------------------------------------------------------
+  // TAB INDEXES
+  //
+  // Public so other screens (Goat Stock's weigh-in shortcut, Notifications,
+  // Health Records) can deep-link straight into a tab without hard-coding
+  // magic numbers. Keep in sync with `_tabs` in the state class below.
+  // -------------------------------------------------------------------------
+  static const int tabOverview = 0;
+  static const int tabPurchase = 1;
+  static const int tabPhotos = 2;
+  static const int tabHealth = 3;
+  static const int tabVaccination = 4;
+  static const int tabHoofCutting = 5;
+  static const int tabHairTrimming = 6;
+  static const int tabMedicine = 7;
+  static const int tabProgress = 8; // Weight & Progress
+
+  /// Maps a health record type key OR a notification `type` (e.g.
+  /// `'vaccination'`, `'hoofCutting_due'`, `'hairTrimming_overdue'`,
+  /// `'medicine_logged'`) to the tab that shows it. Anything unrecognised
+  /// lands on the general Health tab.
+  static int tabForRecordType(String type) {
+    if (type.startsWith('vaccination')) return tabVaccination;
+    if (type.startsWith('hoofCutting')) return tabHoofCutting;
+    if (type.startsWith('hairTrimming')) return tabHairTrimming;
+    if (type.startsWith('medicine')) return tabMedicine;
+    return tabHealth;
+  }
 
   @override
   State<OwnPalaiGoatProfileScreen> createState() =>
@@ -76,6 +108,20 @@ class _OwnPalaiGoatProfileScreenState extends State<OwnPalaiGoatProfileScreen>
     _purchaseFuture = purchaseId.isEmpty
         ? Future.value(null)
         : TradingService.instance.getPurchase(widget.farmId, purchaseId);
+
+    // Apply the farm's Health Reminder Settings to this goat (Vaccination /
+    // Hoof Cutting / Hair Trimming dates). This is what fixes a goat that
+    // was already in Own Palai before its schedule existed, or whose farm
+    // date changed since it last synced. The tabs below listen to the
+    // goat's records live, so the dates simply appear once this writes.
+    // Forced: opening the profile is exactly when it must be up to date.
+    unawaited(
+      HealthReminderScheduler.instance.syncOwnPalaiFarmReminders(
+        widget.farmId,
+        goatId: widget.goat.id,
+        force: true,
+      ),
+    );
   }
 
   @override
@@ -137,7 +183,10 @@ class _OwnPalaiGoatProfileScreenState extends State<OwnPalaiGoatProfileScreen>
                   farmId: widget.farmId,
                   goat: goat,
                   types: _healthTypes,
-                  onOpenType: (i) => _tabController.animateTo(4 + i),
+                  // _healthTypes is ordered vaccination, hoof, hair, medicine — the same
+                  // order as the four consecutive tabs starting at tabVaccination.
+                  onOpenType: (i) => _tabController
+                      .animateTo(OwnPalaiGoatProfileScreen.tabVaccination + i),
                 ),
                 for (final type in _healthTypes)
                   _HealthTypeTab(
@@ -705,6 +754,46 @@ Widget _logButton(Color color, VoidCallback onTap) {
   );
 }
 
+/// What the profile shows for ONE care type (vaccination / hoof cutting /
+/// hair trimming), derived from all of that type's records.
+class _CareSnapshot {
+  /// The most recent care that was actually performed — a logged record.
+  /// Farm-schedule records ([GoatHealthRecord.isAuto]) are a schedule, not
+  /// something that happened, so they never count as "done".
+  final GoatHealthRecord? lastDone;
+
+  /// The record holding the reminder that is still active (earliest
+  /// `nextDueDate`). Normally the farm-schedule record; once the owner logs
+  /// the care, that new record. Null when nothing is scheduled.
+  final GoatHealthRecord? scheduled;
+
+  const _CareSnapshot({this.lastDone, this.scheduled});
+
+  bool get isEmpty => lastDone == null && scheduled == null;
+}
+
+/// [records] are one care type's records, newest first (the stream's order).
+_CareSnapshot _careSnapshot(List<GoatHealthRecord> records) {
+  GoatHealthRecord? lastDone;
+  for (final r in records) {
+    if (!r.isAuto) {
+      lastDone = r;
+      break;
+    }
+  }
+
+  GoatHealthRecord? scheduled;
+  for (final r in records) {
+    final due = r.nextDueDate;
+    if (due == null) continue;
+    if (scheduled == null || due.isBefore(scheduled.nextDueDate!)) {
+      scheduled = r;
+    }
+  }
+
+  return _CareSnapshot(lastDone: lastDone, scheduled: scheduled);
+}
+
 Widget _dueBadge(GoatHealthRecord? latest) {
   if (latest == null || latest.nextDueDate == null) {
     return const SizedBox.shrink();
@@ -1033,8 +1122,18 @@ class _HealthSummaryTabState extends State<_HealthSummaryTab> {
       List<GoatHealthRecord> records,
       VoidCallback onTap,
       ) {
-    final latest = records.isNotEmpty ? records.first : null;
+    final snap = _careSnapshot(records);
     final color = _healthTypeColor(type);
+    final fmt = DateFormat('d MMM yyyy');
+    final summaryText = snap.isEmpty
+        ? 'No records yet'
+        : [
+      snap.lastDone != null
+          ? 'Last: ${fmt.format(snap.lastDone!.date)}'
+          : 'Not done yet',
+      if (snap.scheduled != null)
+        'Next: ${fmt.format(snap.scheduled!.nextDueDate!)}',
+    ].join(' · ');
 
     return InkWell(
       onTap: onTap,
@@ -1056,16 +1155,13 @@ class _HealthSummaryTabState extends State<_HealthSummaryTab> {
               children: [
                 Text(type.label, style: AppTheme.heading(size: 12)),
                 Text(
-                  latest == null
-                      ? 'No records yet'
-                      : 'Last: ${DateFormat('d MMM yyyy').format(latest.date)}'
-                      '${latest.nextDueDate != null ? ' · Next: ${DateFormat('d MMM yyyy').format(latest.nextDueDate!)}' : ''}',
+                  summaryText,
                   style: AppTheme.body(size: 10, color: AppColors.textGrey),
                 ),
               ],
             ),
           ),
-          _dueBadge(latest),
+          _dueBadge(snap.scheduled),
           const Icon(Icons.chevron_right, size: 16, color: AppColors.textGrey),
         ],
       ),
@@ -1132,12 +1228,20 @@ class _HealthTypeTabState extends State<_HealthTypeTab> {
                   .where((r) => r.type == type)
                   .toList();
 
-              if (records.isEmpty) {
+              final snap = _careSnapshot(records);
+              final lastDone = snap.lastDone;
+              final scheduled = snap.scheduled;
+
+              // A farm-schedule record with no due date is an inactive
+              // placeholder (completed / switched off) — not history.
+              final history = records
+                  .where((r) => !r.isAuto || r.nextDueDate != null)
+                  .toList();
+
+              if (snap.isEmpty && history.isEmpty) {
                 return _emptyMessage(_healthIcon(type),
                     'No ${type.label.toLowerCase()} records yet. Tap Log to add one.');
               }
-
-              final latest = records.first;
 
               return Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -1147,7 +1251,9 @@ class _HealthTypeTabState extends State<_HealthTypeTab> {
                       Expanded(
                         child: _StatTile(
                           label: 'Last Done',
-                          value: fmt.format(latest.date),
+                          value: lastDone == null
+                              ? '—'
+                              : fmt.format(lastDone.date),
                           color: color,
                         ),
                       ),
@@ -1155,9 +1261,9 @@ class _HealthTypeTabState extends State<_HealthTypeTab> {
                       Expanded(
                         child: _StatTile(
                           label: 'Next Due',
-                          value: latest.nextDueDate == null
+                          value: scheduled == null
                               ? '—'
-                              : fmt.format(latest.nextDueDate!),
+                              : fmt.format(scheduled.nextDueDate!),
                           color: AppColors.tradingBlue,
                         ),
                       ),
@@ -1166,7 +1272,25 @@ class _HealthTypeTabState extends State<_HealthTypeTab> {
                   const SizedBox(height: 6),
                   Align(
                       alignment: Alignment.centerLeft,
-                      child: _dueBadge(latest)),
+                      child: _dueBadge(scheduled)),
+                  if (scheduled != null && scheduled.isAuto) ...[
+                    const SizedBox(height: 4),
+                    Row(
+                      children: [
+                        const Icon(Icons.event_repeat_outlined,
+                            size: 13, color: AppColors.textGrey),
+                        const SizedBox(width: 5),
+                        Expanded(
+                          child: Text(
+                            'Scheduled automatically from the farm\'s '
+                                'Health Reminder Settings.',
+                            style: AppTheme.body(
+                                size: 9.5, color: AppColors.textGrey),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
                   const SizedBox(height: 10),
                   Text('History',
                       style: AppTheme.body(
@@ -1174,7 +1298,7 @@ class _HealthTypeTabState extends State<_HealthTypeTab> {
                           color: AppColors.textGrey,
                           weight: FontWeight.w700)),
                   const SizedBox(height: 6),
-                  for (final r in records)
+                  for (final r in history)
                     Padding(
                       padding: const EdgeInsets.symmetric(vertical: 4),
                       child: Row(
@@ -1184,8 +1308,14 @@ class _HealthTypeTabState extends State<_HealthTypeTab> {
                             margin: const EdgeInsets.only(top: 4),
                             width: 7,
                             height: 7,
+                            // Hollow dot = scheduled, filled = done.
                             decoration: BoxDecoration(
-                                color: color, shape: BoxShape.circle),
+                              color: r.isAuto ? Colors.transparent : color,
+                              shape: BoxShape.circle,
+                              border: r.isAuto
+                                  ? Border.all(color: color, width: 1.3)
+                                  : null,
+                            ),
                           ),
                           const SizedBox(width: 8),
                           Expanded(
@@ -1193,7 +1323,9 @@ class _HealthTypeTabState extends State<_HealthTypeTab> {
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
                                 Text(
-                                  fmt.format(r.date) +
+                                  r.isAuto
+                                      ? 'Scheduled · Due: ${fmt.format(r.nextDueDate!)}'
+                                      : fmt.format(r.date) +
                                       (r.nextDueDate != null
                                           ? ' · Due: ${fmt.format(r.nextDueDate!)}'
                                           : ''),
@@ -1202,7 +1334,11 @@ class _HealthTypeTabState extends State<_HealthTypeTab> {
                                       color: AppColors.textDark,
                                       weight: FontWeight.w600),
                                 ),
-                                if (r.notes.trim().isNotEmpty)
+                                if (r.isAuto)
+                                  Text('Auto · from farm Health Reminder Settings',
+                                      style: AppTheme.body(
+                                          size: 10, color: AppColors.textGrey))
+                                else if (r.notes.trim().isNotEmpty)
                                   Text(r.notes.trim(),
                                       style: AppTheme.body(
                                           size: 10, color: AppColors.textGrey)),

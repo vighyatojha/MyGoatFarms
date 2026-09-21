@@ -6,8 +6,10 @@ import 'package:intl/intl.dart';
 
 import '../../app_theme.dart';
 import '../../goat_icons.dart';
+import '../../models/goat_model.dart';
 import '../../models/notification_model.dart';
 import '../../services/firestore_service.dart';
+import '../../services/goat_service.dart';
 import '../../widgets/farm_not_linked_state.dart';
 import '../customers/customer_management_screen.dart';
 import '../finance/customer_ledger_screen.dart';
@@ -16,6 +18,7 @@ import '../finance/revenue_list_screen.dart';
 import '../palai/customer_palai/goat_profile_screen.dart';
 import '../palai/goat_list_screen.dart';
 import '../stocks/stock_screen.dart';
+import '../trading/own_palai/own_palai_goat_profile_screen.dart';
 
 /// Notification center — reads from `farms/{farmId}/notifications`.
 ///
@@ -133,11 +136,30 @@ class _NotificationScreenState extends State<NotificationScreen> {
             ),
           );
         }
+      } else {
+        // No customerId → an Own Palai (Trading) goat. Farm-owned goats
+        // live in Trading -> Own Palai, so open that goat's Own Palai
+        // profile on the tab this notification is about (Vaccination /
+        // Hoof Cutting / Hair Trimming / Medicine).
+        Goat? goat;
+        try {
+          goat = await GoatService.instance.getGoat(farmId, goatId);
+        } catch (_) {
+          goat = null;
+        }
+        if (goat != null && mounted) {
+          Navigator.of(context).push(
+            MaterialPageRoute(
+              builder: (_) => OwnPalaiGoatProfileScreen(
+                farmId: farmId,
+                goat: goat!,
+                initialTabIndex:
+                OwnPalaiGoatProfileScreen.tabForRecordType(n.type),
+              ),
+            ),
+          );
+        }
       }
-      // Legacy Own Farm health notifications (no customerId) have no
-      // screen any more — the Own Farm module was removed (farm-owned
-      // goats live in Trading -> Own Palai). They are still marked read
-      // above; tapping one simply does nothing further.
     }
   }
 

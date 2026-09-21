@@ -1,9 +1,12 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../../../app_theme.dart';
 import '../../../goat_icons.dart';
 import '../../../models/goat_model.dart';
 import '../../../services/goat_service.dart';
+import '../../../services/health_reminder_scheduler.dart';
 
 class MoveToOwnPalaiScreen extends StatefulWidget {
   final String farmId;
@@ -96,6 +99,18 @@ class _MoveToOwnPalaiScreenState extends State<MoveToOwnPalaiScreen> {
       await GoatService.instance.moveToOwnPalai(
         farmId: widget.farmId,
         goatId: goat.id,
+      );
+
+      // Start the goat on the farm's Health Reminder Settings straight
+      // away — its Vaccination / Hoof Cutting / Hair Trimming dates are
+      // there the first time its profile is opened, with nothing to log.
+      // Not awaited: the move itself already succeeded.
+      unawaited(
+        HealthReminderScheduler.instance.syncOwnPalaiFarmReminders(
+          widget.farmId,
+          goatId: goat.id,
+          force: true,
+        ),
       );
 
       if (!mounted) return;

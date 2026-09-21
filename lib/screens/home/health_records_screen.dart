@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 
@@ -5,8 +7,10 @@ import '../../app_theme.dart';
 import '../../goat_icons.dart';
 import '../../models/palai_models.dart';
 import '../../services/firestore_service.dart';
+import '../../services/health_reminder_scheduler.dart';
 import '../../widgets/farm_not_linked_state.dart';
 import '../palai/customer_palai/goat_profile_screen.dart';
+import '../trading/own_palai/own_palai_goat_profile_screen.dart';
 
 class HealthRecordsScreen extends StatefulWidget {
   const HealthRecordsScreen({super.key});
@@ -48,10 +52,36 @@ class _HealthRecordsScreenState extends State<HealthRecordsScreen>
       return Future.value(<HealthRecordSummary>[]);
     }
 
-    _future ??= FirestoreService.instance
-        .allCustomerHealthRecordSummaries(farmId);
+    _future ??= _fetchAll(farmId);
 
     return _future!;
+  }
+
+  /// Customer Palai goats' records + Own Palai goats' records, in one list.
+  ///
+  /// Own Palai goats are synced with the farm's Health Reminder Settings
+  /// first, so a goat that has not had its schedule armed yet (moved to Own
+  /// Palai earlier, or the farm date was just changed) still shows up here
+  /// with the current dates. An Own Palai failure never hides the customer
+  /// records — it just contributes nothing.
+  Future<List<HealthRecordSummary>> _fetchAll(
+      String farmId, {
+        bool forceSync = false,
+      }) async {
+    await HealthReminderScheduler.instance
+        .syncOwnPalaiFarmReminders(farmId, force: forceSync);
+
+    final results = await Future.wait([
+      FirestoreService.instance.allCustomerHealthRecordSummaries(farmId),
+      FirestoreService.instance
+          .allOwnPalaiHealthRecordSummaries(farmId)
+          .catchError((Object e) {
+        debugPrint('HealthRecordsScreen: own-palai records failed: $e');
+        return <HealthRecordSummary>[];
+      }),
+    ]);
+
+    return [...results[0], ...results[1]];
   }
 
   Future<List<HealthRecordSummary>> _getRecordsForType(
@@ -79,8 +109,9 @@ class _HealthRecordsScreenState extends State<HealthRecordsScreen>
 
     _cache.clear();
 
-    final future = FirestoreService.instance
-        .allCustomerHealthRecordSummaries(farmId);
+    // Pull-to-refresh: force the Own Palai sync so a just-changed farm date
+    // is picked up immediately.
+    final future = _fetchAll(farmId, forceSync: true);
 
     setState(() {
       _future = future;
@@ -99,13 +130,30 @@ class _HealthRecordsScreenState extends State<HealthRecordsScreen>
     final farmId = _farmId;
     if (farmId == null) return;
 
-    await FirestoreService.instance.markHealthCareRecordCompleted(
-      farmId,
-      record.goat.customerId,
-      record.goat.id,
-      record.recordType,
-      record.recordId,
-    );
+    if (record.isOwnPalai) {
+      // Own Palai goat: same "clear the reminder date" completion, on the
+      // Trading goat's own health record — and stop its on-device alarms.
+      await FirestoreService.instance.markOwnPalaiHealthRecordCompleted(
+        farmId,
+        record.goat.id,
+        record.recordId,
+      );
+      unawaited(
+        HealthReminderScheduler.instance.cancelForTradingRecord(
+          goatId: record.goat.id,
+          recordType: record.recordType,
+          recordId: record.recordId,
+        ),
+      );
+    } else {
+      await FirestoreService.instance.markHealthCareRecordCompleted(
+        farmId,
+        record.goat.customerId,
+        record.goat.id,
+        record.recordType,
+        record.recordId,
+      );
+    }
 
     _cache.clear();
     _future = null;
@@ -194,6 +242,22 @@ class _HealthRecordsScreenState extends State<HealthRecordsScreen>
     final farmId = _farmId;
 
     if (farmId == null) return;
+
+    // Own Palai goats have their own profile screen (different tab layout).
+    final ownGoat = record.ownPalaiGoat;
+    if (ownGoat != null) {
+      Navigator.of(context).push(
+        MaterialPageRoute(
+          builder: (_) => OwnPalaiGoatProfileScreen(
+            farmId: farmId,
+            goat: ownGoat,
+            initialTabIndex:
+            OwnPalaiGoatProfileScreen.tabForRecordType(record.recordType),
+          ),
+        ),
+      );
+      return;
+    }
 
     Navigator.of(context).push(
       MaterialPageRoute(
@@ -712,6 +776,12 @@ class _HealthStatusRecordsScreenState
   // its own small spinner instead of blocking the whole list.
   final Set<String> _markingIds = {};
 
+  /// Unique per record. `recordId` alone is NOT unique: every Own Palai
+  /// goat's schedule record has the same id (e.g. `farm_vaccination`), so
+  /// keying on it would spin — and mark — every goat's card at once.
+  String _keyOf(HealthRecordSummary r) =>
+      '${r.isOwnPalai ? 'own' : r.goat.customerId}|${r.goat.id}|${r.recordId}';
+
   @override
   void initState() {
     super.initState();
@@ -821,7 +891,22 @@ class _HealthStatusRecordsScreenState
     return 'Scheduled · ${_date(due)}';
   }
 
-  Widget _image(PalaiGoat goat) {
+  Widget _image(HealthRecordSummary record) {
+    final goat = record.goat;
+
+    // Own Palai goats keep their photo as bytes on the goat document.
+    final bytes = record.ownPalaiGoat?.photo;
+    if (bytes != null && bytes.isNotEmpty) {
+      return ClipOval(
+        child: Image.memory(
+          bytes,
+          width: 52,
+          height: 52,
+          fit: BoxFit.cover,
+        ),
+      );
+    }
+
     final url = goat.imageUrl?.trim();
 
     if (url == null || url.isEmpty) {
@@ -867,21 +952,21 @@ class _HealthStatusRecordsScreenState
   /// screen's own list on success (so it disappears from Pending/
   /// Upcoming immediately), and surfaces a snack bar either way.
   Future<void> _handleMarkCompleted(HealthRecordSummary record) async {
-    setState(() => _markingIds.add(record.recordId));
+    setState(() => _markingIds.add(_keyOf(record)));
 
     try {
       await widget.onMarkCompleted(record);
       if (!mounted) return;
       setState(() {
         _records.remove(record);
-        _markingIds.remove(record.recordId);
+        _markingIds.remove(_keyOf(record));
       });
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Marked as completed.')),
       );
     } catch (e) {
       if (!mounted) return;
-      setState(() => _markingIds.remove(record.recordId));
+      setState(() => _markingIds.remove(_keyOf(record)));
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text('Could not mark as completed: $e'),
@@ -1013,7 +1098,7 @@ class _HealthStatusRecordsScreenState
                     ? record.goat.name
                     : _goatCode(record.goat);
 
-                final isMarking = _markingIds.contains(record.recordId);
+                final isMarking = _markingIds.contains(_keyOf(record));
 
                 return InkWell(
                   borderRadius: BorderRadius.circular(16),
@@ -1042,7 +1127,7 @@ class _HealthStatusRecordsScreenState
                       children: [
                         Row(
                           children: [
-                            _image(record.goat),
+                            _image(record),
                             const SizedBox(width: 12),
                             Expanded(
                               child: Column(
@@ -1058,7 +1143,8 @@ class _HealthStatusRecordsScreenState
                                   ),
                                   const SizedBox(height: 3),
                                   Text(
-                                    '#${_goatCode(record.goat)}',
+                                    '#${_goatCode(record.goat)}'
+                                        '${record.isOwnPalai ? ' · Own Palai' : ''}',
                                     style: AppTheme.body(
                                       size: 10.5,
                                       color: AppColors.textGrey,

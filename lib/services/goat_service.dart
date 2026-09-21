@@ -368,6 +368,23 @@ class GoatService {
     )
         .timeout(_timeout);
 
+    // Logging a real vaccination / hoof cutting / hair trimming fulfils the
+    // farm-schedule reminder for that care type (see
+    // FirestoreService.syncOwnPalaiFarmReminders): the new record now
+    // carries the next due date, so the schedule record is switched off
+    // rather than left as a second, competing due date. Best-effort — if
+    // the goat has no schedule record yet there is simply nothing to
+    // switch off, and a failure here must never fail the log itself.
+    if (GoatHealthRecord.followsFarmSettings(record.type)) {
+      try {
+        await _healthRecords(farmId, goatId)
+            .doc(GoatHealthRecord.farmScheduleId(record.type))
+            .update({'nextDueDate': null}).timeout(_timeout);
+      } catch (_) {
+        // not-found (no schedule record) or transient — safe to ignore.
+      }
+    }
+
     return ref.id;
   }
 

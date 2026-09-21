@@ -232,6 +232,20 @@ class _AddHealthRecordScreenState extends State<AddHealthRecordScreen>
         ),
       );
 
+      // GoatService.addHealthRecord just switched off this goat's
+      // farm-schedule reminder for this care type (the new record carries
+      // the next due date now) — cancel that schedule's alarms too, so the
+      // goat doesn't get a second, stale notification for the same care.
+      if (GoatHealthRecord.followsFarmSettings(widget.type)) {
+        unawaited(
+          HealthReminderScheduler.instance.cancelForTradingRecord(
+            goatId: widget.goatId,
+            recordType: widget.type.name,
+            recordId: GoatHealthRecord.farmScheduleId(widget.type),
+          ),
+        );
+      }
+
       unawaited(
         FirestoreService.instance.addNotification(
           farmId: widget.farmId,

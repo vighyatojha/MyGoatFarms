@@ -1,8 +1,11 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../../app_theme.dart';
 import '../../models/health_reminder_settings_model.dart';
 import '../../services/firestore_service.dart';
+import '../../services/health_reminder_scheduler.dart';
 import '../../widgets/reminder_date_selector.dart';
 
 /// Dedicated Health Reminder Settings editor — Hoof Cutting reminder
@@ -84,6 +87,21 @@ class _HealthReminderSettingsScreenState
       await FirestoreService.instance.updateHealthReminderSettings(
         widget.farmId,
         settings,
+      );
+
+      // Apply the new values to every Own Palai goat right away (its
+      // profile, Notifications and the Pending / Upcoming lists all read
+      // from the goat's own schedule records). Deliberately not awaited:
+      // the settings are already saved, and a slow or failed sync must not
+      // hold up closing this screen — the next app start / profile open
+      // re-runs it anyway. `force` bypasses the sync cooldown, and passing
+      // the saved values avoids re-reading them.
+      unawaited(
+        HealthReminderScheduler.instance.syncOwnPalaiFarmReminders(
+          widget.farmId,
+          force: true,
+          settings: settings,
+        ),
       );
 
       if (!mounted) return;
