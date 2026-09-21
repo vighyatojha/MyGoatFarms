@@ -254,6 +254,144 @@ class SalesService {
   }
 
   // -----------------------------------------------------------------------
+  // PAYMENT TAKEN WHEN A BOOKING / WAIT FOR DELIVERY IS COMPLETED
+  // -----------------------------------------------------------------------
+  //
+  // At completion the final amount is known, so the person says how much
+  // the customer pays right now and how:
+  //
+  //  * whole amount received -> Paid, nothing on credit
+  //  * part / none received  -> Sell on Credit must be on; the unpaid part
+  //    stays as the customer's outstanding balance (Finance > Customers on
+  //    Credit) and is collected later with [receiveBalancePayment].
+  //
+  // The money received now is stored exactly like a later balance payment
+  // (an entry in the sale's `payments` list plus a Sold Goat Revenue entry
+  // in Finance), so the receipt, the balance and Finance all agree.
+
+  /// Checks the payment given at completion and returns the amount that is
+  /// actually being received now (0 when nothing more is owed).
+  ///
+  /// Throws a [StateError] with a message fit to show to the person.
+  double _checkCompletionPayment({
+    required double finalAmount,
+    required double amountReceivedNow,
+    required bool onCredit,
+  }) {
+    // Nothing left to pay (the advance / booking amount covered it all).
+    if (finalAmount <= 0) return 0.0;
+
+    final received = SaleDraft.round2(amountReceivedNow);
+
+    if (received < 0) {
+      throw StateError('The amount received cannot be negative.');
+    }
+
+    if (received > finalAmount) {
+      throw StateError(
+        'That is more than the final amount due '
+            '(₹${finalAmount.toStringAsFixed(2)}).',
+      );
+    }
+
+    if (!onCredit && received < finalAmount) {
+      throw StateError(
+        'The full ₹${finalAmount.toStringAsFixed(2)} must be received, '
+            'or turn on Sell on Credit.',
+      );
+    }
+
+    return received;
+  }
+
+  /// Sale-doc fields for the payment taken at completion.
+  Map<String, dynamic> _completionPaymentFields({
+    required List existingPayments,
+    required double received,
+    required String method,
+    required DateTime when,
+    required bool onCredit,
+    required double finalAmount,
+    required double paidBefore,
+  }) {
+    final payments = [...existingPayments];
+
+    if (received > 0) {
+      payments.add(
+        SalePayment(
+          amount: received,
+          method: method,
+          date: when,
+          note: '',
+        ).toMap(),
+      );
+    }
+
+    return {
+      'payments': payments,
+      'onCredit': onCredit,
+      'paymentStatus': _paymentStatusFor(
+        balanceDue: finalAmount - received,
+        paid: paidBefore + received,
+      ),
+    };
+  }
+
+  /// Writes the Sold Goat Revenue entry for the money received at
+  /// completion, inside the same transaction. Only the part that covers
+  /// goat sale + holding charges is revenue (see Sale.revenueFromPaid).
+  void _writeCompletionRevenue({
+    required Transaction transaction,
+    required String farmId,
+    required String saleId,
+    required String customerName,
+    required double received,
+    required double paidBefore,
+    required double revenueTotal,
+    required int existingPaymentCount,
+    required String method,
+    required DateTime when,
+  }) {
+    if (received <= 0) return;
+
+    final delta = SaleDraft.round2(
+      Sale.revenueFromPaid(
+        paid: paidBefore + received,
+        revenueTotal: revenueTotal,
+      ) -
+          Sale.revenueFromPaid(
+            paid: paidBefore,
+            revenueTotal: revenueTotal,
+          ),
+    );
+
+    if (delta <= 0) return;
+
+    transaction.set(
+      _transactions(farmId).doc(
+        _saleRevenueDocId(saleId, 'pay${existingPaymentCount + 1}'),
+      ),
+      {
+        ..._saleRevenueData(
+          saleId: saleId,
+          amount: delta,
+          date: when,
+          paymentMethod: method,
+          customerName: customerName,
+          note: 'Sold Goat Revenue — received at delivery, Sale $saleId',
+        ),
+        'createdAt': FieldValue.serverTimestamp(),
+      },
+    );
+  }
+
+  String _paymentMethodOrCash(String? method) {
+    final trimmed = (method ?? '').trim();
+
+    return trimmed.isEmpty ? FinancePaymentMethods.cash : trimmed;
+  }
+
+  // -----------------------------------------------------------------------
   // BRANCH A — DELIVER NOW (Task 3.1)
   // -----------------------------------------------------------------------
 
@@ -1058,7 +1196,13 @@ class SalesService {
     required String farmId,
     required String saleId,
     required DateTime deliveryDate,
+    double amountReceivedNow = 0,
+    String? paymentMethod,
+    bool onCredit = false,
   }) async {
+    final method = _paymentMethodOrCash(paymentMethod);
+    final now = DateTime.now();
+
     final deliveryDay = DateTime(
       deliveryDate.year,
       deliveryDate.month,
@@ -1150,6 +1294,15 @@ class SalesService {
       customerName = sale.customerName;
       initialMethod = _methodOrOther(sale.paymentMethod);
 
+      // The money received right now, checked against the final amount.
+      final received = _checkCompletionPayment(
+        finalAmount: finalAmount,
+        amountReceivedNow: amountReceivedNow,
+        onCredit: onCredit,
+      );
+      final existingPayments =
+          (saleSnap.data()?['payments'] as List?) ?? const [];
+
       // ---------------------------------------------------------------
       // 3. Update the sale doc.
       // ---------------------------------------------------------------
@@ -1161,12 +1314,30 @@ class SalesService {
         'actualHoldingDays': actualHoldingDays,
         'totalHoldingCharges': actualHoldingCharges,
         'finalAmountAfterHolding': finalAmount,
-        'paymentStatus': _paymentStatusFor(
-          balanceDue: finalAmount,
-          paid: bookingAmount,
+        ..._completionPaymentFields(
+          existingPayments: existingPayments,
+          received: received,
+          method: method,
+          when: now,
+          onCredit: finalAmount > 0 && onCredit,
+          finalAmount: finalAmount,
+          paidBefore: bookingAmount,
         ),
         'deliveryCompletedAt': FieldValue.serverTimestamp(),
       });
+
+      _writeCompletionRevenue(
+        transaction: transaction,
+        farmId: farmId,
+        saleId: saleId,
+        customerName: sale.customerName,
+        received: received,
+        paidBefore: bookingAmount,
+        revenueTotal: sale.totalSaleAmount + actualHoldingChargesValue,
+        existingPaymentCount: existingPayments.length,
+        method: method,
+        when: now,
+      );
 
       // ---------------------------------------------------------------
       // 4. Flip every still-Booked goat in this sale to Sold — it has
@@ -1262,10 +1433,16 @@ class SalesService {
     required String farmId,
     required String saleId,
     required double pickupWeight,
+    double amountReceivedNow = 0,
+    String? paymentMethod,
+    bool onCredit = false,
   }) async {
     if (pickupWeight <= 0) {
       throw StateError('Pickup weight must be greater than zero.');
     }
+
+    final method = _paymentMethodOrCash(paymentMethod);
+    final now = DateTime.now();
 
     // Not `late final`: Firestore may re-run the transaction closure on
     // contention, which would assign these more than once.
@@ -1316,9 +1493,19 @@ class SalesService {
       final bookingPricePerKg = sale.bookingPricePerKg ?? 0;
       final bookingAdvanceAmount = sale.bookingAdvanceAmount ?? 0;
 
-      final rawFinalPrice =
-          pickupWeight * bookingPricePerKg - bookingAdvanceAmount;
+      final rawFinalPrice = SaleDraft.round2(
+        pickupWeight * bookingPricePerKg - bookingAdvanceAmount,
+      );
       final finalPrice = rawFinalPrice < 0 ? 0.0 : rawFinalPrice;
+
+      // The money received right now, checked against the final amount.
+      final received = _checkCompletionPayment(
+        finalAmount: finalPrice,
+        amountReceivedNow: amountReceivedNow,
+        onCredit: onCredit,
+      );
+      final existingPayments =
+          (saleSnap.data()?['payments'] as List?) ?? const [];
 
       // Captured for the Finance revenue write after this transaction
       // commits: the gross sale value (pickup weight × booking rate, not
@@ -1339,12 +1526,30 @@ class SalesService {
         'status': Sale.statusPickupCompleted,
         'pickupWeight': pickupWeight,
         'finalPriceAfterPickup': finalPrice,
-        'paymentStatus': _paymentStatusFor(
-          balanceDue: finalPrice,
-          paid: bookingAdvanceAmount,
+        ..._completionPaymentFields(
+          existingPayments: existingPayments,
+          received: received,
+          method: method,
+          when: now,
+          onCredit: finalPrice > 0 && onCredit,
+          finalAmount: finalPrice,
+          paidBefore: bookingAdvanceAmount,
         ),
         'deliveryCompletedAt': FieldValue.serverTimestamp(),
       });
+
+      _writeCompletionRevenue(
+        transaction: transaction,
+        farmId: farmId,
+        saleId: saleId,
+        customerName: sale.customerName,
+        received: received,
+        paidBefore: bookingAdvanceAmount,
+        revenueTotal: pickupWeight * bookingPricePerKg,
+        existingPaymentCount: existingPayments.length,
+        method: method,
+        when: now,
+      );
 
       // ---------------------------------------------------------------
       // 4. Flip every still-Wait-on-Delivery goat in this sale to

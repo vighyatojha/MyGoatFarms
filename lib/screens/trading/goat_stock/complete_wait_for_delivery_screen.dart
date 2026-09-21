@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
 
 import '../../../app_theme.dart';
+import '../../../models/expense_categories.dart';
 import '../../../models/goat_model.dart';
 import '../../../models/sale_model.dart';
 import '../../../services/firestore_service.dart';
@@ -19,8 +20,25 @@ import '../purchase_goats/purchase_wizard_widgets.dart';
 /// booking time ([Sale.bookingPricePerKg]); only the weight is taken
 /// fresh, at pickup:
 ///
-///   Final Price = Pickup Weight x Booking Price/Kg
-///                 + Transportation Charge - Advance Paid
+///   Final Amount Due = Pickup Weight x Booking Price/Kg - Advance Paid
+///
+/// Wait for Delivery carries no transportation charge (the bill never
+/// adds one — see [Sale.billTransportCharges]), so none is added here.
+///
+/// PAYMENT & CREDIT — once the final amount is known, the person says how
+/// much the customer is paying right now and how:
+///
+///  * The whole amount received  -> the sale is Paid, nothing goes on
+///    credit.
+///  * Part or none received      -> "Sell on Credit" must be on. The
+///    unpaid part becomes the customer's outstanding balance, shown in
+///    Finance under Customers on Credit, where it is collected later.
+///
+/// The switch starts on the choice made in Step 5 (Delivery Options,
+/// [Sale.onCredit]) and can be changed here, because the amount that is
+/// actually owed is only known now. The rules are enforced again by
+/// [SalesService.completeWaitForDeliveryPickup], so the screen and the
+/// saved sale can never disagree.
 class CompleteWaitForDeliveryScreen extends StatefulWidget {
   final String farmId;
   final Goat goat;
@@ -40,11 +58,22 @@ class _CompleteWaitForDeliveryScreenState
     extends State<CompleteWaitForDeliveryScreen> {
   final GlobalKey<FormState> _formKey = GlobalKey<FormState>();
   late final TextEditingController _pickupWeightController;
+  late final TextEditingController _amountReceivedController;
 
   bool _loadingSale = true;
   bool _saving = false;
   String? _loadError;
   Sale? _sale;
+
+  /// Sell on Credit. Starts on whatever Step 5 saved on the sale.
+  bool _onCredit = false;
+
+  /// True once the person has typed in the amount field themselves. Until
+  /// then the field follows the final amount (see [_syncAutoAmount]).
+  bool _amountEdited = false;
+
+  /// How the money received now is being paid.
+  String _method = FinancePaymentMethods.cash;
 
   String _currency(num value) {
     return NumberFormat.currency(
@@ -58,12 +87,14 @@ class _CompleteWaitForDeliveryScreenState
   void initState() {
     super.initState();
     _pickupWeightController = TextEditingController();
+    _amountReceivedController = TextEditingController();
     _loadSale();
   }
 
   @override
   void dispose() {
     _pickupWeightController.dispose();
+    _amountReceivedController.dispose();
     super.dispose();
   }
 
@@ -115,6 +146,7 @@ class _CompleteWaitForDeliveryScreenState
       setState(() {
         _sale = sale;
         _loadingSale = false;
+
         // Pre-fill with the weight recorded at booking time — the
         // customer's goat may have gained or lost weight by pickup,
         // so this is editable, same as the Booking branch pre-fills
@@ -123,6 +155,12 @@ class _CompleteWaitForDeliveryScreenState
         (sale.bookingWeight ?? 0) == 0
             ? ''
             : _trimZeros(sale.bookingWeight!);
+
+        // The credit choice made in Step 5 (Delivery Options). If it was
+        // off, the full amount is expected, so the field starts filled in.
+        _onCredit = sale.onCredit;
+        _amountEdited = false;
+        _syncAutoAmount();
       });
     } catch (e) {
       if (!mounted) return;
@@ -141,6 +179,13 @@ class _CompleteWaitForDeliveryScreenState
     return value.toString();
   }
 
+  /// A money value as plain text for an input field: 14760, or 14760.50.
+  String _plain(double value) {
+    return value == value.roundToDouble()
+        ? value.toStringAsFixed(0)
+        : value.toStringAsFixed(2);
+  }
+
   // ===========================================================================
   // LIVE CALCULATION
   // ===========================================================================
@@ -148,19 +193,96 @@ class _CompleteWaitForDeliveryScreenState
   double get _pickupWeight =>
       double.tryParse(_pickupWeightController.text.trim()) ?? 0;
 
-  /// What the customer still owes at pickup: pickup weight x the
-  /// booking-time rate + the transportation charge billed to them - the
-  /// advance already paid. Same figure SalesService stores as
-  /// finalPriceAfterPickup.
-  double get _finalPrice {
+  /// Pickup weight x the booking-time rate. Never today's rate.
+  double get _goatSaleValue {
     final sale = _sale;
     if (sale == null) return 0;
 
-    final raw = _pickupWeight * (sale.bookingPricePerKg ?? 0) +
-        (sale.transportCost ?? 0) -
-        (sale.bookingAdvanceAmount ?? 0);
+    return Sale.roundMoney(_pickupWeight * (sale.bookingPricePerKg ?? 0));
+  }
 
-    return raw < 0 ? 0 : raw;
+  double get _advancePaid => _sale?.bookingAdvanceAmount ?? 0;
+
+  /// What the customer still owes at pickup: pickup weight x the
+  /// booking-time rate - the advance already paid. Same figure
+  /// SalesService stores as finalPriceAfterPickup.
+  double get _finalPrice {
+    final raw = _goatSaleValue - _advancePaid;
+
+    return raw <= 0 ? 0 : Sale.roundMoney(raw);
+  }
+
+  /// The amount typed in "Amount Received Now" (blank counts as 0).
+  double get _typedAmount {
+    final text = _amountReceivedController.text.trim();
+
+    if (text.isEmpty) return 0;
+
+    return Sale.roundMoney(double.tryParse(text) ?? 0);
+  }
+
+  /// What is being received right now. Nothing is asked for when there is
+  /// nothing left to pay (the advance already covered everything).
+  double get _receivedNow => _finalPrice > 0 ? _typedAmount : 0;
+
+  /// The part of the final amount that is still unpaid after
+  /// [_receivedNow]. If Sell on Credit is on, this is what becomes the
+  /// customer's outstanding balance.
+  double get _remaining {
+    final left = Sale.roundMoney(_finalPrice - _receivedNow);
+
+    return left <= 0 ? 0 : left;
+  }
+
+  /// More than the final amount was entered.
+  double get _extraReceived {
+    final extra = Sale.roundMoney(_receivedNow - _finalPrice);
+
+    return extra <= 0 ? 0 : extra;
+  }
+
+  /// While Sell on Credit is off, the amount field simply follows the full
+  /// final amount as the pickup weight changes — until the person types
+  /// their own figure.
+  void _syncAutoAmount() {
+    if (_onCredit || _amountEdited) return;
+
+    final text = _finalPrice > 0 ? _plain(_finalPrice) : '';
+
+    if (_amountReceivedController.text != text) {
+      _amountReceivedController.text = text;
+    }
+  }
+
+  String _buyerName(Sale sale) {
+    final name = sale.customerName.trim();
+
+    return name.isEmpty ? 'the customer' : name;
+  }
+
+  String? _validateAmount(String? value) {
+    final text = value?.trim() ?? '';
+
+    // Blank counts as 0.
+    final number = text.isEmpty ? 0.0 : double.tryParse(text);
+
+    if (number == null || number < 0) {
+      return 'Enter a valid amount';
+    }
+
+    final amount = Sale.roundMoney(number);
+
+    if (amount > _finalPrice) {
+      return 'More than the final amount due (${_currency(_finalPrice)})';
+    }
+
+    // Not on credit -> everything is paid now.
+    if (!_onCredit && amount < _finalPrice) {
+      return 'Enter the full ${_currency(_finalPrice)}, or turn on '
+          'Sell on Credit';
+    }
+
+    return null;
   }
 
   // ===========================================================================
@@ -168,10 +290,20 @@ class _CompleteWaitForDeliveryScreenState
   // ===========================================================================
 
   Future<void> _save() async {
-    if (_saving) return;
+    final sale = _sale;
+
+    if (_saving || sale == null) return;
 
     final valid = _formKey.currentState?.validate() ?? false;
     if (!valid) return;
+
+    // Worked out once, before saving, for the confirmation message. The
+    // service re-checks all of it against the saved sale.
+    final received = _receivedNow;
+    final remaining = _remaining;
+    final owesNothing = _finalPrice <= 0;
+    final onCredit = _finalPrice > 0 && _onCredit;
+    final buyer = _buyerName(sale);
 
     setState(() {
       _saving = true;
@@ -180,20 +312,31 @@ class _CompleteWaitForDeliveryScreenState
     try {
       await SalesService.instance.completeWaitForDeliveryPickup(
         farmId: widget.farmId,
-        saleId: _sale!.id,
+        saleId: sale.id,
         pickupWeight: _pickupWeight,
+        amountReceivedNow: received,
+        paymentMethod: _method,
+        onCredit: onCredit,
       );
 
       if (!mounted) return;
 
+      // Grab the messenger before leaving this screen.
+      final messenger = ScaffoldMessenger.of(context);
+
       Navigator.of(context).pop(true);
 
-      ScaffoldMessenger.of(context).showSnackBar(
+      final message = owesNothing
+          ? 'Delivery completed — the advance covered the full amount.'
+          : remaining > 0
+          ? 'Delivery completed — ${_currency(remaining)} added to '
+          '$buyer\'s outstanding balance.'
+          : 'Delivery completed — ${_currency(received)} received, '
+          'paid in full.';
+
+      messenger.showSnackBar(
         SnackBar(
-          content: Text(
-            'Delivery completed — final amount '
-                '${_currency(_finalPrice)}.',
-          ),
+          content: Text(message),
           backgroundColor: AppColors.darkGreen,
         ),
       );
@@ -204,12 +347,15 @@ class _CompleteWaitForDeliveryScreenState
         _saving = false;
       });
 
+      // A StateError carries a message written for the person (amount too
+      // high, not fully paid, already completed, ...). Anything else is a
+      // connection problem.
+      final reason =
+      e is StateError ? e.message : FirestoreService.instance.describeError(e);
+
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text(
-            'Could not complete delivery: '
-                '${FirestoreService.instance.describeError(e)}',
-          ),
+          content: Text('Could not complete delivery: $reason'),
           backgroundColor: AppColors.error,
         ),
       );
@@ -279,6 +425,7 @@ class _CompleteWaitForDeliveryScreenState
     return Form(
       key: _formKey,
       child: ListView(
+        keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
         padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
         children: [
           WizardSectionCard(
@@ -315,6 +462,7 @@ class _CompleteWaitForDeliveryScreenState
                 label: 'Pickup Weight (kg)',
                 hint: 'e.g. 38',
                 icon: Icons.monitor_weight_outlined,
+                enabled: !_saving,
                 keyboardType:
                 const TextInputType.numberWithOptions(decimal: true),
                 inputFormatters: [
@@ -322,7 +470,7 @@ class _CompleteWaitForDeliveryScreenState
                     RegExp(r'^\d*\.?\d{0,2}'),
                   ),
                 ],
-                onChanged: (_) => setState(() {}),
+                onChanged: (_) => setState(_syncAutoAmount),
                 validator: (value) {
                   final number = double.tryParse(value?.trim() ?? '');
 
@@ -338,38 +486,11 @@ class _CompleteWaitForDeliveryScreenState
 
           const SizedBox(height: 12),
 
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.all(14),
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(14),
-              border: Border.all(color: AppColors.divider),
-            ),
-            child: Column(
-              children: [
-                _summaryRow(
-                  'Pickup Weight × Booking Price/Kg',
-                  _currency(
-                    _pickupWeight * (sale.bookingPricePerKg ?? 0),
-                  ),
-                ),
-                const SizedBox(height: 8),
-                if ((sale.transportCost ?? 0) > 0) ...[
-                  _summaryRow(
-                    'Transportation',
-                    _currency(sale.transportCost!),
-                  ),
-                  const SizedBox(height: 8),
-                ],
-                _summaryRow(
-                  'Final Amount Due',
-                  _currency(_finalPrice),
-                  emphasized: true,
-                ),
-              ],
-            ),
-          ),
+          _buildPaymentCard(sale),
+
+          const SizedBox(height: 12),
+
+          _buildSummaryCard(sale),
 
           const SizedBox(height: 20),
 
@@ -409,20 +530,414 @@ class _CompleteWaitForDeliveryScreenState
     );
   }
 
+  // ---------------------------------------------------------------------------
+  // PAYMENT — amount received now, method, Sell on Credit
+  // ---------------------------------------------------------------------------
+
+  Widget _buildPaymentCard(Sale sale) {
+    final List<Widget> children;
+
+    if (_pickupWeight <= 0) {
+      children = [
+        _infoLine(
+          icon: Icons.info_outline_rounded,
+          color: AppColors.textGrey,
+          text: 'Enter the pickup weight to see the final amount due.',
+        ),
+      ];
+    } else if (_finalPrice <= 0) {
+      children = [
+        _infoLine(
+          icon: Icons.check_circle_outline_rounded,
+          color: AppColors.success,
+          text: 'The advance already covers the whole amount, so there '
+              'is nothing more to collect from ${_buyerName(sale)}.',
+        ),
+      ];
+    } else {
+      children = [
+        _creditSwitch(sale),
+        const SizedBox(height: 14),
+        wizardField(
+          controller: _amountReceivedController,
+          label: 'Amount Received Now',
+          optional: _onCredit,
+          helper: _onCredit
+              ? 'Leave blank if nothing is received now — the whole '
+              'amount stays on credit'
+              : 'The full ${_currency(_finalPrice)} must be received',
+          hint: '0.00',
+          icon: Icons.payments_outlined,
+          enabled: !_saving,
+          keyboardType:
+          const TextInputType.numberWithOptions(decimal: true),
+          inputFormatters: [
+            FilteringTextInputFormatter.allow(
+              RegExp(r'^\d*\.?\d{0,2}'),
+            ),
+          ],
+          onChanged: (_) {
+            setState(() {
+              _amountEdited = true;
+            });
+          },
+          validator: _validateAmount,
+        ),
+        if (_onCredit)
+          Align(
+            alignment: Alignment.centerRight,
+            child: TextButton(
+              onPressed: _saving
+                  ? null
+                  : () {
+                setState(() {
+                  _amountEdited = false;
+                  _amountReceivedController.text =
+                      _plain(_finalPrice);
+                });
+              },
+              child: const Text('Fill full amount'),
+            ),
+          ),
+        if (_receivedNow > 0) ...[
+          const SizedBox(height: 14),
+          _paymentMethodPicker(),
+        ],
+      ];
+    }
+
+    return WizardSectionCard(
+      title: 'Payment',
+      icon: Icons.account_balance_wallet_outlined,
+      children: children,
+    );
+  }
+
+  /// Same look as the "Sell on Credit" switch in Step 5 (Delivery Options).
+  Widget _creditSwitch(Sale sale) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+      decoration: BoxDecoration(
+        color: _onCredit
+            ? AppColors.error.withOpacity(0.06)
+            : AppColors.paleGreen,
+        borderRadius: BorderRadius.circular(13),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Sell on Credit',
+                  style: AppTheme.body(
+                    size: 12,
+                    color: AppColors.textDark,
+                    weight: FontWeight.w700,
+                  ),
+                ),
+                Text(
+                  _onCredit
+                      ? 'Whatever is not received now is added to '
+                      '${_buyerName(sale)}\'s outstanding balance.'
+                      : 'Off — the full final amount is received now.',
+                  style: AppTheme.body(
+                    size: 10,
+                    color: AppColors.textGrey,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          Switch(
+            value: _onCredit,
+            activeColor: AppColors.error,
+            onChanged: _saving
+                ? null
+                : (value) {
+              setState(() {
+                _onCredit = value;
+
+                if (value) {
+                  // Nothing is assumed paid until the person says so.
+                  if (!_amountEdited) {
+                    _amountReceivedController.text = '';
+                  }
+                } else {
+                  // Off -> the full amount is expected.
+                  _amountEdited = false;
+                  _syncAutoAmount();
+                }
+              });
+            },
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _paymentMethodPicker() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'Payment Method',
+          style: AppTheme.body(
+            size: 12,
+            color: AppColors.textGrey,
+            weight: FontWeight.w600,
+          ),
+        ),
+        const SizedBox(height: 8),
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: FinancePaymentMethods.all.map((method) {
+            final selected = _method == method;
+
+            return ChoiceChip(
+              label: Text(method),
+              selected: selected,
+              onSelected: _saving
+                  ? null
+                  : (_) {
+                setState(() {
+                  _method = method;
+                });
+              },
+              selectedColor: AppColors.primaryGreen.withOpacity(0.15),
+              labelStyle: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+                color: selected ? AppColors.darkGreen : AppColors.textDark,
+              ),
+              side: BorderSide(
+                color: selected ? AppColors.primaryGreen : AppColors.divider,
+              ),
+            );
+          }).toList(),
+        ),
+        const SizedBox(height: 4),
+        Text(
+          'How the amount above is being paid now.',
+          style: AppTheme.body(size: 10, color: AppColors.textGrey),
+        ),
+      ],
+    );
+  }
+
+  // ---------------------------------------------------------------------------
+  // PAYMENT SUMMARY — live
+  // ---------------------------------------------------------------------------
+
+  Widget _buildSummaryCard(Sale sale) {
+    final rate = sale.bookingPricePerKg ?? 0;
+    final ready = _pickupWeight > 0;
+    final due = _finalPrice;
+    final remaining = _remaining;
+    final owes = ready && due > 0;
+    final onCreditBalance = owes && _onCredit && remaining > 0;
+
+    final String? statusLabel;
+    final Color statusColor;
+
+    if (!owes) {
+      statusLabel = null;
+      statusColor = AppColors.textGrey;
+    } else if (remaining <= 0) {
+      statusLabel = 'Paid';
+      statusColor = AppColors.success;
+    } else if (_onCredit) {
+      statusLabel = 'On Credit';
+      statusColor = AppColors.warning;
+    } else {
+      statusLabel = 'Not fully paid';
+      statusColor = AppColors.error;
+    }
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: AppColors.divider),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  'Payment Summary',
+                  style: AppTheme.heading(
+                    size: 13,
+                    color: AppColors.textDark,
+                  ),
+                ),
+              ),
+              if (statusLabel != null)
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 5,
+                  ),
+                  decoration: BoxDecoration(
+                    color: statusColor.withOpacity(0.10),
+                    borderRadius: BorderRadius.circular(20),
+                  ),
+                  child: Text(
+                    statusLabel,
+                    style: TextStyle(
+                      color: statusColor,
+                      fontSize: 10,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          Divider(color: AppColors.divider, height: 1),
+          const SizedBox(height: 10),
+          _summaryRow(
+            'Goat Sale (${_trimZeros(_pickupWeight)} kg × '
+                '${_currency(rate)})',
+            _currency(_goatSaleValue),
+          ),
+          const SizedBox(height: 8),
+          _summaryRow(
+            'Advance Paid',
+            '− ${_currency(_advancePaid)}',
+          ),
+          const SizedBox(height: 8),
+          _summaryRow(
+            'Final Amount Due',
+            _currency(due),
+            emphasized: true,
+          ),
+          if (owes) ...[
+            const SizedBox(height: 8),
+            _summaryRow(
+              'Received Now',
+              _currency(_receivedNow),
+            ),
+            const SizedBox(height: 8),
+            _summaryRow(
+              onCreditBalance
+                  ? 'Outstanding (On Credit)'
+                  : 'Remaining Balance',
+              _currency(remaining),
+              emphasized: true,
+            ),
+          ],
+          if (owes && onCreditBalance) ...[
+            const SizedBox(height: 10),
+            _infoLine(
+              icon: Icons.account_balance_wallet_outlined,
+              color: AppColors.warning,
+              text: '${_currency(remaining)} will be added to '
+                  '${_buyerName(sale)}\'s outstanding balance. It shows in '
+                  'Finance under Customers on Credit, where the payment '
+                  'can be received later.',
+            ),
+          ],
+          if (owes && _onCredit && remaining <= 0) ...[
+            const SizedBox(height: 10),
+            _infoLine(
+              icon: Icons.info_outline_rounded,
+              color: AppColors.textGrey,
+              text: 'The full amount is being received, so nothing is '
+                  'left on credit.',
+            ),
+          ],
+          if (owes && !_onCredit && remaining > 0) ...[
+            const SizedBox(height: 10),
+            _infoLine(
+              icon: Icons.warning_amber_rounded,
+              color: AppColors.warning,
+              text: 'The final amount is not fully received. Enter the '
+                  'full amount, or turn on Sell on Credit to keep '
+                  '${_currency(remaining)} as outstanding.',
+            ),
+          ],
+          if (owes && _extraReceived > 0) ...[
+            const SizedBox(height: 10),
+            _infoLine(
+              icon: Icons.warning_amber_rounded,
+              color: AppColors.warning,
+              text: 'You entered ${_currency(_extraReceived)} more than '
+                  'the final amount. Check the amount received before '
+                  'saving.',
+            ),
+          ],
+          if (owes && !_onCredit && remaining <= 0 && _extraReceived <= 0) ...[
+            const SizedBox(height: 10),
+            _infoLine(
+              icon: Icons.verified_rounded,
+              color: AppColors.success,
+              text: 'Paid in full — this sale will be marked Paid and '
+                  'nothing goes on credit.',
+            ),
+          ],
+          const SizedBox(height: 10),
+          _infoLine(
+            icon: Icons.lock_clock_outlined,
+            color: AppColors.textGrey,
+            text: 'Uses the rate fixed at booking time (${_currency(rate)} '
+                '/ kg), not today\'s rate.',
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _infoLine({
+    required IconData icon,
+    required Color color,
+    required String text,
+  }) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.only(top: 1),
+          child: Icon(icon, size: 14, color: color),
+        ),
+        const SizedBox(width: 6),
+        Expanded(
+          child: Text(
+            text,
+            style: AppTheme.body(size: 10.5, color: color),
+          ),
+        ),
+      ],
+    );
+  }
+
   Widget _summaryRow(
       String label,
       String value, {
         bool emphasized = false,
       }) {
     return Row(
-      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(
-          label,
-          style: AppTheme.body(size: 11, color: AppColors.textGrey),
+        // Expanded label so a long label wraps instead of overflowing.
+        Expanded(
+          child: Text(
+            label,
+            style: emphasized
+                ? AppTheme.heading(size: 12, color: AppColors.textDark)
+                : AppTheme.body(size: 11, color: AppColors.textGrey),
+          ),
         ),
+        const SizedBox(width: 12),
         Text(
           value,
+          textAlign: TextAlign.right,
           style: emphasized
               ? AppTheme.heading(size: 15, color: AppColors.textDark)
               : AppTheme.body(
