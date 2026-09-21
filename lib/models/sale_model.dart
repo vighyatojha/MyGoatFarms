@@ -90,10 +90,30 @@ class Sale {
 
   final double sellingWeight;
 
-  /// Auto-calculated: sellingPricePerKg * sellingWeight, summed across
-  /// every goat in [goatIds]. Never manually overridden, same rule as
-  /// the Purchase wizard's Purchase Amount.
+  /// Per-KG sales: sellingPricePerKg * sellingWeight, summed across
+  /// every goat in [goatIds]. Fixed-price sales: [fixedSalePrice].
+  /// Never manually overridden, same rule as the Purchase wizard's
+  /// Purchase Amount.
   final double totalSaleAmount;
+
+  /// How this sale was priced — one of [pricingModeValues].
+  ///
+  /// - [pricingModePerKg]: total = weight x [sellingPricePerKg].
+  /// - [pricingModeFixed]: one agreed price for the whole lot
+  ///   ([fixedSalePrice]) that does NOT change with the weight.
+  ///
+  /// Records saved before fixed pricing existed have no such field and
+  /// are read back as [pricingModePerKg], which is what they were.
+  final String pricingMode;
+
+  /// The agreed lump-sum price for every goat in this sale. Only set for
+  /// [pricingModeFixed]; null for per-KG sales.
+  ///
+  /// For a fixed-price sale [sellingPricePerKg] (and [bookingPricePerKg])
+  /// hold the equivalent rate (fixed price / weight) for reference only —
+  /// nothing may multiply that rate by a weight to get money. Use
+  /// [goatValueAtWeight] instead.
+  final double? fixedSalePrice;
 
   final String deliveryType;
 
@@ -233,6 +253,8 @@ class Sale {
     required this.totalSaleAmount,
     required this.deliveryType,
     required this.status,
+    this.pricingMode = pricingModePerKg,
+    this.fixedSalePrice,
     this.transportCost,
     this.amountReceived,
     this.paymentStatus,
@@ -275,6 +297,14 @@ class Sale {
     deliveryTypeBooking,
     deliveryTypeWaitForDelivery,
     deliveryTypePalai,
+  ];
+
+  static const String pricingModePerKg = 'per_kg';
+  static const String pricingModeFixed = 'fixed';
+
+  static const List<String> pricingModeValues = [
+    pricingModePerKg,
+    pricingModeFixed,
   ];
 
   static const String paymentStatusPaid = 'Paid';
@@ -377,8 +407,25 @@ class Sale {
   /// the same figure SalesService records as revenue at pickup. Note that
   /// [totalSaleAmount] itself keeps the booking-weight value.
   double get billGoatSale => hasPickupSettlement
-      ? _round2(pickupWeight! * (bookingPricePerKg ?? sellingPricePerKg))
+      ? goatValueAtWeight(pickupWeight!)
       : _round2(totalSaleAmount);
+
+  /// True when the goats were sold for one agreed price instead of a
+  /// price per KG.
+  bool get isFixedPrice => pricingMode == pricingModeFixed;
+
+  /// What the goats are worth if weighed in at [weight] — used when a
+  /// Wait for Delivery goat is picked up.
+  ///
+  /// Per-KG: [weight] x the booking-time rate (never today's rate).
+  /// Fixed price: the agreed price, whatever the weight turns out to be.
+  double goatValueAtWeight(double weight) {
+    if (isFixedPrice) {
+      return _round2(fixedSalePrice ?? totalSaleAmount);
+    }
+
+    return _round2(weight * (bookingPricePerKg ?? sellingPricePerKg));
+  }
 
   /// Holding charges on the bill. Booking sales only; 0 otherwise.
   double get billHoldingCharges =>
@@ -615,6 +662,12 @@ class Sale {
       status:
       (data['status'] ?? '').toString(),
 
+      // Missing on records saved before fixed pricing -> per KG.
+      pricingMode: data['pricingMode'] == pricingModeFixed
+          ? pricingModeFixed
+          : pricingModePerKg,
+      fixedSalePrice: nullableNumFrom('fixedSalePrice'),
+
       transportCost: nullableNumFrom('transportCost'),
       amountReceived: nullableNumFrom('amountReceived'),
       paymentStatus: data['paymentStatus'] as String?,
@@ -670,6 +723,7 @@ class Sale {
       'sellingPricePerKg': sellingPricePerKg,
       'sellingWeight': sellingWeight,
       'totalSaleAmount': totalSaleAmount,
+      'pricingMode': pricingMode,
       'deliveryType': deliveryType,
       'status': status,
     };
@@ -684,6 +738,8 @@ class Sale {
 
       map[key] = value;
     }
+
+    putIfNotNull('fixedSalePrice', fixedSalePrice);
 
     putIfNotNull('transportCost', transportCost);
     putIfNotNull('amountReceived', amountReceived);

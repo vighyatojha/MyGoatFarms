@@ -161,12 +161,43 @@ class SaleDraft {
   // STEP 4 — SALE DETAILS  (Task 2.4)
   // ---------------------------------------------------------------------------
 
+  /// One of Sale.pricingModeValues. Per KG until the person flips the
+  /// slider on Step 4.
+  String pricingMode = Sale.pricingModePerKg;
+
+  bool get isFixedPrice => pricingMode == Sale.pricingModeFixed;
+
+  /// Price per KG, used when [pricingMode] is per KG.
+  ///
+  /// Kept as typed even while the slider is on Fixed Price, so flipping
+  /// back and forth never throws away what was entered. Read money and
+  /// rate figures through [totalSaleAmount] / [effectivePricePerKg],
+  /// not this field, unless the mode is known to be per KG.
   double sellingPricePerKg = 0;
 
-  /// Derived: never manually overridden, same rule as the Purchase
-  /// wizard's Purchase Amount.
-  double get totalSaleAmount =>
-      round2(totalSellingWeight * sellingPricePerKg);
+  /// The one agreed price for the whole lot, used when [pricingMode] is
+  /// Fixed Price. Same keep-what-was-typed rule as [sellingPricePerKg].
+  double fixedSalePrice = 0;
+
+  /// Derived, never manually overridden (same rule as the Purchase
+  /// wizard's Purchase Amount):
+  ///  - per KG: total selling weight x price per KG
+  ///  - fixed:  the agreed price, whatever the weight is
+  double get totalSaleAmount => isFixedPrice
+      ? round2(fixedSalePrice)
+      : round2(totalSellingWeight * sellingPricePerKg);
+
+  /// The per-KG rate that goes with the chosen mode. For Fixed Price it
+  /// is the fixed price divided by the total selling weight — a
+  /// reference figure only (it is saved so anything that shows a rate
+  /// still has one); the money always comes from [totalSaleAmount].
+  double get effectivePricePerKg {
+    if (!isFixedPrice) return sellingPricePerKg;
+
+    final weight = totalSellingWeight;
+
+    return weight > 0 ? round2(fixedSalePrice / weight) : 0.0;
+  }
 
   // ---------------------------------------------------------------------------
   // STEP 5 — DELIVERY OPTIONS  (Section 3)
@@ -266,7 +297,11 @@ class SaleDraft {
   /// market rate on pickup day. The eventual "Complete Delivery" action
   /// (out of scope this phase) must use this same value, not whatever
   /// the market rate is on that day.
-  double get bookingPricePerKg => sellingPricePerKg;
+  ///
+  /// For a Fixed Price sale this is only the equivalent rate: pickup
+  /// does not re-price at all, the agreed price stands (see
+  /// Sale.goatValueAtWeight).
+  double get bookingPricePerKg => effectivePricePerKg;
 
   /// Weight at booking time, same total Step 3 already collected —
   /// re-weighing happens later, at pickup, as part of Complete Delivery.

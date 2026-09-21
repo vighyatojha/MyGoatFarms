@@ -5,14 +5,22 @@ import 'package:intl/intl.dart';
 import '../../../app_theme.dart';
 import '../../../goat_icons.dart';
 import '../../../models/sale_draft.dart';
+import '../../../models/sale_model.dart';
 import '../purchase_goats/purchase_wizard_widgets.dart';
 
 /// Step 4 — Sale Details.
 ///
-/// Selling Price/KG (editable) x Total Selling Weight (derived from
-/// Step 3) = Total Sale Amount, auto-calculated live and summed across
-/// every selected goat — Task 2.4. Same "derived field, never manually
-/// overridden" rule as the Purchase wizard's Purchase Amount.
+/// The goats can be priced two ways, chosen with the slider at the top of
+/// the card:
+///
+///  * **By KG** — Selling Price/KG (editable) x Total Selling Weight
+///    (derived from Step 3) = Total Sale Amount.
+///  * **Fixed Price** — one agreed price for the whole lot. It does not
+///    change with the weight.
+///
+/// Either way the Total Sale Amount is auto-calculated live and never
+/// manually overridden — Task 2.4. Same "derived field" rule as the
+/// Purchase wizard's Purchase Amount.
 class Step4SaleDetails extends StatefulWidget {
   final GlobalKey<FormState> formKey;
   final SaleDraft draft;
@@ -29,6 +37,7 @@ class Step4SaleDetails extends StatefulWidget {
 
 class _Step4SaleDetailsState extends State<Step4SaleDetails> {
   late final TextEditingController _priceController;
+  late final TextEditingController _fixedPriceController;
 
   String _currency(num value) {
     return NumberFormat.currency(
@@ -45,16 +54,26 @@ class _Step4SaleDetailsState extends State<Step4SaleDetails> {
   void initState() {
     super.initState();
 
+    // Both fields are pre-filled from the draft, so going Back from
+    // Step 5 and returning here shows exactly what was typed — in the
+    // mode that was chosen.
     _priceController = TextEditingController(
       text: widget.draft.sellingPricePerKg == 0
           ? ''
           : _priceText(widget.draft.sellingPricePerKg),
+    );
+
+    _fixedPriceController = TextEditingController(
+      text: widget.draft.fixedSalePrice == 0
+          ? ''
+          : _priceText(widget.draft.fixedSalePrice),
     );
   }
 
   @override
   void dispose() {
     _priceController.dispose();
+    _fixedPriceController.dispose();
     super.dispose();
   }
 
@@ -62,7 +81,23 @@ class _Step4SaleDetailsState extends State<Step4SaleDetails> {
     widget.draft.sellingPricePerKg =
         double.tryParse(_priceController.text.trim()) ?? 0;
 
+    widget.draft.fixedSalePrice =
+        double.tryParse(_fixedPriceController.text.trim()) ?? 0;
+
     setState(() {});
+  }
+
+  void _setFixedPrice(bool fixed) {
+    final mode = fixed ? Sale.pricingModeFixed : Sale.pricingModePerKg;
+
+    if (widget.draft.pricingMode == mode) return;
+
+    // The field that is about to disappear may hold the keyboard.
+    FocusScope.of(context).unfocus();
+
+    setState(() {
+      widget.draft.pricingMode = mode;
+    });
   }
 
   @override
@@ -91,31 +126,23 @@ class _Step4SaleDetailsState extends State<Step4SaleDetails> {
                 label: 'Total Selling Weight',
                 value: '${SaleDraft.formatWeight(draft.totalSellingWeight)} KG',
               ),
+              const SizedBox(height: 16),
+
+              // How is this sale priced?
+              _PricingModeSlider(
+                isFixed: draft.isFixedPrice,
+                onChanged: _setFixedPrice,
+              ),
+
               const SizedBox(height: 14),
-              wizardField(
-                controller: _priceController,
-                label: 'Selling Price per KG',
-                hint: '0.00',
-                icon: Icons.currency_rupee_rounded,
-                suffix: '/ KG',
-                keyboardType: const TextInputType.numberWithOptions(
-                  decimal: true,
-                ),
-                inputFormatters: [
-                  FilteringTextInputFormatter.allow(
-                    RegExp(r'^\d*\.?\d{0,2}'),
-                  ),
-                ],
-                onChanged: (_) => _recalculate(),
-                validator: (value) {
-                  final number = double.tryParse(value?.trim() ?? '');
 
-                  if (number == null || number <= 0) {
-                    return 'Enter a valid price';
-                  }
-
-                  return null;
-                },
+              AnimatedSize(
+                duration: const Duration(milliseconds: 200),
+                curve: Curves.easeOut,
+                alignment: Alignment.topCenter,
+                child: draft.isFixedPrice
+                    ? _buildFixedPriceField(draft)
+                    : _buildPerKgField(),
               ),
             ],
           ),
@@ -128,15 +155,88 @@ class _Step4SaleDetailsState extends State<Step4SaleDetails> {
     );
   }
 
+  // Only the field for the active mode is in the tree, so the wizard's
+  // Next-button validation only ever checks the price that is in use.
+
+  Widget _buildPerKgField() {
+    // The key gives each mode its own field state, so an error shown on
+    // one price never carries over to the other.
+    return KeyedSubtree(
+      key: const ValueKey('price-per-kg'),
+      child: wizardField(
+        controller: _priceController,
+        label: 'Selling Price per KG',
+        hint: '0.00',
+        icon: Icons.currency_rupee_rounded,
+        suffix: '/ KG',
+        keyboardType: const TextInputType.numberWithOptions(
+          decimal: true,
+        ),
+        inputFormatters: _priceFormatters,
+        onChanged: (_) => _recalculate(),
+        validator: _validatePrice,
+      ),
+    );
+  }
+
+  Widget _buildFixedPriceField(SaleDraft draft) {
+    return KeyedSubtree(
+      key: const ValueKey('fixed-price'),
+      child: wizardField(
+        controller: _fixedPriceController,
+        label: 'Fixed Selling Price',
+        hint: '0.00',
+        icon: Icons.currency_rupee_rounded,
+        suffix: 'total',
+        helper: draft.isMultiGoat
+            ? 'One agreed price for all ${draft.selectedGoats.length} goats'
+            : 'One agreed price for this goat',
+        keyboardType: const TextInputType.numberWithOptions(
+          decimal: true,
+        ),
+        inputFormatters: _priceFormatters,
+        onChanged: (_) => _recalculate(),
+        validator: _validatePrice,
+      ),
+    );
+  }
+
+  /// Up to 2 decimals, digits only — same rule for both price fields.
+  static final List<TextInputFormatter> _priceFormatters = [
+    FilteringTextInputFormatter.allow(RegExp(r'^\d*\.?\d{0,2}')),
+  ];
+
+  static String? _validatePrice(String? value) {
+    final number = double.tryParse(value?.trim() ?? '');
+
+    if (number == null || number <= 0) {
+      return 'Enter a valid price';
+    }
+
+    return null;
+  }
+
   Widget _buildTotalCard(SaleDraft draft) {
     final amount = draft.totalSaleAmount;
 
-    // Live, human-checkable working: "52.8 kg × ₹520 = ₹27,456.00".
-    // Falls back to the generic hint until a price has been typed.
-    final formula = draft.sellingPricePerKg > 0
-        ? '${SaleDraft.formatWeight(draft.totalSellingWeight)} kg × '
-        '${_currency(draft.sellingPricePerKg)} / kg'
-        : 'Selling Weight × Price per KG';
+    // Live, human-checkable working.
+    //   By KG:       "52.8 kg × ₹520.00 / kg"
+    //   Fixed price: "Fixed price · 52.8 kg ≈ ₹519.55 / kg"
+    // Falls back to a generic hint until a price has been typed.
+    final String formula;
+
+    if (draft.isFixedPrice) {
+      formula = draft.fixedSalePrice > 0
+          ? 'Fixed price · '
+          '${SaleDraft.formatWeight(draft.totalSellingWeight)} kg ≈ '
+          '${_currency(draft.effectivePricePerKg)} / kg'
+          : 'Agreed fixed price for the sale';
+    } else {
+      formula = draft.sellingPricePerKg > 0
+          ? '${SaleDraft.formatWeight(draft.totalSellingWeight)} kg × '
+          '${_currency(draft.sellingPricePerKg)} / kg'
+          : 'Selling Weight × Price per KG';
+    }
 
     return Container(
       width: double.infinity,
@@ -158,8 +258,10 @@ class _Step4SaleDetailsState extends State<Step4SaleDetails> {
               color: AppColors.primaryGreen.withOpacity(0.12),
               borderRadius: BorderRadius.circular(13),
             ),
-            child: const Icon(
-              Icons.calculate_outlined,
+            child: Icon(
+              draft.isFixedPrice
+                  ? Icons.sell_outlined
+                  : Icons.calculate_outlined,
               color: AppColors.darkGreen,
               size: 22,
             ),
@@ -208,6 +310,155 @@ class _Step4SaleDetailsState extends State<Step4SaleDetails> {
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+// ============================================================================
+// PRICING MODE SLIDER
+// ============================================================================
+
+/// Two-option sliding switch: "By KG" | "Fixed Price".
+///
+/// The green thumb slides between the halves. It can be changed by
+/// tapping either side or by dragging across the track.
+class _PricingModeSlider extends StatelessWidget {
+  final bool isFixed;
+  final ValueChanged<bool> onChanged;
+
+  const _PricingModeSlider({
+    required this.isFixed,
+    required this.onChanged,
+  });
+
+  static const double _height = 46;
+  static const double _pad = 4;
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final width = constraints.maxWidth;
+
+        return GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          // Dragging the thumb past the middle of the track flips it.
+          onHorizontalDragUpdate: (details) {
+            final fixed = details.localPosition.dx > width / 2;
+
+            if (fixed != isFixed) onChanged(fixed);
+          },
+          child: Container(
+            height: _height,
+            padding: const EdgeInsets.all(_pad),
+            decoration: BoxDecoration(
+              color: AppColors.paleGreen,
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(
+                color: AppColors.primaryGreen.withOpacity(0.18),
+              ),
+            ),
+            child: Stack(
+              children: [
+                // The sliding thumb.
+                AnimatedAlign(
+                  duration: const Duration(milliseconds: 220),
+                  curve: Curves.easeOutCubic,
+                  alignment: isFixed
+                      ? Alignment.centerRight
+                      : Alignment.centerLeft,
+                  child: FractionallySizedBox(
+                    widthFactor: 0.5,
+                    heightFactor: 1,
+                    child: DecoratedBox(
+                      decoration: BoxDecoration(
+                        color: AppColors.primaryGreen,
+                        borderRadius: BorderRadius.circular(11),
+                        boxShadow: [
+                          BoxShadow(
+                            color: AppColors.primaryGreen
+                                .withOpacity(0.30),
+                            blurRadius: 8,
+                            offset: const Offset(0, 2),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+
+                // The two labels, on top of the thumb.
+                Row(
+                  children: [
+                    Expanded(
+                      child: _ModeOption(
+                        label: 'By KG',
+                        icon: Icons.scale_outlined,
+                        selected: !isFixed,
+                        onTap: () => onChanged(false),
+                      ),
+                    ),
+                    Expanded(
+                      child: _ModeOption(
+                        label: 'Fixed Price',
+                        icon: Icons.currency_rupee_rounded,
+                        selected: isFixed,
+                        onTap: () => onChanged(true),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _ModeOption extends StatelessWidget {
+  final String label;
+  final IconData icon;
+  final bool selected;
+  final VoidCallback onTap;
+
+  const _ModeOption({
+    required this.label,
+    required this.icon,
+    required this.selected,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final color = selected ? Colors.white : AppColors.textGrey;
+
+    return Semantics(
+      button: true,
+      selected: selected,
+      label: label,
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: onTap,
+        child: Center(
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(icon, size: 16, color: color),
+              const SizedBox(width: 6),
+              Flexible(
+                child: Text(
+                  label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: AppTheme.heading(size: 12, color: color),
+                ),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }

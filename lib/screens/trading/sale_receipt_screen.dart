@@ -388,10 +388,17 @@ class _SaleReceiptScreenState extends State<SaleReceiptScreen> {
               'Selling Weight',
               '${sale.sellingWeight.toStringAsFixed(2)} kg',
             ),
-            _row(
-              'Selling Price / kg',
-              _currency(sale.sellingPricePerKg),
-            ),
+            if (sale.isFixedPrice)
+              _row(
+                'Selling Price',
+                '${_currency(sale.fixedSalePrice ?? sale.totalSaleAmount)} '
+                    '(fixed)',
+              )
+            else
+              _row(
+                'Selling Price / kg',
+                _currency(sale.sellingPricePerKg),
+              ),
           ],
         ),
         const SizedBox(height: 12),
@@ -583,21 +590,35 @@ class _SaleReceiptScreenState extends State<SaleReceiptScreen> {
             sale.pickupWeight!,
             suffix: ' kg',
           ),
-          _moneyRow(
-            'Booking Rate / kg',
-            sale.bookingPricePerKg ?? sale.sellingPricePerKg,
-            subtitle: 'Fixed at booking time, not today\'s rate',
-          ),
+          if (sale.isFixedPrice)
+            _moneyRow(
+              'Fixed Price',
+              sale.fixedSalePrice ?? sale.totalSaleAmount,
+              subtitle: 'Agreed at booking — not changed by the weight',
+            )
+          else
+            _moneyRow(
+              'Booking Rate / kg',
+              sale.bookingPricePerKg ?? sale.sellingPricePerKg,
+              subtitle: 'Fixed at booking time, not today\'s rate',
+            ),
         ] else ...[
           _moneyRow(
             'Selling Weight',
             sale.sellingWeight,
             suffix: ' kg',
           ),
-          _moneyRow(
-            'Selling Price / kg',
-            sale.sellingPricePerKg,
-          ),
+          if (sale.isFixedPrice)
+            _moneyRow(
+              'Fixed Price',
+              sale.fixedSalePrice ?? sale.totalSaleAmount,
+              subtitle: 'Agreed price for all goats',
+            )
+          else
+            _moneyRow(
+              'Selling Price / kg',
+              sale.sellingPricePerKg,
+            ),
         ],
         const Divider(height: 18),
         _moneyRow('Goat Sale', sale.billGoatSale),
@@ -797,10 +818,16 @@ class _SaleReceiptScreenState extends State<SaleReceiptScreen> {
             'Booking Weight',
             '${(sale.bookingWeight ?? 0).toStringAsFixed(2)} kg',
           ),
-          _row(
-            'Booking Rate',
-            '${_currency(sale.bookingPricePerKg ?? 0)} / kg',
-          ),
+          if (sale.isFixedPrice)
+            _row(
+              'Fixed Price',
+              _currency(sale.fixedSalePrice ?? sale.totalSaleAmount),
+            )
+          else
+            _row(
+              'Booking Rate',
+              '${_currency(sale.bookingPricePerKg ?? 0)} / kg',
+            ),
           if (sale.pickupWeight != null)
             _row(
               'Pickup Weight',

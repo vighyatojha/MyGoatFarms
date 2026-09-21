@@ -22,6 +22,10 @@ import '../purchase_goats/purchase_wizard_widgets.dart';
 ///
 ///   Final Amount Due = Pickup Weight x Booking Price/Kg - Advance Paid
 ///
+/// A Fixed Price sale ([Sale.isFixedPrice]) is the exception: the agreed
+/// price stands whatever the goat weighs, so the pickup weight is only
+/// recorded and Final Amount Due = Fixed Price - Advance Paid.
+///
 /// Wait for Delivery carries no transportation charge (the bill never
 /// adds one — see [Sale.billTransportCharges]), so none is added here.
 ///
@@ -193,12 +197,17 @@ class _CompleteWaitForDeliveryScreenState
   double get _pickupWeight =>
       double.tryParse(_pickupWeightController.text.trim()) ?? 0;
 
-  /// Pickup weight x the booking-time rate. Never today's rate.
+  /// Pickup weight x the booking-time rate. Never today's rate. For a
+  /// Fixed Price sale it is the agreed price instead, whatever the
+  /// pickup weight is.
+  ///
+  /// Nothing is due until a pickup weight has been entered — the weight
+  /// is required either way, so it is recorded for the goat.
   double get _goatSaleValue {
     final sale = _sale;
-    if (sale == null) return 0;
+    if (sale == null || _pickupWeight <= 0) return 0;
 
-    return Sale.roundMoney(_pickupWeight * (sale.bookingPricePerKg ?? 0));
+    return sale.goatValueAtWeight(_pickupWeight);
   }
 
   double get _advancePaid => _sale?.bookingAdvanceAmount ?? 0;
@@ -436,10 +445,16 @@ class _CompleteWaitForDeliveryScreenState
                 label: 'Customer',
                 value: sale.customerName,
               ),
-              WizardComputedRow(
-                label: 'Booking Price / Kg',
-                value: _currency(sale.bookingPricePerKg ?? 0),
-              ),
+              if (sale.isFixedPrice)
+                WizardComputedRow(
+                  label: 'Fixed Price',
+                  value: _currency(sale.fixedSalePrice ?? sale.totalSaleAmount),
+                )
+              else
+                WizardComputedRow(
+                  label: 'Booking Price / Kg',
+                  value: _currency(sale.bookingPricePerKg ?? 0),
+                ),
               WizardComputedRow(
                 label: 'Weight at Booking',
                 value: '${_trimZeros(sale.bookingWeight ?? 0)} kg',
@@ -803,7 +818,9 @@ class _CompleteWaitForDeliveryScreenState
           Divider(color: AppColors.divider, height: 1),
           const SizedBox(height: 10),
           _summaryRow(
-            'Goat Sale (${_trimZeros(_pickupWeight)} kg × '
+            sale.isFixedPrice
+                ? 'Goat Sale (fixed price)'
+                : 'Goat Sale (${_trimZeros(_pickupWeight)} kg × '
                 '${_currency(rate)})',
             _currency(_goatSaleValue),
           ),

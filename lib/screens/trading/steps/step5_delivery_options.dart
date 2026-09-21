@@ -934,7 +934,13 @@ class Step5DeliveryOptionsState extends State<Step5DeliveryOptions> {
                     const SizedBox(width: 8),
                     Expanded(
                       child: Text(
-                        'Price/kg is locked in at ${_currency(draft.bookingPricePerKg)} '
+                        draft.isFixedPrice
+                            ? 'The fixed price of '
+                            '${_currency(draft.totalSaleAmount)} is locked in '
+                            'now. When this delivery is completed later, the '
+                            'pickup weight is only recorded — the amount '
+                            'stays the same, whatever the goat weighs.'
+                            : 'Price/kg is locked in at ${_currency(draft.bookingPricePerKg)} '
                             'now. When this delivery is completed later, use '
                             'this same rate with the new pickup weight — '
                             'never the market rate on that day.',
@@ -993,16 +999,25 @@ class Step5DeliveryOptionsState extends State<Step5DeliveryOptions> {
                 'Booking Weight',
                 '${SaleDraft.formatWeight(draft.bookingWeightTotal)} kg',
               ),
+              if (draft.isFixedPrice)
+                _SummaryRow(
+                  'Fixed Price',
+                  _currency(draft.totalSaleAmount),
+                )
+              else
+                _SummaryRow(
+                  'Booking Price/Kg',
+                  _currency(draft.bookingPricePerKg),
+                ),
+              if (!draft.isFixedPrice)
+                _SummaryRow(
+                  'Goat Sale (Estimated)',
+                  _currency(draft.totalSaleAmount),
+                ),
               _SummaryRow(
-                'Booking Price/Kg',
-                _currency(draft.bookingPricePerKg),
-              ),
-              _SummaryRow(
-                'Goat Sale (Estimated)',
-                _currency(draft.totalSaleAmount),
-              ),
-              _SummaryRow(
-                'Estimated Customer Total',
+                draft.isFixedPrice
+                    ? 'Customer Total'
+                    : 'Estimated Customer Total',
                 _currency(draft.customerTotalWaitForDelivery),
               ),
               _SummaryRow(
@@ -1010,7 +1025,7 @@ class Step5DeliveryOptionsState extends State<Step5DeliveryOptions> {
                 _currency(draft.bookingAdvanceAmount),
               ),
               _SummaryRow(
-                'Estimated Remaining',
+                draft.isFixedPrice ? 'Remaining' : 'Estimated Remaining',
                 _currency(draft.remainingAdvanceBalanceWaitForDelivery),
                 emphasized: true,
               ),
@@ -1029,14 +1044,19 @@ class Step5DeliveryOptionsState extends State<Step5DeliveryOptions> {
               if (draft.onCredit)
                 _SummaryNote(
                   'On credit: the final amount is worked out at pickup '
-                      '(pickup weight × rate - advance). Whatever is unpaid '
+                      '(${draft.isFixedPrice ? 'fixed price' : 'pickup weight × rate'}'
+                      ' - advance). Whatever is unpaid '
                       'then is added to ${_buyer(draft)}\'s outstanding '
                       'balance.',
                   color: AppColors.warning,
                   icon: Icons.account_balance_wallet_outlined,
                 ),
               _SummaryNote(
-                'Estimated at today\'s weight. At pickup the goat is '
+                draft.isFixedPrice
+                    ? 'The price is fixed. At pickup the goat is weighed '
+                    'again for the record, but the final amount is always: '
+                    'fixed price − advance.'
+                    : 'Estimated at today\'s weight. At pickup the goat is '
                     'weighed again and the final amount is: pickup weight '
                     '× ${_currency(draft.bookingPricePerKg)}/kg − advance.',
                 color: AppColors.textGrey,

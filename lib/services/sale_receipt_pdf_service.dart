@@ -619,10 +619,17 @@ class SaleReceiptPdfService {
             'Selling Weight',
             '${sale.sellingWeight.toStringAsFixed(2)} kg',
           ),
-          _detailRow(
-            'Selling Price / kg',
-            _currency(sale.sellingPricePerKg),
-          ),
+          if (sale.isFixedPrice)
+            _detailRow(
+              'Selling Price',
+              '${_currency(sale.fixedSalePrice ?? sale.totalSaleAmount)} '
+                  '(fixed)',
+            )
+          else
+            _detailRow(
+              'Selling Price / kg',
+              _currency(sale.sellingPricePerKg),
+            ),
           _detailRow(
             'Delivery Type',
             _deliveryTypeLabel(sale),
@@ -647,26 +654,45 @@ class SaleReceiptPdfService {
               'Pickup Weight',
               '${sale.pickupWeight!.toStringAsFixed(2)} kg',
             ),
-            _calculationRow(
-              'Booking Rate / kg',
-              _currency(
-                sale.bookingPricePerKg ??
-                    sale.sellingPricePerKg,
+            if (sale.isFixedPrice)
+              _calculationRow(
+                'Fixed Price',
+                _currency(
+                  sale.fixedSalePrice ?? sale.totalSaleAmount,
+                ),
+                note:
+                'Agreed at booking, not changed by the weight',
+              )
+            else
+              _calculationRow(
+                'Booking Rate / kg',
+                _currency(
+                  sale.bookingPricePerKg ??
+                      sale.sellingPricePerKg,
+                ),
+                note:
+                'Fixed at booking time, not today\'s rate',
               ),
-              note:
-              'Fixed at booking time, not today\'s rate',
-            ),
           ] else ...[
             _calculationRow(
               'Selling Weight',
               '${sale.sellingWeight.toStringAsFixed(2)} kg',
             ),
-            _calculationRow(
-              'Selling Price / kg',
-              _currency(
-                sale.sellingPricePerKg,
+            if (sale.isFixedPrice)
+              _calculationRow(
+                'Fixed Price',
+                _currency(
+                  sale.fixedSalePrice ?? sale.totalSaleAmount,
+                ),
+                note: 'Agreed price for all goats',
+              )
+            else
+              _calculationRow(
+                'Selling Price / kg',
+                _currency(
+                  sale.sellingPricePerKg,
+                ),
               ),
-            ),
           ],
 
           pw.SizedBox(height: 1),
@@ -779,7 +805,14 @@ class SaleReceiptPdfService {
       );
 
       rows.add(
-        _detailRow(
+        sale.isFixedPrice
+            ? _detailRow(
+          'Fixed Price',
+          _currency(
+            sale.fixedSalePrice ?? sale.totalSaleAmount,
+          ),
+        )
+            : _detailRow(
           'Booking Price / kg',
           _currency(
             sale.bookingPricePerKg ?? 0,

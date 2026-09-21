@@ -502,7 +502,10 @@ class SalesService {
         customerName: draft.customerName.trim(),
         mobile: draft.mobile.trim(),
         address: draft.address.trim(),
-        sellingPricePerKg: draft.sellingPricePerKg,
+        sellingPricePerKg: draft.effectivePricePerKg,
+        pricingMode: draft.pricingMode,
+        fixedSalePrice:
+        draft.isFixedPrice ? draft.fixedSalePrice : null,
         sellingWeight: draft.totalSellingWeight,
         totalSaleAmount: draft.totalSaleAmount,
         deliveryType: Sale.deliveryTypeDeliverNow,
@@ -681,7 +684,10 @@ class SalesService {
         customerName: draft.customerName.trim(),
         mobile: draft.mobile.trim(),
         address: draft.address.trim(),
-        sellingPricePerKg: draft.sellingPricePerKg,
+        sellingPricePerKg: draft.effectivePricePerKg,
+        pricingMode: draft.pricingMode,
+        fixedSalePrice:
+        draft.isFixedPrice ? draft.fixedSalePrice : null,
         sellingWeight: draft.totalSellingWeight,
         totalSaleAmount: draft.totalSaleAmount,
         deliveryType: Sale.deliveryTypeBooking,
@@ -843,7 +849,10 @@ class SalesService {
         customerName: draft.customerName.trim(),
         mobile: draft.mobile.trim(),
         address: draft.address.trim(),
-        sellingPricePerKg: draft.sellingPricePerKg,
+        sellingPricePerKg: draft.effectivePricePerKg,
+        pricingMode: draft.pricingMode,
+        fixedSalePrice:
+        draft.isFixedPrice ? draft.fixedSalePrice : null,
         sellingWeight: draft.totalSellingWeight,
         totalSaleAmount: draft.totalSaleAmount,
         deliveryType: Sale.deliveryTypeWaitForDelivery,
@@ -1002,7 +1011,10 @@ class SalesService {
         customerName: draft.customerName.trim(),
         mobile: draft.mobile.trim(),
         address: draft.address.trim(),
-        sellingPricePerKg: draft.sellingPricePerKg,
+        sellingPricePerKg: draft.effectivePricePerKg,
+        pricingMode: draft.pricingMode,
+        fixedSalePrice:
+        draft.isFixedPrice ? draft.fixedSalePrice : null,
         sellingWeight: draft.totalSellingWeight,
         totalSaleAmount: draft.totalSaleAmount,
         deliveryType: Sale.deliveryTypePalai,
@@ -1422,6 +1434,13 @@ class SalesService {
   ///
   ///   Final Price = Pickup Weight x Booking Price/Kg - Advance Paid
   ///
+  /// A Fixed Price sale ([Sale.isFixedPrice]) is not re-priced by the
+  /// pickup weight at all: the pickup weight is only recorded, and
+  ///
+  ///   Final Price = Fixed Price - Advance Paid
+  ///
+  /// Both come from [Sale.goatValueAtWeight].
+  ///
   /// Wait for Delivery has no transportation charge. The stored
   /// [Sale.finalPriceAfterPickup] is what the customer still owes at
   /// pickup.
@@ -1490,11 +1509,14 @@ class SalesService {
       //    weight, never today's rate.
       // ---------------------------------------------------------------
 
-      final bookingPricePerKg = sale.bookingPricePerKg ?? 0;
       final bookingAdvanceAmount = sale.bookingAdvanceAmount ?? 0;
 
+      // Per KG: pickup weight x the booking-time rate. Fixed price: the
+      // agreed price, unchanged by the pickup weight.
+      final goatValue = sale.goatValueAtWeight(pickupWeight);
+
       final rawFinalPrice = SaleDraft.round2(
-        pickupWeight * bookingPricePerKg - bookingAdvanceAmount,
+        goatValue - bookingAdvanceAmount,
       );
       final finalPrice = rawFinalPrice < 0 ? 0.0 : rawFinalPrice;
 
@@ -1513,7 +1535,7 @@ class SalesService {
       // already received, which is the money that becomes revenue now
       // that the goat has left. The balance is recorded as it is
       // collected.
-      grossSaleValue = pickupWeight * bookingPricePerKg;
+      grossSaleValue = goatValue;
       advancePaid = bookingAdvanceAmount;
       customerName = sale.customerName;
       initialMethod = _methodOrOther(sale.paymentMethod);
@@ -1545,7 +1567,7 @@ class SalesService {
         customerName: sale.customerName,
         received: received,
         paidBefore: bookingAdvanceAmount,
-        revenueTotal: pickupWeight * bookingPricePerKg,
+        revenueTotal: goatValue,
         existingPaymentCount: existingPayments.length,
         method: method,
         when: now,
