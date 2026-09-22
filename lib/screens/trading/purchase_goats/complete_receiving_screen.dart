@@ -264,13 +264,6 @@ class _CompleteReceivingScreenState
                   decimal: true,
                 ),
                 inputFormatters: wizardDecimalFormatters(),
-                // Without this, typing a value updates the
-                // controller/text field itself (which manages its own
-                // rendering) but never calls setState, so
-                // _receivingSummary() below — which reads
-                // _arrivalWeight and the cost card (via _costing) via
-                // getters — keeps rendering whatever it saw on the
-                // last rebuild (i.e. stays stuck on "—").
                 onChanged: (_) => setState(() {}),
                 validator: (value) {
                   final parsed = double.tryParse(
@@ -292,10 +285,12 @@ class _CompleteReceivingScreenState
 
               const SizedBox(height: 12),
 
+              // Mortality clarification:
+              // explicitly tells the user that mortality means goats that died.
               _textField(
                 controller: _mortalityController,
-                label: 'Mortality',
-                hint: 'Enter mortality count',
+                label: 'Mortality (Goats Died)',
+                hint: 'Enter number of goats that died',
                 suffix: 'Goats',
                 icon: GoatIcons.paw,
                 keyboardType: TextInputType.number,
@@ -303,10 +298,6 @@ class _CompleteReceivingScreenState
                   FilteringTextInputFormatter.digitsOnly,
                   LengthLimitingTextInputFormatter(5),
                 ],
-                // Same reason as the arrival-weight field above: the
-                // Mortality row in the summary card reads _mortality
-                // via a getter, so it needs a setState to pick up the
-                // new value as the user types.
                 onChanged: (_) => setState(() {}),
                 validator: (value) {
                   final parsed = int.tryParse(
@@ -360,18 +351,21 @@ class _CompleteReceivingScreenState
                 icon: Icons.directions_car_outlined,
               ),
               const SizedBox(height: 12),
+
               _moneyField(
                 controller: _loadingController,
                 label: 'Loading Charges',
                 icon: Icons.upload_outlined,
               ),
               const SizedBox(height: 12),
+
               _moneyField(
                 controller: _unloadingController,
                 label: 'Unloading Charges',
                 icon: Icons.download_outlined,
               ),
               const SizedBox(height: 12),
+
               _moneyField(
                 controller: _otherController,
                 label: 'Other Expenses',
@@ -434,10 +428,6 @@ class _CompleteReceivingScreenState
       ),
     );
   }
-
-  // ---------------------------------------------------------------------------
-  // PURCHASE HEADER
-  // ---------------------------------------------------------------------------
 
   Widget _purchaseHeader() {
     return Container(
@@ -517,10 +507,6 @@ class _CompleteReceivingScreenState
     );
   }
 
-  // ---------------------------------------------------------------------------
-  // DATE
-  // ---------------------------------------------------------------------------
-
   Widget _dateField() {
     return InkWell(
       onTap: _saving ? null : _selectDate,
@@ -556,21 +542,11 @@ class _CompleteReceivingScreenState
     );
   }
 
-  // ---------------------------------------------------------------------------
-  // SUMMARY
-  // ---------------------------------------------------------------------------
-
   Widget _receivingSummary() {
-    // Shared live card: grand total, weight loss, goats arrived, effective
-    // cost per KG and per surviving goat.
     return PurchaseCostCard(
       costing: _costing,
     );
   }
-
-  // ---------------------------------------------------------------------------
-  // SHARED UI
-  // ---------------------------------------------------------------------------
 
   Widget _sectionTitle({
     required IconData icon,
@@ -670,9 +646,11 @@ class _CompleteReceivingScreenState
       hint: '0.00',
       icon: icon,
       prefix: '₹ ',
-      keyboardType: const TextInputType.numberWithOptions(decimal: true),
+      keyboardType:
+      const TextInputType.numberWithOptions(
+        decimal: true,
+      ),
       inputFormatters: wizardDecimalFormatters(),
-      // Live: the cost card below reads these controllers via _costing.
       onChanged: (_) => setState(() {}),
     );
   }
@@ -705,5 +683,4 @@ class _CompleteReceivingScreenState
       ],
     );
   }
-
 }

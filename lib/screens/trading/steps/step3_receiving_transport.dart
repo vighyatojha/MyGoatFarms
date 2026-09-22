@@ -51,10 +51,13 @@ class _Step3ReceivingTransportState
   late final TextEditingController _unloadingController;
   late final TextEditingController _otherController;
 
-  static DateTime _dateOnly(DateTime d) => DateTime(d.year, d.month, d.day);
+  static DateTime _dateOnly(DateTime d) =>
+      DateTime(d.year, d.month, d.day);
 
   String _moneyText(double value) =>
-      value == 0 ? '' : PurchaseCosting.formatNumber(value);
+      value == 0
+          ? ''
+          : PurchaseCosting.formatNumber(value);
 
   @override
   void initState() {
@@ -67,7 +70,8 @@ class _Step3ReceivingTransportState
     // received date up with it.
     if (_dateOnly(draft.dateReceivedAtFarm)
         .isBefore(_dateOnly(draft.purchaseDate))) {
-      draft.dateReceivedAtFarm = _dateOnly(draft.purchaseDate);
+      draft.dateReceivedAtFarm =
+          _dateOnly(draft.purchaseDate);
     }
 
     _weightAfterController = TextEditingController(
@@ -75,22 +79,29 @@ class _Step3ReceivingTransportState
     );
 
     _mortalityController = TextEditingController(
-      text: draft.mortality == 0 ? '' : draft.mortality.toString(),
+      text: draft.mortality == 0
+          ? ''
+          : draft.mortality.toString(),
     );
 
-    _remarksController = TextEditingController(text: draft.remarks);
+    _remarksController =
+        TextEditingController(text: draft.remarks);
 
-    _transportController =
-        TextEditingController(text: _moneyText(draft.transportCost));
+    _transportController = TextEditingController(
+      text: _moneyText(draft.transportCost),
+    );
 
-    _loadingController =
-        TextEditingController(text: _moneyText(draft.loadingCharges));
+    _loadingController = TextEditingController(
+      text: _moneyText(draft.loadingCharges),
+    );
 
-    _unloadingController =
-        TextEditingController(text: _moneyText(draft.unloadingCharges));
+    _unloadingController = TextEditingController(
+      text: _moneyText(draft.unloadingCharges),
+    );
 
-    _otherController =
-        TextEditingController(text: _moneyText(draft.otherExpenses));
+    _otherController = TextEditingController(
+      text: _moneyText(draft.otherExpenses),
+    );
   }
 
   @override
@@ -132,12 +143,23 @@ class _Step3ReceivingTransportState
   void _recalculate() {
     final draft = widget.draft;
 
-    draft.totalWeightAfterArrival = _number(_weightAfterController);
-    draft.mortality = int.tryParse(_mortalityController.text.trim()) ?? 0;
-    draft.transportCost = _number(_transportController);
-    draft.loadingCharges = _number(_loadingController);
-    draft.unloadingCharges = _number(_unloadingController);
-    draft.otherExpenses = _number(_otherController);
+    draft.totalWeightAfterArrival =
+        _number(_weightAfterController);
+
+    draft.mortality =
+        int.tryParse(_mortalityController.text.trim()) ?? 0;
+
+    draft.transportCost =
+        _number(_transportController);
+
+    draft.loadingCharges =
+        _number(_loadingController);
+
+    draft.unloadingCharges =
+        _number(_unloadingController);
+
+    draft.otherExpenses =
+        _number(_otherController);
 
     setState(() {});
   }
@@ -150,8 +172,10 @@ class _Step3ReceivingTransportState
     return Form(
       key: widget.formKey,
       child: ListView(
-        keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
-        padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
+        keyboardDismissBehavior:
+        ScrollViewKeyboardDismissBehavior.onDrag,
+        padding:
+        const EdgeInsets.fromLTRB(16, 16, 16, 24),
         children: [
           _buildReceivingSection(draft, costing),
 
@@ -164,8 +188,10 @@ class _Step3ReceivingTransportState
           WizardResultCard(
             icon: Icons.receipt_long_outlined,
             title: 'Total Transportation Expenses',
-            formula: 'Transport + loading + unloading + other',
-            value: wizardCurrency(costing.totalExpenses),
+            formula:
+            'Transport + loading + unloading + other',
+            value:
+            wizardCurrency(costing.totalExpenses),
           ),
 
           const SizedBox(height: 14),
@@ -208,7 +234,8 @@ class _Step3ReceivingTransportState
           inputFormatters: wizardDecimalFormatters(),
           onChanged: (_) => _recalculate(),
           validator: (value) {
-            final number = double.tryParse(value?.trim() ?? '');
+            final number =
+            double.tryParse(value?.trim() ?? '');
 
             if (number == null || number <= 0) {
               return 'Enter a valid weight';
@@ -225,13 +252,16 @@ class _Step3ReceivingTransportState
 
         const SizedBox(height: 14),
 
+        // Mortality clarification:
+        // explicitly tells the user that mortality means goats that died.
         wizardField(
           controller: _mortalityController,
-          label: 'Mortality',
-          hint: 'Goats lost in transit (0 if none)',
+          label: 'Mortality (Goats Died)',
+          hint: 'Enter number of goats that died',
           icon: Icons.report_gmailerrorred_outlined,
           suffix: 'goats',
-          helper: 'Out of ${draft.totalGoats} purchased',
+          helper:
+          'Out of ${draft.totalGoats} purchased',
           keyboardType: TextInputType.number,
           inputFormatters: [
             FilteringTextInputFormatter.digitsOnly,
@@ -270,7 +300,8 @@ class _Step3ReceivingTransportState
           icon: Icons.edit_note_rounded,
           maxLines: 3,
           optional: true,
-          textCapitalization: TextCapitalization.sentences,
+          textCapitalization:
+          TextCapitalization.sentences,
           onChanged: (value) {
             draft.remarks = value;
           },
@@ -278,9 +309,9 @@ class _Step3ReceivingTransportState
 
         const SizedBox(height: 14),
 
-        // ---------------------------------------------------------------
+        // -----------------------------------------------------------------
         // LIVE — weight loss + goats that arrived
-        // ---------------------------------------------------------------
+        // -----------------------------------------------------------------
 
         Row(
           children: [
@@ -329,7 +360,8 @@ class _Step3ReceivingTransportState
       keyboardType: wizardDecimalKeyboard,
       inputFormatters: wizardDecimalFormatters(),
       optional: true,
-      textInputAction: last ? TextInputAction.done : TextInputAction.next,
+      textInputAction:
+      last ? TextInputAction.done : TextInputAction.next,
       onChanged: (_) => _recalculate(),
     );
   }
@@ -344,24 +376,31 @@ class _Step3ReceivingTransportState
           style: AppTheme.body(size: 11),
         ),
         const SizedBox(height: 12),
+
         _moneyField(
           controller: _transportController,
           label: 'Transport Cost',
           icon: Icons.directions_car_outlined,
         ),
+
         const SizedBox(height: 14),
+
         _moneyField(
           controller: _loadingController,
           label: 'Loading Charges',
           icon: Icons.upload_outlined,
         ),
+
         const SizedBox(height: 14),
+
         _moneyField(
           controller: _unloadingController,
           label: 'Unloading Charges',
           icon: Icons.download_outlined,
         ),
+
         const SizedBox(height: 14),
+
         _moneyField(
           controller: _otherController,
           label: 'Other Expenses',

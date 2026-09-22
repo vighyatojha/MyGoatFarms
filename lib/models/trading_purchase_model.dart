@@ -48,6 +48,16 @@ class TradingPurchase {
   final int maleGoats;
   final int femaleGoats;
 
+  /// How many of [maleGoats] / [femaleGoats] have already been assigned to
+  /// a registered goat. Kept in sync by GoatService.registerGoat(), which
+  /// uses the difference (maleGoats - maleRegistered, femaleGoats -
+  /// femaleRegistered) to decide each newly-registered goat's gender
+  /// automatically, so Goat Registration never has to ask for it again.
+  /// 0 / 0 on older records, and on purchases with no gender split (0 / 0
+  /// maleGoats / femaleGoats) — those goats are registered with gender ''.
+  final int maleRegistered;
+  final int femaleRegistered;
+
   /// Trading purchase payment method.
   ///
   /// Only:
@@ -110,6 +120,8 @@ class TradingPurchase {
     required this.purchaseAmount,
     this.maleGoats = 0,
     this.femaleGoats = 0,
+    this.maleRegistered = 0,
+    this.femaleRegistered = 0,
     required this.paymentMethod,
 
     required this.receivingStatus,
@@ -248,6 +260,10 @@ class TradingPurchase {
       maleGoats: intFrom('maleGoats'),
       femaleGoats: intFrom('femaleGoats'),
 
+      // Absent on purchases saved before auto gender assignment existed.
+      maleRegistered: intFrom('maleRegistered'),
+      femaleRegistered: intFrom('femaleRegistered'),
+
       // Backward-safe default.
       paymentMethod: _normalisePaymentMethod(
         (data['paymentMethod'] ?? 'Cash').toString(),
@@ -302,6 +318,8 @@ class TradingPurchase {
       'purchaseAmount': purchaseAmount,
       'maleGoats': maleGoats,
       'femaleGoats': femaleGoats,
+      'maleRegistered': maleRegistered,
+      'femaleRegistered': femaleRegistered,
 
       'paymentMethod': _normalisePaymentMethod(paymentMethod),
 

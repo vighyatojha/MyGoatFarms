@@ -419,6 +419,16 @@ class GoatService {
   ///
   /// [ageMonths] is the age in complete months at the time of registration.
   ///
+  /// [gender] is optional. Goat Registration no longer asks for it — the
+  /// Male/Female split is captured once, in the lot, at purchase time (see
+  /// TradingPurchase.maleGoats / femaleGoats). Leave [gender] null and this
+  /// method works out each goat's gender itself, from however much of that
+  /// split is still unassigned (TradingPurchase.maleRegistered /
+  /// femaleRegistered), so the two always add back up to the purchase's
+  /// totals. Pass [gender] explicitly only when a single, specific goat's
+  /// gender is being recorded directly, outside of a lot split — e.g. the
+  /// Individual Goat Purchase screen.
+  ///
   /// Firestore stores:
   ///
   ///   ageMonths
@@ -433,7 +443,7 @@ class GoatService {
     required double weight,
     required String color,
     required String healthStatus,
-    required String gender,
+    String? gender,
 
     /// Height in cm. Optional — 0 means "not recorded".
     double height = 0,
@@ -486,7 +496,12 @@ class GoatService {
       );
     }
 
-    if (!Goat.genderValues.contains(gender)) {
+    // A caller-supplied gender (Individual Goat Purchase) is validated
+    // up front like every other field. When null (Goat Registration), the
+    // gender is worked out per-goat inside the transaction below, from the
+    // purchase's remaining Male/Female split, so it always sees the latest
+    // counts.
+    if (gender != null && !Goat.genderValues.contains(gender)) {
       throw ArgumentError(
         'Gender must be one of ${Goat.genderValues}.',
       );
@@ -538,6 +553,27 @@ class GoatService {
         }
 
         // ---------------------------------------------------------------
+        // RESOLVE GENDER
+        // ---------------------------------------------------------------
+        //
+        // Explicit gender (Individual Goat Purchase): use it as-is, and
+        // don't touch the purchase's Male/Female counters — that flow
+        // doesn't set maleGoats/femaleGoats in the first place.
+        //
+        // No explicit gender (Goat Registration): assign whichever of
+        // Male/Female still has quota left in the purchase's split,
+        // keeping pace with the overall ratio so one gender doesn't run
+        // out long before the other. Purchases with no split recorded
+        // (maleGoats == femaleGoats == 0, e.g. older purchases) register
+        // with gender '', same as before this field existed.
+
+        final resolvedGender =
+            gender ??
+                _resolveGenderFromSplit(
+                  currentPurchase,
+                );
+
+        // ---------------------------------------------------------------
         // GENERATE GOAT ID
         // ---------------------------------------------------------------
 
@@ -582,7 +618,7 @@ class GoatService {
           healthStatus,
 
           gender:
-          gender,
+          resolvedGender,
 
           notes:
           notes.trim(),
@@ -636,6 +672,12 @@ class GoatService {
             newRegisteredCount >=
                 currentPurchase.totalGoats;
 
+        // Only advance the gender counters when this goat's gender came
+        // from the purchase's own split (gender was null going in) — an
+        // explicit gender (Individual Goat Purchase) isn't drawn from
+        // maleGoats/femaleGoats, so it must not decrement them.
+        final usedSplit = gender == null;
+
         transaction.update(
           purchaseRef,
           {
@@ -644,6 +686,14 @@ class GoatService {
 
             'pendingCount':
             newPendingCount,
+
+            if (usedSplit && resolvedGender == Goat.genderValues[0])
+              'maleRegistered':
+              currentPurchase.maleRegistered + 1,
+
+            if (usedSplit && resolvedGender == Goat.genderValues[1])
+              'femaleRegistered':
+              currentPurchase.femaleRegistered + 1,
 
             if (justCompleted)
               'registrationStatus':
@@ -674,5 +724,48 @@ class GoatService {
     ).timeout(_timeout);
 
     return goat;
+  }
+
+  // -----------------------------------------------------------------------
+  // GENDER SPLIT
+  // -----------------------------------------------------------------------
+
+  /// Picks the next goat's gender from what's left of [purchase]'s
+  /// Male/Female split (maleGoats/femaleGoats minus what's already been
+  /// registered). See registerGoat()'s doc comment.
+  String _resolveGenderFromSplit(
+      TradingPurchase purchase,
+      ) {
+    // No split recorded on this purchase (0/0) — nothing to assign from.
+    if (purchase.maleGoats <= 0 && purchase.femaleGoats <= 0) {
+      return '';
+    }
+
+    final remainingMale =
+        purchase.maleGoats - purchase.maleRegistered;
+
+    final remainingFemale =
+        purchase.femaleGoats - purchase.femaleRegistered;
+
+    if (remainingMale <= 0) {
+      return Goat.genderValues[1]; // Female
+    }
+
+    if (remainingFemale <= 0) {
+      return Goat.genderValues[0]; // Male
+    }
+
+    // Both still have quota: assign whichever has the larger share of its
+    // own total left, so registrations track the overall Male/Female
+    // ratio instead of exhausting one gender before touching the other.
+    final maleShareLeft =
+        remainingMale / purchase.maleGoats;
+
+    final femaleShareLeft =
+        remainingFemale / purchase.femaleGoats;
+
+    return maleShareLeft >= femaleShareLeft
+        ? Goat.genderValues[0] // Male
+        : Goat.genderValues[1]; // Female
   }
 }

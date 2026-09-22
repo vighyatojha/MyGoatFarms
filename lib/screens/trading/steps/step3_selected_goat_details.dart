@@ -13,10 +13,10 @@ import '../purchase_goats/purchase_wizard_widgets.dart';
 /// with weight editable (selling weight may differ slightly from last
 /// recorded weight) — Task 2.3.
 ///
-/// Gender is shown here read-only. It's captured once, during Trading's
-/// Goat Registration (see Goat.gender's doc comment) — this screen only
-/// displays whatever was recorded then; it is never asked or edited
-/// again during a sale.
+/// Gender is shown here read-only. It's assigned once, at Trading's Goat
+/// Registration, from the purchase's Male/Female split (see Goat.gender's
+/// doc comment) — this screen only displays whatever was recorded then;
+/// it is never asked or edited again during a sale.
 ///
 /// Weights are pushed into the [SaleDraft] on EVERY keystroke (not only
 /// when Next is pressed), so:

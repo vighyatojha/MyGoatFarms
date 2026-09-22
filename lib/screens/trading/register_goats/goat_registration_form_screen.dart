@@ -26,6 +26,9 @@ import 'registration_completed_screen.dart';
 ///   below the Age field.
 /// - Actions are stacked so long button labels don't feel cramped.
 /// - Goat age is saved in months and automatically increases over time.
+/// - Gender is not asked here. It comes from the purchase's Male/Female
+///   split (captured in Step 2 — Purchase Details) — GoatService.
+///   registerGoat() assigns it automatically as each goat is registered.
 class GoatRegistrationFormScreen extends StatefulWidget {
   final String farmId;
   final TradingPurchase purchase;
@@ -54,7 +57,6 @@ class _GoatRegistrationFormScreenState
   final _notesController = TextEditingController();
 
   String _healthStatus = Goat.healthStatusValues.first;
-  String _gender = Goat.genderValues.first;
 
   Uint8List? _photoBytes;
   String? _photoContentType;
@@ -156,7 +158,6 @@ class _GoatRegistrationFormScreenState
 
     setState(() {
       _healthStatus = Goat.healthStatusValues.first;
-      _gender = Goat.genderValues.first;
       _photoBytes = null;
       _photoContentType = null;
     });
@@ -200,7 +201,6 @@ class _GoatRegistrationFormScreenState
         length: length,
         color: _colorController.text,
         healthStatus: _healthStatus,
-        gender: _gender,
         notes: _notesController.text,
         photo: _photoBytes,
         photoContentType: _photoContentType,
@@ -435,28 +435,6 @@ class _GoatRegistrationFormScreenState
                       ),
                     ),
                   ],
-                ),
-
-                const SizedBox(height: 18),
-
-                // -----------------------------------------------------------
-                // GENDER
-                // -----------------------------------------------------------
-                //
-                // Captured once, here, at registration — this is the only
-                // place it's ever asked. The Sell Goat wizard later only
-                // displays it (see Step3SelectedGoatDetails).
-
-                _label('Gender'),
-
-                _dropdown(
-                  _gender,
-                  Goat.genderValues,
-                      (value) {
-                    setState(() {
-                      _gender = value;
-                    });
-                  },
                 ),
 
                 const SizedBox(height: 18),

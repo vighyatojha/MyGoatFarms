@@ -101,12 +101,19 @@ class Goat {
   // GENDER (Phase 4)
   // ---------------------------------------------------------------------
 
-  /// One of [genderValues], or '' for goats registered before this field
-  /// existed.
+  /// One of [genderValues], or '' for goats with no gender on record —
+  /// either registered before this field existed, or registered against a
+  /// purchase with no Male/Female split recorded.
   ///
-  /// Gender is captured once, at Trading's Goat Registration, alongside
-  /// breed/age/weight — see GoatRegistrationFormScreen and
-  /// GoatService.registerGoat(). It is fixed at that point and is no
+  /// Gender is not asked per goat. For goats registered through Trading's
+  /// Goat Registration, it is assigned automatically at registration time
+  /// from the purchase's Male/Female split (captured once, in the lot, at
+  /// purchase — see TradingPurchase.maleGoats / femaleGoats and
+  /// GoatService.registerGoat()). The Individual Goat Purchase screen,
+  /// which registers one specific, already-identified goat, is the
+  /// exception and asks for gender directly at purchase.
+  ///
+  /// Either way, gender is fixed once the goat is registered and is no
   /// longer asked or editable later in the Sell Goat wizard; Step 3
   /// (Selected Goat Details) only displays it.
   final String gender;
