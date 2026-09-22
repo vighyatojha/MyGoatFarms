@@ -29,6 +29,15 @@ class PurchaseDraft {
   double totalWeightAtPurchase = 0;
   double pricePerKg = 0;
 
+  /// Gender split of [totalGoats], captured here — at Purchase Details —
+  /// rather than per-goat on the Register Goat screen, since a wholesale
+  /// lot is bought and counted as a batch, not goat by goat.
+  ///
+  /// Both start at 0 and are expected to add up to [totalGoats] once the
+  /// user has filled them in; see [genderCountIsValid].
+  int maleGoats = 0;
+  int femaleGoats = 0;
+
   /// Trading purchase payment methods are intentionally limited to:
   /// Cash / Online.
   String paymentMethod = 'Cash';
@@ -146,6 +155,8 @@ class PurchaseDraft {
           totalGoats > 0 ||
           totalWeightAtPurchase > 0 ||
           pricePerKg > 0 ||
+          maleGoats > 0 ||
+          femaleGoats > 0 ||
           totalWeightAfterArrival > 0 ||
           mortality > 0 ||
           transportCost > 0 ||
@@ -153,6 +164,13 @@ class PurchaseDraft {
           unloadingCharges > 0 ||
           otherExpenses > 0 ||
           remarks.trim().isNotEmpty;
+
+  /// True once Male + Female goats add up to the Total Goats entered.
+  ///
+  /// False (not an error) while totalGoats is still 0, so the check only
+  /// starts to matter once there is something to check it against.
+  bool get genderCountIsValid =>
+      totalGoats > 0 && (maleGoats + femaleGoats) == totalGoats;
 
   /// Normalizes the payment method so only Cash or Online can be stored.
   void setPaymentMethod(String value) {

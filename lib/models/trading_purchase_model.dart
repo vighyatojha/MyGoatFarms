@@ -42,6 +42,12 @@ class TradingPurchase {
   final double pricePerKg;
   final double purchaseAmount;
 
+  /// Gender split of [totalGoats], captured at purchase time (Step 2 —
+  /// Purchase Details) rather than during individual Goat Registration.
+  /// 0 / 0 on older records saved before this existed.
+  final int maleGoats;
+  final int femaleGoats;
+
   /// Trading purchase payment method.
   ///
   /// Only:
@@ -102,6 +108,8 @@ class TradingPurchase {
     required this.totalWeightAtPurchase,
     required this.pricePerKg,
     required this.purchaseAmount,
+    this.maleGoats = 0,
+    this.femaleGoats = 0,
     required this.paymentMethod,
 
     required this.receivingStatus,
@@ -236,6 +244,10 @@ class TradingPurchase {
       pricePerKg: numFrom('pricePerKg'),
       purchaseAmount: numFrom('purchaseAmount'),
 
+      // Absent on purchases saved before the gender split existed.
+      maleGoats: intFrom('maleGoats'),
+      femaleGoats: intFrom('femaleGoats'),
+
       // Backward-safe default.
       paymentMethod: _normalisePaymentMethod(
         (data['paymentMethod'] ?? 'Cash').toString(),
@@ -288,6 +300,8 @@ class TradingPurchase {
       'totalWeightAtPurchase': totalWeightAtPurchase,
       'pricePerKg': pricePerKg,
       'purchaseAmount': purchaseAmount,
+      'maleGoats': maleGoats,
+      'femaleGoats': femaleGoats,
 
       'paymentMethod': _normalisePaymentMethod(paymentMethod),
 

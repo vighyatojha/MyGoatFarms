@@ -114,6 +114,8 @@ class Step4SummaryState extends State<Step4Summary> {
         totalGoats: draft.totalGoats,
         totalWeightAtPurchase: draft.totalWeightAtPurchase,
         pricePerKg: draft.pricePerKg,
+        maleGoats: draft.maleGoats,
+        femaleGoats: draft.femaleGoats,
 
         // Payment
         paymentMethod: draft.paymentMethod,
@@ -228,6 +230,12 @@ class Step4SummaryState extends State<Step4Summary> {
               label: 'Total Goats Purchased',
               value: '${c.totalGoats}',
             ),
+            if (draft.maleGoats > 0 || draft.femaleGoats > 0)
+              WizardComputedRow(
+                label: 'Male / Female',
+                value: '${draft.maleGoats} Male · '
+                    '${draft.femaleGoats} Female',
+              ),
             WizardComputedRow(
               label: 'Weight at Purchase',
               value: '${PurchaseCosting.formatNumber(c.weightAtPurchase)} kg',

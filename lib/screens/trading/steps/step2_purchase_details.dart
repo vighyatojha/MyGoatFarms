@@ -11,11 +11,17 @@ import '../purchase_goats/purchase_wizard_widgets.dart';
 ///
 /// Fields:
 /// - Total Goats
+/// - Male Goats / Female Goats (must add up to Total Goats)
 /// - Total Weight at Purchase
 /// - Price per KG
 /// - Payment Method: Cash / Online
 ///
 /// Breed has intentionally been removed from the Trading purchase flow.
+///
+/// The Male/Female gender split lives here — a batch count taken at
+/// purchase time — rather than on the Register Goat screen, since goats
+/// are bought and counted as a lot, not registered one at a time with a
+/// gender choice each.
 ///
 /// Purchase Amount is always calculated, live, as:
 /// Total Weight × Price per KG
@@ -41,6 +47,8 @@ class _Step2PurchaseDetailsState extends State<Step2PurchaseDetails> {
   late final TextEditingController _totalGoatsController;
   late final TextEditingController _weightController;
   late final TextEditingController _priceController;
+  late final TextEditingController _maleGoatsController;
+  late final TextEditingController _femaleGoatsController;
 
   /// Goats outside this average live weight are almost certainly a typo
   /// (an extra digit, or weight typed in grams). Only a warning — never
@@ -69,6 +77,14 @@ class _Step2PurchaseDetailsState extends State<Step2PurchaseDetails> {
           ? ''
           : PurchaseCosting.formatNumber(draft.pricePerKg),
     );
+
+    _maleGoatsController = TextEditingController(
+      text: draft.maleGoats == 0 ? '' : draft.maleGoats.toString(),
+    );
+
+    _femaleGoatsController = TextEditingController(
+      text: draft.femaleGoats == 0 ? '' : draft.femaleGoats.toString(),
+    );
   }
 
   @override
@@ -76,6 +92,8 @@ class _Step2PurchaseDetailsState extends State<Step2PurchaseDetails> {
     _totalGoatsController.dispose();
     _weightController.dispose();
     _priceController.dispose();
+    _maleGoatsController.dispose();
+    _femaleGoatsController.dispose();
     super.dispose();
   }
 
@@ -91,7 +109,32 @@ class _Step2PurchaseDetailsState extends State<Step2PurchaseDetails> {
 
     draft.pricePerKg = double.tryParse(_priceController.text.trim()) ?? 0;
 
+    draft.maleGoats =
+        int.tryParse(_maleGoatsController.text.trim()) ?? 0;
+
+    draft.femaleGoats =
+        int.tryParse(_femaleGoatsController.text.trim()) ?? 0;
+
     setState(() {});
+  }
+
+  /// Shared validator for both the Male and Female fields: reads straight
+  /// from the controllers (rather than the draft) so it's correct even
+  /// mid-keystroke, before [_recalculate] has run for this field.
+  String? _validateGenderSplit(PurchaseDraft draft) {
+    final total = int.tryParse(_totalGoatsController.text.trim()) ?? 0;
+    final male = int.tryParse(_maleGoatsController.text.trim()) ?? 0;
+    final female = int.tryParse(_femaleGoatsController.text.trim()) ?? 0;
+
+    if (male < 0 || female < 0) {
+      return 'Enter a valid count';
+    }
+
+    if (total > 0 && (male + female) != total) {
+      return 'Must add up to $total';
+    }
+
+    return null;
   }
 
   void _setPaymentMethod(String method) {
@@ -137,6 +180,67 @@ class _Step2PurchaseDetailsState extends State<Step2PurchaseDetails> {
                   return null;
                 },
               ),
+
+              const SizedBox(height: 14),
+
+              // ---------------------------------------------------------
+              // GENDER SPLIT — Male / Female goats, captured here as a
+              // batch count rather than per-goat during Registration.
+              // ---------------------------------------------------------
+
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Expanded(
+                    child: wizardField(
+                      controller: _maleGoatsController,
+                      label: 'Male Goats',
+                      hint: 'e.g. 12',
+                      icon: Icons.male_rounded,
+                      suffix: 'male',
+                      keyboardType: TextInputType.number,
+                      inputFormatters: [
+                        FilteringTextInputFormatter.digitsOnly,
+                        LengthLimitingTextInputFormatter(5),
+                      ],
+                      onChanged: (_) => _recalculate(),
+                      validator: (_) => _validateGenderSplit(draft),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: wizardField(
+                      controller: _femaleGoatsController,
+                      label: 'Female Goats',
+                      hint: 'e.g. 8',
+                      icon: Icons.female_rounded,
+                      suffix: 'female',
+                      keyboardType: TextInputType.number,
+                      inputFormatters: [
+                        FilteringTextInputFormatter.digitsOnly,
+                        LengthLimitingTextInputFormatter(5),
+                      ],
+                      onChanged: (_) => _recalculate(),
+                      validator: (_) => _validateGenderSplit(draft),
+                    ),
+                  ),
+                ],
+              ),
+
+              if (draft.totalGoats > 0 && !draft.genderCountIsValid) ...[
+                const SizedBox(height: 10),
+                WizardNote(
+                  (draft.maleGoats + draft.femaleGoats) < draft.totalGoats
+                      ? 'Male + Female should add up to the '
+                      '${draft.totalGoats} goats purchased — '
+                      '${draft.totalGoats - (draft.maleGoats + draft.femaleGoats)} '
+                      'more to account for.'
+                      : 'Male + Female comes to '
+                      '${draft.maleGoats + draft.femaleGoats}, which is '
+                      'more than the ${draft.totalGoats} goats purchased.',
+                  tone: WizardNoteTone.warning,
+                ),
+              ],
 
               const SizedBox(height: 14),
 

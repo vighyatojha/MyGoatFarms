@@ -267,6 +267,12 @@ class TradingService {
     required double totalWeightAtPurchase,
     required double pricePerKg,
 
+    // Gender split of totalGoats, captured at Purchase Details rather
+    // than per-goat at Registration. Defaults to 0/0 for callers (like
+    // the single-goat quick purchase) that don't collect this yet.
+    int maleGoats = 0,
+    int femaleGoats = 0,
+
     // Payment
     required String paymentMethod,
 
@@ -295,6 +301,20 @@ class TradingService {
 
     if (totalGoats <= 0) {
       throw ArgumentError('Total goats must be greater than zero.');
+    }
+
+    if (maleGoats < 0 || femaleGoats < 0) {
+      throw ArgumentError('Male and Female goat counts cannot be negative.');
+    }
+
+    // Only enforced once a gender split has actually been entered, so
+    // callers that don't collect it yet (e.g. the single-goat quick
+    // purchase) can keep passing 0 / 0 without tripping this check.
+    if ((maleGoats > 0 || femaleGoats > 0) &&
+        (maleGoats + femaleGoats) != totalGoats) {
+      throw ArgumentError(
+        'Male + Female goats must add up to the total goats purchased.',
+      );
     }
 
     if (totalWeightAtPurchase <= 0) {
@@ -420,6 +440,8 @@ class TradingService {
           totalWeightAtPurchase,
           pricePerKg: pricePerKg,
           purchaseAmount: purchaseAmount,
+          maleGoats: maleGoats,
+          femaleGoats: femaleGoats,
 
           paymentMethod: normalizedPaymentMethod,
 
