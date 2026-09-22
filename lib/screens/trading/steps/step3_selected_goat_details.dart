@@ -13,10 +13,10 @@ import '../purchase_goats/purchase_wizard_widgets.dart';
 /// with weight editable (selling weight may differ slightly from last
 /// recorded weight) — Task 2.3.
 ///
-/// Gender is also editable here even though it isn't part of the plan's
-/// literal field list: Trading's Goat model never captured it (see
-/// Goat.gender's doc comment), so this is the one place it can be
-/// filled in, and it's written back onto the goat record on save.
+/// Gender is shown here read-only. It's captured once, during Trading's
+/// Goat Registration (see Goat.gender's doc comment) — this screen only
+/// displays whatever was recorded then; it is never asked or edited
+/// again during a sale.
 ///
 /// Weights are pushed into the [SaleDraft] on EVERY keystroke (not only
 /// when Next is pressed), so:
@@ -135,14 +135,8 @@ class Step3SelectedGoatDetailsState
                 return _GoatDetailCard(
                   goat: goat,
                   weightController: _weightControllers[goat.id]!,
-                  gender: draft.genderFor(goat),
                   onWeightChanged: (value) =>
                       _onWeightChanged(goat, value),
-                  onGenderChanged: (value) {
-                    setState(() {
-                      draft.setGender(goat, value);
-                    });
-                  },
                 );
               },
             ),
@@ -242,16 +236,12 @@ class Step3SelectedGoatDetailsState
 class _GoatDetailCard extends StatelessWidget {
   final Goat goat;
   final TextEditingController weightController;
-  final String gender;
   final ValueChanged<String> onWeightChanged;
-  final ValueChanged<String> onGenderChanged;
 
   const _GoatDetailCard({
     required this.goat,
     required this.weightController,
-    required this.gender,
     required this.onWeightChanged,
-    required this.onGenderChanged,
   });
 
   @override
@@ -322,6 +312,24 @@ class _GoatDetailCard extends StatelessWidget {
                             color: AppColors.textGrey,
                           ),
                         ),
+                        if (goat.gender.isNotEmpty) ...[
+                          const SizedBox(width: 8),
+                          Icon(
+                            goat.gender == 'Female'
+                                ? Icons.female_rounded
+                                : Icons.male_rounded,
+                            size: 13,
+                            color: AppColors.textGrey,
+                          ),
+                          const SizedBox(width: 2),
+                          Text(
+                            goat.gender,
+                            style: AppTheme.body(
+                              size: 10,
+                              color: AppColors.textGrey,
+                            ),
+                          ),
+                        ],
                       ],
                     ),
                   ],
@@ -332,62 +340,6 @@ class _GoatDetailCard extends StatelessWidget {
 
           const SizedBox(height: 14),
           Divider(color: AppColors.divider, height: 1),
-          const SizedBox(height: 14),
-
-          // ---------------------------------------------------------------
-          // GENDER
-          // ---------------------------------------------------------------
-
-          Text(
-            'Gender',
-            style: AppTheme.body(
-              size: 11,
-              color: AppColors.textGrey,
-              weight: FontWeight.w600,
-            ),
-          ),
-          const SizedBox(height: 8),
-          Row(
-            children: Goat.genderValues.map((value) {
-              final selected = gender == value;
-
-              return Padding(
-                padding: const EdgeInsets.only(right: 8),
-                child: InkWell(
-                  onTap: () => onGenderChanged(value),
-                  borderRadius: BorderRadius.circular(20),
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 16,
-                      vertical: 8,
-                    ),
-                    decoration: BoxDecoration(
-                      color: selected
-                          ? AppColors.primaryGreen
-                          : Colors.white,
-                      borderRadius: BorderRadius.circular(20),
-                      border: Border.all(
-                        color: selected
-                            ? AppColors.primaryGreen
-                            : AppColors.divider,
-                      ),
-                    ),
-                    child: Text(
-                      value,
-                      style: AppTheme.body(
-                        size: 11,
-                        color: selected
-                            ? Colors.white
-                            : AppColors.textGrey,
-                        weight: FontWeight.w700,
-                      ),
-                    ),
-                  ),
-                ),
-              );
-            }).toList(),
-          ),
-
           const SizedBox(height: 14),
 
           // ---------------------------------------------------------------

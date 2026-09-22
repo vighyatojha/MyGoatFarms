@@ -41,6 +41,18 @@ class Goat {
   /// GoatService.registerGoat (a sanity check against typos such as 650).
   static const double maxHeightCm = 200;
 
+  /// Body length (nose to tail base), in centimetres, as recorded at
+  /// registration.
+  ///
+  /// 0 means "not recorded" — length is optional, same as [height], and
+  /// every goat registered before this field existed has none. Use
+  /// [hasLength] / [lengthLabel] rather than checking for 0 directly.
+  final double length;
+
+  /// Upper bound accepted by the registration forms and
+  /// GoatService.registerGoat (a sanity check against typos such as 650).
+  static const double maxLengthCm = 200;
+
   final String color;
 
   /// One of [healthStatusValues].
@@ -89,17 +101,17 @@ class Goat {
   // GENDER (Phase 4)
   // ---------------------------------------------------------------------
 
-  /// One of [genderValues], or '' when never recorded.
+  /// One of [genderValues], or '' for goats registered before this field
+  /// existed.
   ///
-  /// Trading's Goat Registration (Phase 3) never captured gender, unlike
-  /// the Own Farm and Customer Palai goat models. Rather than reopening
-  /// Registration, this is deliberately optional and only ever edited
-  /// from the Sell Goat wizard's Step 3 (Selected Goat Details) — see
-  /// SaleDraft.genderFor()/setGender(). Once set there it's written back
-  /// onto this doc so it isn't asked again next time.
+  /// Gender is captured once, at Trading's Goat Registration, alongside
+  /// breed/age/weight — see GoatRegistrationFormScreen and
+  /// GoatService.registerGoat(). It is fixed at that point and is no
+  /// longer asked or editable later in the Sell Goat wizard; Step 3
+  /// (Selected Goat Details) only displays it.
   final String gender;
 
-  const Goat({
+  Goat({
     required this.id,
     required this.breed,
     required this.ageMonthsAtRecord,
@@ -118,7 +130,11 @@ class Goat {
     this.saleId,
     this.gender = '',
     this.height = 0,
-  });
+    this.length = 0,
+  }) : assert(
+  gender == '' || genderValues.contains(gender),
+  'gender must be one of Goat.genderValues, or empty.',
+  );
 
   // ---------------------------------------------------------------------
   // CONSTANTS
@@ -336,6 +352,18 @@ class Goat {
     return '${text.endsWith('.0') ? text.substring(0, text.length - 2) : text} cm';
   }
 
+  /// Whether a length was recorded for this goat.
+  bool get hasLength => length > 0;
+
+  /// e.g. "65 cm" or "65.5 cm"; empty when no length was recorded.
+  String get lengthLabel {
+    if (!hasLength) return '';
+
+    final text = length.toStringAsFixed(1);
+
+    return '${text.endsWith('.0') ? text.substring(0, text.length - 2) : text} cm';
+  }
+
   /// True for goats Step 1 of the Sale wizard (Task 2.1) should list:
   /// plain farm stock, or a goat already living in Own Palai. This is
   /// the "Own Palai -> Sell" tie-in from PDF section 13 — one query,
@@ -442,6 +470,9 @@ class Goat {
       height:
       numFrom('height'),
 
+      length:
+      numFrom('length'),
+
       color:
       (data['color'] ?? '').toString(),
 
@@ -522,6 +553,18 @@ class Goat {
     // meaningless 0 stored on its document.
     if (hasHeight) {
       map['height'] = height;
+    }
+
+    // Same reasoning as height above.
+    if (hasLength) {
+      map['length'] = length;
+    }
+
+    // Only written when recorded, so goats registered before gender
+    // capture existed (or, in future, any legacy import) never get an
+    // empty string overwriting whatever may already be on the doc.
+    if (gender.isNotEmpty) {
+      map['gender'] = gender;
     }
 
     if (photo != null) {

@@ -61,6 +61,7 @@ class _IndividualGoatPurchaseScreenState
   final _ageController = TextEditingController();
   final _weightController = TextEditingController();
   final _heightController = TextEditingController();
+  final _lengthController = TextEditingController();
   final _colorController = TextEditingController();
   final _notesController = TextEditingController();
 
@@ -73,6 +74,7 @@ class _IndividualGoatPurchaseScreenState
   final _priceController = TextEditingController();
 
   String _healthStatus = Goat.healthStatusValues.first;
+  String _gender = Goat.genderValues.first;
   DateTime _purchaseDate = DateTime.now();
 
   /// Trading payment methods are limited to Cash / Online.
@@ -94,6 +96,7 @@ class _IndividualGoatPurchaseScreenState
     _ageController.dispose();
     _weightController.dispose();
     _heightController.dispose();
+    _lengthController.dispose();
     _colorController.dispose();
     _notesController.dispose();
     _sellerNameController.dispose();
@@ -113,6 +116,9 @@ class _IndividualGoatPurchaseScreenState
   /// Optional — 0 means "not recorded".
   double get _height =>
       double.tryParse(_heightController.text.trim()) ?? 0;
+
+  double get _length =>
+      double.tryParse(_lengthController.text.trim()) ?? 0;
 
   double get _pricePerKg =>
       double.tryParse(_priceController.text.trim()) ?? 0;
@@ -271,8 +277,10 @@ class _IndividualGoatPurchaseScreenState
         ageMonths: int.tryParse(_ageController.text.trim()) ?? 0,
         weight: _weight,
         height: _height,
+        length: _length,
         color: _colorController.text,
         healthStatus: _healthStatus,
+        gender: _gender,
         notes: _notesController.text,
         photo: _photoBytes,
         photoContentType: _photoContentType,
@@ -563,19 +571,70 @@ class _IndividualGoatPurchaseScreenState
             const SizedBox(width: 12),
             Expanded(
               child: wizardField(
-                controller: _colorController,
-                label: 'Color',
-                hint: 'e.g. Brown',
-                icon: Icons.palette_outlined,
+                controller: _lengthController,
+                label: 'Length (cm)',
+                hint: 'e.g. 70',
+                icon: Icons.straighten_outlined,
+                optional: true,
+                keyboardType:
+                const TextInputType.numberWithOptions(
+                  decimal: true,
+                ),
+                inputFormatters: [
+                  FilteringTextInputFormatter.allow(
+                    RegExp(r'^\d*\.?\d{0,1}'),
+                  ),
+                ],
                 validator: (value) {
-                  if ((value ?? '').trim().isEmpty) {
-                    return 'Enter color';
+                  final text = (value ?? '').trim();
+
+                  // Optional — blank is fine.
+                  if (text.isEmpty) return null;
+
+                  final cm = double.tryParse(text);
+
+                  if (cm == null || cm <= 0) {
+                    return 'Enter length';
                   }
+
+                  if (cm > Goat.maxLengthCm) {
+                    return 'Max ${Goat.maxLengthCm.toStringAsFixed(0)} cm';
+                  }
+
                   return null;
                 },
               ),
             ),
           ],
+        ),
+
+        const SizedBox(height: 14),
+
+        wizardField(
+          controller: _colorController,
+          label: 'Color',
+          hint: 'e.g. Brown',
+          icon: Icons.palette_outlined,
+          validator: (value) {
+            if ((value ?? '').trim().isEmpty) {
+              return 'Enter color';
+            }
+            return null;
+          },
+        ),
+
+        const SizedBox(height: 14),
+
+        _fieldLabel('Gender'),
+
+        _dropdown(
+          value: _gender,
+          options: Goat.genderValues,
+          onChanged: (value) {
+            setState(() {
+              _gender = value;
+            });
+          },
         ),
 
         const SizedBox(height: 14),

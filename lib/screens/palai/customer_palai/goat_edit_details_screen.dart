@@ -44,6 +44,7 @@ class _GoatEditDetailsScreenState extends State<GoatEditDetailsScreen> {
   late final TextEditingController _colorController;
   late final TextEditingController _weightController;
   late final TextEditingController _heightController;
+  late final TextEditingController _lengthController;
   late final TextEditingController _pricingController;
   late final TextEditingController _notesController;
 
@@ -72,6 +73,9 @@ class _GoatEditDetailsScreenState extends State<GoatEditDetailsScreen> {
     _heightController = TextEditingController(
       text: goat.hasHeight ? goat.heightAtCheckIn.toStringAsFixed(1) : '',
     );
+    _lengthController = TextEditingController(
+      text: goat.hasLength ? goat.lengthAtCheckIn.toStringAsFixed(1) : '',
+    );
     _pricingController = TextEditingController(text: goat.pricing.toStringAsFixed(2));
     _notesController = TextEditingController(text: goat.notes);
     _gender = _genders.contains(goat.gender) ? goat.gender : 'Male';
@@ -89,6 +93,7 @@ class _GoatEditDetailsScreenState extends State<GoatEditDetailsScreen> {
     _colorController.dispose();
     _weightController.dispose();
     _heightController.dispose();
+    _lengthController.dispose();
     _pricingController.dispose();
     _notesController.dispose();
     super.dispose();
@@ -157,6 +162,17 @@ class _GoatEditDetailsScreenState extends State<GoatEditDetailsScreen> {
       return;
     }
 
+    // Length is optional — blank clears it (0 = not recorded).
+    final lengthText = _lengthController.text.trim();
+    final length = lengthText.isEmpty ? 0.0 : double.tryParse(lengthText);
+    if (length == null || length < 0 || length > PalaiGoat.maxLengthCm) {
+      _showSnack(
+        'Please enter a valid goat length (up to ${PalaiGoat.maxLengthCm.toStringAsFixed(0)} cm).',
+        isError: true,
+      );
+      return;
+    }
+
     final pricingText = _pricingController.text.trim();
     final pricing = pricingText.isEmpty ? 0.0 : double.tryParse(pricingText);
     if (pricing == null || pricing < 0) {
@@ -174,6 +190,7 @@ class _GoatEditDetailsScreenState extends State<GoatEditDetailsScreen> {
         color: _colorController.text.trim(),
         weightAtCheckIn: weight,
         heightAtCheckIn: height,
+        lengthAtCheckIn: length,
         healthStatus: _healthStatus,
         farmArrivalDate: _farmArrivalDate,
         monthlyPackage: _monthlyPackage,
@@ -275,6 +292,15 @@ class _GoatEditDetailsScreenState extends State<GoatEditDetailsScreen> {
               label: 'Height (cm)',
               hint: 'e.g. 65',
               icon: Icons.height,
+              keyboardType: const TextInputType.numberWithOptions(decimal: true),
+              optional: true,
+            ),
+            const SizedBox(height: 16),
+            _textField(
+              controller: _lengthController,
+              label: 'Length (cm)',
+              hint: 'e.g. 70',
+              icon: Icons.straighten_outlined,
               keyboardType: const TextInputType.numberWithOptions(decimal: true),
               optional: true,
             ),

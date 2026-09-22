@@ -341,6 +341,7 @@ class _OwnPalaiGoatProfileScreenState extends State<OwnPalaiGoatProfileScreen>
             if (goat.gender.isNotEmpty) ('Gender', goat.gender),
             ('Age', goat.age),
             ('Height', goat.hasHeight ? goat.heightLabel : 'Not recorded'),
+            ('Length', goat.hasLength ? goat.lengthLabel : 'Not recorded'),
             if (goat.notes.trim().isNotEmpty) ('Notes', goat.notes),
           ]),
         ),

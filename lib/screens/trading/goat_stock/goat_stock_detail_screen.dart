@@ -464,6 +464,10 @@ class _GoatStockDetailScreenState
                     goat.hasHeight ? goat.heightLabel : 'Not recorded',
                   ),
                   _infoRow(
+                    'Length',
+                    goat.hasLength ? goat.lengthLabel : 'Not recorded',
+                  ),
+                  _infoRow(
                     'Health Status',
                     goat.healthStatus,
                   ),

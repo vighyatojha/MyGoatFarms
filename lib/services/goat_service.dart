@@ -433,9 +433,13 @@ class GoatService {
     required double weight,
     required String color,
     required String healthStatus,
+    required String gender,
 
     /// Height in cm. Optional — 0 means "not recorded".
     double height = 0,
+
+    /// Body length in cm. Optional — 0 means "not recorded".
+    double length = 0,
     String notes = '',
     Uint8List? photo,
     String? photoContentType,
@@ -469,9 +473,22 @@ class GoatService {
       );
     }
 
+    if (length < 0 || length > Goat.maxLengthCm) {
+      throw ArgumentError(
+        'Length must be between 0 and '
+            '${Goat.maxLengthCm.toStringAsFixed(0)} cm.',
+      );
+    }
+
     if (color.trim().isEmpty) {
       throw ArgumentError(
         'Color is required.',
+      );
+    }
+
+    if (!Goat.genderValues.contains(gender)) {
+      throw ArgumentError(
+        'Gender must be one of ${Goat.genderValues}.',
       );
     }
 
@@ -555,11 +572,17 @@ class GoatService {
           height:
           height,
 
+          length:
+          length,
+
           color:
           color.trim(),
 
           healthStatus:
           healthStatus,
+
+          gender:
+          gender,
 
           notes:
           notes.trim(),

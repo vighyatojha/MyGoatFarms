@@ -214,6 +214,20 @@ class PalaiGoat {
   static const double maxHeightCm = 200;
 
   // --------------------------------------------------------------------------
+  // LENGTH
+  // --------------------------------------------------------------------------
+
+  /// Body length (nose to tail base), in centimetres, when the goat
+  /// entered Palai.
+  ///
+  /// 0 means "not recorded" — length is optional, same as [heightAtCheckIn].
+  /// Use [hasLength] / [lengthLabel] rather than checking for 0 directly.
+  final double lengthAtCheckIn;
+
+  /// Upper bound accepted by the Palai forms (a typo sanity check).
+  static const double maxLengthCm = 200;
+
+  // --------------------------------------------------------------------------
   // HEALTH
   // --------------------------------------------------------------------------
 
@@ -392,6 +406,9 @@ class PalaiGoat {
     // Height (cm, 0 = not recorded)
     this.heightAtCheckIn = 0,
 
+    // Length (cm, 0 = not recorded)
+    this.lengthAtCheckIn = 0,
+
     // Health
     this.healthStatus = 'Healthy',
 
@@ -512,6 +529,11 @@ class PalaiGoat {
       heightAtCheckIn:
       _readDouble(
         data['heightAtCheckIn'],
+      ),
+
+      lengthAtCheckIn:
+      _readDouble(
+        data['lengthAtCheckIn'],
       ),
 
       // ----------------------------------------------------------------------
@@ -705,6 +727,11 @@ class PalaiGoat {
         data['heightAtCheckIn'],
       ),
 
+      lengthAtCheckIn:
+      _readDouble(
+        data['lengthAtCheckIn'],
+      ),
+
       healthStatus:
       _readString(
         data['healthStatus'],
@@ -829,6 +856,9 @@ class PalaiGoat {
       // Height (cm, 0 = not recorded)
       'heightAtCheckIn': heightAtCheckIn,
 
+      // Length (cm, 0 = not recorded)
+      'lengthAtCheckIn': lengthAtCheckIn,
+
       // Health
       'healthStatus': healthStatus,
 
@@ -942,6 +972,9 @@ class PalaiGoat {
       // Height (cm, 0 = not recorded)
       'heightAtCheckIn': heightAtCheckIn,
 
+      // Length (cm, 0 = not recorded)
+      'lengthAtCheckIn': lengthAtCheckIn,
+
       // Health
       'healthStatus': healthStatus,
 
@@ -1035,6 +1068,7 @@ class PalaiGoat {
     double? weightAtCheckIn,
     double? currentWeight,
     double? heightAtCheckIn,
+    double? lengthAtCheckIn,
 
     String? healthStatus,
 
@@ -1106,6 +1140,10 @@ class PalaiGoat {
       heightAtCheckIn:
       heightAtCheckIn ??
           this.heightAtCheckIn,
+
+      lengthAtCheckIn:
+      lengthAtCheckIn ??
+          this.lengthAtCheckIn,
 
       healthStatus:
       healthStatus ??
@@ -1208,6 +1246,22 @@ class PalaiGoat {
     if (!hasHeight) return '';
 
     final text = heightAtCheckIn.toStringAsFixed(1);
+
+    return '${text.endsWith('.0') ? text.substring(0, text.length - 2) : text} cm';
+  }
+
+  // ==========================================================================
+  // LENGTH HELPERS
+  // ==========================================================================
+
+  /// Whether a length was recorded for this goat.
+  bool get hasLength => lengthAtCheckIn > 0;
+
+  /// e.g. "65 cm" or "65.5 cm"; empty when no length was recorded.
+  String get lengthLabel {
+    if (!hasLength) return '';
+
+    final text = lengthAtCheckIn.toStringAsFixed(1);
 
     return '${text.endsWith('.0') ? text.substring(0, text.length - 2) : text} cm';
   }

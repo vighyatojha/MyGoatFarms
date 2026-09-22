@@ -18,8 +18,9 @@ import 'registration_completed_screen.dart';
 /// Single goat registration form.
 ///
 /// The UI is intentionally compact and symmetrical:
-/// - Equal-width Age / Weight fields, and Height / Color below them.
-///   Height (cm) is optional; it is validated only when filled in.
+/// - Equal-width Age / Weight fields, and Height / Length / Color below
+///   them. Height and Length (cm) are optional; each is validated only
+///   when filled in.
 /// - Consistent label and field spacing.
 /// - Age explanation is placed below the complete row instead of only
 ///   below the Age field.
@@ -48,10 +49,12 @@ class _GoatRegistrationFormScreenState
   final _ageController = TextEditingController();
   final _weightController = TextEditingController();
   final _heightController = TextEditingController();
+  final _lengthController = TextEditingController();
   final _colorController = TextEditingController();
   final _notesController = TextEditingController();
 
   String _healthStatus = Goat.healthStatusValues.first;
+  String _gender = Goat.genderValues.first;
 
   Uint8List? _photoBytes;
   String? _photoContentType;
@@ -72,6 +75,7 @@ class _GoatRegistrationFormScreenState
     _ageController.dispose();
     _weightController.dispose();
     _heightController.dispose();
+    _lengthController.dispose();
     _colorController.dispose();
     _notesController.dispose();
     super.dispose();
@@ -146,11 +150,13 @@ class _GoatRegistrationFormScreenState
     _ageController.clear();
     _weightController.clear();
     _heightController.clear();
+    _lengthController.clear();
     _colorController.clear();
     _notesController.clear();
 
     setState(() {
       _healthStatus = Goat.healthStatusValues.first;
+      _gender = Goat.genderValues.first;
       _photoBytes = null;
       _photoContentType = null;
     });
@@ -175,6 +181,10 @@ class _GoatRegistrationFormScreenState
     final height =
         double.tryParse(_heightController.text.trim()) ?? 0;
 
+    // Optional: blank means "not recorded" (0).
+    final length =
+        double.tryParse(_lengthController.text.trim()) ?? 0;
+
     setState(() {
       _saving = true;
     });
@@ -187,8 +197,10 @@ class _GoatRegistrationFormScreenState
         ageMonths: ageMonths,
         weight: weight,
         height: height,
+        length: length,
         color: _colorController.text,
         healthStatus: _healthStatus,
+        gender: _gender,
         notes: _notesController.text,
         photo: _photoBytes,
         photoContentType: _photoContentType,
@@ -428,11 +440,29 @@ class _GoatRegistrationFormScreenState
                 const SizedBox(height: 18),
 
                 // -----------------------------------------------------------
-                // COLOR
+                // GENDER
                 // -----------------------------------------------------------
+                //
+                // Captured once, here, at registration — this is the only
+                // place it's ever asked. The Sell Goat wizard later only
+                // displays it (see Step3SelectedGoatDetails).
+
+                _label('Gender'),
+
+                _dropdown(
+                  _gender,
+                  Goat.genderValues,
+                      (value) {
+                    setState(() {
+                      _gender = value;
+                    });
+                  },
+                ),
+
+                const SizedBox(height: 18),
 
                 // -----------------------------------------------------------
-                // HEIGHT + COLOR
+                // HEIGHT + LENGTH
                 // -----------------------------------------------------------
 
                 Row(
@@ -475,14 +505,50 @@ class _GoatRegistrationFormScreenState
 
                     Expanded(
                       child: _fieldColumn(
-                        label: 'Color',
+                        label: 'Length (cm)',
                         child: _textField(
-                          _colorController,
-                          hint: 'e.g. Brown & White',
+                          _lengthController,
+                          hint: 'e.g. 70',
+                          keyboardType:
+                          const TextInputType.numberWithOptions(
+                            decimal: true,
+                          ),
+                          optional: true,
+                          validator: (value) {
+                            final text = (value ?? '').trim();
+
+                            // Optional — blank is fine.
+                            if (text.isEmpty) return null;
+
+                            final cm = double.tryParse(text);
+
+                            if (cm == null || cm <= 0) {
+                              return 'Enter valid length';
+                            }
+
+                            if (cm > Goat.maxLengthCm) {
+                              return 'Max ${Goat.maxLengthCm.toStringAsFixed(0)} cm';
+                            }
+
+                            return null;
+                          },
                         ),
                       ),
                     ),
                   ],
+                ),
+
+                const SizedBox(height: 18),
+
+                // -----------------------------------------------------------
+                // COLOR
+                // -----------------------------------------------------------
+
+                _label('Color'),
+
+                _textField(
+                  _colorController,
+                  hint: 'e.g. Brown & White',
                 ),
 
                 const SizedBox(height: 18),

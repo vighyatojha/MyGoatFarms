@@ -2185,8 +2185,9 @@ class FirestoreService {
 
   /// Edits a goat's registration-time details in place — the "Edit Goat
   /// Details" screen deliberately only touches the same fields the
-  /// Register Goat screen collects (identity, arrival weight and height, health
-  /// status, package/pricing, arrival date, before-Palai photo, notes).
+  /// Register Goat screen collects (identity, arrival weight, height and
+  /// length, health status, package/pricing, arrival date, before-Palai
+  /// photo, notes).
   /// It never touches checkInDate, checkOutDate, status, isCheckedOut,
   /// currentWeight (driven by Health Updates), or report state — those
   /// belong to other flows (check-in, checkout, health tracking,
@@ -2205,6 +2206,7 @@ class FirestoreService {
       'color': updated.color,
       'weightAtCheckIn': updated.weightAtCheckIn,
       'heightAtCheckIn': updated.heightAtCheckIn,
+      'lengthAtCheckIn': updated.lengthAtCheckIn,
       'healthStatus': updated.healthStatus,
       'farmArrivalDate': updated.farmArrivalDate != null ? Timestamp.fromDate(updated.farmArrivalDate!) : null,
       'monthlyPackage': updated.monthlyPackage,

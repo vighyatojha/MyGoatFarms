@@ -125,18 +125,11 @@ class SaleDraft {
     _sellingWeights[goat.id] = weight;
   }
 
-  /// Gender per goat, keyed by goat ID. Trading's Goat Registration
-  /// never captured gender (see Goat.gender's doc comment) — this is
-  /// the one place it's ever asked, and it's written back onto the goat
-  /// doc when the sale saves so it isn't asked again next time. Falls
-  /// back to whatever's already on the goat record, if anything.
-  final Map<String, String> _genders = {};
-
-  String genderFor(Goat goat) => _genders[goat.id] ?? goat.gender;
-
-  void setGender(Goat goat, String gender) {
-    _genders[goat.id] = gender;
-  }
+  /// Gender is captured once, at Trading's Goat Registration (see
+  /// Goat.gender's doc comment), so by the time a goat reaches the Sell
+  /// Goat wizard it's already fixed. This is read-only here — the sale
+  /// flow displays it but never edits or writes it back.
+  String genderFor(Goat goat) => goat.gender;
 
   /// Sum of every selected goat's selling weight — this is what Step 4
   /// treats as the sale's total Selling Weight. It is deliberately

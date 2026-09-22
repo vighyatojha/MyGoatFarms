@@ -46,6 +46,7 @@ class _CustomerGoatRegistrationScreenState
   final _colorController = TextEditingController();
   final _weightController = TextEditingController();
   final _heightController = TextEditingController();
+  final _lengthController = TextEditingController();
   final _pricingController = TextEditingController();
   final _checkInTransportController = TextEditingController();
   final _notesController = TextEditingController();
@@ -286,6 +287,7 @@ class _CustomerGoatRegistrationScreenState
     _colorController.dispose();
     _weightController.dispose();
     _heightController.dispose();
+    _lengthController.dispose();
     _pricingController.dispose();
     _checkInTransportController.dispose();
     _notesController.dispose();
@@ -406,6 +408,24 @@ class _CustomerGoatRegistrationScreenState
       return;
     }
 
+    // Length is optional — blank means "not recorded" (0).
+    final lengthText = _lengthController.text.trim();
+
+    final length = lengthText.isEmpty
+        ? 0.0
+        : double.tryParse(lengthText);
+
+    if (length == null ||
+        length < 0 ||
+        length > PalaiGoat.maxLengthCm) {
+      _showSnack(
+        'Please enter a valid goat length '
+            '(up to ${PalaiGoat.maxLengthCm.toStringAsFixed(0)} cm).',
+        isError: true,
+      );
+      return;
+    }
+
     // When opened without a preset customer, the picker's selection is
     // the source of truth for the owner.
     if (_needsCustomerPicker && _selectedCustomer == null) {
@@ -501,6 +521,10 @@ class _CustomerGoatRegistrationScreenState
         // Height (optional, cm — 0 = not recorded)
         heightAtCheckIn:
         height,
+
+        // Length (optional, cm — 0 = not recorded)
+        lengthAtCheckIn:
+        length,
 
         // Health
         healthStatus:
@@ -838,6 +862,10 @@ class _CustomerGoatRegistrationScreenState
             const SizedBox(height: 16),
 
             _buildHeightField(),
+
+            const SizedBox(height: 16),
+
+            _buildLengthField(),
 
             const SizedBox(height: 16),
 
@@ -1244,6 +1272,51 @@ class _CustomerGoatRegistrationScreenState
 
         if (height > PalaiGoat.maxHeightCm) {
           return 'Please check the height';
+        }
+
+        return null;
+      },
+    );
+  }
+
+  // ===========================================================================
+  // LENGTH (optional)
+  // ===========================================================================
+
+  Widget _buildLengthField() {
+    return _textField(
+      controller:
+      _lengthController,
+      label:
+      'Length at Check-In (cm)',
+      hint:
+      'Example: 70',
+      icon:
+      Icons.straighten_outlined,
+      keyboardType:
+      const TextInputType.numberWithOptions(
+        decimal: true,
+      ),
+      optional:
+      true,
+      validator: (value) {
+        final text =
+            value?.trim() ?? '';
+
+        // Optional — blank is fine.
+        if (text.isEmpty) {
+          return null;
+        }
+
+        final length =
+        double.tryParse(text);
+
+        if (length == null || length <= 0) {
+          return 'Enter a valid length';
+        }
+
+        if (length > PalaiGoat.maxLengthCm) {
+          return 'Please check the length';
         }
 
         return null;

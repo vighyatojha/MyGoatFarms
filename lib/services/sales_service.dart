@@ -528,14 +528,13 @@ class SalesService {
       // 4. Flip every goat to Sold.
       // ---------------------------------------------------------------
 
+      // Gender is captured once at registration and is fixed by the time
+      // a goat reaches this point — nothing to write back here.
       for (final goat in draft.selectedGoats) {
-        final gender = draft.genderFor(goat);
-
         transaction.update(_goats(farmId).doc(goat.id), {
           'currentStatus': Goat.statusSold,
           'saleId': saleId,
           'weight': draft.weightFor(goat),
-          if (gender.isNotEmpty) 'gender': gender,
         });
       }
 
@@ -716,14 +715,13 @@ class SalesService {
       // 4. Flip every goat to Booked.
       // ---------------------------------------------------------------
 
+      // Gender is captured once at registration and is fixed by the time
+      // a goat reaches this point — nothing to write back here.
       for (final goat in draft.selectedGoats) {
-        final gender = draft.genderFor(goat);
-
         transaction.update(_goats(farmId).doc(goat.id), {
           'currentStatus': Goat.statusBooked,
           'saleId': saleId,
           'weight': draft.weightFor(goat),
-          if (gender.isNotEmpty) 'gender': gender,
         });
       }
 
@@ -873,14 +871,13 @@ class SalesService {
       // 4. Flip every goat to Wait on Delivery.
       // ---------------------------------------------------------------
 
+      // Gender is captured once at registration and is fixed by the time
+      // a goat reaches this point — nothing to write back here.
       for (final goat in draft.selectedGoats) {
-        final gender = draft.genderFor(goat);
-
         transaction.update(_goats(farmId).doc(goat.id), {
           'currentStatus': Goat.statusWaitOnDelivery,
           'saleId': saleId,
           'weight': draft.weightFor(goat),
-          if (gender.isNotEmpty) 'gender': gender,
         });
       }
 
@@ -1036,14 +1033,13 @@ class SalesService {
         'createdAt': FieldValue.serverTimestamp(),
       });
 
+      // Gender is captured once at registration and is fixed by the time
+      // a goat reaches this point — nothing to write back here.
       for (final goat in draft.selectedGoats) {
-        final gender = draft.genderFor(goat);
-
         transaction.update(_goats(farmId).doc(goat.id), {
           'currentStatus': Goat.statusInCustomerPalai,
           'saleId': saleId,
           'weight': draft.weightFor(goat),
-          if (gender.isNotEmpty) 'gender': gender,
         });
       }
 
@@ -1097,6 +1093,7 @@ class SalesService {
           gender: gender.isEmpty ? 'Male' : gender,
           weightAtCheckIn: draft.weightFor(goat),
           heightAtCheckIn: goat.height,
+          lengthAtCheckIn: goat.length,
           healthStatus:
           goat.healthStatus.isEmpty ? 'Healthy' : goat.healthStatus,
           checkInDate: draft.transferDate ?? DateTime.now(),
