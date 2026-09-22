@@ -16,6 +16,7 @@ import '../register_goats/goat_registration_form_screen.dart';
 import 'complete_booking_delivery_screen.dart';
 import 'complete_wait_for_delivery_screen.dart';
 import 'goat_stock_detail_screen.dart';
+import 'wait_delivery_customer_list_screen.dart';
 import '../purchase_goats/individual_goat_purchase_screen.dart';
 
 // ============================================================================
@@ -210,10 +211,31 @@ class _GoatStockListScreenState
   bool _centerSelectedChip = true;
 
   void _setStatusFilter(String? status) {
+    // Wait on Delivery is not a flat goat filter like the other tabs — a
+    // customer's waiting goats are picked up (and paid for) together, so
+    // this tab opens its own customer-grouped screen instead of filtering
+    // the list in place. See WaitDeliveryCustomerListScreen.
+    if (status == Goat.statusWaitOnDelivery) {
+      _openWaitOnDelivery();
+      return;
+    }
+
     setState(() {
       _statusFilter = status;
       _centerSelectedChip = true;
     });
+  }
+
+  void _openWaitOnDelivery() {
+    final farmId = _farmId;
+
+    if (farmId == null) return;
+
+    Navigator.of(context).push(
+      fastRoute(
+        WaitDeliveryCustomerListScreen(farmId: farmId),
+      ),
+    );
   }
 
   @override
