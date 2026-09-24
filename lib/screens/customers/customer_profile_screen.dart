@@ -402,6 +402,7 @@ class _CustomerProfileScreenState extends State<CustomerProfileScreen> {
                   customerId: _customer.id,
                   mobile: _customer.mobileNumber,
                   name: _customer.name,
+                  palaiOutstanding: _customer.pendingAmount,
                 ),
 
                 const SizedBox(height: 14),

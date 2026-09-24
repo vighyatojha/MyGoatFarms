@@ -779,12 +779,28 @@ class _CustomerGoatsProgressReportScreenState
         );
       }
 
+      // Re-read the customer's live balance just before printing, so the
+      // Payment Details page can show what is owed right now (the same
+      // figure as Customer Profile and Customer Ledger), not only the
+      // frozen numbers the bill was generated with.
+      double? liveOutstanding;
+      try {
+        final liveCustomer = await FirestoreService.instance.getCustomer(
+          widget.farmId,
+          widget.customer.id,
+        );
+        liveOutstanding = liveCustomer?.pendingAmount;
+      } catch (_) {
+        // Falls back to the bill's own remaining balance in the PDF.
+      }
+
       if (share) {
         await CustomerGoatsProgressReportPdfService.instance.share(
           customer: widget.customer,
           entries: entries,
           billSettings: billSettings,
           monthlyBill: monthlyBill,
+          currentOutstanding: liveOutstanding,
         );
       } else {
         await CustomerGoatsProgressReportPdfService.instance.preview(
@@ -792,6 +808,7 @@ class _CustomerGoatsProgressReportScreenState
           entries: entries,
           billSettings: billSettings,
           monthlyBill: monthlyBill,
+          currentOutstanding: liveOutstanding,
         );
       }
     } catch (e) {

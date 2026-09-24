@@ -150,12 +150,19 @@ class GoatCreditProfileCard extends StatefulWidget {
   final String mobile;
   final String name;
 
+  /// The customer's Palai outstanding (their profile's pending amount).
+  /// Only used to show one combined "Total owed" line under the goat sale
+  /// credit — the two amounts are never merged or stored together: the
+  /// goat sale credit is worked out from the sales themselves.
+  final double palaiOutstanding;
+
   const GoatCreditProfileCard({
     super.key,
     required this.farmId,
     required this.customerId,
     required this.mobile,
     required this.name,
+    this.palaiOutstanding = 0,
   });
 
   @override
@@ -182,22 +189,14 @@ class _GoatCreditProfileCardState extends State<GoatCreditProfileCard> {
   }
 
   CustomerCredit? _find(List<CustomerCredit> credits) {
-    final key = CustomerCredit.keyFromParts(
-      mobile: widget.mobile,
+    // Same lookup Customer Palai payments use to settle this customer's
+    // goat sales, so the card and the payment always agree.
+    return CustomerCredit.find(
+      credits,
       customerId: widget.customerId,
+      mobile: widget.mobile,
       name: widget.name,
     );
-
-    for (final credit in credits) {
-      if (credit.key == key) return credit;
-    }
-
-    // Same customer record, saved under a different mobile format.
-    for (final credit in credits) {
-      if (credit.customerIds.contains(widget.customerId)) return credit;
-    }
-
-    return null;
   }
 
   @override
@@ -258,10 +257,48 @@ class _GoatCreditProfileCardState extends State<GoatCreditProfileCard> {
                 const SizedBox(height: 4),
                 Text(
                   'Still owed on ${credit.saleCount} goat sale'
-                      '${credit.saleCount == 1 ? '' : 's'}. This is separate '
-                      'from the Palai outstanding above.',
+                      '${credit.saleCount == 1 ? '' : 's'}. It is kept on the '
+                      'sale itself, so it is not part of the Palai '
+                      'outstanding above.',
                   style: AppTheme.body(size: 10.5, color: AppColors.textGrey),
                 ),
+                if (widget.palaiOutstanding > 0) ...[
+                  const SizedBox(height: 8),
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 10,
+                      vertical: 8,
+                    ),
+                    decoration: BoxDecoration(
+                      color: AppColors.error.withOpacity(0.06),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            'Total owed to the farm (Palai '
+                                '${_money(widget.palaiOutstanding)} + goat sale '
+                                '${_money(credit.totalDue)})',
+                            style: AppTheme.body(
+                              size: 10.5,
+                              color: AppColors.textDark,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Text(
+                          _money(widget.palaiOutstanding + credit.totalDue),
+                          style: AppTheme.heading(
+                            size: 13,
+                            color: AppColors.error,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
                 const SizedBox(height: 10),
                 SizedBox(
                   width: double.infinity,

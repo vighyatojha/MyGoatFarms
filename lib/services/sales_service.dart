@@ -996,39 +996,24 @@ class SalesService {
     // 2. Trading-side transaction.
     // -----------------------------------------------------------------
 
-    // The Trading sale's unpaid goat amount becomes part of the same
-    // customer's Customer Palai pending balance.
-    final palaiCustomerRef =
-    _palaiCustomers(farmId).doc(palaiCustomerId);
+    // ONE DEBT, ONE RECORD.
+    //
+    // Whatever the customer has not paid toward the goat's price stays on
+    // the SALE (see Sale.billBalanceDue) and is deliberately NOT copied
+    // into the Palai customer's `pendingAmount`. Copying it would create
+    // a second figure for the same debt, and every later payment would
+    // have to be applied to both to keep them equal. Instead the Palai
+    // side reads the debt from the sale (Goat sale credit on the customer
+    // profile) and Palai payments that go beyond the Palai outstanding
+    // are applied to the sale (see [settleSalesInTransaction]), so the two
+    // views can never disagree and the monthly Palai bill never carries a
+    // Trading debt inside it.
 
     // Not `late final`: Firestore may re-run the transaction closure
     // on contention, which would assign this more than once.
     String saleId = '';
 
     await _db.runTransaction((transaction) async {
-      // Read the Palai customer before any transaction writes.
-      final palaiCustomerSnap =
-      await transaction.get(palaiCustomerRef);
-
-      if (!palaiCustomerSnap.exists) {
-        throw StateError(
-          'The Customer Palai record could not be found.',
-        );
-      }
-
-      final palaiCustomerData =
-          palaiCustomerSnap.data() ?? <String, dynamic>{};
-
-      final existingPalaiPending =
-          (palaiCustomerData['pendingAmount'] as num?)
-              ?.toDouble() ??
-              0.0;
-
-      final tradingPending =
-      draft.remainingBalancePalai < 0
-          ? 0.0
-          : draft.remainingBalancePalai;
-
       for (final goat in draft.selectedGoats) {
         final snap = await transaction.get(_goats(farmId).doc(goat.id));
 
@@ -1814,17 +1799,6 @@ class SalesService {
 
       final sale = Sale.fromDoc(saleSnap);
 
-      DocumentReference<Map<String, dynamic>>? palaiCustomerRef;
-      DocumentSnapshot<Map<String, dynamic>>? palaiCustomerSnap;
-
-      if (sale.palaiCustomerId != null &&
-          sale.palaiCustomerId!.trim().isNotEmpty) {
-        palaiCustomerRef =
-            _palaiCustomers(farmId).doc(sale.palaiCustomerId!);
-        palaiCustomerSnap =
-        await transaction.get(palaiCustomerRef);
-      }
-
       if (!sale.isDelivered) {
         throw StateError(
           'A balance can only be collected after the goat has been '
@@ -1848,88 +1822,231 @@ class SalesService {
         );
       }
 
-      final payment = SalePayment(
-        amount: paid,
+      // The sale is the ONLY record of this debt, so this is all there is
+      // to update: the customer's Palai pending balance is a different
+      // debt and is never touched here.
+      _writeBalancePayment(
+        transaction: transaction,
+        farmId: farmId,
+        saleSnap: saleSnap,
+        sale: sale,
+        paid: paid,
         method: method,
-        date: DateTime.now(),
         note: note,
+        when: DateTime.now(),
       );
-
-      // Rewrite the raw list (rather than arrayUnion) so the new entry is
-      // always appended, even if an identical payment already exists.
-      final existing = (saleSnap.data()?['payments'] as List?) ?? const [];
-      final dueAfter = SaleDraft.round2(due - paid);
-
-      // Revenue = the part of this payment that covers goat sale +
-      // holding charges; anything past that is transportation.
-      final revenueDelta = SaleDraft.round2(
-        Sale.revenueFromPaid(
-          paid: sale.billAmountPaid + paid,
-          revenueTotal: sale.billRevenueTotal,
-        ) -
-            sale.billRevenueReceived,
-      );
-
-      transaction.update(saleRef, {
-        'payments': [...existing, payment.toMap()],
-        'paymentStatus': _paymentStatusFor(
-          balanceDue: dueAfter,
-          paid: sale.billAmountPaid + paid,
-        ),
-      });
-
-      // A balance payment against a Trading sale that was transferred
-      // to Customer Palai also settles the same customer's Palai
-      // pending balance. Never let it go below zero.
-      if (palaiCustomerRef != null &&
-          palaiCustomerSnap != null &&
-          palaiCustomerSnap.exists) {
-        final palaiData =
-            palaiCustomerSnap.data() ?? <String, dynamic>{};
-
-        final currentPalaiPending =
-            (palaiData['pendingAmount'] as num?)
-                ?.toDouble() ??
-                0.0;
-
-        final updatedPalaiPending =
-        (currentPalaiPending - paid)
-            .clamp(0.0, double.infinity)
-            .toDouble();
-
-        transaction.update(
-          palaiCustomerRef,
-          {
-            'pendingAmount': updatedPalaiPending,
-            'updatedAt': FieldValue.serverTimestamp(),
-          },
-        );
-      }
-
-      if (revenueDelta > 0) {
-        final trimmedNote = note.trim();
-
-        transaction.set(
-          _transactions(farmId).doc(
-            _saleRevenueDocId(saleId, 'pay${existing.length + 1}'),
-          ),
-          {
-            ..._saleRevenueData(
-              saleId: saleId,
-              amount: revenueDelta,
-              date: payment.date,
-              paymentMethod: method,
-              customerName: sale.customerName,
-              note: trimmedNote.isEmpty
-                  ? 'Sold Goat Revenue — balance payment, Sale $saleId'
-                  : 'Sold Goat Revenue — balance payment, Sale $saleId '
-                  '· $trimmedNote',
-            ),
-            'createdAt': FieldValue.serverTimestamp(),
-          },
-        );
-      }
     }).timeout(_timeout * 2);
+  }
+
+  /// The writes for ONE balance payment against ONE sale, inside a
+  /// caller's transaction: the payment appended to the sale's `payments`,
+  /// its `paymentStatus` refreshed, and the Sold Goat Revenue entry for
+  /// the part that is revenue (never transportation). The caller has
+  /// already read [saleSnap] and checked that [paid] does not exceed the
+  /// balance due.
+  ///
+  /// Shared by [receiveBalancePayment] (a payment taken on the sale) and
+  /// [settleSalesInTransaction] (a Customer Palai payment that also
+  /// settles goat sales), so both leave the sale and Finance in exactly
+  /// the same state.
+  void _writeBalancePayment({
+    required Transaction transaction,
+    required String farmId,
+    required DocumentSnapshot<Map<String, dynamic>> saleSnap,
+    required Sale sale,
+    required double paid,
+    required String method,
+    required String note,
+    required DateTime when,
+  }) {
+    final payment = SalePayment(
+      amount: paid,
+      method: method,
+      date: when,
+      note: note,
+    );
+
+    // Rewrite the raw list (rather than arrayUnion) so the new entry is
+    // always appended, even if an identical payment already exists.
+    final existing = (saleSnap.data()?['payments'] as List?) ?? const [];
+    final dueAfter = SaleDraft.round2(sale.billBalanceDue - paid);
+
+    // Revenue = the part of this payment that covers goat sale +
+    // holding charges; anything past that is transportation.
+    final revenueDelta = SaleDraft.round2(
+      Sale.revenueFromPaid(
+        paid: sale.billAmountPaid + paid,
+        revenueTotal: sale.billRevenueTotal,
+      ) -
+          sale.billRevenueReceived,
+    );
+
+    transaction.update(saleSnap.reference, {
+      'payments': [...existing, payment.toMap()],
+      'paymentStatus': _paymentStatusFor(
+        balanceDue: dueAfter,
+        paid: sale.billAmountPaid + paid,
+      ),
+    });
+
+    if (revenueDelta > 0) {
+      final trimmedNote = note.trim();
+      final saleId = saleSnap.id;
+
+      transaction.set(
+        _transactions(farmId).doc(
+          _saleRevenueDocId(saleId, 'pay${existing.length + 1}'),
+        ),
+        {
+          ..._saleRevenueData(
+            saleId: saleId,
+            amount: revenueDelta,
+            date: payment.date,
+            paymentMethod: method,
+            customerName: sale.customerName,
+            note: trimmedNote.isEmpty
+                ? 'Sold Goat Revenue — balance payment, Sale $saleId'
+                : 'Sold Goat Revenue — balance payment, Sale $saleId '
+                '· $trimmedNote',
+          ),
+          'createdAt': FieldValue.serverTimestamp(),
+        },
+      );
+    }
+  }
+
+  // -----------------------------------------------------------------------
+  // GOAT SALE CREDIT SETTLED FROM A CUSTOMER PALAI PAYMENT
+  // -----------------------------------------------------------------------
+  //
+  // A customer can owe money in two places: the Palai outstanding on their
+  // profile (boarding charges) and the unpaid part of a goat sale. The
+  // sale stays the only record of its own debt. When money comes in
+  // through Customer Palai "Receive Payment", it goes to the Palai
+  // outstanding first; only what is left over goes to the customer's open
+  // goat sales, oldest first, and only what is left after THAT is stored
+  // as advance. The same payment therefore never counts twice: the Palai
+  // part is Palai income, and the goat-sale part is Sold Goat Revenue on
+  // the sale it settled.
+
+  /// The unpaid goat sales of one person, grouped exactly like the Goat
+  /// sale credit card on their profile (by mobile number, else customer
+  /// id, else name). Null when they owe nothing on any sale.
+  Future<CustomerCredit?> creditForPerson(
+      String farmId, {
+        required String customerId,
+        String mobile = '',
+        String name = '',
+      }) async {
+    final snap = await _sales(farmId)
+        .where(
+      'paymentStatus',
+      whereIn: [
+        Sale.paymentStatusPartial,
+        Sale.paymentStatusPending,
+      ],
+    )
+        .get()
+        .timeout(_timeout);
+
+    return CustomerCredit.find(
+      CustomerCredit.group(snap.docs.map(Sale.fromDoc)),
+      customerId: customerId,
+      mobile: mobile,
+      name: name,
+    );
+  }
+
+  /// Step 1 of settling sales from inside another transaction: re-reads
+  /// every sale in [saleIds] through [transaction] (Firestore needs all
+  /// reads before any write). Pass the result to [settleSalesInTransaction].
+  Future<List<DocumentSnapshot<Map<String, dynamic>>>>
+  readSalesForSettlement(
+      Transaction transaction,
+      String farmId,
+      List<String> saleIds,
+      ) async {
+    final snaps = <DocumentSnapshot<Map<String, dynamic>>>[];
+
+    for (final id in saleIds) {
+      snaps.add(await transaction.get(_sales(farmId).doc(id)));
+    }
+
+    return snaps;
+  }
+
+  /// Step 2: applies up to [amount] to the sales read by
+  /// [readSalesForSettlement], oldest first, each through the same writes
+  /// as [receiveBalancePayment]. Only sales that can still collect a
+  /// balance are used, and no sale is paid more than it owes. Writes
+  /// only — no reads — so it is safe after the caller's own reads.
+  ///
+  /// Returns what was actually applied; anything that could not be
+  /// applied (no open sale, or more than they owe) is left for the caller.
+  GoatSaleSettlement settleSalesInTransaction({
+    required Transaction transaction,
+    required String farmId,
+    required List<DocumentSnapshot<Map<String, dynamic>>> saleSnapshots,
+    required double amount,
+    required String paymentMethod,
+    String note = '',
+    DateTime? when,
+  }) {
+    var remaining = SaleDraft.round2(amount);
+
+    if (remaining <= 0 || saleSnapshots.isEmpty) {
+      return const GoatSaleSettlement([]);
+    }
+
+    final method = paymentMethod.trim().isEmpty
+        ? FinancePaymentMethods.cash
+        : paymentMethod.trim();
+    final at = when ?? DateTime.now();
+
+    final open = <MapEntry<Sale, DocumentSnapshot<Map<String, dynamic>>>>[];
+
+    for (final snap in saleSnapshots) {
+      if (!snap.exists) continue;
+
+      final sale = Sale.fromDoc(snap);
+
+      if (!sale.canCollectBalance) continue;
+
+      open.add(MapEntry(sale, snap));
+    }
+
+    final epoch = DateTime.fromMillisecondsSinceEpoch(0);
+
+    open.sort(
+          (a, b) => (a.key.saleDate ?? epoch).compareTo(b.key.saleDate ?? epoch),
+    );
+
+    final lines = <GoatSaleSettlementLine>[];
+
+    for (final entry in open) {
+      if (remaining <= 0) break;
+
+      final due = entry.key.billBalanceDue;
+      final apply = SaleDraft.round2(remaining < due ? remaining : due);
+
+      if (apply <= 0) continue;
+
+      _writeBalancePayment(
+        transaction: transaction,
+        farmId: farmId,
+        saleSnap: entry.value,
+        sale: entry.key,
+        paid: apply,
+        method: method,
+        note: note,
+        when: at,
+      );
+
+      lines.add(GoatSaleSettlementLine(saleId: entry.value.id, amount: apply));
+      remaining = SaleDraft.round2(remaining - apply);
+    }
+
+    return GoatSaleSettlement(lines);
   }
 
   // -----------------------------------------------------------------------
@@ -2226,4 +2343,36 @@ class CustomerMatch {
     return name.toLowerCase().contains(lowercaseQuery) ||
         mobile.toLowerCase().contains(lowercaseQuery);
   }
+}
+
+/// How much of one payment was applied to one goat sale.
+class GoatSaleSettlementLine {
+  final String saleId;
+  final double amount;
+
+  const GoatSaleSettlementLine({
+    required this.saleId,
+    required this.amount,
+  });
+
+  Map<String, dynamic> toMap() => {'saleId': saleId, 'amount': amount};
+}
+
+/// What [SalesService.settleSalesInTransaction] applied to goat sales.
+class GoatSaleSettlement {
+  final List<GoatSaleSettlementLine> lines;
+
+  const GoatSaleSettlement(this.lines);
+
+  double get total {
+    var sum = 0.0;
+
+    for (final line in lines) {
+      sum += line.amount;
+    }
+
+    return SaleDraft.round2(sum);
+  }
+
+  bool get isEmpty => lines.isEmpty;
 }

@@ -97,6 +97,7 @@ class CustomerGoatsProgressReportPdfService {
     required List<GoatProgressEntry> entries,
     required BillSettings billSettings,
     MonthlyBill? monthlyBill,
+    double? currentOutstanding,
   }) async {
     final regularFont = await PdfGoogleFonts.notoSansRegular();
     final boldFont = await PdfGoogleFonts.notoSansBold();
@@ -148,6 +149,7 @@ class CustomerGoatsProgressReportPdfService {
           entries: entries,
           billSettings: billSettings,
           monthlyBill: monthlyBill,
+          currentOutstanding: currentOutstanding,
         ),
       ),
     );
@@ -160,12 +162,14 @@ class CustomerGoatsProgressReportPdfService {
     required List<GoatProgressEntry> entries,
     required BillSettings billSettings,
     MonthlyBill? monthlyBill,
+    double? currentOutstanding,
   }) async {
     final bytes = await generatePdf(
       customer: customer,
       entries: entries,
       billSettings: billSettings,
       monthlyBill: monthlyBill,
+      currentOutstanding: currentOutstanding,
     );
 
     await Printing.layoutPdf(
@@ -179,12 +183,14 @@ class CustomerGoatsProgressReportPdfService {
     required List<GoatProgressEntry> entries,
     required BillSettings billSettings,
     MonthlyBill? monthlyBill,
+    double? currentOutstanding,
   }) async {
     final bytes = await generatePdf(
       customer: customer,
       entries: entries,
       billSettings: billSettings,
       monthlyBill: monthlyBill,
+      currentOutstanding: currentOutstanding,
     );
 
     await Printing.sharePdf(
@@ -198,12 +204,14 @@ class CustomerGoatsProgressReportPdfService {
     required List<GoatProgressEntry> entries,
     required BillSettings billSettings,
     MonthlyBill? monthlyBill,
+    double? currentOutstanding,
   }) async {
     final bytes = await generatePdf(
       customer: customer,
       entries: entries,
       billSettings: billSettings,
       monthlyBill: monthlyBill,
+      currentOutstanding: currentOutstanding,
     );
 
     final directory = await getApplicationDocumentsDirectory();
@@ -246,6 +254,7 @@ class CustomerGoatsProgressReportPdfService {
     required List<GoatProgressEntry> entries,
     required BillSettings billSettings,
     required MonthlyBill? monthlyBill,
+    required double? currentOutstanding,
   }) {
     final content = <pw.Widget>[];
 
@@ -301,7 +310,13 @@ class CustomerGoatsProgressReportPdfService {
     content.add(pw.SizedBox(height: 14));
 
     if (monthlyBill != null) {
-      content.add(_buildBillingSummary(monthlyBill, entries));
+      content.add(
+        _buildBillingSummary(
+          monthlyBill,
+          entries,
+          currentOutstanding: currentOutstanding,
+        ),
+      );
     } else {
       content.add(
         pw.Container(
@@ -1121,7 +1136,34 @@ class CustomerGoatsProgressReportPdfService {
   // PAYMENT DETAILS — billing summary
   // ==========================================================================
 
-  pw.Widget _buildBillingSummary(MonthlyBill bill, List<GoatProgressEntry> entries) {
+  pw.Widget _buildBillingSummary(
+      MonthlyBill bill,
+      List<GoatProgressEntry> entries, {
+        double? currentOutstanding,
+      }) {
+    // ------------------------------------------------------------------
+    // A monthly bill is a frozen snapshot: its Old Pending / Current
+    // Month Palai / Total are exactly what was owed the moment it was
+    // generated. Payments recorded afterwards lower the customer's live
+    // outstanding (the figure on their profile and in the Customer
+    // Ledger) but never rewrite those frozen lines. Printing only the
+    // frozen total next to a "PARTIALLY PAID" badge therefore looked like
+    // the report and the profile disagreed.
+    //
+    // So once anything has moved since billing, the page keeps the frozen
+    // lines and adds the missing steps, so it always adds up to the same
+    // balance the profile shows:
+    //
+    //   Total billed  - payments received  +/- other changes
+    //     = Balance due now (customer's live outstanding)
+    // ------------------------------------------------------------------
+    final billedTotal = bill.totalDue;
+    final paidSinceBilling = bill.amountPaid;
+    final balanceNow = currentOutstanding ?? bill.remainingAmount;
+    final otherChanges = balanceNow - (billedTotal - paidSinceBilling);
+    final balanceHasMoved =
+        paidSinceBilling > 0.5 || otherChanges.abs() > 0.5;
+
     final statusBackground = bill.isPaid
         ? PdfColors.green100
         : bill.isPartiallyPaid
@@ -1189,15 +1231,39 @@ class CustomerGoatsProgressReportPdfService {
           pw.SizedBox(height: 5),
           pw.Divider(color: PdfColors.green300),
           pw.SizedBox(height: 5),
+          if (balanceHasMoved) ...[
+            _billingRow('Total Billed (at time of billing)', _currency(billedTotal)),
+            if (paidSinceBilling > 0.5)
+              _billingRow('Payments Received Since Billing', '- ${_currency(paidSinceBilling)}'),
+            if (otherChanges.abs() > 0.5)
+              _billingRow(
+                otherChanges > 0
+                    ? 'Other Charges Since Billing'
+                    : 'Other Credits / Adjustments Since Billing',
+                otherChanges > 0
+                    ? '+ ${_currency(otherChanges)}'
+                    : '- ${_currency(otherChanges.abs())}',
+              ),
+            pw.SizedBox(height: 5),
+            pw.Divider(color: PdfColors.green300),
+            pw.SizedBox(height: 5),
+          ],
           pw.Container(
             width: double.infinity,
             padding: const pw.EdgeInsets.all(10),
             decoration: pw.BoxDecoration(color: PdfColors.white, borderRadius: const pw.BorderRadius.all(pw.Radius.circular(7))),
-            child: _billingRow('TOTAL PENDING PAYMENT', _currency(bill.totalDue), emphasize: true),
+            child: _billingRow(
+              balanceHasMoved ? 'BALANCE DUE NOW' : 'TOTAL PENDING PAYMENT',
+              _currency(balanceHasMoved ? balanceNow : billedTotal),
+              emphasize: true,
+            ),
           ),
           pw.SizedBox(height: 8),
           pw.Text(
-            'Current Month Calculation Only \u2014 previous monthly payments and historical transactions are not included above.',
+            balanceHasMoved
+                ? 'Lines above the total are as billed on ${DateFormat('d MMM yyyy').format(bill.generatedAt)}. '
+                'Balance Due Now is the customer\'s outstanding balance today and matches the customer profile.'
+                : 'Current Month Calculation Only \u2014 previous monthly payments and historical transactions are not included above.',
             style: const pw.TextStyle(fontSize: 7, color: PdfColors.grey600, fontStyle: pw.FontStyle.italic),
           ),
           pw.SizedBox(height: 6),

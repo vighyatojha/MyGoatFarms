@@ -155,6 +155,38 @@ class CustomerCredit {
     return result;
   }
 
+  /// The credit that belongs to the customer described by these parts, or
+  /// null when they owe nothing on any sale. Matches on the grouping key
+  /// first, then on any record id the person's sales are filed under (the
+  /// same customer saved with a different mobile format).
+  ///
+  /// Used by the Goat sale credit card on a customer profile and by
+  /// Customer Palai payments, so both always agree on who owes what.
+  static CustomerCredit? find(
+      Iterable<CustomerCredit> credits, {
+        required String customerId,
+        String mobile = '',
+        String name = '',
+      }) {
+    final key = keyFromParts(
+      mobile: mobile,
+      customerId: customerId,
+      name: name,
+    );
+
+    for (final credit in credits) {
+      if (credit.key == key) return credit;
+    }
+
+    if (customerId.trim().isEmpty) return null;
+
+    for (final credit in credits) {
+      if (credit.customerIds.contains(customerId)) return credit;
+    }
+
+    return null;
+  }
+
   /// The total still owed across every customer in [credits].
   static double totalOf(Iterable<CustomerCredit> credits) {
     var total = 0.0;

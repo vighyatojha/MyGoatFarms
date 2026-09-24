@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../../app_theme.dart';
 import '../../models/palai_models.dart';
 import '../../services/firestore_service.dart';
+import '../../services/sales_service.dart';
 import '../../widgets/farm_not_linked_state.dart';
 
 class ReceivePaymentScreen extends StatefulWidget {
@@ -37,6 +38,13 @@ class _ReceivePaymentScreenState
 
   bool _saving = false;
 
+  /// What the selected customer still owes on unpaid goat sales. A
+  /// payment larger than their Palai pending settles these (oldest
+  /// first) before anything is stored as advance — the same rule
+  /// FirestoreService.receivePalaiPayment applies.
+  double _goatCreditBefore = 0;
+  int _goatCreditRequest = 0;
+
   @override
   void initState() {
     super.initState();
@@ -55,6 +63,37 @@ class _ReceivePaymentScreenState
       _farmId = farmId;
       _loadingFarm = false;
     });
+
+    _loadGoatCredit();
+  }
+
+  Future<void> _loadGoatCredit() async {
+    final farmId = _farmId;
+    final customer = _selectedCustomer;
+    final request = ++_goatCreditRequest;
+
+    if (farmId == null || customer == null) {
+      if (mounted) setState(() => _goatCreditBefore = 0);
+      return;
+    }
+
+    try {
+      final credit = await SalesService.instance.creditForPerson(
+        farmId,
+        customerId: customer.id,
+        mobile: customer.mobileNumber,
+        name: customer.name,
+      );
+
+      // Ignore an answer for a customer that is no longer selected.
+      if (!mounted || request != _goatCreditRequest) return;
+
+      setState(() => _goatCreditBefore = credit?.totalDue ?? 0);
+    } catch (_) {
+      if (!mounted || request != _goatCreditRequest) return;
+
+      setState(() => _goatCreditBefore = 0);
+    }
   }
 
   @override
@@ -86,8 +125,26 @@ class _ReceivePaymentScreenState
         .toDouble();
   }
 
-  double get _advanceAdded {
+  double get _amountAfterPending {
     return (_amount - _amountAppliedToPending)
+        .clamp(0, double.infinity)
+        .toDouble();
+  }
+
+  double get _amountAppliedToGoatSales {
+    return _amountAfterPending
+        .clamp(0, _goatCreditBefore)
+        .toDouble();
+  }
+
+  double get _goatCreditAfter {
+    return (_goatCreditBefore - _amountAppliedToGoatSales)
+        .clamp(0, double.infinity)
+        .toDouble();
+  }
+
+  double get _advanceAdded {
+    return (_amountAfterPending - _amountAppliedToGoatSales)
         .clamp(0, double.infinity)
         .toDouble();
   }
@@ -210,6 +267,12 @@ class _ReceivePaymentScreenState
                 'Pending After',
                 result.pendingAfter,
               ),
+
+              if (result.amountAppliedToGoatSales > 0)
+                _dialogRow(
+                  'Applied to Goat Sale Credit',
+                  result.amountAppliedToGoatSales,
+                ),
 
               if (result.advanceAdded > 0) ...[
                 const Divider(),
@@ -461,7 +524,10 @@ class _ReceivePaymentScreenState
             setState(() {
               _selectedCustomer =
                   customer;
+              _goatCreditBefore = 0;
             });
+
+            _loadGoatCredit();
           },
         ),
       ),
@@ -627,6 +693,27 @@ class _ReceivePaymentScreenState
             _pendingAfter,
             bold: true,
           ),
+
+          if (_goatCreditBefore > 0) ...[
+            const SizedBox(height: 8),
+
+            _summaryRow(
+              'Goat Sale Credit Before',
+              _goatCreditBefore,
+              color: AppColors.error,
+            ),
+
+            _summaryRow(
+              'Applied to Goat Sale Credit',
+              _amountAppliedToGoatSales,
+            ),
+
+            _summaryRow(
+              'Goat Sale Credit After',
+              _goatCreditAfter,
+              bold: true,
+            ),
+          ],
 
           const SizedBox(height: 8),
 

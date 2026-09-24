@@ -21,6 +21,7 @@ import '../models/notification_model.dart';
 import '../models/supplier_model.dart';
 import '../models/goat_model.dart';
 import '../models/trading_goat_health_record.dart';
+import 'sales_service.dart';
 
 /// One upcoming/due health reminder for a Customer-Palai goat —
 /// vaccination, hoof cutting, or hair trimming. See
@@ -365,6 +366,11 @@ class StandalonePaymentResult {
   final double amountAppliedToPending;
   final double pendingAfter;
 
+  /// The part of this payment that went past the Palai outstanding and
+  /// settled the customer's unpaid goat sales instead (oldest first).
+  /// Zero when they owe nothing on any sale.
+  final double amountAppliedToGoatSales;
+
   final double advanceBefore;
   final double advanceAdded;
   final double advanceAfter;
@@ -385,6 +391,7 @@ class StandalonePaymentResult {
     required this.amountReceived,
     required this.amountAppliedToPending,
     required this.pendingAfter,
+    this.amountAppliedToGoatSales = 0,
     required this.advanceBefore,
     required this.advanceAdded,
     required this.advanceAfter,
@@ -1140,7 +1147,10 @@ class FirestoreService {
   /// This operation is atomic:
   /// - reads current pending + advance
   /// - applies payment to pending first
-  /// - stores excess payment as advance
+  /// - applies what is left to the customer's unpaid GOAT SALES, oldest
+  ///   first (the sale stays the only record of that debt — see
+  ///   SalesService.settleSalesInTransaction)
+  /// - stores whatever is still left as advance
   /// - creates payment record
   /// - creates income transaction
   /// - updates customer balance
@@ -1200,6 +1210,40 @@ class FirestoreService {
 
     // Resolved once, before the transaction — see [addOutstandingAmount].
     final actor = await getCurrentActor();
+
+    // ------------------------------------------------------------------
+    // FIND THE CUSTOMER'S OPEN GOAT SALES
+    //
+    // A customer can also owe money on goat sales (Trading). That debt is
+    // kept on the sale itself, not in pendingAmount, so a payment that is
+    // bigger than the Palai outstanding must be applied to those sales
+    // instead of being stored as advance while the sale still shows the
+    // customer owing. Like the monthly bills below, the sales are found
+    // here and re-read fresh, by reference, inside the transaction.
+    //
+    // Never allowed to block a Palai payment: if the lookup fails, the
+    // payment behaves exactly as it did before (excess becomes advance).
+    // ------------------------------------------------------------------
+
+    var goatSaleIds = const <String>[];
+
+    try {
+      final customerBeforeSnap =
+      await customerRef.get().timeout(timeout);
+      final customerBefore = customerBeforeSnap.data() ?? {};
+
+      final credit = await SalesService.instance.creditForPerson(
+        farmId,
+        customerId: customerId,
+        mobile: (customerBefore['mobileNumber'] ?? '').toString(),
+        name: (customerBefore['name'] ?? '').toString(),
+      );
+
+      goatSaleIds =
+          credit?.sales.map((sale) => sale.id).toList() ?? const <String>[];
+    } catch (_) {
+      goatSaleIds = const <String>[];
+    }
 
     // ------------------------------------------------------------------
     // FIND THE CUSTOMER'S CURRENT (LIVE) MONTHLY BILL
@@ -1265,6 +1309,15 @@ class FirestoreService {
           staleBillSnapshots.add(await transaction.get(ref));
         }
 
+        // Goat sales are read here too — a transaction needs every read
+        // before its first write.
+        final goatSaleSnapshots =
+        await SalesService.instance.readSalesForSettlement(
+          transaction,
+          farmId,
+          goatSaleIds,
+        );
+
         final data = customerSnapshot.data() ?? {};
 
         final customerName =
@@ -1302,13 +1355,50 @@ class FirestoreService {
             .clamp(0, double.infinity)
             .toDouble();
 
-        final advanceAfter =
-        (advanceBefore + excessPayment)
+        final paymentNumber =
+            'PAY-${paymentRef.id.substring(0, 8).toUpperCase()}';
+
+        // ============================================================
+        // WHAT IS LEFT AFTER THE PALAI OUTSTANDING GOES TO GOAT SALES
+        //
+        // Palai outstanding first, then the customer's unpaid goat sales
+        // (oldest first), and only then advance. Each sale gets the
+        // payment through the same writes as a payment taken on the sale
+        // itself, so its balance, status and Sold Goat Revenue entry
+        // are all updated here — once. The Finance income for THIS
+        // payment below only counts what was not applied to a sale, so
+        // the same money is never counted as both Palai income and Sold
+        // Goat Revenue.
+        // ============================================================
+
+        final goatSaleSettlement = excessPayment > 0
+            ? SalesService.instance.settleSalesInTransaction(
+          transaction: transaction,
+          farmId: farmId,
+          saleSnapshots: goatSaleSnapshots,
+          amount: excessPayment,
+          paymentMethod: paymentMethod,
+          note: 'Received with Customer Palai payment $paymentNumber',
+        )
+            : const GoatSaleSettlement([]);
+
+        final amountAppliedToGoatSales = goatSaleSettlement.total;
+
+        final advanceAdded =
+        (excessPayment - amountAppliedToGoatSales)
             .clamp(0, double.infinity)
             .toDouble();
 
-        final paymentNumber =
-            'PAY-${paymentRef.id.substring(0, 8).toUpperCase()}';
+        final advanceAfter =
+        (advanceBefore + advanceAdded)
+            .clamp(0, double.infinity)
+            .toDouble();
+
+        // Money that stays on the Palai side (pending + advance).
+        final palaiIncomeAmount =
+        (paidAmount - amountAppliedToGoatSales)
+            .clamp(0, double.infinity)
+            .toDouble();
 
         // ============================================================
         // APPLY THE SAME AMOUNT TO THE CUSTOMER'S CURRENT MONTHLY BILL
@@ -1399,8 +1489,18 @@ class FirestoreService {
           'amountAppliedToPending':
           amountAppliedToPending,
 
+          // Which goat sales this payment settled, so a sale's balance
+          // can always be traced back to the Palai payment that paid it.
+          'amountAppliedToGoatSales':
+          amountAppliedToGoatSales,
+
+          'goatSalesSettled':
+          goatSaleSettlement.lines
+              .map((line) => line.toMap())
+              .toList(),
+
           'advanceAmount':
-          excessPayment,
+          advanceAdded,
 
           'pendingBefore':
           pendingBefore,
@@ -1433,40 +1533,46 @@ class FirestoreService {
         // INCOME TRANSACTION
         // ============================================================
 
-        transaction.set(transactionRef, {
-          'amount': paidAmount,
+        // Only the part that stayed on the Palai side is Palai income.
+        // The part applied to a goat sale was already written above as
+        // Sold Goat Revenue on that sale; nothing is written here when
+        // the whole payment went to goat sales.
+        if (palaiIncomeAmount > 0) {
+          transaction.set(transactionRef, {
+            'amount': palaiIncomeAmount,
 
-          'isIncome': true,
+            'isIncome': true,
 
-          'category': 'Payment Received',
+            'category': 'Payment Received',
 
-          'customerId': customerId,
+            'customerId': customerId,
 
-          'customerName': customerName,
+            'customerName': customerName,
 
-          'paymentId': paymentRef.id,
+            'paymentId': paymentRef.id,
 
-          'paymentNumber': paymentNumber,
+            'paymentNumber': paymentNumber,
 
-          'amountAppliedToPending':
-          amountAppliedToPending,
+            'amountAppliedToPending':
+            amountAppliedToPending,
 
-          'advanceAmount':
-          excessPayment,
+            'advanceAmount':
+            advanceAdded,
 
-          'paymentMethod':
-          paymentMethod.trim(),
+            'paymentMethod':
+            paymentMethod.trim(),
 
-          'note': note.trim().isNotEmpty
-              ? note.trim()
-              : 'Payment received from $customerName',
+            'note': note.trim().isNotEmpty
+                ? note.trim()
+                : 'Payment received from $customerName',
 
-          'date':
-          FieldValue.serverTimestamp(),
+            'date':
+            FieldValue.serverTimestamp(),
 
-          'createdAt':
-          FieldValue.serverTimestamp(),
-        });
+            'createdAt':
+            FieldValue.serverTimestamp(),
+          });
+        }
 
         // ============================================================
         // UPDATE CUSTOMER
@@ -1522,9 +1628,11 @@ class FirestoreService {
 
           pendingAfter: pendingAfter,
 
+          amountAppliedToGoatSales: amountAppliedToGoatSales,
+
           advanceBefore: advanceBefore,
 
-          advanceAdded: excessPayment,
+          advanceAdded: advanceAdded,
 
           advanceAfter: advanceAfter,
 
