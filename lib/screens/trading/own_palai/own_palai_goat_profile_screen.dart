@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
@@ -6,6 +7,7 @@ import 'package:intl/intl.dart';
 import '../../../app_theme.dart';
 import '../../../goat_icons.dart';
 import '../../../models/goat_model.dart';
+import '../../../models/health_reminder_settings_model.dart';
 import '../../../models/purchase_costing.dart';
 import '../../../models/trading_goat_health_record.dart';
 import '../../../models/trading_goat_weight_entry.dart';
@@ -13,29 +15,50 @@ import '../../../models/trading_purchase_model.dart';
 import '../../../services/firestore_service.dart';
 import '../../../services/goat_service.dart';
 import '../../../services/health_reminder_scheduler.dart';
+import '../../../services/image_service.dart';
 import '../../../services/trading_service.dart';
 import '../../../widgets/fast_route.dart';
+import '../../../widgets/image_source_sheet.dart';
+import '../../../widgets/reminder_cadence_selector.dart';
+import '../../../widgets/reminder_date_selector.dart';
 import '../../palai/fullscreen_image_viewer.dart';
-import 'add_health_record_screen.dart';
-import 'add_weight_entry_screen.dart';
+import '../goat_stock/goat_stock_detail_screen.dart';
 
 /// Own Palai goat profile — same tabbed layout as the customer Palai
 /// GoatProfileScreen, but:
 ///   • Purchase details get their own, much more detailed tab.
 ///   • No Monthly Reports / Final Report tabs (and no Payment / Checkout,
 ///     which only make sense for customer-owned goats).
+///
+/// STOCK PROFILE — a goat that is still Available stock (see
+/// [Goat.isAvailable]) opens the same screen in a slimmer form: it has no
+/// owner and nothing to track beyond its care, so it only has the Photos
+/// and health tabs (Health, Vaccination, Hoof Cutting, Hair Trimming,
+/// Medicine). Like an Own Palai goat it follows the farm's Health Reminder
+/// Settings — its dates are armed from them when the profile opens (see
+/// [FirestoreService.syncOwnPalaiFarmReminders]) and raise notifications
+/// when due. The [tabOverview] / [tabPurchase] / [tabProgress] indexes are
+/// simply not shown there, so a deep link to one of them opens on Photos.
 class OwnPalaiGoatProfileScreen extends StatefulWidget {
   final String farmId;
   final Goat goat;
 
-  /// Tab to open on (e.g. from a reminder tap). Defaults to Overview.
+  /// Tab to open on (e.g. from a reminder tap), as one of the `tab…`
+  /// constants below. Defaults to Overview (Photos on a stock profile,
+  /// which has no Overview).
   final int initialTabIndex;
+
+  /// Opens the Progress tab with its "Log Weight Entry" form already
+  /// expanded — used by Goat Stock's "Log weigh-in" shortcut. Has no
+  /// effect on a stock profile, which has no Progress tab.
+  final bool openWeightLog;
 
   const OwnPalaiGoatProfileScreen({
     super.key,
     required this.farmId,
     required this.goat,
     this.initialTabIndex = 0,
+    this.openWeightLog = false,
   });
 
   // -------------------------------------------------------------------------
@@ -77,6 +100,28 @@ class _OwnPalaiGoatProfileScreenState extends State<OwnPalaiGoatProfileScreen>
   late final TabController _tabController;
   Future<TradingPurchase?>? _purchaseFuture;
 
+  /// Available stock goat: Photos + health tabs only (see class doc).
+  bool get _stock => widget.goat.isAvailable;
+
+  /// The `OwnPalaiGoatProfileScreen.tab…` indexes that are shown.
+  late final List<int> _visibleTabs = _stock
+      ? const [
+    OwnPalaiGoatProfileScreen.tabPhotos,
+    OwnPalaiGoatProfileScreen.tabHealth,
+    OwnPalaiGoatProfileScreen.tabVaccination,
+    OwnPalaiGoatProfileScreen.tabHoofCutting,
+    OwnPalaiGoatProfileScreen.tabHairTrimming,
+    OwnPalaiGoatProfileScreen.tabMedicine,
+  ]
+      : List<int>.generate(_tabs.length, (i) => i);
+
+  /// Position of a `tab…` index in the tab bar (0 when it is not shown).
+  int _positionOf(int tab) {
+    final position = _visibleTabs.indexOf(tab);
+
+    return position < 0 ? 0 : position;
+  }
+
   static const _tabs = [
     ('Overview', Icons.dashboard_outlined),
     ('Purchase', Icons.receipt_long_outlined),
@@ -100,12 +145,12 @@ class _OwnPalaiGoatProfileScreenState extends State<OwnPalaiGoatProfileScreen>
   void initState() {
     super.initState();
     _tabController = TabController(
-      length: _tabs.length,
+      length: _visibleTabs.length,
       vsync: this,
-      initialIndex: widget.initialTabIndex.clamp(0, _tabs.length - 1),
+      initialIndex: _positionOf(widget.initialTabIndex),
     );
     final purchaseId = widget.goat.purchaseId.trim();
-    _purchaseFuture = purchaseId.isEmpty
+    _purchaseFuture = (_stock || purchaseId.isEmpty)
         ? Future.value(null)
         : TradingService.instance.getPurchase(widget.farmId, purchaseId);
 
@@ -145,6 +190,24 @@ class _OwnPalaiGoatProfileScreenState extends State<OwnPalaiGoatProfileScreen>
         elevation: 0,
         foregroundColor: AppColors.textDark,
         title: Text(goat.id, style: AppTheme.heading(size: 16)),
+        actions: [
+          // A stock profile has no Overview / Purchase tabs, so the goat's
+          // full details (breed, colour, purchase & origin) stay one tap
+          // away.
+          if (_stock)
+            IconButton(
+              tooltip: 'Goat details',
+              icon: const Icon(Icons.info_outline_rounded),
+              onPressed: () => Navigator.of(context).push(
+                fastRoute(
+                  GoatStockDetailScreen(
+                    farmId: widget.farmId,
+                    goat: goat,
+                  ),
+                ),
+              ),
+            ),
+        ],
       ),
       body: Column(
         children: [
@@ -161,11 +224,11 @@ class _OwnPalaiGoatProfileScreenState extends State<OwnPalaiGoatProfileScreen>
               unselectedLabelStyle: AppTheme.body(size: 11.5),
               tabAlignment: TabAlignment.start,
               tabs: [
-                for (final tab in _tabs)
+                for (final index in _visibleTabs)
                   Tab(
                     height: 40,
-                    icon: Icon(tab.$2, size: 16),
-                    text: tab.$1,
+                    icon: Icon(_tabs[index].$2, size: 16),
+                    text: _tabs[index].$1,
                     iconMargin: const EdgeInsets.only(bottom: 2),
                   ),
               ],
@@ -176,37 +239,67 @@ class _OwnPalaiGoatProfileScreenState extends State<OwnPalaiGoatProfileScreen>
             child: TabBarView(
               controller: _tabController,
               children: [
-                _buildOverviewTab(goat),
-                _buildPurchaseTab(goat),
-                _PhotosTab(farmId: widget.farmId, goat: goat),
-                _HealthSummaryTab(
-                  farmId: widget.farmId,
-                  goat: goat,
-                  types: _healthTypes,
-                  // _healthTypes is ordered vaccination, hoof, hair, medicine — the same
-                  // order as the four consecutive tabs starting at tabVaccination.
-                  onOpenType: (i) => _tabController
-                      .animateTo(OwnPalaiGoatProfileScreen.tabVaccination + i),
-                ),
-                for (final type in _healthTypes)
-                  _HealthTypeTab(
-                    farmId: widget.farmId,
-                    goatId: goat.id,
-                    type: type,
-                    onLog: () => _openAddHealthRecord(type),
-                  ),
-                _ProgressTab(
-                  farmId: widget.farmId,
-                  goat: goat,
-                  purchaseFuture: _purchaseFuture,
-                  onLog: _openAddWeightEntry,
-                ),
+                for (final index in _visibleTabs) _tabBody(goat, index),
               ],
             ),
           ),
         ],
       ),
     );
+  }
+
+  /// The content of one tab, by its `OwnPalaiGoatProfileScreen.tab…`
+  /// index.
+  Widget _tabBody(Goat goat, int index) {
+    switch (index) {
+      case OwnPalaiGoatProfileScreen.tabOverview:
+        return _buildOverviewTab(goat);
+
+      case OwnPalaiGoatProfileScreen.tabPurchase:
+        return _buildPurchaseTab(goat);
+
+      case OwnPalaiGoatProfileScreen.tabPhotos:
+        return _PhotosTab(
+          farmId: widget.farmId,
+          goat: goat,
+          emptyMessage: _stock
+              ? 'No photos yet. The photo taken when the goat was '
+              'registered shows here.'
+              : 'No photos yet. Add one while logging a weight entry.',
+        );
+
+      case OwnPalaiGoatProfileScreen.tabHealth:
+        return _HealthSummaryTab(
+          farmId: widget.farmId,
+          goat: goat,
+          types: _healthTypes,
+          // _healthTypes is ordered vaccination, hoof, hair, medicine — the
+          // same order as the four consecutive tabs starting at
+          // tabVaccination.
+          onOpenType: (i) => _tabController.animateTo(
+            _positionOf(OwnPalaiGoatProfileScreen.tabVaccination + i),
+          ),
+        );
+
+      case OwnPalaiGoatProfileScreen.tabProgress:
+        return _ProgressTab(
+          farmId: widget.farmId,
+          goat: goat,
+          purchaseFuture: _purchaseFuture,
+          initiallyOpen: widget.openWeightLog,
+        );
+
+      default:
+      // Vaccination / Hoof Cutting / Hair Trimming / Medicine.
+        final type = _healthTypes[index -
+            OwnPalaiGoatProfileScreen.tabVaccination];
+
+        return _HealthTypeTab(
+          farmId: widget.farmId,
+          goatId: goat.id,
+          type: type,
+        );
+    }
   }
 
   // ---------------------------------------------------------------------------
@@ -266,7 +359,9 @@ class _OwnPalaiGoatProfileScreenState extends State<OwnPalaiGoatProfileScreen>
                       ),
                     ),
                     const SizedBox(width: 6),
-                    _pill('Own Palai', AppColors.stockTeal),
+                    _stock
+                        ? _pill('Available', AppColors.success)
+                        : _pill('Own Palai', AppColors.stockTeal),
                     const SizedBox(width: 4),
                     Flexible(
                       child: _pill(
@@ -283,9 +378,16 @@ class _OwnPalaiGoatProfileScreenState extends State<OwnPalaiGoatProfileScreen>
                   children: [
                     _miniStat('Current', '${goat.weight.toStringAsFixed(1)} kg'),
                     _miniStat('Age', goat.age.isEmpty ? '—' : goat.age),
-                    _miniStat('Days Owned', '$daysOwned'),
-                    _miniStat('Bought',
-                        DateFormat('d MMM').format(goat.purchaseDate)),
+                    if (_stock) ...[
+                      _miniStat(
+                          'Gender', goat.gender.isEmpty ? '—' : goat.gender),
+                      if (goat.breed.trim().isNotEmpty)
+                        _miniStat('Breed', goat.breed.trim()),
+                    ] else ...[
+                      _miniStat('Days Owned', '$daysOwned'),
+                      _miniStat('Bought',
+                          DateFormat('d MMM').format(goat.purchaseDate)),
+                    ],
                   ],
                 ),
               ],
@@ -599,41 +701,10 @@ class _OwnPalaiGoatProfileScreenState extends State<OwnPalaiGoatProfileScreen>
     );
   }
 
-  // ---------------------------------------------------------------------------
-  // ACTIONS
-  // ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// ACTIONS
+// ---------------------------------------------------------------------------
 
-  Future<void> _openAddWeightEntry() async {
-    final saved = await Navigator.of(context).push<bool>(
-      fastRoute(
-        AddWeightEntryScreen(farmId: widget.farmId, goatId: widget.goat.id),
-      ),
-    );
-    if (saved == true && mounted) _snack('Weight entry logged.');
-  }
-
-  Future<void> _openAddHealthRecord(GoatHealthRecordType type) async {
-    final saved = await Navigator.of(context).push<bool>(
-      fastRoute(
-        AddHealthRecordScreen(
-          farmId: widget.farmId,
-          goatId: widget.goat.id,
-          type: type,
-        ),
-      ),
-    );
-    if (saved == true && mounted) _snack('${type.label} record logged.');
-  }
-
-  void _snack(String msg) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(msg),
-        backgroundColor: AppColors.darkGreen,
-        behavior: SnackBarBehavior.floating,
-      ),
-    );
-  }
 }
 
 // ============================================================================
@@ -713,6 +784,65 @@ Widget _kvColumn(List<(String, String)> pairs) {
   );
 }
 
+/// Turns a Firestore list stream into one that never leaves its screen
+/// loading for long. If the first snapshot has not arrived after [wait]
+/// (a goat with nothing saved yet, or a slow / offline connection), an
+/// empty list is emitted so the tab can say "no data" instead of showing a
+/// skeleton forever. Real data still replaces it the moment it arrives.
+///
+/// The result is a BROADCAST stream: a tab's StreamBuilder is torn down and
+/// rebuilt as the person scrolls or switches tabs, so it can be listened
+/// to more than once (a single-subscription stream throws "Stream has
+/// already been listened to" on the second listen). Every new listener
+/// starts its own fresh wait.
+Stream<List<T>> _orEmptyAfter<T>(
+    Stream<List<T>> source, {
+      Duration wait = const Duration(seconds: 2),
+    }) {
+  StreamSubscription<List<T>>? subscription;
+  Timer? timer;
+  late final StreamController<List<T>> controller;
+
+  controller = StreamController<List<T>>.broadcast(
+    onListen: () {
+      var gotFirst = false;
+
+      timer?.cancel();
+      timer = Timer(wait, () {
+        if (!gotFirst && controller.hasListener) {
+          controller.add(<T>[]);
+        }
+      });
+
+      subscription = source.listen(
+            (data) {
+          gotFirst = true;
+          timer?.cancel();
+          controller.add(data);
+        },
+        onError: (Object error, StackTrace stack) {
+          gotFirst = true;
+          timer?.cancel();
+          controller.addError(error, stack);
+        },
+      );
+    },
+    // A broadcast controller's onCancel must return void, so the source
+    // subscription is cancelled without being awaited.
+    onCancel: () {
+      timer?.cancel();
+      timer = null;
+
+      final active = subscription;
+      subscription = null;
+
+      unawaited(active?.cancel());
+    },
+  );
+
+  return controller.stream;
+}
+
 Widget _emptyMessage(IconData icon, String text) {
   return Container(
     width: double.infinity,
@@ -752,6 +882,54 @@ Widget _logButton(Color color, VoidCallback onTap) {
       visualDensity: VisualDensity.compact,
       tapTargetSize: MaterialTapTargetSize.shrinkWrap,
     ),
+  );
+}
+
+// ----------------------------------------------------------------------------
+// Small pieces shared by the inline log forms (health record forms)
+// ----------------------------------------------------------------------------
+
+Widget _logFieldIcon(IconData icon, Color color) {
+  return Container(
+    width: 30,
+    height: 30,
+    decoration: BoxDecoration(
+      color: color.withOpacity(0.09),
+      borderRadius: BorderRadius.circular(9),
+    ),
+    child: Icon(icon, size: 16, color: color),
+  );
+}
+
+Widget _logFieldLabel(String text, IconData icon, Color color) {
+  return Row(
+    children: [
+      _logFieldIcon(icon, color),
+      const SizedBox(width: 8),
+      Text(text, style: AppTheme.heading(size: 12.5)),
+    ],
+  );
+}
+
+InputDecoration _logInputDecoration(String hint) {
+  return InputDecoration(
+    hintText: hint,
+    hintStyle: AppTheme.body(size: 11.5, color: AppColors.textGrey),
+    filled: true,
+    fillColor: AppColors.paleGreen.withOpacity(0.55),
+    border: OutlineInputBorder(
+      borderRadius: BorderRadius.circular(11),
+      borderSide: BorderSide.none,
+    ),
+    enabledBorder: OutlineInputBorder(
+      borderRadius: BorderRadius.circular(11),
+      borderSide: BorderSide(color: AppColors.divider.withOpacity(0.6)),
+    ),
+    focusedBorder: OutlineInputBorder(
+      borderRadius: BorderRadius.circular(11),
+      borderSide: const BorderSide(color: AppColors.stockTeal, width: 1.2),
+    ),
+    contentPadding: const EdgeInsets.all(12),
   );
 }
 
@@ -900,8 +1078,13 @@ class _StatTile extends StatelessWidget {
 class _PhotosTab extends StatefulWidget {
   final String farmId;
   final Goat goat;
+  final String emptyMessage;
 
-  const _PhotosTab({required this.farmId, required this.goat});
+  const _PhotosTab({
+    required this.farmId,
+    required this.goat,
+    required this.emptyMessage,
+  });
 
   @override
   State<_PhotosTab> createState() => _PhotosTabState();
@@ -913,9 +1096,11 @@ class _PhotosTabState extends State<_PhotosTab> {
   @override
   void initState() {
     super.initState();
-    _stream = GoatService.instance.weightHistoryStream(
-      farmId: widget.farmId,
-      goatId: widget.goat.id,
+    _stream = _orEmptyAfter(
+      GoatService.instance.weightHistoryStream(
+        farmId: widget.farmId,
+        goatId: widget.goat.id,
+      ),
     );
   }
 
@@ -959,8 +1144,7 @@ class _PhotosTabState extends State<_PhotosTab> {
                   : snapshot.connectionState == ConnectionState.waiting
                   ? const _SectionSkeleton(rows: 4)
                   : tiles.isEmpty
-                  ? _emptyMessage(Icons.photo_outlined,
-                  'No photos yet. Add one while logging a weight entry.')
+                  ? _emptyMessage(Icons.photo_outlined, widget.emptyMessage)
                   : GridView.count(
                 crossAxisCount: 3,
                 crossAxisSpacing: 8,
@@ -1044,9 +1228,11 @@ class _HealthSummaryTabState extends State<_HealthSummaryTab> {
   @override
   void initState() {
     super.initState();
-    _stream = GoatService.instance.healthRecordsStream(
-      farmId: widget.farmId,
-      goatId: widget.goat.id,
+    _stream = _orEmptyAfter(
+      GoatService.instance.healthRecordsStream(
+        farmId: widget.farmId,
+        goatId: widget.goat.id,
+      ),
     );
   }
 
@@ -1178,33 +1364,527 @@ class _HealthTypeTab extends StatefulWidget {
   final String farmId;
   final String goatId;
   final GoatHealthRecordType type;
-  final VoidCallback onLog;
 
   const _HealthTypeTab({
     required this.farmId,
     required this.goatId,
     required this.type,
-    required this.onLog,
   });
 
   @override
   State<_HealthTypeTab> createState() => _HealthTypeTabState();
 }
 
-class _HealthTypeTabState extends State<_HealthTypeTab> {
+class _HealthTypeTabState extends State<_HealthTypeTab>
+    with AutomaticKeepAliveClientMixin {
   late final Stream<List<GoatHealthRecord>> _stream;
+
+  // Log form -----------------------------------------------------------------
+  final TextEditingController _notesController = TextEditingController();
+
+  bool _formOpen = false;
+  DateTime _date = DateTime.now();
+
+  /// Medicine only: a reminder the person sets by hand.
+  bool _setNextDueDate = false;
+  DateTime? _manualNextDueDate;
+
+  /// Vaccination / Hoof Cutting / Hair Trimming: the farm's Health Reminder
+  /// Settings decide the next due date, so it is shown but never edited.
+  DateTime? _farmReminderDate;
+  int? _farmReminderDays;
+  bool _loadingReminderSetting = false;
+
+  bool _saving = false;
+
+  bool get _usesFarmSettings => widget.type != GoatHealthRecordType.medicine;
+
+  // Keeps a half-filled form when the person swipes to another tab.
+  @override
+  bool get wantKeepAlive => true;
 
   @override
   void initState() {
     super.initState();
-    _stream = GoatService.instance.healthRecordsStream(
-      farmId: widget.farmId,
-      goatId: widget.goatId,
+    _stream = _orEmptyAfter(
+      GoatService.instance.healthRecordsStream(
+        farmId: widget.farmId,
+        goatId: widget.goatId,
+      ),
     );
   }
 
   @override
+  void dispose() {
+    _notesController.dispose();
+    super.dispose();
+  }
+
+  // ---------------------------------------------------------------------------
+  // LOG FORM
+  // ---------------------------------------------------------------------------
+
+  void _snack(String message, {bool isError = false}) {
+    if (!mounted) return;
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        backgroundColor: isError ? AppColors.error : AppColors.darkGreen,
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(10),
+        ),
+      ),
+    );
+  }
+
+  void _openForm() {
+    setState(() {
+      _formOpen = true;
+    });
+
+    if (_usesFarmSettings) {
+      _loadFarmReminderSetting();
+    }
+  }
+
+  /// Reads the farm's current reminder setting each time the form opens, so
+  /// a date changed in Health Reminder Settings is always the one shown.
+  Future<void> _loadFarmReminderSetting() async {
+    setState(() {
+      _loadingReminderSetting = true;
+    });
+
+    try {
+      final HealthReminderSettings settings =
+      await FirestoreService.instance.getHealthReminderSettings(
+        widget.farmId,
+      );
+
+      if (!mounted) return;
+
+      setState(() {
+        switch (widget.type) {
+          case GoatHealthRecordType.vaccination:
+            _farmReminderDate = settings.vaccinationNextDueDate;
+            break;
+
+          case GoatHealthRecordType.hairTrimming:
+            _farmReminderDate = settings.hairTrimmingNextDueDate;
+            break;
+
+          case GoatHealthRecordType.hoofCutting:
+            _farmReminderDays = settings.hoofCuttingReminderDays;
+            break;
+
+          case GoatHealthRecordType.medicine:
+            break;
+        }
+
+        _loadingReminderSetting = false;
+      });
+    } catch (_) {
+      if (!mounted) return;
+
+      setState(() {
+        _loadingReminderSetting = false;
+      });
+    }
+  }
+
+  DateTime? get _resolvedNextDueDate {
+    switch (widget.type) {
+      case GoatHealthRecordType.vaccination:
+      case GoatHealthRecordType.hairTrimming:
+        return _farmReminderDate;
+
+      case GoatHealthRecordType.hoofCutting:
+        return _farmReminderDays != null
+            ? _date.add(Duration(days: _farmReminderDays!))
+            : null;
+
+      case GoatHealthRecordType.medicine:
+        return _setNextDueDate ? _manualNextDueDate : null;
+    }
+  }
+
+  Future<void> _pickDate() async {
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: _date,
+      firstDate: DateTime(2000),
+      lastDate: DateTime.now(),
+    );
+
+    if (picked != null && mounted) {
+      setState(() {
+        _date = picked;
+      });
+    }
+  }
+
+  Future<void> _pickManualNextDueDate() async {
+    final picked = await showDatePicker(
+      context: context,
+      initialDate:
+      _manualNextDueDate ?? _date.add(const Duration(days: 30)),
+      firstDate: DateTime(2000),
+      lastDate: DateTime(2100),
+    );
+
+    if (picked != null && mounted) {
+      setState(() {
+        _manualNextDueDate = picked;
+      });
+    }
+  }
+
+  void _resetForm() {
+    _notesController.clear();
+    _date = DateTime.now();
+    _setNextDueDate = false;
+    _manualNextDueDate = null;
+  }
+
+  Future<void> _save() async {
+    if (_saving || _loadingReminderSetting) return;
+
+    FocusScope.of(context).unfocus();
+
+    setState(() {
+      _saving = true;
+    });
+
+    final type = widget.type;
+    final nextDueDate = _resolvedNextDueDate;
+
+    try {
+      final recordId = await GoatService.instance.addHealthRecord(
+        farmId: widget.farmId,
+        goatId: widget.goatId,
+        record: GoatHealthRecord(
+          id: '',
+          type: type,
+          date: _date,
+          notes: _notesController.text.trim(),
+          nextDueDate: nextDueDate,
+        ),
+      );
+
+      unawaited(
+        HealthReminderScheduler.instance.scheduleTradingHealthReminder(
+          farmId: widget.farmId,
+          goatId: widget.goatId,
+          goatCode: widget.goatId,
+          recordType: type.name,
+          recordId: recordId,
+          label: type.label,
+          dueDate: nextDueDate,
+        ),
+      );
+
+      // GoatService.addHealthRecord just switched off this goat's
+      // farm-schedule reminder for this care type (the new record carries
+      // the next due date now) — cancel that schedule's alarms too, so the
+      // goat doesn't get a second, stale notification for the same care.
+      if (GoatHealthRecord.followsFarmSettings(type)) {
+        unawaited(
+          HealthReminderScheduler.instance.cancelForTradingRecord(
+            goatId: widget.goatId,
+            recordType: type.name,
+            recordId: GoatHealthRecord.farmScheduleId(type),
+          ),
+        );
+      }
+
+      unawaited(
+        FirestoreService.instance.addNotification(
+          farmId: widget.farmId,
+          docId:
+          'health_trading_${widget.goatId}_${type.name}_${recordId}_logged',
+          type: '${type.name}_logged',
+          category: 'health',
+          priority: 'normal',
+          title: '${type.label} recorded',
+          message: '${widget.goatId}: ${type.label} logged.',
+          reference: {
+            'goatId': widget.goatId,
+            'recordId': recordId,
+          },
+        ),
+      );
+
+      if (!mounted) return;
+
+      setState(() {
+        _resetForm();
+        _formOpen = false;
+        _saving = false;
+      });
+
+      _snack('${type.label} record logged.');
+    } catch (e) {
+      if (!mounted) return;
+
+      setState(() {
+        _saving = false;
+      });
+
+      _snack(FirestoreService.instance.describeError(e), isError: true);
+    }
+  }
+
+  Widget _buildLogForm(Color color) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // Record date ------------------------------------------------------
+        _logFieldLabel('Record Date', Icons.calendar_today_outlined, color),
+        const SizedBox(height: 8),
+        InkWell(
+          onTap: _saving ? null : _pickDate,
+          borderRadius: BorderRadius.circular(11),
+          child: Container(
+            width: double.infinity,
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+            decoration: BoxDecoration(
+              color: color.withOpacity(0.06),
+              borderRadius: BorderRadius.circular(11),
+            ),
+            child: Row(
+              children: [
+                Icon(Icons.event_outlined, size: 17, color: color),
+                const SizedBox(width: 9),
+                Expanded(
+                  child: Text(
+                    DateFormat('dd MMM yyyy').format(_date),
+                    style: AppTheme.body(
+                      size: 12.5,
+                      color: AppColors.textDark,
+                      weight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+                const Icon(Icons.edit_calendar_outlined,
+                    size: 17, color: AppColors.textGrey),
+              ],
+            ),
+          ),
+        ),
+
+        const SizedBox(height: 14),
+
+        // Notes ------------------------------------------------------------
+        _logFieldLabel('Notes', Icons.notes_outlined, AppColors.warning),
+        const SizedBox(height: 8),
+        TextField(
+          controller: _notesController,
+          maxLines: 3,
+          enabled: !_saving,
+          style: AppTheme.body(size: 12.5, color: AppColors.textDark),
+          decoration: _logInputDecoration('Optional notes about this record'),
+        ),
+
+        const SizedBox(height: 14),
+
+        // Reminder ---------------------------------------------------------
+        _logFieldLabel(
+            'Reminder', Icons.notifications_none_outlined, AppColors.info),
+        const SizedBox(height: 8),
+        _buildReminderContent(),
+
+        const SizedBox(height: 16),
+
+        // Save -------------------------------------------------------------
+        SizedBox(
+          width: double.infinity,
+          height: 48,
+          child: ElevatedButton(
+            onPressed: (_saving || _loadingReminderSetting) ? null : _save,
+            style: ElevatedButton.styleFrom(
+              backgroundColor: color,
+              disabledBackgroundColor: color.withOpacity(0.5),
+              foregroundColor: Colors.white,
+              elevation: 0,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12),
+              ),
+            ),
+            child: _saving
+                ? const SizedBox(
+              width: 20,
+              height: 20,
+              child: CircularProgressIndicator(
+                strokeWidth: 2.2,
+                color: Colors.white,
+              ),
+            )
+                : Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                const Icon(Icons.check_circle_outline, size: 18),
+                const SizedBox(width: 7),
+                Text(
+                  'Save ${widget.type.label} Record',
+                  style: const TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildReminderContent() {
+    if (_loadingReminderSetting) {
+      return const _SectionSkeleton(rows: 2);
+    }
+
+    if (!_usesFarmSettings) {
+      return _buildMedicineReminder();
+    }
+
+    if (widget.type == GoatHealthRecordType.hoofCutting) {
+      return ReminderCadenceSelector(
+        value: _farmReminderDays,
+        onChanged: (_) {},
+        locked: true,
+        lockedNote: 'This reminder schedule is controlled from '
+            'Profile → Health Reminder Settings and applies '
+            'to the farm.',
+      );
+    }
+
+    return ReminderDateSelector(
+      value: _farmReminderDate,
+      onChanged: (_) {},
+      locked: true,
+      lockedNote: 'This due date is controlled from Profile → '
+          'Health Reminder Settings and applies to the farm.',
+    );
+  }
+
+  void _setReminderOn(bool value) {
+    setState(() {
+      _setNextDueDate = value;
+
+      if (value) {
+        _manualNextDueDate ??= _date.add(const Duration(days: 30));
+      }
+    });
+  }
+
+  Widget _buildMedicineReminder() {
+    return Column(
+      children: [
+        InkWell(
+          onTap: _saving ? null : () => _setReminderOn(!_setNextDueDate),
+          borderRadius: BorderRadius.circular(11),
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 10),
+            decoration: BoxDecoration(
+              color: _setNextDueDate
+                  ? AppColors.info.withOpacity(0.07)
+                  : AppColors.paleGreen.withOpacity(0.55),
+              borderRadius: BorderRadius.circular(11),
+            ),
+            child: Row(
+              children: [
+                _logFieldIcon(
+                  _setNextDueDate
+                      ? Icons.notifications_active_outlined
+                      : Icons.notifications_none_outlined,
+                  AppColors.info,
+                ),
+                const SizedBox(width: 9),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Set next due date',
+                        style: AppTheme.body(
+                          size: 12.5,
+                          color: AppColors.textDark,
+                          weight: FontWeight.w600,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        'Create a reminder for this medicine',
+                        style: AppTheme.body(
+                          size: 10,
+                          color: AppColors.textGrey,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                Switch(
+                  value: _setNextDueDate,
+                  activeColor: AppColors.info,
+                  onChanged: _saving ? null : _setReminderOn,
+                ),
+              ],
+            ),
+          ),
+        ),
+        if (_setNextDueDate) ...[
+          const SizedBox(height: 8),
+          InkWell(
+            onTap: _saving ? null : _pickManualNextDueDate,
+            borderRadius: BorderRadius.circular(11),
+            child: Container(
+              width: double.infinity,
+              padding:
+              const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+              decoration: BoxDecoration(
+                color: AppColors.info.withOpacity(0.06),
+                borderRadius: BorderRadius.circular(11),
+                border: Border.all(color: AppColors.info.withOpacity(0.15)),
+              ),
+              child: Row(
+                children: [
+                  const Icon(Icons.event_repeat_outlined,
+                      size: 17, color: AppColors.info),
+                  const SizedBox(width: 9),
+                  Expanded(
+                    child: Text(
+                      _manualNextDueDate != null
+                          ? DateFormat('dd MMM yyyy')
+                          .format(_manualNextDueDate!)
+                          : 'Choose a due date',
+                      style: AppTheme.body(
+                        size: 12.5,
+                        color: AppColors.textDark,
+                        weight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                  const Icon(Icons.chevron_right,
+                      size: 18, color: AppColors.textGrey),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+
+  // ---------------------------------------------------------------------------
+  // BUILD
+  // ---------------------------------------------------------------------------
+
+  @override
   Widget build(BuildContext context) {
+    super.build(context); // AutomaticKeepAliveClientMixin
+
     final type = widget.type;
     final color = _healthTypeColor(type);
     final fmt = DateFormat('d MMM yyyy');
@@ -1212,9 +1892,32 @@ class _HealthTypeTabState extends State<_HealthTypeTab> {
     return ListView(
       padding: const EdgeInsets.fromLTRB(14, 12, 14, 24),
       children: [
+        if (_formOpen) ...[
+          _SectionCard(
+            title: 'Log ${type.label}',
+            trailing: TextButton.icon(
+              onPressed: _saving
+                  ? null
+                  : () => setState(() {
+                _formOpen = false;
+              }),
+              icon: const Icon(Icons.close, size: 14),
+              label: const Text('Close'),
+              style: TextButton.styleFrom(
+                foregroundColor: AppColors.textGrey,
+                padding:
+                const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+                visualDensity: VisualDensity.compact,
+                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              ),
+            ),
+            child: _buildLogForm(color),
+          ),
+          const SizedBox(height: 12),
+        ],
         _SectionCard(
           title: type.label,
-          trailing: _logButton(color, widget.onLog),
+          trailing: _formOpen ? null : _logButton(color, _openForm),
           child: StreamBuilder<List<GoatHealthRecord>>(
             stream: _stream,
             builder: (context, snapshot) {
@@ -1241,7 +1944,7 @@ class _HealthTypeTabState extends State<_HealthTypeTab> {
 
               if (snap.isEmpty && history.isEmpty) {
                 return _emptyMessage(_healthIcon(type),
-                    'No ${type.label.toLowerCase()} records yet. Tap Log to add one.');
+                    'No ${type.label.toLowerCase()} data yet. Tap Log to add the first record.');
               }
 
               return Column(
@@ -1367,39 +2070,233 @@ class _ProgressTab extends StatefulWidget {
   final String farmId;
   final Goat goat;
   final Future<TradingPurchase?>? purchaseFuture;
-  final VoidCallback onLog;
+
+  /// Whether the "Log Weight Entry" form starts expanded.
+  final bool initiallyOpen;
 
   const _ProgressTab({
     required this.farmId,
     required this.goat,
     required this.purchaseFuture,
-    required this.onLog,
+    this.initiallyOpen = false,
   });
 
   @override
   State<_ProgressTab> createState() => _ProgressTabState();
 }
 
-class _ProgressTabState extends State<_ProgressTab> {
+class _ProgressTabState extends State<_ProgressTab>
+    with AutomaticKeepAliveClientMixin {
   late final Stream<List<GoatWeightEntry>> _stream;
+
+  // Log Weight Entry form ----------------------------------------------------
+  final GlobalKey<FormState> _formKey = GlobalKey<FormState>();
+  final TextEditingController _weightController = TextEditingController();
+  final TextEditingController _notesController = TextEditingController();
+
+  late bool _formOpen = widget.initiallyOpen;
+  DateTime _date = DateTime.now();
+  Uint8List? _photoBytes;
+  String? _photoContentType;
+  bool _saving = false;
+
+  // Keeps a half-filled form when the person swipes to another tab.
+  @override
+  bool get wantKeepAlive => true;
 
   @override
   void initState() {
     super.initState();
-    _stream = GoatService.instance.weightHistoryStream(
-      farmId: widget.farmId,
-      goatId: widget.goat.id,
+    _stream = _orEmptyAfter(
+      GoatService.instance.weightHistoryStream(
+        farmId: widget.farmId,
+        goatId: widget.goat.id,
+      ),
     );
   }
 
   @override
+  void dispose() {
+    _weightController.dispose();
+    _notesController.dispose();
+    super.dispose();
+  }
+
+  // ---------------------------------------------------------------------------
+  // LOG WEIGHT ENTRY
+  // ---------------------------------------------------------------------------
+
+  void _snack(String message, {bool isError = false}) {
+    if (!mounted) return;
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        backgroundColor: isError ? AppColors.error : AppColors.darkGreen,
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(10),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _pickPhoto() async {
+    try {
+      final picked = await showImageSourceSheet(
+        context,
+        isGoatPhoto: true,
+      );
+
+      if (picked == null || !mounted) return;
+
+      setState(() {
+        _photoBytes = picked.bytes;
+        _photoContentType = picked.contentType;
+      });
+    } on ImageTooLargeException catch (e) {
+      _snack(e.message, isError: true);
+    } catch (_) {
+      _snack('Could not add photo. Please try again.', isError: true);
+    }
+  }
+
+  void _removePhoto() {
+    setState(() {
+      _photoBytes = null;
+      _photoContentType = null;
+    });
+  }
+
+  Future<void> _pickDate() async {
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: _date,
+      firstDate: DateTime(2000),
+      lastDate: DateTime.now(),
+      builder: (context, child) {
+        return Theme(
+          data: Theme.of(context).copyWith(
+            colorScheme: Theme.of(context).colorScheme.copyWith(
+              primary: AppColors.stockTeal,
+            ),
+          ),
+          child: child!,
+        );
+      },
+    );
+
+    if (picked != null && mounted) {
+      setState(() {
+        _date = picked;
+      });
+    }
+  }
+
+  void _resetForm() {
+    _weightController.clear();
+    _notesController.clear();
+    _date = DateTime.now();
+    _photoBytes = null;
+    _photoContentType = null;
+  }
+
+  Future<void> _save() async {
+    if (_saving) return;
+
+    if (!(_formKey.currentState?.validate() ?? false)) return;
+
+    final weight = double.tryParse(_weightController.text.trim());
+
+    if (weight == null || weight <= 0) {
+      _snack('Enter a valid weight.', isError: true);
+      return;
+    }
+
+    FocusScope.of(context).unfocus();
+
+    setState(() {
+      _saving = true;
+    });
+
+    try {
+      await GoatService.instance.addWeightEntry(
+        farmId: widget.farmId,
+        goatId: widget.goat.id,
+        entry: GoatWeightEntry(
+          id: '',
+          weight: weight,
+          date: _date,
+          photo: _photoBytes,
+          photoContentType: _photoContentType,
+          notes: _notesController.text.trim(),
+        ),
+      );
+
+      if (!mounted) return;
+
+      setState(() {
+        _resetForm();
+        _formOpen = false;
+        _saving = false;
+      });
+
+      _snack('Weight entry logged.');
+    } catch (e) {
+      if (!mounted) return;
+
+      setState(() {
+        _saving = false;
+      });
+
+      _snack(FirestoreService.instance.describeError(e), isError: true);
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // BUILD
+  // ---------------------------------------------------------------------------
+
+  @override
   Widget build(BuildContext context) {
+    super.build(context); // AutomaticKeepAliveClientMixin
+
     return ListView(
       padding: const EdgeInsets.fromLTRB(14, 12, 14, 24),
       children: [
+        if (_formOpen) ...[
+          _SectionCard(
+            title: 'Log Weight Entry',
+            trailing: TextButton.icon(
+              onPressed: _saving
+                  ? null
+                  : () => setState(() {
+                _formOpen = false;
+              }),
+              icon: const Icon(Icons.close, size: 14),
+              label: const Text('Close'),
+              style: TextButton.styleFrom(
+                foregroundColor: AppColors.textGrey,
+                padding:
+                const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+                visualDensity: VisualDensity.compact,
+                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              ),
+            ),
+            child: _buildLogForm(),
+          ),
+          const SizedBox(height: 12),
+        ],
         _SectionCard(
           title: 'Weight & Progress',
-          trailing: _logButton(AppColors.stockTeal, widget.onLog),
+          trailing: _formOpen
+              ? null
+              : _logButton(
+            AppColors.stockTeal,
+                () => setState(() {
+              _formOpen = true;
+            }),
+          ),
           child: StreamBuilder<List<GoatWeightEntry>>(
             stream: _stream,
             builder: (context, snapshot) {
@@ -1413,7 +2310,7 @@ class _ProgressTabState extends State<_ProgressTab> {
               final entries = snapshot.data ?? const <GoatWeightEntry>[];
               if (entries.isEmpty) {
                 return _emptyMessage(Icons.monitor_weight_outlined,
-                    'No weight entries yet. Log the first weight check.');
+                    'No weight data yet. Tap Log to add the first entry.');
               }
 
               final current = entries.last;
@@ -1479,6 +2376,272 @@ class _ProgressTabState extends State<_ProgressTab> {
           ),
         ),
       ],
+    );
+  }
+
+  // ---------------------------------------------------------------------------
+  // LOG FORM WIDGETS
+  // ---------------------------------------------------------------------------
+
+  Widget _buildLogForm() {
+    return Form(
+      key: _formKey,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Monthly photo -----------------------------------------------------
+          Row(
+            children: [
+              _fieldIcon(Icons.camera_alt_outlined, AppColors.stockTeal),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('Monthly Photo', style: AppTheme.heading(size: 12.5)),
+                    const SizedBox(height: 2),
+                    Text(
+                      _photoBytes == null
+                          ? 'Optional photo for this weight check'
+                          : 'Photo added',
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: AppTheme.body(
+                        size: 10.5,
+                        color: AppColors.textGrey,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 10),
+              _CompactPhotoPicker(
+                imageBytes: _photoBytes,
+                onTap: _saving ? null : _pickPhoto,
+                onRemove: _saving ? null : _removePhoto,
+              ),
+            ],
+          ),
+
+          const Padding(
+            padding: EdgeInsets.symmetric(vertical: 12),
+            child: Divider(height: 1),
+          ),
+
+          // Weight ------------------------------------------------------------
+          _fieldLabel('Weight', Icons.monitor_weight_outlined,
+              AppColors.stockTeal),
+          const SizedBox(height: 8),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(
+                child: _logTextField(
+                  _weightController,
+                  hint: 'e.g. 24.5',
+                  keyboardType:
+                  const TextInputType.numberWithOptions(decimal: true),
+                  validator: (value) {
+                    final weight = double.tryParse((value ?? '').trim());
+
+                    if (weight == null || weight <= 0) {
+                      return 'Enter a valid weight';
+                    }
+
+                    return null;
+                  },
+                ),
+              ),
+              const SizedBox(width: 8),
+              Container(
+                height: 48,
+                padding: const EdgeInsets.symmetric(horizontal: 13),
+                decoration: BoxDecoration(
+                  color: AppColors.stockTeal.withOpacity(0.08),
+                  borderRadius: BorderRadius.circular(11),
+                ),
+                alignment: Alignment.center,
+                child: Text(
+                  'kg',
+                  style: AppTheme.heading(size: 12)
+                      .copyWith(color: AppColors.stockTeal),
+                ),
+              ),
+            ],
+          ),
+
+          const SizedBox(height: 14),
+
+          // Date --------------------------------------------------------------
+          _fieldLabel('Weight Check Date', Icons.calendar_today_outlined,
+              AppColors.tradingBlue),
+          const SizedBox(height: 8),
+          InkWell(
+            onTap: _saving ? null : _pickDate,
+            borderRadius: BorderRadius.circular(11),
+            child: Container(
+              width: double.infinity,
+              padding:
+              const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+              decoration: BoxDecoration(
+                color: AppColors.tradingBlue.withOpacity(0.07),
+                borderRadius: BorderRadius.circular(11),
+              ),
+              child: Row(
+                children: [
+                  const Icon(Icons.event_outlined,
+                      size: 17, color: AppColors.tradingBlue),
+                  const SizedBox(width: 9),
+                  Expanded(
+                    child: Text(
+                      DateFormat('dd MMM yyyy').format(_date),
+                      style: AppTheme.body(
+                        size: 12.5,
+                        color: AppColors.textDark,
+                        weight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                  const Icon(Icons.keyboard_arrow_down,
+                      size: 18, color: AppColors.textGrey),
+                ],
+              ),
+            ),
+          ),
+
+          const SizedBox(height: 14),
+
+          // Notes -------------------------------------------------------------
+          _fieldLabel('Notes', Icons.notes_outlined, AppColors.warning),
+          const SizedBox(height: 8),
+          _logTextField(
+            _notesController,
+            hint: 'Optional notes about this weight check',
+            maxLines: 3,
+            optional: true,
+          ),
+
+          const SizedBox(height: 16),
+
+          // Save --------------------------------------------------------------
+          SizedBox(
+            width: double.infinity,
+            height: 48,
+            child: ElevatedButton(
+              onPressed: _saving ? null : _save,
+              style: ElevatedButton.styleFrom(
+                backgroundColor: AppColors.stockTeal,
+                disabledBackgroundColor:
+                AppColors.stockTeal.withOpacity(0.55),
+                foregroundColor: Colors.white,
+                elevation: 0,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+              ),
+              child: _saving
+                  ? const SizedBox(
+                width: 20,
+                height: 20,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2.2,
+                  color: Colors.white,
+                ),
+              )
+                  : const Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(Icons.check_circle_outline, size: 18),
+                  SizedBox(width: 7),
+                  Text(
+                    'Save Weight Entry',
+                    style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _fieldIcon(IconData icon, Color color) {
+    return Container(
+      width: 30,
+      height: 30,
+      decoration: BoxDecoration(
+        color: color.withOpacity(0.09),
+        borderRadius: BorderRadius.circular(9),
+      ),
+      child: Icon(icon, size: 16, color: color),
+    );
+  }
+
+  Widget _fieldLabel(String text, IconData icon, Color color) {
+    return Row(
+      children: [
+        _fieldIcon(icon, color),
+        const SizedBox(width: 8),
+        Text(text, style: AppTheme.heading(size: 12.5)),
+      ],
+    );
+  }
+
+  Widget _logTextField(
+      TextEditingController controller, {
+        String? hint,
+        TextInputType? keyboardType,
+        int maxLines = 1,
+        bool optional = false,
+        String? Function(String?)? validator,
+      }) {
+    return TextFormField(
+      controller: controller,
+      keyboardType: keyboardType,
+      maxLines: maxLines,
+      enabled: !_saving,
+      validator: validator ??
+              (value) {
+            if (!optional && (value == null || value.trim().isEmpty)) {
+              return 'Required';
+            }
+
+            return null;
+          },
+      style: AppTheme.body(size: 12.5, color: AppColors.textDark),
+      decoration: InputDecoration(
+        hintText: hint,
+        hintStyle: AppTheme.body(size: 11.5, color: AppColors.textGrey),
+        filled: true,
+        fillColor: AppColors.paleGreen.withOpacity(0.55),
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(11),
+          borderSide: BorderSide.none,
+        ),
+        enabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(11),
+          borderSide: BorderSide(color: AppColors.divider.withOpacity(0.6)),
+        ),
+        focusedBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(11),
+          borderSide:
+          const BorderSide(color: AppColors.stockTeal, width: 1.2),
+        ),
+        errorBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(11),
+          borderSide: const BorderSide(color: AppColors.error),
+        ),
+        focusedErrorBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(11),
+          borderSide: const BorderSide(color: AppColors.error),
+        ),
+        contentPadding:
+        const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+      ),
     );
   }
 
@@ -1634,6 +2797,87 @@ class _SectionSkeletonState extends State<_SectionSkeleton>
                   const SizedBox(width: 12),
                   Expanded(child: _box(double.infinity, 10)),
                 ],
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+// ============================================================================
+// COMPACT PHOTO PICKER (Log Weight Entry form)
+// ============================================================================
+
+class _CompactPhotoPicker extends StatelessWidget {
+  final Uint8List? imageBytes;
+  final VoidCallback? onTap;
+  final VoidCallback? onRemove;
+
+  const _CompactPhotoPicker({
+    required this.imageBytes,
+    required this.onTap,
+    required this.onRemove,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: 54,
+      height: 54,
+      child: Stack(
+        clipBehavior: Clip.none,
+        children: [
+          Material(
+            color: Colors.transparent,
+            child: InkWell(
+              onTap: onTap,
+              borderRadius: BorderRadius.circular(14),
+              child: Ink(
+                width: 54,
+                height: 54,
+                decoration: BoxDecoration(
+                  color: AppColors.stockTeal.withOpacity(0.08),
+                  borderRadius: BorderRadius.circular(14),
+                  border: Border.all(
+                    color: AppColors.stockTeal.withOpacity(0.18),
+                    width: 1,
+                  ),
+                ),
+                child: imageBytes == null
+                    ? const Icon(
+                  Icons.add_a_photo_outlined,
+                  color: AppColors.stockTeal,
+                  size: 21,
+                )
+                    : ClipRRect(
+                  borderRadius: BorderRadius.circular(13),
+                  child: Image.memory(
+                    imageBytes!,
+                    width: 54,
+                    height: 54,
+                    fit: BoxFit.cover,
+                  ),
+                ),
+              ),
+            ),
+          ),
+          if (imageBytes != null)
+            Positioned(
+              right: -4,
+              top: -4,
+              child: GestureDetector(
+                onTap: onRemove,
+                child: Container(
+                  width: 18,
+                  height: 18,
+                  decoration: BoxDecoration(
+                    color: AppColors.error,
+                    shape: BoxShape.circle,
+                    border: Border.all(color: Colors.white, width: 1.5),
+                  ),
+                  child: const Icon(Icons.close, color: Colors.white, size: 11),
+                ),
               ),
             ),
         ],

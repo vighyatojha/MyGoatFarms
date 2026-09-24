@@ -13,6 +13,7 @@ import '../../services/goat_service.dart';
 import '../../services/trading_service.dart';
 import '../../widgets/farm_not_linked_state.dart';
 import '../../widgets/fast_route.dart';
+import 'goat_stock/booking_delivery_customer_list_screen.dart';
 import 'goat_stock/goat_stock_list_screen.dart';
 import 'goat_stock/wait_delivery_customer_list_screen.dart';
 import 'own_palai/own_palai_list_screen.dart';
@@ -216,6 +217,15 @@ class _TradingDashboardScreenState extends State<TradingDashboardScreen> {
     return _push(GoatStockListScreen(initialStatusFilter: statusFilter));
   }
 
+  /// Booking / Holding opens its own customer-grouped screen (not a flat
+  /// goat-stock filter), so a customer's booked goats are delivered — and
+  /// paid for — together, exactly like Wait on Delivery.
+  Future<void> _openBooking() {
+    final farmId = _farmId;
+    if (farmId == null) return Future.value();
+    return _push(BookingDeliveryCustomerListScreen(farmId: farmId));
+  }
+
   /// Wait on Delivery opens its own customer-grouped screen (not a flat
   /// goat-stock filter).
   Future<void> _openWaitOnDelivery() {
@@ -389,7 +399,7 @@ class _TradingDashboardScreenState extends State<TradingDashboardScreen> {
             value: '${s.booking}',
             color: Colors.deepPurple,
             badge: s.booking > 0 ? 'Deposit paid' : null,
-            onTap: () => _openGoatStock(statusFilter: Goat.statusBooked),
+            onTap: _openBooking,
           ),
           height: 116,
         ),

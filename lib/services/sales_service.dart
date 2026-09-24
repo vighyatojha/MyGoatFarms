@@ -575,6 +575,8 @@ class SalesService {
       paymentMethod: _methodOrOther(draft.paymentMethod),
     );
 
+    _stopFarmHealthReminders(farmId, draft.selectedGoats);
+
     return saleId;
   }
 
@@ -739,6 +741,8 @@ class SalesService {
         SetOptions(merge: true),
       );
     }).timeout(_timeout * 2);
+
+    _stopFarmHealthReminders(farmId, draft.selectedGoats);
 
     return saleId;
   }
@@ -1126,7 +1130,25 @@ class SalesService {
       );
     }
 
+    _stopFarmHealthReminders(farmId, draft.selectedGoats);
+
     return saleId;
+  }
+
+  /// Available stock, Own Palai and Wait on Delivery goats follow the
+  /// farm's Health Reminder Settings. A goat that is sold outright, booked
+  /// or transferred to a customer's Palai is no longer on that schedule,
+  /// so its on-device vaccination / hoof / hair alarms are switched off.
+  /// Not awaited; never throws.
+  void _stopFarmHealthReminders(String farmId, Iterable<Goat> goats) {
+    for (final goat in goats) {
+      unawaited(
+        HealthReminderScheduler.instance.cancelForTradingGoat(
+          farmId: farmId,
+          goatId: goat.id,
+        ),
+      );
+    }
   }
 
   // -----------------------------------------------------------------------

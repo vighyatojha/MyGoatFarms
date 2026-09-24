@@ -27,7 +27,11 @@ import '../../../services/wait_delivery_service.dart';
 ///
 ///   Goat value  = pickup weight x booking rate           (per KG)
 ///               = the agreed price, whatever the weight   (fixed price)
-///   Remaining   = Goat value - advance paid
+///   Remaining   = Goat value + transportation - advance paid
+///
+/// Transportation is an optional charge typed per booking at pickup. It
+/// is collected on top of the goat value and shows on the bill, but it is
+/// passed on to the transport team, so it is never farm revenue.
 ///
 /// which is the same formula SalesService.completeWaitForDeliveryPickup
 /// saves, so the amount shown here is the amount that gets stored.
@@ -95,6 +99,12 @@ class _WaitDeliveryCustomerScreenState
   final Map<String, TextEditingController> _amounts =
   <String, TextEditingController>{};
 
+  /// Optional transportation charge per booking, keyed by sale ID.
+  /// Collected from the customer on top of the goat value; passed on to
+  /// the transport team, so it is not farm revenue.
+  final Map<String, TextEditingController> _transports =
+  <String, TextEditingController>{};
+
   /// Bookings whose amount field the person has typed in themselves.
   /// Until then it follows the remaining amount as the pickup weight
   /// changes, same as the single-goat screen.
@@ -119,6 +129,10 @@ class _WaitDeliveryCustomerScreenState
     }
 
     for (final controller in _amounts.values) {
+      controller.dispose();
+    }
+
+    for (final controller in _transports.values) {
       controller.dispose();
     }
 
@@ -168,8 +182,32 @@ class _WaitDeliveryCustomerScreenState
     return (sum * 1000).round() / 1000;
   }
 
+  TextEditingController _transportControllerFor(WaitDeliverySale entry) {
+    return _transports.putIfAbsent(
+      entry.id,
+          () => TextEditingController(),
+    );
+  }
+
+  /// The transportation charge typed for a booking (blank counts as 0).
+  double _transportOf(WaitDeliverySale entry) {
+    final text = _transportControllerFor(entry).text.trim();
+
+    if (text.isEmpty) return 0;
+
+    final number = double.tryParse(text) ?? 0;
+
+    return number <= 0 ? 0 : Sale.roundMoney(number);
+  }
+
+  /// Final Amount Due for a booking: pickup weight x booking rate (or the
+  /// fixed price) + transportation - advance. Same figure the service
+  /// saves.
   double _remainingOf(WaitDeliverySale entry) {
-    return entry.remainingAt(_pickupWeightOf(entry));
+    return entry.remainingAt(
+      _pickupWeightOf(entry),
+      transport: _transportOf(entry),
+    );
   }
 
   TextEditingController _amountControllerFor(WaitDeliverySale entry) {
@@ -351,10 +389,11 @@ class _WaitDeliveryCustomerScreenState
 
     for (final entry in picked) {
       final weight = _pickupWeightOf(entry);
-      final due = entry.remainingAt(weight);
+      final due = _remainingOf(entry);
 
       payments[entry.id] = WaitDeliveryPayment(
         pickupWeight: weight,
+        transportCharges: _transportOf(entry),
         expectedRemaining: due,
         amountReceivedNow: due > 0 ? _receivedNowOf(entry) : 0,
         onCredit: due > 0 && _onCredit,
@@ -668,7 +707,8 @@ class _WaitDeliveryCustomerScreenState
 
   Widget _confirmRow(WaitDeliverySale entry) {
     final pickup = _pickupWeightOf(entry);
-    final due = entry.remainingAt(pickup);
+    final transport = _transportOf(entry);
+    final due = _remainingOf(entry);
     final receivedNow = due > 0 ? _receivedNowOf(entry) : 0.0;
 
     return Row(
@@ -684,12 +724,14 @@ class _WaitDeliveryCustomerScreenState
               ),
               const SizedBox(height: 1),
               Text(
-                entry.isFixedPrice
-                    ? 'Fixed price − '
-                    '${_money.format(entry.advancePaid)} advance'
+                (entry.isFixedPrice
+                    ? 'Fixed price'
                     : '${_trim(pickup)} kg × '
-                    '${_money.format(entry.ratePerKg)} − '
-                    '${_money.format(entry.advancePaid)} advance',
+                    '${_money.format(entry.ratePerKg)}') +
+                    (transport > 0
+                        ? ' + ${_money.format(transport)} transport'
+                        : '') +
+                    ' − ${_money.format(entry.advancePaid)} advance',
                 style: AppTheme.body(size: 10),
               ),
               if (due > 0)
@@ -1128,7 +1170,7 @@ class _WaitDeliveryCustomerScreenState
   Widget _bookingCard(WaitDeliverySale entry) {
     final selected = _selected.contains(entry.id);
     final pickup = _pickupWeightOf(entry);
-    final due = entry.remainingAt(pickup);
+    final due = _remainingOf(entry);
 
     return Container(
       width: double.infinity,
@@ -1262,6 +1304,10 @@ class _WaitDeliveryCustomerScreenState
                 const Divider(height: 18, color: AppColors.divider),
 
                 for (final goat in entry.goats) _goatRow(goat, selected),
+
+                const SizedBox(height: 3),
+
+                _transportField(entry, selected),
 
                 const SizedBox(height: 12),
 
@@ -1485,6 +1531,8 @@ class _WaitDeliveryCustomerScreenState
   }
 
   Widget _calcBox(WaitDeliverySale entry, double pickup, double due) {
+    final transport = _transportOf(entry);
+
     return Container(
       padding: const EdgeInsets.all(11),
       decoration: BoxDecoration(
@@ -1502,6 +1550,13 @@ class _WaitDeliveryCustomerScreenState
                 : '${_trim(pickup)} kg × ${_money.format(entry.ratePerKg)}',
             _money.format(entry.saleValueAt(pickup)),
           ),
+          if (transport > 0) ...[
+            const SizedBox(height: 6),
+            _calcRow(
+              'Transportation',
+              '+ ${_money.format(transport)}',
+            ),
+          ],
           const SizedBox(height: 6),
           _calcRow(
             'Advance paid',
@@ -1550,6 +1605,69 @@ class _WaitDeliveryCustomerScreenState
           ),
         ),
       ],
+    );
+  }
+
+  /// Optional transportation charge for one booking, entered at pickup.
+  /// It is added to the amount due and shown on the bill, but it is not
+  /// farm revenue (it is passed on to the transport team).
+  Widget _transportField(WaitDeliverySale entry, bool selected) {
+    return TextField(
+      controller: _transportControllerFor(entry),
+      enabled: selected && !_delivering,
+      keyboardType: const TextInputType.numberWithOptions(decimal: true),
+      inputFormatters: [
+        FilteringTextInputFormatter.allow(
+          RegExp(r'^\d*\.?\d{0,2}'),
+        ),
+      ],
+      onChanged: (_) => setState(() {}),
+      style: AppTheme.body(
+        size: 12.5,
+        color: AppColors.textDark,
+        weight: FontWeight.w600,
+      ),
+      decoration: InputDecoration(
+        isDense: true,
+        labelText: 'Transportation Charge (optional)',
+        labelStyle: AppTheme.body(size: 10.5),
+        helperText: 'Added to the amount due — not farm revenue.',
+        helperStyle: AppTheme.body(size: 9.5),
+        prefixText: '₹ ',
+        prefixStyle: AppTheme.body(size: 12),
+        prefixIcon: const Icon(
+          Icons.directions_car_outlined,
+          size: 18,
+          color: AppColors.textGrey,
+        ),
+        filled: true,
+        fillColor: selected ? Colors.white : AppColors.paleGreen,
+        contentPadding: const EdgeInsets.symmetric(
+          horizontal: 10,
+          vertical: 10,
+        ),
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(10),
+          borderSide: const BorderSide(color: AppColors.divider),
+        ),
+        enabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(10),
+          borderSide: const BorderSide(color: AppColors.divider),
+        ),
+        disabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(10),
+          borderSide: BorderSide(
+            color: AppColors.divider.withOpacity(0.6),
+          ),
+        ),
+        focusedBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(10),
+          borderSide: const BorderSide(
+            color: AppColors.darkGreen,
+            width: 1.4,
+          ),
+        ),
+      ),
     );
   }
 

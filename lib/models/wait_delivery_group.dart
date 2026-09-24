@@ -47,13 +47,20 @@ class WaitDeliverySale {
 
   /// What the customer still owes at pickup:
   ///
-  ///   sale value at pickup weight - advance paid   (never below 0)
+  ///   sale value at pickup weight + transportation - advance paid
+  ///                                                   (never below 0)
+  ///
+  /// [transport] is the optional transportation charge entered at pickup.
+  /// It is collected on top of the goat value and passed on to the
+  /// transport team, so it is never farm revenue.
   ///
   /// This is the same formula SalesService.completeWaitForDeliveryPickup
   /// stores as `finalPriceAfterPickup`, so the figure shown here is the
   /// figure that gets saved.
-  double remainingAt(double pickupWeight) {
-    final raw = saleValueAt(pickupWeight) - advancePaid;
+  double remainingAt(double pickupWeight, {double transport = 0}) {
+    final raw = saleValueAt(pickupWeight) +
+        (transport < 0 ? 0 : transport) -
+        advancePaid;
 
     return Sale.roundMoney(raw < 0 ? 0 : raw);
   }

@@ -12,8 +12,9 @@ import '../../../services/trading_service.dart';
 import '../../../widgets/fast_route.dart';
 import '../../palai/fullscreen_image_viewer.dart';
 import '../../../widgets/farm_not_linked_state.dart';
-import '../own_palai/add_weight_entry_screen.dart';
+import '../own_palai/own_palai_goat_profile_screen.dart';
 import '../register_goats/goat_registration_form_screen.dart';
+import 'booking_delivery_customer_list_screen.dart';
 import 'complete_booking_delivery_screen.dart';
 import 'complete_wait_for_delivery_screen.dart';
 import 'goat_stock_detail_screen.dart';
@@ -232,6 +233,15 @@ class _GoatStockListScreenState
   bool _centerSelectedChip = true;
 
   void _setStatusFilter(String? status) {
+    // Booking / Holding is the same: a customer's booked goats are
+    // delivered (and paid for) together, so this tab opens the
+    // customer-grouped Booking / Holding screen instead of filtering the
+    // list in place. See BookingDeliveryCustomerListScreen.
+    if (status == Goat.statusBooked) {
+      _openBookingDelivery();
+      return;
+    }
+
     // Wait on Delivery is not a flat goat filter like the other tabs — a
     // customer's waiting goats are picked up (and paid for) together, so
     // this tab opens its own customer-grouped screen instead of filtering
@@ -245,6 +255,18 @@ class _GoatStockListScreenState
       _statusFilter = status;
       _centerSelectedChip = true;
     });
+  }
+
+  void _openBookingDelivery() {
+    final farmId = _farmId;
+
+    if (farmId == null) return;
+
+    Navigator.of(context).push(
+      fastRoute(
+        BookingDeliveryCustomerListScreen(farmId: farmId),
+      ),
+    );
   }
 
   void _openWaitOnDelivery() {
@@ -314,9 +336,19 @@ class _GoatStockListScreenState
 
     if (farmId == null) return;
 
+    // An Available stock goat opens its profile — Photos and health
+    // records (Vaccination, Hoof Cutting, Hair Trimming, Medicine), kept
+    // in step with the farm's Health Reminder Settings. Its full details
+    // are one tap away from there (the info button). Every other status
+    // keeps opening the details screen.
     Navigator.of(context).push(
       fastRoute(
-        GoatStockDetailScreen(
+        _hasStatus(goat, Goat.statusAvailable)
+            ? OwnPalaiGoatProfileScreen(
+          farmId: farmId,
+          goat: goat,
+        )
+            : GoatStockDetailScreen(
           farmId: farmId,
           goat: goat,
         ),
@@ -351,9 +383,13 @@ class _GoatStockListScreenState
 
     Navigator.of(context).push(
       fastRoute(
-        AddWeightEntryScreen(
+        // The weight entry form now lives on the goat's profile, in the
+        // Progress tab — opened here with the form already expanded.
+        OwnPalaiGoatProfileScreen(
           farmId: farmId,
-          goatId: goat.id,
+          goat: goat,
+          initialTabIndex: OwnPalaiGoatProfileScreen.tabProgress,
+          openWeightLog: true,
         ),
       ),
     );

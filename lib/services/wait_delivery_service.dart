@@ -10,6 +10,10 @@ class WaitDeliveryPayment {
   /// Total pickup weight of this booking (sum of its goats), in kg.
   final double pickupWeight;
 
+  /// Optional transportation charge collected at pickup (0 when none).
+  /// Included in [expectedRemaining]; never farm revenue.
+  final double transportCharges;
+
   /// What the customer still owes at this weight — shown to the person
   /// before saving and carried through only for the result message; the
   /// service re-derives and re-checks the real figure itself.
@@ -24,6 +28,7 @@ class WaitDeliveryPayment {
 
   const WaitDeliveryPayment({
     required this.pickupWeight,
+    this.transportCharges = 0,
     required this.expectedRemaining,
     required this.amountReceivedNow,
     required this.onCredit,
@@ -137,6 +142,7 @@ class WaitDeliveryService {
           farmId: farmId,
           saleId: saleId,
           pickupWeight: payment.pickupWeight,
+          transportCharges: payment.transportCharges,
           amountReceivedNow: payment.amountReceivedNow,
           paymentMethod: paymentMethod,
           onCredit: payment.onCredit,

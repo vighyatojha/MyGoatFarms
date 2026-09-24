@@ -356,15 +356,18 @@ class Goat {
           statusWaitOnDelivery.toLowerCase();
 
   /// True for the goats that follow the farm's Health Reminder Settings
-  /// (Profile > Health Reminder Settings): Own Palai goats, and goats on
-  /// Wait on Delivery, which are still on the farm until they are picked
-  /// up. Their vaccination / hoof cutting / hair trimming dates are armed
-  /// from the farm settings and raise notifications when due.
-  bool get followsFarmHealthSchedule => isOwnPalai || isWaitOnDelivery;
+  /// (Profile > Health Reminder Settings): Available stock, Own Palai
+  /// goats, and goats on Wait on Delivery — all still on the farm (a Wait
+  /// on Delivery goat until it is picked up). Their vaccination / hoof
+  /// cutting / hair trimming dates are armed from the farm settings and
+  /// raise notifications when due.
+  bool get followsFarmHealthSchedule =>
+      isAvailable || isOwnPalai || isWaitOnDelivery;
 
   /// [followsFarmHealthSchedule] as `currentStatus` values, for Firestore
   /// `whereIn` queries.
   static const List<String> farmHealthScheduleStatuses = [
+    statusAvailable,
     statusOwnPalai,
     statusWaitOnDelivery,
   ];

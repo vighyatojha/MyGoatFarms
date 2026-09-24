@@ -3670,7 +3670,7 @@ class FirestoreService {
       ) =>
       _tradingGoats(farmId).doc(goatId).collection('healthRecords');
 
-  /// Every Own-Palai or Wait-on-Delivery (Trading module) goat with a
+  /// Every Available, Own-Palai or Wait-on-Delivery (Trading module) goat with a
   /// vaccination / hoof-cutting / hair-trimming / medicine `nextDueDate`
   /// due within [withinDays] days (default 45) or already overdue. Goats
   /// that have been picked up (Sold) drop out.
@@ -3753,8 +3753,8 @@ class FirestoreService {
           '${d.day.toString().padLeft(2, '0')}';
 
   /// Puts the farm's Health Reminder Settings (Profile > Health Reminder
-  /// Settings) onto every Own Palai goat's — and every Wait on Delivery
-  /// goat's — Vaccination / Hoof Cutting /
+  /// Settings) onto every Available, Own Palai and Wait on Delivery
+  /// goat's Vaccination / Hoof Cutting /
   /// Hair Trimming schedule, so the dates the farm owner picked show up on
   /// each goat's profile — and in Notifications and the Pending / Upcoming
   /// health lists — WITHOUT anyone having to log a record first.
@@ -3937,7 +3937,10 @@ class FirestoreService {
     // on Delivery (not its purchase date, which would make a hoof cutting
     // look long overdue the moment it is booked); goats that went on Wait
     // on Delivery before that day was recorded fall back to the day they
-    // entered Own Palai, or else today.
+    // entered Own Palai, or else today. An Available stock goat is counted
+    // from the day its schedule is first armed (today), so switching this
+    // on for a whole stock never floods the farm with "overdue" hoof
+    // cuttings that were never tracked before.
     final DateTime startDay =
     (type == GoatHealthRecordType.hoofCutting && logged.isNotEmpty)
         ? logged.first.date
@@ -3945,6 +3948,8 @@ class FirestoreService {
         ? (goat.waitOnDeliveryAt ??
         goat.movedToOwnPalaiAt ??
         DateTime.now())
+        : goat.isAvailable
+        ? (goat.movedToOwnPalaiAt ?? DateTime.now())
         : (goat.movedToOwnPalaiAt ?? goat.purchaseDate);
 
     final DateTime? due = isOff
@@ -4018,7 +4023,7 @@ class FirestoreService {
         .update({'nextDueDate': null}).timeout(timeout);
   }
 
-  /// Every Own Palai (and Wait on Delivery) vaccination / hoof-cutting /
+  /// Every Available, Own Palai (and Wait on Delivery) vaccination / hoof-cutting /
   /// hair-trimming record, classified Complete / Pending / Upcoming with
   /// the SAME rule
   /// ([_classifyHealthRecordStatus]) the Customer Palai list uses, so the

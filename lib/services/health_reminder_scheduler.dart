@@ -149,9 +149,9 @@ class HealthReminderScheduler {
   // ---------------------------------------------------------------------
 
   /// Re-derives and re-schedules reminders for every Customer-Palai goat's
-  /// vaccination / hoof-cutting / hair-trimming records and every Own-Palai
-  /// and Wait-on-Delivery (Trading) goat's health records, across the
-  /// farm.
+  /// vaccination / hoof-cutting / hair-trimming records and every
+  /// Available, Own-Palai and Wait-on-Delivery (Trading) goat's health
+  /// records, across the farm.
   ///
   /// flutter_local_notifications' scheduled alarms are cleared by
   /// Android when the phone reboots and are NOT automatically
@@ -159,9 +159,9 @@ class HealthReminderScheduler {
   /// addition to scheduling at creation time) so a reboot doesn't
   /// silently drop upcoming reminders.
   Future<void> rescheduleAllForFarm(String farmId) async {
-    // Make sure every Own Palai and Wait on Delivery goat carries the
-    // farm's current Health Reminder Settings before its reminders are
-    // read back and scheduled.
+    // Make sure every Available, Own Palai and Wait on Delivery goat
+    // carries the farm's current Health Reminder Settings before its
+    // reminders are read back and scheduled.
     await syncOwnPalaiFarmReminders(farmId);
 
     try {
