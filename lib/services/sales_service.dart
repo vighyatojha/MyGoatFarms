@@ -1235,9 +1235,14 @@ class SalesService {
   ///
   ///   Holding Charges = holding days x Daily Charge
   ///   Final Amount    = Goat Sale Amount + Holding Charges
-  ///                     - Booking Amount already paid
+  ///                     + Transportation - Booking Amount already paid
   ///
-  /// Booking carries no transportation charge. The stored
+  /// [transportCharges] is the optional transportation charge collected
+  /// from the customer at delivery (0 when there is none). It is added to
+  /// what the customer owes and saved as [Sale.transportCost] so the bill
+  /// shows it, but it is never farm revenue: it is paid on to the
+  /// transport team, so the Sold Goat Revenue written here stays capped at
+  /// Goat Sale + Holding Charges. The stored
   /// [Sale.finalAmountAfterHolding] is what the customer still owes at
   /// pickup.
   ///
@@ -1248,10 +1253,16 @@ class SalesService {
     required String farmId,
     required String saleId,
     required DateTime deliveryDate,
+    double transportCharges = 0,
     double amountReceivedNow = 0,
     String? paymentMethod,
     bool onCredit = false,
   }) async {
+    if (transportCharges < 0) {
+      throw StateError('The transportation charge cannot be negative.');
+    }
+
+    final transport = SaleDraft.round2(transportCharges);
     final method = _paymentMethodOrCash(paymentMethod);
     final now = DateTime.now();
 
@@ -1331,7 +1342,10 @@ class SalesService {
       );
 
       final rawFinalAmount = SaleDraft.round2(
-        sale.totalSaleAmount + actualHoldingChargesValue - bookingAmount,
+        sale.totalSaleAmount +
+            actualHoldingChargesValue +
+            transport -
+            bookingAmount,
       );
       final finalAmount = rawFinalAmount < 0 ? 0.0 : rawFinalAmount;
 
@@ -1365,6 +1379,9 @@ class SalesService {
         'holdingEndDate': Timestamp.fromDate(deliveryDay),
         'actualHoldingDays': actualHoldingDays,
         'totalHoldingCharges': actualHoldingCharges,
+        // Cleared when there is none, so a stale value can never linger
+        // on the bill.
+        'transportCost': transport > 0 ? transport : FieldValue.delete(),
         'finalAmountAfterHolding': finalAmount,
         ..._completionPaymentFields(
           existingPayments: existingPayments,

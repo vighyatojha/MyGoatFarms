@@ -20,8 +20,12 @@ import '../purchase_goats/purchase_wizard_widgets.dart';
 /// Unlike Wait for Delivery, a Booking sale is never repriced by weight:
 /// its final amount is
 ///
-///   Goat Sale Amount + Holding Charges − Booking Amount
+///   Goat Sale Amount + Holding Charges + Transportation − Booking Amount
 ///   Holding Charges = Holding Days × Holding Charge/Day
+///
+/// Transportation is an optional charge typed per booking at delivery.
+/// It is added to the amount due and shown on the bill, but it is passed
+/// on to the transport team, so it is never farm revenue.
 ///
 /// counted inclusively from the day holding started to the delivery
 /// date — the exact formula CompleteBookingDeliveryScreen shows and
@@ -88,6 +92,12 @@ class _BookingDeliveryCustomerScreenState
   final Map<String, TextEditingController> _amounts =
   <String, TextEditingController>{};
 
+  /// Optional transportation charge per booking, keyed by sale ID. It is
+  /// added to the amount due but is passed on to the transport team, so
+  /// it is not farm revenue.
+  final Map<String, TextEditingController> _transports =
+  <String, TextEditingController>{};
+
   /// Bookings whose amount field the person has typed in themselves.
   /// Until then it follows the final amount as the delivery date
   /// changes, same as the single-goat screen.
@@ -113,6 +123,10 @@ class _BookingDeliveryCustomerScreenState
   @override
   void dispose() {
     for (final controller in _amounts.values) {
+      controller.dispose();
+    }
+
+    for (final controller in _transports.values) {
       controller.dispose();
     }
 
@@ -143,7 +157,28 @@ class _BookingDeliveryCustomerScreenState
   }
 
   double _finalAmountOf(BookingDeliveryCustomer customer, BookingDeliverySale entry) {
-    return entry.finalAmountAt(_deliveryDateOr(customer));
+    return entry.finalAmountAt(
+      _deliveryDateOr(customer),
+      transport: _transportOf(entry),
+    );
+  }
+
+  TextEditingController _transportControllerFor(BookingDeliverySale entry) {
+    return _transports.putIfAbsent(
+      entry.id,
+          () => TextEditingController(),
+    );
+  }
+
+  /// The transportation charge typed for a booking (blank counts as 0).
+  double _transportOf(BookingDeliverySale entry) {
+    final text = _transportControllerFor(entry).text.trim();
+
+    if (text.isEmpty) return 0;
+
+    final number = double.tryParse(text) ?? 0;
+
+    return number <= 0 ? 0 : Sale.roundMoney(number);
   }
 
   int _holdingDaysOf(BookingDeliveryCustomer customer, BookingDeliverySale entry) {
@@ -351,9 +386,11 @@ class _BookingDeliveryCustomerScreenState
     final payments = <String, BookingDeliveryPayment>{};
 
     for (final entry in picked) {
-      final due = entry.finalAmountAt(deliveryDate);
+      final transport = _transportOf(entry);
+      final due = entry.finalAmountAt(deliveryDate, transport: transport);
 
       payments[entry.id] = BookingDeliveryPayment(
+        transportCharges: transport,
         expectedRemaining: due,
         amountReceivedNow: due > 0 ? _receivedNowOf(customer, entry) : 0,
         onCredit: due > 0 && _onCredit,
@@ -661,7 +698,8 @@ class _BookingDeliveryCustomerScreenState
               Text(
                 '$days holding day${days == 1 ? '' : 's'} × '
                     '${_money.format(entry.holdingChargePerDay)} − '
-                    '${_money.format(entry.bookingAmount)} booking amount',
+                    '${_money.format(entry.bookingAmount)} booking amount'
+                    '${_transportOf(entry) > 0 ? ' + ${_money.format(_transportOf(entry))} transport' : ''}',
                 style: AppTheme.body(size: 10),
               ),
               if (due > 0)
@@ -1187,6 +1225,8 @@ class _BookingDeliveryCustomerScreenState
                 ),
                 const Divider(height: 18, color: AppColors.divider),
                 for (final goat in entry.goats) _goatRow(goat),
+                const SizedBox(height: 3),
+                _transportField(customer, entry, selected),
                 const SizedBox(height: 12),
                 _calcBox(customer, entry, due),
                 if (selected && due > 0) ...[
@@ -1282,9 +1322,66 @@ class _BookingDeliveryCustomerScreenState
     );
   }
 
+  /// Optional transportation charge for one booking, entered at delivery.
+  /// It is added to the amount due and shown on the bill, but it is not
+  /// farm revenue (it is passed on to the transport team).
+  Widget _transportField(
+      BookingDeliveryCustomer customer,
+      BookingDeliverySale entry,
+      bool selected,
+      ) {
+    OutlineInputBorder border(Color color, [double width = 1]) {
+      return OutlineInputBorder(
+        borderRadius: BorderRadius.circular(10),
+        borderSide: BorderSide(color: color, width: width),
+      );
+    }
+
+    return TextField(
+      controller: _transportControllerFor(entry),
+      enabled: selected && !_delivering,
+      keyboardType: const TextInputType.numberWithOptions(decimal: true),
+      inputFormatters: [
+        FilteringTextInputFormatter.allow(RegExp(r'^\d*\.?\d{0,2}')),
+      ],
+      onChanged: (_) {
+        setState(() {
+          _syncAutoAmount(customer, entry);
+        });
+      },
+      style: AppTheme.body(
+        size: 12.5,
+        color: AppColors.textDark,
+        weight: FontWeight.w600,
+      ),
+      decoration: InputDecoration(
+        isDense: true,
+        labelText: 'Transportation Charge (optional)',
+        labelStyle: AppTheme.body(size: 10.5),
+        helperText: 'Added to the amount due — not farm revenue.',
+        helperStyle: AppTheme.body(size: 9.5),
+        prefixText: '₹ ',
+        prefixStyle: AppTheme.body(size: 12),
+        prefixIcon: const Icon(
+          Icons.directions_car_outlined,
+          size: 18,
+          color: AppColors.textGrey,
+        ),
+        filled: true,
+        fillColor: selected ? Colors.white : AppColors.paleGreen,
+        contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+        border: border(AppColors.divider),
+        enabledBorder: border(AppColors.divider),
+        disabledBorder: border(AppColors.divider.withOpacity(0.6)),
+        focusedBorder: border(AppColors.darkGreen, 1.4),
+      ),
+    );
+  }
+
   Widget _calcBox(BookingDeliveryCustomer customer, BookingDeliverySale entry, double due) {
     final days = _holdingDaysOf(customer, entry);
     final charges = _holdingChargesOf(customer, entry);
+    final transport = _transportOf(entry);
 
     return Container(
       padding: const EdgeInsets.all(11),
@@ -1302,6 +1399,10 @@ class _BookingDeliveryCustomerScreenState
                 '${_money.format(entry.holdingChargePerDay)})',
             _money.format(charges),
           ),
+          if (transport > 0) ...[
+            const SizedBox(height: 6),
+            _calcRow('Transportation', '+ ${_money.format(transport)}'),
+          ],
           const SizedBox(height: 6),
           _calcRow('Booking Amount Paid', '− ${_money.format(entry.bookingAmount)}'),
           const Padding(

@@ -67,12 +67,19 @@ class BookingDeliverySale {
     return Sale.roundMoney(holdingDaysAt(deliveryDate) * holdingChargePerDay);
   }
 
-  /// Goat Sale Amount + Holding Charges − Booking Amount, never below 0 —
-  /// the same figure `completeBookingDelivery` saves as
-  /// `finalAmountAfterHolding`.
-  double finalAmountAt(DateTime deliveryDate) {
+  /// Goat Sale Amount + Holding Charges + Transportation − Booking
+  /// Amount, never below 0 — the same figure `completeBookingDelivery`
+  /// saves as `finalAmountAfterHolding`.
+  ///
+  /// [transport] is the optional transportation charge entered at
+  /// delivery. It is passed on to the transport team, so it is never farm
+  /// revenue.
+  double finalAmountAt(DateTime deliveryDate, {double transport = 0}) {
     final raw = Sale.roundMoney(
-      sale.totalSaleAmount + holdingChargesAt(deliveryDate) - bookingAmount,
+      sale.totalSaleAmount +
+          holdingChargesAt(deliveryDate) +
+          (transport < 0 ? 0 : transport) -
+          bookingAmount,
     );
 
     return raw < 0 ? 0 : raw;

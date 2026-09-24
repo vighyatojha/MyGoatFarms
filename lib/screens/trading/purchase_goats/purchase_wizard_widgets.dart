@@ -95,9 +95,23 @@ Future<DateTime?> showWizardDatePicker({
             shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(22),
             ),
-            todayForegroundColor: const WidgetStatePropertyAll(
-              AppColors.primaryGreen,
-            ),
+            // Today is often ALSO the selected day. Its number used to be
+            // green on the green selection circle, so it vanished — keep it
+            // white while selected, green otherwise.
+            dayForegroundColor: WidgetStateProperty.resolveWith((states) {
+              if (states.contains(WidgetState.selected)) return Colors.white;
+              if (states.contains(WidgetState.disabled)) {
+                return AppColors.textDark.withOpacity(0.3);
+              }
+              return AppColors.textDark;
+            }),
+            todayForegroundColor: WidgetStateProperty.resolveWith((states) {
+              if (states.contains(WidgetState.selected)) return Colors.white;
+              if (states.contains(WidgetState.disabled)) {
+                return AppColors.textDark.withOpacity(0.3);
+              }
+              return AppColors.primaryGreen;
+            }),
             todayBorder: const BorderSide(
               color: AppColors.primaryGreen,
             ),

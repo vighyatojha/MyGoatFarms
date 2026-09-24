@@ -20,10 +20,15 @@ class BookingDeliveryPayment {
   /// outstanding balance instead of blocking the delivery.
   final bool onCredit;
 
+  /// Optional transportation charge collected at delivery (0 when none).
+  /// It is added to what the customer owes but is never farm revenue.
+  final double transportCharges;
+
   const BookingDeliveryPayment({
     required this.expectedRemaining,
     required this.amountReceivedNow,
     required this.onCredit,
+    this.transportCharges = 0,
   });
 }
 
@@ -137,6 +142,7 @@ class BookingDeliveryService {
           farmId: farmId,
           saleId: saleId,
           deliveryDate: deliveryDate,
+          transportCharges: payment.transportCharges,
           amountReceivedNow: payment.amountReceivedNow,
           paymentMethod: paymentMethod,
           onCredit: payment.onCredit,

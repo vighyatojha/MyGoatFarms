@@ -38,6 +38,11 @@ class _CustomerManagementScreenState
   String? _farmId;
   bool _loading = true;
 
+  /// Created ONCE per farm. Building it inside build() made a brand-new
+  /// stream on every keystroke, so the StreamBuilder went back to
+  /// "waiting" and flashed the loading spinner for each letter typed.
+  Stream<List<PalaiCustomer>>? _customersStream;
+
   final TextEditingController _searchController =
   TextEditingController();
 
@@ -69,6 +74,10 @@ class _CustomerManagementScreenState
       if (!mounted) return;
 
       setState(() {
+        if (id != _farmId || _customersStream == null) {
+          _customersStream =
+          id == null ? null : FirestoreService.instance.customersStream(id);
+        }
         _farmId = id;
         _loading = false;
       });
@@ -374,8 +383,7 @@ class _CustomerManagementScreenState
             : _farmId == null
             ? _buildNotLinkedState()
             : StreamBuilder<List<PalaiCustomer>>(
-          stream: FirestoreService.instance
-              .customersStream(_farmId!),
+          stream: _customersStream,
           builder: (
               context,
               snapshot,
@@ -386,8 +394,10 @@ class _CustomerManagementScreenState
               );
             }
 
-            if (snapshot.connectionState ==
-                ConnectionState.waiting) {
+            // Spinner only for the very first load, never while typing.
+            if (!snapshot.hasData &&
+                snapshot.connectionState ==
+                    ConnectionState.waiting) {
               return const Center(
                 child: CircularProgressIndicator(
                   color: AppColors.primaryGreen,

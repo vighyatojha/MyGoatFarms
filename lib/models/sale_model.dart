@@ -373,7 +373,8 @@ class Sale {
   //
   //   Goat Sale              ₹20,000
   //   Holding Charges           ₹500   (Booking only)
-  //   Transportation          ₹1,000   (Deliver Now, and Wait for
+  //   Transportation          ₹1,000   (Deliver Now, Booking once
+  //                                     delivered, and Wait for
   //                                     Delivery once picked up)
   //   ------------------------------
   //   Customer Total         ₹21,500
@@ -398,6 +399,11 @@ class Sale {
       isWaitForDelivery &&
           status == statusPickupCompleted &&
           pickupWeight != null;
+
+  /// True once a Booking / Holding sale has been delivered (the holding
+  /// charges and any transportation charge are settled at that point).
+  bool get hasBookingDeliverySettlement =>
+      isBooking && status == statusDeliveryCompleted;
 
   /// Goat sale value on the bill.
   ///
@@ -435,12 +441,14 @@ class Sale {
   ///
   /// Deliver Now sales carry a transportation charge, and so does a Wait
   /// for Delivery sale once its pickup is completed (the charge is entered
-  /// at pickup, see [hasPickupSettlement]). Booking and Transfer to Palai
-  /// never do, so this is always 0 for them — even if an older record
-  /// happens to have a `transportCost` stored on it. A Wait for Delivery
-  /// that is still waiting has not been picked up yet, so it has none.
+  /// at pickup, see [hasPickupSettlement]) and a Booking / Holding sale
+  /// once its delivery is completed (entered at delivery, see
+  /// [hasBookingDeliverySettlement]). Transfer to Palai never does, so
+  /// this is always 0 for it — even if an older record happens to have a
+  /// `transportCost` stored on it. A Booking or Wait for Delivery that is
+  /// still open has not been handed over yet, so it has none.
   double get billTransportCharges =>
-      (isDeliverNow || hasPickupSettlement)
+      (isDeliverNow || hasPickupSettlement || hasBookingDeliverySettlement)
           ? _nonNegative(transportCost ?? 0)
           : 0.0;
 

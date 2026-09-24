@@ -13,7 +13,12 @@ import '../purchase_goats/purchase_wizard_widgets.dart';
 /// Complete Delivery — Booking (Phase 5, Section 1).
 ///
 /// Holding days run from the day holding started to the delivery date,
-/// both days counted. Booking carries no transportation charge.
+/// both days counted.
+///
+/// TRANSPORTATION — an optional charge entered at delivery. It is added
+/// to what the customer owes and shows on the bill
+/// ([Sale.billTransportCharges]), but it is passed on to the transport
+/// team, so it is never farm revenue.
 ///
 /// PAYMENT & CREDIT — once the final amount is known, the person says how
 /// much the customer pays now and how:
@@ -41,6 +46,7 @@ class _CompleteBookingDeliveryScreenState
     extends State<CompleteBookingDeliveryScreen> {
   final GlobalKey<FormState> _formKey = GlobalKey<FormState>();
   late final TextEditingController _amountReceivedController;
+  late final TextEditingController _transportController;
 
   DateTime _deliveryDate = _dayOnly(DateTime.now());
 
@@ -77,12 +83,14 @@ class _CompleteBookingDeliveryScreenState
   void initState() {
     super.initState();
     _amountReceivedController = TextEditingController();
+    _transportController = TextEditingController();
     _loadSale();
   }
 
   @override
   void dispose() {
     _amountReceivedController.dispose();
+    _transportController.dispose();
     super.dispose();
   }
 
@@ -167,13 +175,26 @@ class _CompleteBookingDeliveryScreenState
     return Sale.roundMoney(_actualHoldingDays * (sale.holdingChargePerDay ?? 0));
   }
 
-  /// Goat sale + holding charges - booking amount already paid.
+  /// The transportation charge typed in (blank counts as 0). Collected
+  /// from the customer on top of the goat sale and holding charges, and
+  /// passed on to the transport team — it is not farm revenue.
+  double get _transport {
+    final text = _transportController.text.trim();
+    if (text.isEmpty) return 0;
+
+    final number = double.tryParse(text) ?? 0;
+    return number <= 0 ? 0 : Sale.roundMoney(number);
+  }
+
+  /// Goat sale + holding charges + transportation - booking amount
+  /// already paid.
   double get _finalAmount {
     final sale = _sale;
     if (sale == null) return 0;
 
     final raw = sale.totalSaleAmount +
-        _actualHoldingCharges -
+        _actualHoldingCharges +
+        _transport -
         (sale.bookingAmount ?? 0);
 
     return raw <= 0 ? 0 : Sale.roundMoney(raw);
@@ -281,6 +302,7 @@ class _CompleteBookingDeliveryScreenState
         farmId: widget.farmId,
         saleId: sale.id,
         deliveryDate: _deliveryDate,
+        transportCharges: _transport,
         amountReceivedNow: received,
         paymentMethod: _method,
         onCredit: onCredit,
@@ -433,6 +455,39 @@ class _CompleteBookingDeliveryScreenState
                     '${DateFormat('dd MMM').format(_deliveryDate)}, '
                     'both days counted.',
                 style: AppTheme.body(size: 10, color: AppColors.textGrey),
+              ),
+              const SizedBox(height: 14),
+              wizardField(
+                controller: _transportController,
+                label: 'Transportation Charge',
+                hint: '0.00',
+                icon: Icons.directions_car_outlined,
+                suffix: 'Added to bill',
+                helper: 'Optional — leave blank if there is none. Passed on '
+                    'to the transport team, so it is not farm revenue.',
+                optional: true,
+                enabled: !_saving,
+                keyboardType:
+                const TextInputType.numberWithOptions(decimal: true),
+                inputFormatters: [
+                  FilteringTextInputFormatter.allow(
+                    RegExp(r'^\d*\.?\d{0,2}'),
+                  ),
+                ],
+                onChanged: (_) => setState(_syncAutoAmount),
+                validator: (value) {
+                  final text = value?.trim() ?? '';
+
+                  if (text.isEmpty) return null;
+
+                  final number = double.tryParse(text);
+
+                  if (number == null || number < 0) {
+                    return 'Enter a valid amount';
+                  }
+
+                  return null;
+                },
               ),
             ],
           ),
@@ -731,6 +786,13 @@ class _CompleteBookingDeliveryScreenState
                 '${_currency(sale.holdingChargePerDay ?? 0)})',
             _currency(_actualHoldingCharges),
           ),
+          if (_transport > 0) ...[
+            const SizedBox(height: 8),
+            _summaryRow(
+              'Transportation',
+              '+ ${_currency(_transport)}',
+            ),
+          ],
           const SizedBox(height: 8),
           _summaryRow(
             'Booking Amount Paid',
@@ -790,6 +852,15 @@ class _CompleteBookingDeliveryScreenState
               text: 'You entered ${_currency(_extraReceived)} more than '
                   'the final amount. Check the amount received before '
                   'saving.',
+            ),
+          ],
+          if (_transport > 0) ...[
+            const SizedBox(height: 10),
+            _infoLine(
+              icon: Icons.local_shipping_outlined,
+              color: AppColors.textGrey,
+              text: 'Transportation is passed on to the transport team, so '
+                  'it is not counted as farm revenue.',
             ),
           ],
           if (owes && !_onCredit && remaining <= 0 && _extraReceived <= 0) ...[
