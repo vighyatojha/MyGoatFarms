@@ -450,6 +450,14 @@ class PalaiGoat {
   }) : registrationDate =
       registrationDate ?? checkInDate;
 
+  /// The date the goat actually came into the farm, used as the start of
+  /// its Palai billing (day-wise / pro-rated first month).
+  ///
+  /// This is the owner-entered [farmArrivalDate]. [checkInDate] is only
+  /// the moment the goat was registered in the app, so it is used as a
+  /// fallback for older goats that have no arrival date saved.
+  DateTime get billingStartDate => farmArrivalDate ?? checkInDate;
+
   // ==========================================================================
   // FIRESTORE
   // ==========================================================================

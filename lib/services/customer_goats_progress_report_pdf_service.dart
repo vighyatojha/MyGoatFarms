@@ -847,7 +847,7 @@ class CustomerGoatsProgressReportPdfService {
           _detailRow('Breed', goat.breed.trim().isNotEmpty ? goat.breed : '-'),
           _detailRow('Gender', goat.gender.trim().isNotEmpty ? goat.gender : '-'),
           _detailRow('Color', goat.color.trim().isNotEmpty ? goat.color : '-'),
-          _detailRow('Date of Join', _formatDate(goat.checkInDate)),
+          _detailRow('Date of Join', _formatDate(goat.billingStartDate)),
           _detailRow('Age', _ageLabel(goat.dateOfBirth)),
           _detailRow('Monthly Rate', _currency(goat.pricing)),
         ],
@@ -1225,7 +1225,7 @@ class CustomerGoatsProgressReportPdfService {
                 _currency(
                   PalaiProrationCalculator.calculate(
                     monthlyCharge: entry.goat.pricing,
-                    joiningDate: entry.goat.checkInDate,
+                    joiningDate: entry.goat.billingStartDate,
                     year: bill.year,
                     month: bill.month,
                   ).amount,

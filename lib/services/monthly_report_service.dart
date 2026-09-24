@@ -463,7 +463,7 @@ class MonthlyReportService {
           // check-in date; every later month is the full monthly price.
           monthlyCharge: PalaiProrationCalculator.calculate(
             monthlyCharge: goat.pricing,
-            joiningDate: goat.checkInDate,
+            joiningDate: goat.billingStartDate,
             year: monthStart.year,
             month: monthStart.month,
           ).amount,

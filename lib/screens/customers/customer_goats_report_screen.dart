@@ -261,7 +261,7 @@ class _CustomerGoatsReportScreenState
     final now = DateTime.now();
     return PalaiProrationCalculator.calculate(
       monthlyCharge: goat.pricing,
-      joiningDate: goat.checkInDate,
+      joiningDate: goat.billingStartDate,
       year: now.year,
       month: now.month,
     );
@@ -1029,7 +1029,7 @@ class _CustomerGoatsReportScreenState
   /// e.g. "Joined 11 Apr 2026 • 20 of 30 days • ₹3,000 ÷ 30 × 20"
   String _prorationNote(PalaiGoat goat) {
     final p = _prorationFor(goat);
-    final joined = DateFormat('d MMM yyyy').format(goat.checkInDate);
+    final joined = DateFormat('d MMM yyyy').format(goat.billingStartDate);
     return 'Joined $joined • ${p.label} • '
         '${_currency(p.monthlyCharge)} ÷ ${p.daysInMonth} × ${p.billableDays}';
   }

@@ -458,7 +458,7 @@ class CustomerGoatsReportPdfService {
                 _currency(
                   PalaiProrationCalculator.calculate(
                     monthlyCharge: goat.pricing,
-                    joiningDate: goat.checkInDate,
+                    joiningDate: goat.billingStartDate,
                     year: bill.year,
                     month: bill.month,
                   ).amount,
