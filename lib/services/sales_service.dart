@@ -11,6 +11,7 @@ import '../models/palai_models.dart';
 import '../models/sale_draft.dart';
 import '../models/sale_model.dart';
 import 'firestore_service.dart';
+import 'health_reminder_scheduler.dart';
 
 /// Handles the Trading module's Sell Goat flow (Phase 4: Feature 7 + 8).
 ///
@@ -694,7 +695,6 @@ class SalesService {
         bookingAmount: draft.bookingAmount,
         paymentMethod: draft.paymentMethod,
         onCredit: draft.onCredit,
-        expectedDeliveryDate: draft.expectedDeliveryDate,
         holdingChargePerDay: draft.holdingChargePerDay,
         // Holding starts today (the booking day) and counts this day.
         // The days and the charges are worked out when the delivery is
@@ -754,9 +754,11 @@ class SalesService {
   /// using [Sale.bookingPricePerKg], never the market rate on pickup day)
   /// is [completeWaitForDeliveryPickup].
   ///
-  /// No transportation charge is taken on this option, and no receipt is
-  /// generated here: the sale record is only kept. The receipt is
-  /// generated when the delivery is completed.
+  /// No transportation charge is taken here — it is not known until the
+  /// goat is picked up, so it is entered in
+  /// [completeWaitForDeliveryPickup]. No receipt is generated here either:
+  /// the sale record is only kept. The receipt is generated when the
+  /// delivery is completed.
   Future<String> saveWaitForDelivery({
     required String farmId,
     required SaleDraft draft,
@@ -878,6 +880,9 @@ class SalesService {
           'currentStatus': Goat.statusWaitOnDelivery,
           'saleId': saleId,
           'weight': draft.weightFor(goat),
+          // The Hoof Cutting cadence of the farm's Health Reminder
+          // Settings is counted from this day.
+          'waitOnDeliveryAt': FieldValue.serverTimestamp(),
         });
       }
 
@@ -896,6 +901,22 @@ class SalesService {
         SetOptions(merge: true),
       );
     }).timeout(_timeout * 2);
+
+    // The goats are still on the farm until they are picked up, so they
+    // follow the farm's Health Reminder Settings (Profile > Health
+    // Reminder Settings) like Own Palai goats do: their vaccination /
+    // hoof cutting / hair trimming dates are armed now, and raise
+    // notifications when due. Not awaited — the sale is already saved and
+    // this never throws.
+    for (final goat in draft.selectedGoats) {
+      unawaited(
+        HealthReminderScheduler.instance.syncOwnPalaiFarmReminders(
+          farmId,
+          goatId: goat.id,
+          force: true,
+        ),
+      );
+    }
 
     return saleId;
   }
@@ -1429,18 +1450,25 @@ class SalesService {
   /// current market rate is the easiest mistake to make here. Only
   /// the weight is taken fresh, at pickup:
   ///
-  ///   Final Price = Pickup Weight x Booking Price/Kg - Advance Paid
+  ///   Final Price = Pickup Weight x Booking Price/Kg
+  ///                 + Transportation - Advance Paid
   ///
   /// A Fixed Price sale ([Sale.isFixedPrice]) is not re-priced by the
   /// pickup weight at all: the pickup weight is only recorded, and
   ///
-  ///   Final Price = Fixed Price - Advance Paid
+  ///   Final Price = Fixed Price + Transportation - Advance Paid
   ///
-  /// Both come from [Sale.goatValueAtWeight].
+  /// The goat value comes from [Sale.goatValueAtWeight].
   ///
-  /// Wait for Delivery has no transportation charge. The stored
-  /// [Sale.finalPriceAfterPickup] is what the customer still owes at
-  /// pickup.
+  /// [transportCharges] is the optional transportation charge collected
+  /// from the customer at pickup (0 when there is none). It is added to
+  /// what the customer owes, and saved on the sale as
+  /// [Sale.transportCost] so the bill shows it, but it is never farm
+  /// revenue: it is paid on to the transport team, so the Sold Goat
+  /// Revenue written here is still capped at the goat value.
+  ///
+  /// The stored [Sale.finalPriceAfterPickup] is what the customer still
+  /// owes at pickup.
   ///
   /// Worked example from the plan (Section 2, Task 2.2): 34kg booked,
   /// 38kg at delivery, ₹520/kg fixed, ₹5,000 advance -> ₹14,760
@@ -1449,6 +1477,7 @@ class SalesService {
     required String farmId,
     required String saleId,
     required double pickupWeight,
+    double transportCharges = 0,
     double amountReceivedNow = 0,
     String? paymentMethod,
     bool onCredit = false,
@@ -1457,6 +1486,11 @@ class SalesService {
       throw StateError('Pickup weight must be greater than zero.');
     }
 
+    if (transportCharges < 0) {
+      throw StateError('The transportation charge cannot be negative.');
+    }
+
+    final transport = SaleDraft.round2(transportCharges);
     final method = _paymentMethodOrCash(paymentMethod);
     final now = DateTime.now();
 
@@ -1466,6 +1500,7 @@ class SalesService {
     double advancePaid = 0;
     String customerName = '';
     String initialMethod = FinancePaymentMethods.other;
+    List<String> pickedUpGoatIds = const [];
 
     await _db.runTransaction((transaction) async {
       // ---------------------------------------------------------------
@@ -1481,6 +1516,7 @@ class SalesService {
       }
 
       final sale = Sale.fromDoc(saleSnap);
+      pickedUpGoatIds = List<String>.from(sale.goatIds);
 
       if (!sale.isWaitForDelivery) {
         throw StateError('Sale $saleId is not a Wait for Delivery sale.');
@@ -1512,8 +1548,10 @@ class SalesService {
       // agreed price, unchanged by the pickup weight.
       final goatValue = sale.goatValueAtWeight(pickupWeight);
 
+      // Transportation is collected on top of the goat value; the advance
+      // already paid is then taken off the whole.
       final rawFinalPrice = SaleDraft.round2(
-        goatValue - bookingAdvanceAmount,
+        goatValue + transport - bookingAdvanceAmount,
       );
       final finalPrice = rawFinalPrice < 0 ? 0.0 : rawFinalPrice;
 
@@ -1528,7 +1566,8 @@ class SalesService {
 
       // Captured for the Finance revenue write after this transaction
       // commits: the gross sale value (pickup weight × booking rate, not
-      // [finalPrice], which is the remaining balance) and the advance
+      // [finalPrice], which is the remaining balance; and not including
+      // transportation, which is never revenue) and the advance
       // already received, which is the money that becomes revenue now
       // that the goat has left. The balance is recorded as it is
       // collected.
@@ -1544,6 +1583,10 @@ class SalesService {
       transaction.update(saleRef, {
         'status': Sale.statusPickupCompleted,
         'pickupWeight': pickupWeight,
+        // Cleared when there is none, so a stale value can never linger
+        // on the bill.
+        'transportCost':
+        transport > 0 ? transport : FieldValue.delete(),
         'finalPriceAfterPickup': finalPrice,
         ..._completionPaymentFields(
           existingPayments: existingPayments,
@@ -1614,6 +1657,22 @@ class SalesService {
         SetOptions(merge: true),
       );
     }).timeout(_timeout * 2);
+
+    // -----------------------------------------------------------------
+    // HEALTH REMINDERS — the goats have left the farm, so their on-device
+    // vaccination / hoof cutting / hair trimming alarms are switched off
+    // (the Firestore due-checks already skip a goat that is no longer on
+    // the farm). Not awaited; never throws.
+    // -----------------------------------------------------------------
+
+    for (final goatId in pickedUpGoatIds) {
+      unawaited(
+        HealthReminderScheduler.instance.cancelForTradingGoat(
+          farmId: farmId,
+          goatId: goatId,
+        ),
+      );
+    }
 
     // -----------------------------------------------------------------
     // FINANCE REVENUE — the goat has now actually left the farm, so

@@ -10,6 +10,7 @@ import '../../../services/firestore_service.dart';
 import '../../../services/goat_service.dart';
 import '../../../services/trading_service.dart';
 import '../../../widgets/fast_route.dart';
+import '../../palai/fullscreen_image_viewer.dart';
 import '../../../widgets/farm_not_linked_state.dart';
 import '../own_palai/add_weight_entry_screen.dart';
 import '../register_goats/goat_registration_form_screen.dart';
@@ -38,9 +39,28 @@ const List<String> _stockTabs = [
   Goat.statusSold,
 ];
 
-/// The "All" tab shows Available goats (plus the unregistered batches).
-/// Booked, Wait on Delivery, Own Palai and Sold goats live in their own tabs.
-bool _showInAll(Goat goat) => _hasStatus(goat, Goat.statusAvailable);
+/// Available Stock = every goat currently on the farm that can still be
+/// sold, INCLUDING goats in Own Palai, but excluding goats that are already
+/// sold. Booked and Wait on Delivery goats are already committed to a
+/// customer, so they are not available stock either.
+///
+/// This is the definition behind the "Available" tab / summary stat and the
+/// "All" tab.
+bool _inAvailableStock(Goat goat) =>
+    _hasStatus(goat, Goat.statusAvailable) ||
+        _hasStatus(goat, Goat.statusOwnPalai);
+
+/// The "All" tab shows Available Stock (plus the unregistered batches).
+/// Booked, Wait on Delivery and Sold goats live in their own tabs; Own Palai
+/// goats show here AND in their own tab.
+bool _showInAll(Goat goat) => _inAvailableStock(goat);
+
+/// Whether [goat] belongs on the tab for [status]. Only "Available" differs
+/// from a plain status match (it also includes Own Palai goats).
+bool _matchesTab(Goat goat, String status) {
+  if (status == Goat.statusAvailable) return _inAvailableStock(goat);
+  return _hasStatus(goat, status);
+}
 
 bool _hasStatus(Goat goat, String status) {
   return goat.currentStatus.trim().toLowerCase() ==
@@ -146,7 +166,8 @@ class _SortFilterResult {
 /// - Pinned filter tabs with counts: All, Available, Unregistered, Booked,
 ///   Wait on Delivery, Own Palai, Sold Out
 ///
-/// "All" shows Available goats plus Unregistered goats. Unregistered goats
+/// "All" shows Available Stock (Available + Own Palai goats, never Sold)
+/// plus Unregistered goats. Unregistered goats
 /// (received but not yet tagged/weighed) have no goat record yet, so they
 /// appear as one card per purchase with a "Register Goats" action.
 /// - Status-aware goat cards (Customer Palai goats are not shown here —
@@ -891,19 +912,20 @@ class _GoatStockListScreenState
       return _unregisteredTotal(batches);
     }
 
-    return goats.where((goat) => _hasStatus(goat, status)).length;
+    return goats.where((goat) => _matchesTab(goat, status)).length;
   }
 
   List<Goat> _visibleGoats(List<Goat> allGoats) {
     final status = _statusFilter;
 
-    // "All" = Available only (unregistered batches are added separately).
+    // "All" = Available Stock (Available + Own Palai); unregistered batches
+    // are added separately.
     // The Unregistered tab has no registered goats at all.
     var goats = status == null
         ? allGoats.where(_showInAll).toList()
         : status == _kUnregistered
         ? <Goat>[]
-        : allGoats.where((g) => _hasStatus(g, status)).toList();
+        : allGoats.where((g) => _matchesTab(g, status)).toList();
 
     final gender = _genderFilter;
 
@@ -1471,10 +1493,10 @@ class _GoatStockListScreenState
       subtitle = 'There are no goats marked as '
           '"${_statusLabel(status)}".';
     } else if (hasAnyGoats) {
-      // "All" only lists Available + Unregistered goats.
+      // "All" only lists Available Stock + Unregistered goats.
       title = 'No available or unregistered goats';
       subtitle =
-      'Booked, sold and other goats are under their own tabs.';
+      'Booked, wait on delivery and sold goats are under their own tabs.';
     } else {
       title = 'No goats registered';
       subtitle =
@@ -1704,7 +1726,7 @@ class _GoatStockCard extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              _topRow(),
+              _topRow(context),
 
               if (footer != null) ...[
                 const SizedBox(height: 9),
@@ -1726,14 +1748,14 @@ class _GoatStockCard extends StatelessWidget {
   // TOP ROW
   // ---------------------------------------------------------------------------
 
-  Widget _topRow() {
+  Widget _topRow(BuildContext context) {
     final color = _statusColor(goat.currentStatus);
     final gender = _genderLabel;
 
     return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        _photo(),
+        _photo(context),
 
         const SizedBox(width: 10),
 
@@ -1847,7 +1869,23 @@ class _GoatStockCard extends StatelessWidget {
     );
   }
 
-  Widget _photo() {
+  /// Tap the photo to view it full-screen (pinch to zoom). With no photo
+  /// the paw logo is shown and is not tappable.
+  Widget _photo(BuildContext context) {
+    final box = _photoBox();
+    final photo = goat.photo;
+    if (photo == null || photo.isEmpty) return box;
+
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: () => Navigator.of(context).push(
+        fastRoute(FullscreenImageViewer(imageBytes: photo, title: goat.id)),
+      ),
+      child: box,
+    );
+  }
+
+  Widget _photoBox() {
     final badge = _badge;
 
     return Container(

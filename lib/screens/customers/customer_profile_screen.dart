@@ -17,6 +17,7 @@ import '../finance/customer_ledger_screen.dart';
 import '../palai/add_customer_screen.dart';
 import '../palai/customer_palai/customer_goat_registration_screen.dart';
 import '../palai/customer_palai/goat_profile_screen.dart';
+import '../palai/fullscreen_image_viewer.dart';
 import '../palai/multi_goat_checkout_screen.dart';
 import 'customer_goats_progress_report_pdf_screen.dart';
 import 'monthly_bills_screen.dart';
@@ -1241,7 +1242,10 @@ class _CustomerProfileScreenState extends State<CustomerProfileScreen> {
       PalaiGoat goat,
       Color healthColor,
       ) {
-    return Container(
+    final hasPhoto =
+        goat.beforeImage != null && goat.beforeImage!.isNotEmpty;
+
+    final avatar = Container(
       width: 48,
       height: 48,
       decoration: BoxDecoration(
@@ -1279,6 +1283,24 @@ class _CustomerProfileScreenState extends State<CustomerProfileScreen> {
           size: 22,
         ),
       ),
+    );
+
+    // Tap the photo to view it full-screen (pinch to zoom). With no photo
+    // the paw logo is shown and is not tappable, so the tap falls through
+    // to the card and opens the goat profile as before.
+    if (!hasPhoto) return avatar;
+
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: () => Navigator.of(context).push(
+        fastRoute(
+          FullscreenImageViewer(
+            imageBytes: goat.beforeImage!,
+            title: goat.goatCode,
+          ),
+        ),
+      ),
+      child: avatar,
     );
   }
 

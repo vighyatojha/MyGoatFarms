@@ -1144,7 +1144,7 @@ class _HealthStatusRecordsScreenState
                                   const SizedBox(height: 3),
                                   Text(
                                     '#${_goatCode(record.goat)}'
-                                        '${record.isOwnPalai ? ' · Own Palai' : ''}',
+                                        '${record.isOwnPalai ? (record.ownPalaiGoat!.isWaitOnDelivery ? ' · Wait on Delivery' : ' · Own Palai') : ''}',
                                     style: AppTheme.body(
                                       size: 10.5,
                                       color: AppColors.textGrey,

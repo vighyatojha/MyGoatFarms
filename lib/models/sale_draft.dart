@@ -267,9 +267,6 @@ class SaleDraft {
 
   double bookingAmount = 0;
 
-  /// Only for reference — nothing is calculated from it.
-  DateTime? expectedDeliveryDate;
-
   /// Charge per day of holding. The holding DAYS are not asked for here:
   /// they are counted from the booking day to the delivery day when the
   /// delivery is completed (both days included), and the holding charges

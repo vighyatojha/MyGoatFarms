@@ -3670,9 +3670,10 @@ class FirestoreService {
       ) =>
       _tradingGoats(farmId).doc(goatId).collection('healthRecords');
 
-  /// Every Own-Palai (Trading module) goat with a vaccination /
-  /// hoof-cutting / hair-trimming / medicine `nextDueDate` due within
-  /// [withinDays] days (default 45) or already overdue.
+  /// Every Own-Palai or Wait-on-Delivery (Trading module) goat with a
+  /// vaccination / hoof-cutting / hair-trimming / medicine `nextDueDate`
+  /// due within [withinDays] days (default 45) or already overdue. Goats
+  /// that have been picked up (Sold) drop out.
   ///
   /// This is the Trading-module counterpart to
   /// [upcomingCustomerHealthReminders] —
@@ -3690,7 +3691,7 @@ class FirestoreService {
         int withinDays = 45,
       }) async {
     final goatsSnap = await _tradingGoats(farmId)
-        .where('currentStatus', isEqualTo: Goat.statusOwnPalai)
+        .where('currentStatus', whereIn: Goat.farmHealthScheduleStatuses)
         .get()
         .timeout(timeout);
 
@@ -3752,7 +3753,8 @@ class FirestoreService {
           '${d.day.toString().padLeft(2, '0')}';
 
   /// Puts the farm's Health Reminder Settings (Profile > Health Reminder
-  /// Settings) onto every Own Palai goat's Vaccination / Hoof Cutting /
+  /// Settings) onto every Own Palai goat's — and every Wait on Delivery
+  /// goat's — Vaccination / Hoof Cutting /
   /// Hair Trimming schedule, so the dates the farm owner picked show up on
   /// each goat's profile — and in Notifications and the Pending / Upcoming
   /// health lists — WITHOUT anyone having to log a record first.
@@ -3812,7 +3814,7 @@ class FirestoreService {
         ];
       } else {
         goatDocs = (await _tradingGoats(farmId)
-            .where('currentStatus', isEqualTo: Goat.statusOwnPalai)
+            .where('currentStatus', whereIn: Goat.farmHealthScheduleStatuses)
             .get()
             .timeout(timeout))
             .docs;
@@ -3837,9 +3839,9 @@ class FirestoreService {
       }
 
       // A goat that has since been sold / moved on no longer has a
-      // schedule to maintain.
-      if (goat.currentStatus.trim().toLowerCase() !=
-          Goat.statusOwnPalai.toLowerCase()) {
+      // schedule to maintain. Own Palai and Wait on Delivery goats are
+      // both still on the farm, so both follow the farm's settings.
+      if (!goat.followsFarmHealthSchedule) {
         return;
       }
 
@@ -3931,9 +3933,18 @@ class FirestoreService {
 
     // The day the schedule is counted from: the goat's last real hoof
     // cutting if there is one, otherwise the day it entered Own Palai.
+    // A Wait on Delivery goat is counted from the day it was put on Wait
+    // on Delivery (not its purchase date, which would make a hoof cutting
+    // look long overdue the moment it is booked); goats that went on Wait
+    // on Delivery before that day was recorded fall back to the day they
+    // entered Own Palai, or else today.
     final DateTime startDay =
     (type == GoatHealthRecordType.hoofCutting && logged.isNotEmpty)
         ? logged.first.date
+        : goat.isWaitOnDelivery
+        ? (goat.waitOnDeliveryAt ??
+        goat.movedToOwnPalaiAt ??
+        DateTime.now())
         : (goat.movedToOwnPalaiAt ?? goat.purchaseDate);
 
     final DateTime? due = isOff
@@ -4007,8 +4018,9 @@ class FirestoreService {
         .update({'nextDueDate': null}).timeout(timeout);
   }
 
-  /// Every Own Palai vaccination / hoof-cutting / hair-trimming record,
-  /// classified Complete / Pending / Upcoming with the SAME rule
+  /// Every Own Palai (and Wait on Delivery) vaccination / hoof-cutting /
+  /// hair-trimming record, classified Complete / Pending / Upcoming with
+  /// the SAME rule
   /// ([_classifyHealthRecordStatus]) the Customer Palai list uses, so the
   /// Health Records screen can show Own Palai goats alongside customer
   /// goats. Each summary carries the Own Palai [Goat] so a tap can open its
@@ -4022,7 +4034,7 @@ class FirestoreService {
         int perGoatLimit = 60,
       }) async {
     final goatsSnap = await _tradingGoats(farmId)
-        .where('currentStatus', isEqualTo: Goat.statusOwnPalai)
+        .where('currentStatus', whereIn: Goat.farmHealthScheduleStatuses)
         .get()
         .timeout(timeout);
 

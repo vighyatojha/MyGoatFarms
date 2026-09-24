@@ -7,6 +7,7 @@ import '../../goat_icons.dart';
 import '../../models/palai_models.dart';
 import '../../services/firestore_service.dart';
 import '../../widgets/fast_route.dart';
+import 'fullscreen_image_viewer.dart';
 import 'multi_goat_checkout_screen.dart';
 import 'generate_report_screen.dart';
 import 'health_records_screen.dart';
@@ -1603,7 +1604,33 @@ class _GoatListScreenState extends State<GoatListScreen> {
     );
   }
 
+  /// Tap the photo to view it full-screen (pinch to zoom). With no photo
+  /// the paw logo is shown and is not tappable.
   Widget _goatAvatar({
+    required PalaiGoat goat,
+    required Color healthColor,
+  }) {
+    final avatar = _goatAvatarBox(goat: goat, healthColor: healthColor);
+    final photo = goat.beforeImage;
+    if (photo == null || photo.isEmpty) return avatar;
+
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: () => Navigator.of(context).push(
+        fastRoute(
+          FullscreenImageViewer(
+            imageBytes: photo,
+            title: goat.goatCode.trim().isNotEmpty
+                ? goat.goatCode
+                : goat.tagNumber,
+          ),
+        ),
+      ),
+      child: avatar,
+    );
+  }
+
+  Widget _goatAvatarBox({
     required PalaiGoat goat,
     required Color healthColor,
   }) {

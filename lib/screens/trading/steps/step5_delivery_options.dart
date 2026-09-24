@@ -203,7 +203,6 @@ class Step5DeliveryOptionsState extends State<Step5DeliveryOptions> {
       if (!valid) return false;
 
       _syncBooking();
-      draft.expectedDeliveryDate ??= DateTime.now();
 
       return true;
     }
@@ -653,30 +652,6 @@ class Step5DeliveryOptionsState extends State<Step5DeliveryOptions> {
                     'remaining balance later. What is unpaid after the '
                     'delivery is added to their outstanding balance.',
                 offText: 'Off — the remaining balance is paid at pickup.',
-              ),
-              const SizedBox(height: 14),
-              WizardDateField(
-                label: 'Expected Delivery Date',
-                helper: 'For reference only — holding charges are counted '
-                    'until the day the goat is actually delivered.',
-                date: draft.expectedDeliveryDate ?? DateTime.now(),
-                onTap: () async {
-                  final picked = await showWizardDatePicker(
-                    context: context,
-                    initialDate: draft.expectedDeliveryDate ?? DateTime.now(),
-                    firstDate: DateTime.now(),
-                    lastDate: DateTime.now().add(
-                      const Duration(days: 365),
-                    ),
-                    helpText: 'Expected delivery date',
-                  );
-
-                  if (picked == null) return;
-
-                  setState(() {
-                    draft.expectedDeliveryDate = picked;
-                  });
-                },
               ),
               const SizedBox(height: 14),
               wizardField(

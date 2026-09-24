@@ -6,6 +6,7 @@ import '../../../models/goat_model.dart';
 import '../../../services/firestore_service.dart';
 import '../../../services/goat_service.dart';
 import '../../../widgets/fast_route.dart';
+import '../../palai/fullscreen_image_viewer.dart';
 import '../../../widgets/farm_not_linked_state.dart';
 import 'move_to_own_palai_screen.dart';
 import 'own_palai_goat_profile_screen.dart';
@@ -362,7 +363,23 @@ class _OwnPalaiListScreenState extends State<OwnPalaiListScreen> {
     );
   }
 
+  /// Tap the photo to view it full-screen (pinch to zoom). With no photo
+  /// the paw logo is shown and is not tappable.
   Widget _goatPhoto(Goat goat) {
+    final box = _goatPhotoBox(goat);
+    final photo = goat.photo;
+    if (photo == null || photo.isEmpty) return box;
+
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: () => Navigator.of(context).push(
+        fastRoute(FullscreenImageViewer(imageBytes: photo, title: goat.id)),
+      ),
+      child: box,
+    );
+  }
+
+  Widget _goatPhotoBox(Goat goat) {
     return Container(
       width: 62,
       height: 62,

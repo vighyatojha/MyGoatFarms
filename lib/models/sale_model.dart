@@ -121,6 +121,10 @@ class Sale {
   // BRANCH A: DELIVER NOW (Task 3.1)
   // ---------------------------------------------------------------------
 
+  /// Transportation charge collected from the customer for the transport
+  /// team. Set when a Deliver Now sale is made, and for a Wait for
+  /// Delivery sale when the pickup is completed (it is not known at
+  /// booking time). Never revenue — see [billTransportCharges].
   final double? transportCost;
   final double? amountReceived;
 
@@ -132,11 +136,6 @@ class Sale {
   // ---------------------------------------------------------------------
 
   final double? bookingAmount;
-
-  /// Only for reference — when the customer said they would collect. It
-  /// is NOT used to calculate anything: holding charges run until the
-  /// day the delivery is actually completed.
-  final DateTime? expectedDeliveryDate;
 
   /// Estimated holding days. Older bookings only — new bookings no longer
   /// ask for an estimate, because the days are counted from
@@ -259,7 +258,6 @@ class Sale {
     this.amountReceived,
     this.paymentStatus,
     this.bookingAmount,
-    this.expectedDeliveryDate,
     this.holdingDays,
     this.holdingChargePerDay,
     this.holdingStartDate,
@@ -375,7 +373,8 @@ class Sale {
   //
   //   Goat Sale              ₹20,000
   //   Holding Charges           ₹500   (Booking only)
-  //   Transportation          ₹1,000   (Deliver Now only)
+  //   Transportation          ₹1,000   (Deliver Now, and Wait for
+  //                                     Delivery once picked up)
   //   ------------------------------
   //   Customer Total         ₹21,500
   //
@@ -434,12 +433,16 @@ class Sale {
   /// Transportation charge collected from the customer for the transport
   /// team. 0 when there is none.
   ///
-  /// Only Deliver Now sales carry a transportation charge. Booking, Wait
-  /// for Delivery and Transfer to Palai never do, so this is always 0 for
-  /// them — even if an older record happens to have a `transportCost`
-  /// stored on it.
+  /// Deliver Now sales carry a transportation charge, and so does a Wait
+  /// for Delivery sale once its pickup is completed (the charge is entered
+  /// at pickup, see [hasPickupSettlement]). Booking and Transfer to Palai
+  /// never do, so this is always 0 for them — even if an older record
+  /// happens to have a `transportCost` stored on it. A Wait for Delivery
+  /// that is still waiting has not been picked up yet, so it has none.
   double get billTransportCharges =>
-      isDeliverNow ? _nonNegative(transportCost ?? 0) : 0.0;
+      (isDeliverNow || hasPickupSettlement)
+          ? _nonNegative(transportCost ?? 0)
+          : 0.0;
 
   /// Goat Sale + Holding Charges + Transportation.
   double get billCustomerTotal => _round2(
@@ -673,7 +676,6 @@ class Sale {
       paymentStatus: data['paymentStatus'] as String?,
 
       bookingAmount: nullableNumFrom('bookingAmount'),
-      expectedDeliveryDate: dateFrom('expectedDeliveryDate'),
       holdingDays: nullableIntFrom('holdingDays'),
       holdingChargePerDay: nullableNumFrom('holdingChargePerDay'),
       holdingStartDate: dateFrom('holdingStartDate'),
@@ -746,7 +748,6 @@ class Sale {
     putIfNotNull('paymentStatus', paymentStatus);
 
     putIfNotNull('bookingAmount', bookingAmount);
-    putIfNotNull('expectedDeliveryDate', expectedDeliveryDate);
     putIfNotNull('holdingDays', holdingDays);
     putIfNotNull('holdingChargePerDay', holdingChargePerDay);
     putIfNotNull('holdingStartDate', holdingStartDate);

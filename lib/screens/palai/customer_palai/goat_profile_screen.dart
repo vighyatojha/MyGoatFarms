@@ -5,6 +5,8 @@ import '../../../app_theme.dart';
 import '../../../goat_icons.dart';
 import '../../../models/palai_models.dart';
 import '../../../services/firestore_service.dart';
+import '../../../widgets/fast_route.dart';
+import '../fullscreen_image_viewer.dart';
 import 'customer_goat_hair_screen.dart';
 import 'customer_goat_hoof_screen.dart';
 import 'customer_goat_medicine_screen.dart';
@@ -277,6 +279,7 @@ class _GoatProfileScreenState extends State<GoatProfileScreen>
     final gain = currentWeight - goat.weightAtCheckIn;
     final arrivalDate = goat.farmArrivalDate ?? goat.checkInDate;
     final daysAtFarm = DateTime.now().difference(arrivalDate).inDays;
+    final hasPhoto = goat.beforeImage != null && goat.beforeImage!.isNotEmpty;
 
     return Container(
       margin: const EdgeInsets.fromLTRB(14, 10, 14, 8),
@@ -285,15 +288,29 @@ class _GoatProfileScreenState extends State<GoatProfileScreen>
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          ClipRRect(
-            borderRadius: BorderRadius.circular(12),
-            child: goat.beforeImage != null
-                ? Image.memory(goat.beforeImage!, width: 64, height: 64, fit: BoxFit.cover)
-                : Container(
-              width: 64,
-              height: 64,
-              color: AppColors.lightGreen,
-              child: const Icon(GoatIcons.paw, color: AppColors.primaryGreen, size: 26),
+          // Tap the photo to view it full-screen (pinch to zoom). With no
+          // photo the paw logo is shown and is not tappable.
+          GestureDetector(
+            onTap: !hasPhoto
+                ? null
+                : () => Navigator.of(context).push(
+              fastRoute(
+                FullscreenImageViewer(
+                  imageBytes: goat.beforeImage!,
+                  title: _goatDisplayId(goat),
+                ),
+              ),
+            ),
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(12),
+              child: hasPhoto
+                  ? Image.memory(goat.beforeImage!, width: 64, height: 64, fit: BoxFit.cover)
+                  : Container(
+                width: 64,
+                height: 64,
+                color: AppColors.lightGreen,
+                child: const Icon(GoatIcons.paw, color: AppColors.primaryGreen, size: 26),
+              ),
             ),
           ),
           const SizedBox(width: 12),

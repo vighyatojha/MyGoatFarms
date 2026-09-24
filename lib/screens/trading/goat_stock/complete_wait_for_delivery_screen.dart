@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
@@ -6,7 +8,9 @@ import '../../../app_theme.dart';
 import '../../../models/expense_categories.dart';
 import '../../../models/goat_model.dart';
 import '../../../models/sale_model.dart';
+import '../../../models/trading_goat_health_record.dart';
 import '../../../services/firestore_service.dart';
+import '../../../services/goat_service.dart';
 import '../../../services/sales_service.dart';
 import '../purchase_goats/purchase_wizard_widgets.dart';
 
@@ -20,14 +24,34 @@ import '../purchase_goats/purchase_wizard_widgets.dart';
 /// booking time ([Sale.bookingPricePerKg]); only the weight is taken
 /// fresh, at pickup:
 ///
-///   Final Amount Due = Pickup Weight x Booking Price/Kg - Advance Paid
+///   Final Amount Due = Pickup Weight x Booking Price/Kg
+///                      + Transportation - Advance Paid
 ///
 /// A Fixed Price sale ([Sale.isFixedPrice]) is the exception: the agreed
 /// price stands whatever the goat weighs, so the pickup weight is only
-/// recorded and Final Amount Due = Fixed Price - Advance Paid.
+/// recorded and Final Amount Due = Fixed Price + Transportation - Advance
+/// Paid.
 ///
-/// Wait for Delivery carries no transportation charge (the bill never
-/// adds one — see [Sale.billTransportCharges]), so none is added here.
+/// TRANSPORTATION — an optional charge entered at pickup, because it is
+/// only known once the goat is actually being handed over. It is added
+/// to what the customer pays and shows on the bill
+/// ([Sale.billTransportCharges]), but it is passed on to the transport
+/// team, so it is never farm revenue.
+///
+/// HEALTH REMINDER — the goat is about to leave the farm, so the top of the
+/// screen reminds the person to check its health before handover. It reads
+/// the current health status and the care records (vaccination, hoof
+/// cutting, hair trimming, medicine) of every goat in the sale, and
+/// flags any that is not Healthy or has care that is overdue or due within
+/// the next [_dueSoonDays] days. It is only a reminder: it never blocks
+/// Complete Delivery.
+///
+/// The dates come from the farm's Health Reminder Settings (Profile >
+/// Health Reminder Settings): a goat on Wait on Delivery is armed with the
+/// farm's vaccination, hoof cutting and hair trimming schedule exactly
+/// like an Own Palai goat (see FirestoreService.syncOwnPalaiFarmReminders),
+/// and the same dates raise notifications in the Notifications screen until
+/// the goat is picked up.
 ///
 /// PAYMENT & CREDIT — once the final amount is known, the person says how
 /// much the customer is paying right now and how:
@@ -62,6 +86,7 @@ class _CompleteWaitForDeliveryScreenState
     extends State<CompleteWaitForDeliveryScreen> {
   final GlobalKey<FormState> _formKey = GlobalKey<FormState>();
   late final TextEditingController _pickupWeightController;
+  late final TextEditingController _transportController;
   late final TextEditingController _amountReceivedController;
 
   bool _loadingSale = true;
@@ -79,6 +104,19 @@ class _CompleteWaitForDeliveryScreenState
   /// How the money received now is being paid.
   String _method = FinancePaymentMethods.cash;
 
+  /// Care due within this many days (or already overdue) is flagged in the
+  /// Health Reminder card.
+  static const int _dueSoonDays = 7;
+
+  bool _loadingHealth = false;
+
+  /// True when the health records of at least one goat could not be read,
+  /// so "all good" is not claimed on incomplete information.
+  bool _healthLoadFailed = false;
+
+  /// Only goats that need attention: not Healthy, or care due / overdue.
+  List<_GoatHealthAlert> _healthAlerts = const [];
+
   String _currency(num value) {
     return NumberFormat.currency(
       locale: 'en_IN',
@@ -91,6 +129,7 @@ class _CompleteWaitForDeliveryScreenState
   void initState() {
     super.initState();
     _pickupWeightController = TextEditingController();
+    _transportController = TextEditingController();
     _amountReceivedController = TextEditingController();
     _loadSale();
   }
@@ -98,6 +137,7 @@ class _CompleteWaitForDeliveryScreenState
   @override
   void dispose() {
     _pickupWeightController.dispose();
+    _transportController.dispose();
     _amountReceivedController.dispose();
     super.dispose();
   }
@@ -166,6 +206,8 @@ class _CompleteWaitForDeliveryScreenState
         _amountEdited = false;
         _syncAutoAmount();
       });
+
+      unawaited(_loadHealthReminders(sale));
     } catch (e) {
       if (!mounted) return;
 
@@ -191,6 +233,108 @@ class _CompleteWaitForDeliveryScreenState
   }
 
   // ===========================================================================
+  // HEALTH REMINDER
+  // ===========================================================================
+
+  Future<void> _loadHealthReminders(Sale sale) async {
+    if (!mounted) return;
+
+    setState(() {
+      _loadingHealth = true;
+      _healthLoadFailed = false;
+    });
+
+    final alerts = <_GoatHealthAlert>[];
+    var failed = false;
+
+    for (final goatId in sale.goatIds) {
+      try {
+        final goat = await GoatService.instance.getGoat(widget.farmId, goatId);
+
+        if (goat == null) continue;
+
+        var records = <GoatHealthRecord>[];
+
+        try {
+          records = await GoatService.instance
+              .healthRecordsStream(farmId: widget.farmId, goatId: goatId)
+              .first
+              .timeout(const Duration(seconds: 10));
+        } catch (_) {
+          // The health status is still shown; only the care dates are
+          // missing.
+          failed = true;
+        }
+
+        final status = goat.healthStatus.trim();
+        final pending = _pendingCare(records);
+        final unwell = status.isNotEmpty && status != 'Healthy';
+
+        if (unwell || pending.isNotEmpty) {
+          alerts.add(
+            _GoatHealthAlert(
+              goatId: goat.id,
+              healthStatus: status,
+              isUnwell: unwell,
+              pendingCare: pending,
+            ),
+          );
+        }
+      } catch (_) {
+        failed = true;
+      }
+    }
+
+    if (!mounted) return;
+
+    setState(() {
+      _healthAlerts = alerts;
+      _healthLoadFailed = failed;
+      _loadingHealth = false;
+    });
+  }
+
+  /// For each care type, the newest record decides — an older record's
+  /// due date is superseded once a newer one exists, so it is not flagged
+  /// as overdue forever. Only what is overdue or due soon is returned,
+  /// earliest first.
+  List<GoatHealthRecord> _pendingCare(List<GoatHealthRecord> records) {
+    final seen = <GoatHealthRecordType>{};
+    final pending = <GoatHealthRecord>[];
+
+    // [records] arrive newest first (see GoatService.healthRecordsStream).
+    for (final record in records) {
+      if (!seen.add(record.type)) continue;
+
+      if (record.nextDueDate == null) continue;
+
+      if (record.isOverdue ||
+          record.isDueWithin(const Duration(days: _dueSoonDays))) {
+        pending.add(record);
+      }
+    }
+
+    pending.sort((a, b) => a.nextDueDate!.compareTo(b.nextDueDate!));
+
+    return pending;
+  }
+
+  Color _healthStatusColor(String status) {
+    switch (status.trim()) {
+      case 'Healthy':
+        return AppColors.success;
+      case 'Under Treatment':
+        return AppColors.warning;
+      case 'Sick':
+        return AppColors.error;
+      case 'Quarantined':
+        return AppColors.info;
+      default:
+        return AppColors.textGrey;
+    }
+  }
+
+  // ===========================================================================
   // LIVE CALCULATION
   // ===========================================================================
 
@@ -212,11 +356,27 @@ class _CompleteWaitForDeliveryScreenState
 
   double get _advancePaid => _sale?.bookingAdvanceAmount ?? 0;
 
+  /// The transportation charge typed in (blank counts as 0). Collected
+  /// from the customer on top of the goat value, and passed on to the
+  /// transport team — it is not farm revenue.
+  double get _transport {
+    final text = _transportController.text.trim();
+
+    if (text.isEmpty) return 0;
+
+    final number = double.tryParse(text) ?? 0;
+
+    return number <= 0 ? 0 : Sale.roundMoney(number);
+  }
+
   /// What the customer still owes at pickup: pickup weight x the
-  /// booking-time rate - the advance already paid. Same figure
-  /// SalesService stores as finalPriceAfterPickup.
+  /// booking-time rate + transportation - the advance already paid. Same
+  /// figure SalesService stores as finalPriceAfterPickup.
   double get _finalPrice {
-    final raw = _goatSaleValue - _advancePaid;
+    // Nothing is due until a pickup weight has been entered.
+    if (_pickupWeight <= 0) return 0;
+
+    final raw = _goatSaleValue + _transport - _advancePaid;
 
     return raw <= 0 ? 0 : Sale.roundMoney(raw);
   }
@@ -323,6 +483,7 @@ class _CompleteWaitForDeliveryScreenState
         farmId: widget.farmId,
         saleId: sale.id,
         pickupWeight: _pickupWeight,
+        transportCharges: _transport,
         amountReceivedNow: received,
         paymentMethod: _method,
         onCredit: onCredit,
@@ -437,6 +598,10 @@ class _CompleteWaitForDeliveryScreenState
         keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
         padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
         children: [
+          _buildHealthReminderCard(sale),
+
+          const SizedBox(height: 12),
+
           WizardSectionCard(
             title: 'Booking Summary',
             icon: Icons.local_shipping_outlined,
@@ -496,6 +661,39 @@ class _CompleteWaitForDeliveryScreenState
                   return null;
                 },
               ),
+              const SizedBox(height: 14),
+              wizardField(
+                controller: _transportController,
+                label: 'Transportation Charge',
+                hint: '0.00',
+                icon: Icons.directions_car_outlined,
+                suffix: 'Added to bill',
+                helper: 'Optional — leave blank if there is none. Passed on '
+                    'to the transport team, so it is not farm revenue.',
+                optional: true,
+                enabled: !_saving,
+                keyboardType:
+                const TextInputType.numberWithOptions(decimal: true),
+                inputFormatters: [
+                  FilteringTextInputFormatter.allow(
+                    RegExp(r'^\d*\.?\d{0,2}'),
+                  ),
+                ],
+                onChanged: (_) => setState(_syncAutoAmount),
+                validator: (value) {
+                  final text = value?.trim() ?? '';
+
+                  if (text.isEmpty) return null;
+
+                  final number = double.tryParse(text);
+
+                  if (number == null || number < 0) {
+                    return 'Enter a valid amount';
+                  }
+
+                  return null;
+                },
+              ),
             ],
           ),
 
@@ -542,6 +740,162 @@ class _CompleteWaitForDeliveryScreenState
           ),
         ],
       ),
+    );
+  }
+
+  // ---------------------------------------------------------------------------
+  // HEALTH REMINDER CARD
+  // ---------------------------------------------------------------------------
+
+  Widget _buildHealthReminderCard(Sale sale) {
+    final buyer = _buyerName(sale);
+
+    final children = <Widget>[
+      _infoLine(
+        icon: Icons.info_outline_rounded,
+        color: AppColors.textGrey,
+        text: 'Check the goat\'s health before handing it over to $buyer.',
+      ),
+    ];
+
+    if (_loadingHealth) {
+      children.addAll([
+        const SizedBox(height: 10),
+        _infoLine(
+          icon: Icons.hourglass_empty_rounded,
+          color: AppColors.textGrey,
+          text: 'Checking health records…',
+        ),
+      ]);
+    } else {
+      for (final alert in _healthAlerts) {
+        children.addAll([
+          const SizedBox(height: 12),
+          _healthAlertTile(alert, buyer),
+        ]);
+      }
+
+      if (_healthLoadFailed) {
+        children.addAll([
+          const SizedBox(height: 10),
+          _infoLine(
+            icon: Icons.cloud_off_rounded,
+            color: AppColors.warning,
+            text: 'Some health records could not be read right now, so '
+                'this list may be incomplete.',
+          ),
+        ]);
+      } else if (_healthAlerts.isEmpty) {
+        children.addAll([
+          const SizedBox(height: 10),
+          _infoLine(
+            icon: Icons.check_circle_outline_rounded,
+            color: AppColors.success,
+            text: 'All good — marked Healthy, with no vaccination, hoof '
+                'cutting, hair trimming or medicine due or overdue.',
+          ),
+        ]);
+      }
+    }
+
+    return WizardSectionCard(
+      title: 'Health Reminder',
+      icon: Icons.medical_services_outlined,
+      children: children,
+    );
+  }
+
+  Widget _healthAlertTile(_GoatHealthAlert alert, String buyer) {
+    final statusColor = _healthStatusColor(alert.healthStatus);
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: AppColors.warning.withOpacity(0.08),
+        borderRadius: BorderRadius.circular(13),
+        border: Border.all(color: AppColors.warning.withOpacity(0.35)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  'Goat ${alert.goatId}',
+                  style: AppTheme.heading(
+                    size: 12,
+                    color: AppColors.textDark,
+                  ),
+                ),
+              ),
+              if (alert.isUnwell)
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 4,
+                  ),
+                  decoration: BoxDecoration(
+                    color: statusColor.withOpacity(0.12),
+                    borderRadius: BorderRadius.circular(20),
+                  ),
+                  child: Text(
+                    alert.healthStatus,
+                    style: TextStyle(
+                      color: statusColor,
+                      fontSize: 10,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+            ],
+          ),
+          if (alert.isUnwell) ...[
+            const SizedBox(height: 8),
+            _infoLine(
+              icon: Icons.warning_amber_rounded,
+              color: statusColor,
+              text: 'Marked ${alert.healthStatus}. Let $buyer know before '
+                  'handover.',
+            ),
+          ],
+          for (final record in alert.pendingCare) ...[
+            const SizedBox(height: 8),
+            _careLine(record),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _careLine(GoatHealthRecord record) {
+    final due = record.nextDueDate!;
+    final overdue = record.isOverdue;
+
+    final today = DateTime.now();
+    final days = DateTime.utc(due.year, due.month, due.day)
+        .difference(DateTime.utc(today.year, today.month, today.day))
+        .inDays;
+
+    final dateText = DateFormat('d MMM yyyy').format(due);
+
+    final String when;
+
+    if (overdue) {
+      when = 'overdue since $dateText';
+    } else if (days <= 0) {
+      when = 'due today';
+    } else if (days == 1) {
+      when = 'due tomorrow';
+    } else {
+      when = 'due in $days days ($dateText)';
+    }
+
+    return _infoLine(
+      icon: overdue ? Icons.error_outline_rounded : Icons.schedule_rounded,
+      color: overdue ? AppColors.error : AppColors.warning,
+      text: '${record.type.label} — $when',
     );
   }
 
@@ -824,6 +1178,13 @@ class _CompleteWaitForDeliveryScreenState
                 '${_currency(rate)})',
             _currency(_goatSaleValue),
           ),
+          if (_transport > 0) ...[
+            const SizedBox(height: 8),
+            _summaryRow(
+              'Transportation',
+              '+ ${_currency(_transport)}',
+            ),
+          ],
           const SizedBox(height: 8),
           _summaryRow(
             'Advance Paid',
@@ -899,6 +1260,15 @@ class _CompleteWaitForDeliveryScreenState
                   'nothing goes on credit.',
             ),
           ],
+          if (ready && _transport > 0) ...[
+            const SizedBox(height: 10),
+            _infoLine(
+              icon: Icons.local_shipping_outlined,
+              color: AppColors.textGrey,
+              text: 'Transportation is passed on to the transport team, so '
+                  'it is not counted as farm revenue.',
+            ),
+          ],
           const SizedBox(height: 10),
           _infoLine(
             icon: Icons.lock_clock_outlined,
@@ -966,4 +1336,23 @@ class _CompleteWaitForDeliveryScreenState
       ],
     );
   }
+}
+
+/// One goat in the sale that needs attention before handover: it is not
+/// marked Healthy, or it has care that is overdue or due soon. Goats with
+/// nothing to flag are not listed.
+class _GoatHealthAlert {
+  final String goatId;
+  final String healthStatus;
+  final bool isUnwell;
+
+  /// Overdue or due-soon care, earliest first.
+  final List<GoatHealthRecord> pendingCare;
+
+  const _GoatHealthAlert({
+    required this.goatId,
+    required this.healthStatus,
+    required this.isUnwell,
+    required this.pendingCare,
+  });
 }

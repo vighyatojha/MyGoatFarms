@@ -4,54 +4,51 @@ import 'package:intl/intl.dart';
 
 import '../../../app_theme.dart';
 import '../../../goat_icons.dart';
+import '../../../models/booking_delivery_group.dart';
 import '../../../models/expense_categories.dart';
 import '../../../models/goat_model.dart';
 import '../../../models/sale_model.dart';
-import '../../../models/wait_delivery_group.dart';
+import '../../../services/booking_delivery_service.dart';
 import '../../../services/goat_service.dart';
-import '../../../widgets/fast_route.dart';
-import '../../palai/fullscreen_image_viewer.dart';
-import '../../../services/wait_delivery_service.dart';
+import '../purchase_goats/purchase_wizard_widgets.dart';
 
-/// Wait on Delivery — one customer.
+/// Booking / Holding — one customer.
 ///
-/// Flow: Goat Stock -> Wait on Delivery tab (customers) -> this screen
-/// (that customer's goats, grouped by booking) -> Deliver All at Once.
+/// Flow: Goat Stock -> Booked tab -> this customer's goats, grouped by
+/// booking -> Deliver All at Once.
 ///
-/// A booking (Sale) has one rate — or one agreed [Sale.isFixedPrice]
-/// price — one advance and one pickup weight, so all of its goats are
-/// delivered together; that is what the booking selector below chooses
-/// between. Every goat still has its own pickup-weight field (pre-filled
-/// with the weight recorded at booking); a booking's pickup weight is the
-/// total of its goats' fields.
+/// Unlike Wait for Delivery, a Booking sale is never repriced by weight:
+/// its final amount is
 ///
-///   Goat value  = pickup weight x booking rate           (per KG)
-///               = the agreed price, whatever the weight   (fixed price)
-///   Remaining   = Goat value - advance paid
+///   Goat Sale Amount + Holding Charges − Booking Amount
+///   Holding Charges = Holding Days × Holding Charge/Day
 ///
-/// which is the same formula SalesService.completeWaitForDeliveryPickup
-/// saves, so the amount shown here is the amount that gets stored.
+/// counted inclusively from the day holding started to the delivery
+/// date — the exact formula CompleteBookingDeliveryScreen shows and
+/// SalesService.completeBookingDelivery saves. Because the amount depends
+/// on the delivery date rather than a per-goat field, one delivery date
+/// is chosen for the whole batch (defaulting to today, never before the
+/// latest holding-start among the selected bookings) instead of a
+/// per-goat weight input.
 ///
 /// PAYMENT & CREDIT — same rule as the single-goat Complete Delivery
 /// screen: once a booking's final amount is known, either it is received
 /// in full right now, or Sell on Credit is on and whatever is left
 /// becomes the customer's outstanding balance. One Sell on Credit switch
 /// and one payment method apply to every booking delivered in this
-/// batch; each booking still gets its own "amount received now" field
-/// (pre-filled with its full remaining amount, editable, and only
-/// required to match exactly while credit is off). The rules are
-/// enforced again by SalesService per booking, so this screen and the
-/// saved sale can never disagree.
-class WaitDeliveryCustomerScreen extends StatefulWidget {
+/// batch; each booking still gets its own "amount received now" field.
+/// The rules are enforced again by SalesService per booking, so this
+/// screen and the saved sale can never disagree.
+class BookingDeliveryCustomerScreen extends StatefulWidget {
   final String farmId;
 
-  /// [WaitDeliveryCustomer.key] of the customer to show.
+  /// [BookingDeliveryCustomer.key] of the customer to show.
   final String customerKey;
 
   /// Only used for the header while loading, or once nothing is left.
   final String customerName;
 
-  const WaitDeliveryCustomerScreen({
+  const BookingDeliveryCustomerScreen({
     super.key,
     required this.farmId,
     required this.customerKey,
@@ -59,12 +56,12 @@ class WaitDeliveryCustomerScreen extends StatefulWidget {
   });
 
   @override
-  State<WaitDeliveryCustomerScreen> createState() =>
-      _WaitDeliveryCustomerScreenState();
+  State<BookingDeliveryCustomerScreen> createState() =>
+      _BookingDeliveryCustomerScreenState();
 }
 
-class _WaitDeliveryCustomerScreenState
-    extends State<WaitDeliveryCustomerScreen> {
+class _BookingDeliveryCustomerScreenState
+    extends State<BookingDeliveryCustomerScreen> {
   static final DateFormat _dateFormat = DateFormat('d MMM yyyy');
 
   static final NumberFormat _money = NumberFormat.currency(
@@ -77,7 +74,7 @@ class _WaitDeliveryCustomerScreenState
   GoatService.instance.goatsStream(widget.farmId);
 
   late final Stream<List<Sale>> _salesStream =
-  WaitDeliveryService.instance.openSalesStream(widget.farmId);
+  BookingDeliveryService.instance.openSalesStream(widget.farmId);
 
   /// Booking (sale) IDs picked for delivery.
   final Set<String> _selected = <String>{};
@@ -87,21 +84,22 @@ class _WaitDeliveryCustomerScreenState
   /// next stream update).
   final Set<String> _seen = <String>{};
 
-  /// Pickup weight per goat, keyed by goat ID.
-  final Map<String, TextEditingController> _weights =
-  <String, TextEditingController>{};
-
   /// Amount received now per booking, keyed by sale ID.
   final Map<String, TextEditingController> _amounts =
   <String, TextEditingController>{};
 
   /// Bookings whose amount field the person has typed in themselves.
-  /// Until then it follows the remaining amount as the pickup weight
+  /// Until then it follows the final amount as the delivery date
   /// changes, same as the single-goat screen.
   final Set<String> _amountEdited = <String>{};
 
+  /// Delivery date shared across every booking in this batch — holding
+  /// charges are computed against it. Set once the customer's bookings
+  /// are known (never before the latest holding-start among them).
+  DateTime? _deliveryDate;
+
   /// Sell on Credit for this batch. Whatever is left after the amount
-  /// received goes onto each customer's outstanding balance instead of
+  /// received goes onto the customer's outstanding balance instead of
   /// blocking the delivery.
   bool _onCredit = false;
 
@@ -114,10 +112,6 @@ class _WaitDeliveryCustomerScreenState
 
   @override
   void dispose() {
-    for (final controller in _weights.values) {
-      controller.dispose();
-    }
-
     for (final controller in _amounts.values) {
       controller.dispose();
     }
@@ -129,57 +123,45 @@ class _WaitDeliveryCustomerScreenState
   // HELPERS
   // ===========================================================================
 
-  String _trim(double value) {
-    if (value == value.roundToDouble()) {
-      return value.toInt().toString();
-    }
+  static DateTime _dayOnly(DateTime d) => DateTime(d.year, d.month, d.day);
 
-    return value.toString();
-  }
-
-  /// A money value as plain text for an input field: 14760, or 14760.50.
   String _plainMoney(double value) {
     return value == value.roundToDouble()
         ? value.toStringAsFixed(0)
         : value.toStringAsFixed(2);
   }
 
-  TextEditingController _weightControllerFor(Goat goat) {
-    return _weights.putIfAbsent(
-      goat.id,
-          () => TextEditingController(
-        text: goat.weight <= 0 ? '' : _trim(goat.weight),
-      ),
-    );
+  DateTime _deliveryDateOr(BookingDeliveryCustomer customer) {
+    final chosen = _deliveryDate;
+
+    if (chosen != null) return chosen;
+
+    final today = _dayOnly(DateTime.now());
+    final earliestStart = _dayOnly(customer.earliestHoldingStart);
+
+    return today.isBefore(earliestStart) ? earliestStart : today;
   }
 
-  double _weightOf(Goat goat) {
-    return double.tryParse(_weightControllerFor(goat).text.trim()) ?? 0;
+  double _finalAmountOf(BookingDeliveryCustomer customer, BookingDeliverySale entry) {
+    return entry.finalAmountAt(_deliveryDateOr(customer));
   }
 
-  /// Total pickup weight of a booking, from its goats' fields. Rounded so
-  /// adding decimals (34.5 + 12.3) never leaves float noise in the total.
-  double _pickupWeightOf(WaitDeliverySale entry) {
-    final sum = entry.goats.fold<double>(
-      0,
-          (total, goat) => total + _weightOf(goat),
-    );
-
-    return (sum * 1000).round() / 1000;
+  int _holdingDaysOf(BookingDeliveryCustomer customer, BookingDeliverySale entry) {
+    return entry.holdingDaysAt(_deliveryDateOr(customer));
   }
 
-  double _remainingOf(WaitDeliverySale entry) {
-    return entry.remainingAt(_pickupWeightOf(entry));
+  double _holdingChargesOf(BookingDeliveryCustomer customer, BookingDeliverySale entry) {
+    return entry.holdingChargesAt(_deliveryDateOr(customer));
   }
 
-  TextEditingController _amountControllerFor(WaitDeliverySale entry) {
+  TextEditingController _amountControllerFor(BookingDeliverySale entry) {
     return _amounts.putIfAbsent(
       entry.id,
           () => TextEditingController(),
     );
   }
 
-  double _typedAmount(WaitDeliverySale entry) {
+  double _typedAmount(BookingDeliverySale entry) {
     final text = _amountControllerFor(entry).text.trim();
 
     if (text.isEmpty) return 0;
@@ -188,28 +170,27 @@ class _WaitDeliveryCustomerScreenState
   }
 
   /// What is being received now for this booking. Nothing is asked for
-  /// when the advance already covers the whole amount.
-  double _receivedNowOf(WaitDeliverySale entry) {
-    final due = _remainingOf(entry);
+  /// when the holding total already comes to 0.
+  double _receivedNowOf(BookingDeliveryCustomer customer, BookingDeliverySale entry) {
+    final due = _finalAmountOf(customer, entry);
 
     return due > 0 ? _typedAmount(entry) : 0;
   }
 
-  double _leftAfterReceiptOf(WaitDeliverySale entry) {
-    final left = Sale.roundMoney(
-      _remainingOf(entry) - _receivedNowOf(entry),
-    );
+  double _leftAfterReceiptOf(BookingDeliveryCustomer customer, BookingDeliverySale entry) {
+    final due = _finalAmountOf(customer, entry);
+    final left = Sale.roundMoney(due - _receivedNowOf(customer, entry));
 
     return left <= 0 ? 0 : left;
   }
 
   /// While Sell on Credit is off, a booking's amount field simply follows
-  /// its full remaining amount as pickup weight changes, until the
+  /// its full final amount as the delivery date changes, until the
   /// person types their own figure.
-  void _syncAutoAmount(WaitDeliverySale entry) {
+  void _syncAutoAmount(BookingDeliveryCustomer customer, BookingDeliverySale entry) {
     if (_onCredit || _amountEdited.contains(entry.id)) return;
 
-    final due = _remainingOf(entry);
+    final due = _finalAmountOf(customer, entry);
     final text = due > 0 ? _plainMoney(due) : '';
     final controller = _amountControllerFor(entry);
 
@@ -218,10 +199,18 @@ class _WaitDeliveryCustomerScreenState
     }
   }
 
-  /// Ticks new bookings, drops bookings that are no longer waiting, and
-  /// keeps every selected booking's amount field following its remaining
+  void _syncAllAutoAmounts(BookingDeliveryCustomer customer) {
+    for (final entry in customer.sales) {
+      if (_selected.contains(entry.id)) {
+        _syncAutoAmount(customer, entry);
+      }
+    }
+  }
+
+  /// Ticks new bookings, drops bookings that are no longer open, and
+  /// keeps every selected booking's amount field following its final
   /// amount while Sell on Credit is off.
-  void _syncSelection(WaitDeliveryCustomer customer) {
+  void _syncSelection(BookingDeliveryCustomer customer) {
     final ids = customer.sales.map((entry) => entry.id).toSet();
 
     for (final id in ids) {
@@ -232,51 +221,44 @@ class _WaitDeliveryCustomerScreenState
 
     _selected.removeWhere((id) => !ids.contains(id));
 
-    for (final entry in customer.sales) {
-      if (_selected.contains(entry.id)) {
-        _syncAutoAmount(entry);
-      }
-    }
+    _syncAllAutoAmounts(customer);
   }
 
-  List<WaitDeliverySale> _picked(WaitDeliveryCustomer customer) {
+  List<BookingDeliverySale> _picked(BookingDeliveryCustomer customer) {
     return customer.sales
         .where((entry) => _selected.contains(entry.id))
         .toList();
   }
 
-  double _totalRemaining(List<WaitDeliverySale> picked) {
+  double _totalDue(BookingDeliveryCustomer customer, List<BookingDeliverySale> picked) {
     return Sale.roundMoney(
-      picked.fold<double>(0, (sum, entry) => sum + _remainingOf(entry)),
+      picked.fold<double>(0, (sum, entry) => sum + _finalAmountOf(customer, entry)),
     );
   }
 
-  double _totalReceivedNow(List<WaitDeliverySale> picked) {
+  double _totalReceivedNow(BookingDeliveryCustomer customer, List<BookingDeliverySale> picked) {
     return Sale.roundMoney(
-      picked.fold<double>(0, (sum, entry) => sum + _receivedNowOf(entry)),
+      picked.fold<double>(0, (sum, entry) => sum + _receivedNowOf(customer, entry)),
     );
   }
 
-  double _totalLeftAfterReceipt(List<WaitDeliverySale> picked) {
+  double _totalLeftAfterReceipt(BookingDeliveryCustomer customer, List<BookingDeliverySale> picked) {
     return Sale.roundMoney(
-      picked.fold<double>(
-        0,
-            (sum, entry) => sum + _leftAfterReceiptOf(entry),
-      ),
+      picked.fold<double>(0, (sum, entry) => sum + _leftAfterReceiptOf(customer, entry)),
     );
   }
 
-  int _goatCountOf(List<WaitDeliverySale> picked) {
+  int _goatCountOf(List<BookingDeliverySale> picked) {
     return picked.fold<int>(0, (sum, entry) => sum + entry.goats.length);
   }
 
   String _goats(int count) => count == 1 ? '1 goat' : '$count goats';
 
   /// True while every selected booking's typed amount is a valid entry
-  /// (within range, and equal to the full remaining amount when credit
-  /// is off). Mirrors the single-goat screen's per-field validator.
-  bool _amountValid(WaitDeliverySale entry) {
-    final due = _remainingOf(entry);
+  /// (within range, and equal to the full final amount when credit is
+  /// off). Mirrors the single-goat screen's validator.
+  bool _amountValid(BookingDeliveryCustomer customer, BookingDeliverySale entry) {
+    final due = _finalAmountOf(customer, entry);
 
     if (due <= 0) return true;
 
@@ -309,54 +291,71 @@ class _WaitDeliveryCustomerScreenState
   }
 
   // ===========================================================================
+  // DELIVERY DATE
+  // ===========================================================================
+
+  Future<void> _pickDeliveryDate(BookingDeliveryCustomer customer) async {
+    final picked = await showWizardDatePicker(
+      context: context,
+      initialDate: _deliveryDateOr(customer),
+      firstDate: _dayOnly(customer.earliestHoldingStart),
+      lastDate: _dayOnly(DateTime.now()),
+      helpText: 'Delivery date',
+    );
+
+    if (picked == null || !mounted) return;
+
+    setState(() {
+      _deliveryDate = _dayOnly(picked);
+      // Final amount changed with the holding days for every booking.
+      _amountEdited.clear();
+      _syncAllAutoAmounts(customer);
+    });
+  }
+
+  // ===========================================================================
   // DELIVER
   // ===========================================================================
 
-  Future<void> _deliver(WaitDeliveryCustomer customer) async {
+  Future<void> _deliver(BookingDeliveryCustomer customer) async {
     if (_delivering) return;
 
     final picked = _picked(customer);
 
     if (picked.isEmpty) return;
 
-    final missingWeight = picked.any(
-          (entry) => entry.goats.any((goat) => _weightOf(goat) <= 0),
-    );
+    final invalidAmount =
+    picked.any((entry) => !_amountValid(customer, entry));
 
-    final invalidAmount = picked.any((entry) => !_amountValid(entry));
-
-    if (missingWeight || invalidAmount) {
+    if (invalidAmount) {
       setState(() {
         _submitted = true;
       });
 
       _snack(
-        missingWeight
-            ? 'Enter a pickup weight for every selected goat.'
-            : 'Check the amount received for every selected booking.',
+        'Check the amount received for every selected booking.',
         error: true,
       );
 
       return;
     }
 
-    final confirmed = await _confirmSheet(customer, picked);
+    final deliveryDate = _deliveryDateOr(customer);
+    final confirmed = await _confirmSheet(customer, picked, deliveryDate);
 
     if (confirmed != true || !mounted) return;
 
     final messenger = ScaffoldMessenger.of(context);
     final navigator = Navigator.of(context);
 
-    final payments = <String, WaitDeliveryPayment>{};
+    final payments = <String, BookingDeliveryPayment>{};
 
     for (final entry in picked) {
-      final weight = _pickupWeightOf(entry);
-      final due = entry.remainingAt(weight);
+      final due = entry.finalAmountAt(deliveryDate);
 
-      payments[entry.id] = WaitDeliveryPayment(
-        pickupWeight: weight,
+      payments[entry.id] = BookingDeliveryPayment(
         expectedRemaining: due,
-        amountReceivedNow: due > 0 ? _receivedNowOf(entry) : 0,
+        amountReceivedNow: due > 0 ? _receivedNowOf(customer, entry) : 0,
         onCredit: due > 0 && _onCredit,
       );
     }
@@ -365,8 +364,9 @@ class _WaitDeliveryCustomerScreenState
       _delivering = true;
     });
 
-    final result = await WaitDeliveryService.instance.deliverSales(
+    final result = await BookingDeliveryService.instance.deliverSales(
       farmId: widget.farmId,
+      deliveryDate: deliveryDate,
       payments: payments,
       paymentMethod: _method,
     );
@@ -415,13 +415,11 @@ class _WaitDeliveryCustomerScreenState
   }
 
   Future<void> _showFailures(
-      List<WaitDeliverySale> picked,
-      WaitDeliveryBatchResult result,
+      List<BookingDeliverySale> picked,
+      BookingDeliveryBatchResult result,
       ) async {
     final deliveredGoats = picked
-        .where(
-          (entry) => result.delivered.any((o) => o.saleId == entry.id),
-    )
+        .where((entry) => result.delivered.any((o) => o.saleId == entry.id))
         .fold<int>(0, (sum, entry) => sum + entry.goats.length);
 
     final leftOnDelivered = result.totalRemainingDelivered;
@@ -474,8 +472,8 @@ class _WaitDeliveryCustomerScreenState
                   const SizedBox(height: 8),
                 ],
                 Text(
-                  'Bookings that failed are still waiting for delivery — '
-                      'you can try them again.',
+                  'Bookings that failed are still Booked — you can try '
+                      'them again.',
                   style: AppTheme.body(size: 10.5),
                 ),
               ],
@@ -499,12 +497,13 @@ class _WaitDeliveryCustomerScreenState
   }
 
   Future<bool?> _confirmSheet(
-      WaitDeliveryCustomer customer,
-      List<WaitDeliverySale> picked,
+      BookingDeliveryCustomer customer,
+      List<BookingDeliverySale> picked,
+      DateTime deliveryDate,
       ) {
-    final due = _totalRemaining(picked);
-    final receivedNow = _totalReceivedNow(picked);
-    final left = _totalLeftAfterReceipt(picked);
+    final due = _totalDue(customer, picked);
+    final receivedNow = _totalReceivedNow(customer, picked);
+    final left = _totalLeftAfterReceipt(customer, picked);
     final goatCount = _goatCountOf(picked);
 
     return showModalBottomSheet<bool>(
@@ -516,9 +515,7 @@ class _WaitDeliveryCustomerScreenState
           child: Container(
             decoration: const BoxDecoration(
               color: Colors.white,
-              borderRadius: BorderRadius.vertical(
-                top: Radius.circular(24),
-              ),
+              borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
             ),
             padding: const EdgeInsets.fromLTRB(18, 10, 18, 18),
             child: SingleChildScrollView(
@@ -536,46 +533,31 @@ class _WaitDeliveryCustomerScreenState
                       ),
                     ),
                   ),
-
                   const SizedBox(height: 14),
-
-                  Text(
-                    'Confirm delivery',
-                    style: AppTheme.heading(size: 16),
-                  ),
-
+                  Text('Confirm delivery', style: AppTheme.heading(size: 16)),
                   const SizedBox(height: 3),
-
                   Text(
                     '${customer.name} · ${_goats(goatCount)} will be '
-                        'marked as Sold.',
+                        'marked as Sold, delivered on '
+                        '${_dateFormat.format(deliveryDate)}.',
                     style: AppTheme.body(size: 11),
                   ),
-
                   const SizedBox(height: 14),
-
                   for (final entry in picked) ...[
-                    _confirmRow(entry),
+                    _confirmRow(customer, entry),
                     const SizedBox(height: 10),
                   ],
-
                   const Divider(height: 1, color: AppColors.divider),
-
                   const SizedBox(height: 10),
-
-                  _confirmTotalRow('Goat value + advance total', due),
+                  _confirmTotalRow('Goat value + holding charges total', due),
                   const SizedBox(height: 6),
                   _confirmTotalRow('Received now', receivedNow),
-
                   const SizedBox(height: 8),
-
                   Row(
                     children: [
                       Expanded(
                         child: Text(
-                          left > 0
-                              ? 'Outstanding (On Credit)'
-                              : 'Remaining',
+                          left > 0 ? 'Outstanding (On Credit)' : 'Remaining',
                           style: AppTheme.heading(size: 14),
                         ),
                       ),
@@ -590,9 +572,7 @@ class _WaitDeliveryCustomerScreenState
                       ),
                     ],
                   ),
-
                   const SizedBox(height: 5),
-
                   Text(
                     left > 0
                         ? 'Added to the customer\'s outstanding balance — '
@@ -600,23 +580,19 @@ class _WaitDeliveryCustomerScreenState
                         : 'Nothing is left owing on these bookings.',
                     style: AppTheme.body(size: 10),
                   ),
-
                   const SizedBox(height: 18),
-
                   Row(
                     children: [
                       Expanded(
                         child: SizedBox(
                           height: 44,
                           child: OutlinedButton(
-                            onPressed: () {
-                              Navigator.of(sheetContext).pop(false);
-                            },
+                            onPressed: () =>
+                                Navigator.of(sheetContext).pop(false),
                             style: OutlinedButton.styleFrom(
                               foregroundColor: AppColors.textDark,
-                              side: const BorderSide(
-                                color: AppColors.divider,
-                              ),
+                              side:
+                              const BorderSide(color: AppColors.divider),
                               shape: RoundedRectangleBorder(
                                 borderRadius: BorderRadius.circular(12),
                               ),
@@ -634,9 +610,8 @@ class _WaitDeliveryCustomerScreenState
                         child: SizedBox(
                           height: 44,
                           child: ElevatedButton(
-                            onPressed: () {
-                              Navigator.of(sheetContext).pop(true);
-                            },
+                            onPressed: () =>
+                                Navigator.of(sheetContext).pop(true),
                             style: ElevatedButton.styleFrom(
                               backgroundColor: AppColors.darkGreen,
                               foregroundColor: Colors.white,
@@ -666,10 +641,10 @@ class _WaitDeliveryCustomerScreenState
     );
   }
 
-  Widget _confirmRow(WaitDeliverySale entry) {
-    final pickup = _pickupWeightOf(entry);
-    final due = entry.remainingAt(pickup);
-    final receivedNow = due > 0 ? _receivedNowOf(entry) : 0.0;
+  Widget _confirmRow(BookingDeliveryCustomer customer, BookingDeliverySale entry) {
+    final due = _finalAmountOf(customer, entry);
+    final receivedNow = due > 0 ? _receivedNowOf(customer, entry) : 0.0;
+    final days = _holdingDaysOf(customer, entry);
 
     return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -684,12 +659,9 @@ class _WaitDeliveryCustomerScreenState
               ),
               const SizedBox(height: 1),
               Text(
-                entry.isFixedPrice
-                    ? 'Fixed price − '
-                    '${_money.format(entry.advancePaid)} advance'
-                    : '${_trim(pickup)} kg × '
-                    '${_money.format(entry.ratePerKg)} − '
-                    '${_money.format(entry.advancePaid)} advance',
+                '$days holding day${days == 1 ? '' : 's'} × '
+                    '${_money.format(entry.holdingChargePerDay)} − '
+                    '${_money.format(entry.bookingAmount)} booking amount',
                 style: AppTheme.body(size: 10),
               ),
               if (due > 0)
@@ -707,10 +679,7 @@ class _WaitDeliveryCustomerScreenState
         const SizedBox(width: 8),
         Text(
           _money.format(due),
-          style: AppTheme.heading(
-            size: 13,
-            color: AppColors.textDark,
-          ),
+          style: AppTheme.heading(size: 13, color: AppColors.textDark),
         ),
       ],
     );
@@ -719,9 +688,7 @@ class _WaitDeliveryCustomerScreenState
   Widget _confirmTotalRow(String label, double value) {
     return Row(
       children: [
-        Expanded(
-          child: Text(label, style: AppTheme.body(size: 11)),
-        ),
+        Expanded(child: Text(label, style: AppTheme.body(size: 11))),
         Text(
           _money.format(value),
           style: AppTheme.body(
@@ -775,12 +742,12 @@ class _WaitDeliveryCustomerScreenState
                 );
               }
 
-              final customers = WaitDeliveryCustomer.group(
+              final customers = BookingDeliveryCustomer.group(
                 sales: saleSnap.data!,
                 goats: goatSnap.data!,
               );
 
-              WaitDeliveryCustomer? customer;
+              BookingDeliveryCustomer? customer;
 
               for (final candidate in customers) {
                 if (candidate.key == widget.customerKey) {
@@ -795,9 +762,9 @@ class _WaitDeliveryCustomerScreenState
                   body: _messageState(
                     icon: Icons.check_circle_outline_rounded,
                     color: AppColors.success,
-                    title: 'No goats waiting',
+                    title: 'No open bookings',
                     subtitle:
-                    'Every goat for this customer has been delivered.',
+                    'Every booking for this customer has been delivered.',
                   ),
                 );
               }
@@ -868,9 +835,7 @@ class _WaitDeliveryCustomerScreenState
               ),
             ),
           ),
-
           const SizedBox(width: 9),
-
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -884,14 +849,11 @@ class _WaitDeliveryCustomerScreenState
                 ),
                 Text(
                   subtitle == null
-                      ? 'Wait on Delivery'
-                      : 'Wait on Delivery · $subtitle',
+                      ? 'Booking / Holding'
+                      : 'Booking / Holding · $subtitle',
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: AppTheme.body(
-                    size: 10.5,
-                    color: AppColors.textGrey,
-                  ),
+                  style: AppTheme.body(size: 10.5, color: AppColors.textGrey),
                 ),
               ],
             ),
@@ -923,17 +885,9 @@ class _WaitDeliveryCustomerScreenState
               child: Icon(icon, size: 26, color: color),
             ),
             const SizedBox(height: 11),
-            Text(
-              title,
-              textAlign: TextAlign.center,
-              style: AppTheme.heading(size: 15),
-            ),
+            Text(title, textAlign: TextAlign.center, style: AppTheme.heading(size: 15)),
             const SizedBox(height: 4),
-            Text(
-              subtitle,
-              textAlign: TextAlign.center,
-              style: AppTheme.body(size: 11),
-            ),
+            Text(subtitle, textAlign: TextAlign.center, style: AppTheme.body(size: 11)),
           ],
         ),
       ),
@@ -944,30 +898,24 @@ class _WaitDeliveryCustomerScreenState
   // BODY
   // ===========================================================================
 
-  Widget _body(WaitDeliveryCustomer customer) {
-    // A plain scroll view (not a lazy list) so every pickup-weight /
-    // amount field stays mounted and keeps its value while scrolling.
+  Widget _body(BookingDeliveryCustomer customer) {
     return SingleChildScrollView(
       keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
       padding: const EdgeInsets.fromLTRB(14, 2, 14, 24),
       child: Column(
         children: [
           _summaryCard(customer),
-
           const SizedBox(height: 12),
-
+          _deliveryDateCard(customer),
+          const SizedBox(height: 12),
           _selectorBar(customer),
-
           const SizedBox(height: 9),
-
           for (var i = 0; i < customer.sales.length; i++) ...[
             if (i > 0) const SizedBox(height: 10),
-            _bookingCard(customer.sales[i]),
+            _bookingCard(customer, customer.sales[i]),
           ],
-
           const SizedBox(height: 12),
-
-          _batchPaymentCard(_picked(customer)),
+          _batchPaymentCard(customer, _picked(customer)),
         ],
       ),
     );
@@ -977,24 +925,19 @@ class _WaitDeliveryCustomerScreenState
   // SUMMARY
   // ---------------------------------------------------------------------------
 
-  Widget _summaryCard(WaitDeliveryCustomer customer) {
+  Widget _summaryCard(BookingDeliveryCustomer customer) {
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.symmetric(vertical: 12),
       decoration: AppTheme.card(radius: 18).copyWith(
-        border: Border.all(
-          color: AppColors.divider.withOpacity(0.6),
-        ),
+        border: Border.all(color: AppColors.divider.withOpacity(0.6)),
       ),
       child: IntrinsicHeight(
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             Expanded(
-              child: _summaryStat(
-                '${customer.goatCount}',
-                'Goats waiting',
-              ),
+              child: _summaryStat('${customer.goatCount}', 'Goats held'),
             ),
             _statDivider(),
             Expanded(
@@ -1006,8 +949,8 @@ class _WaitDeliveryCustomerScreenState
             _statDivider(),
             Expanded(
               child: _summaryStat(
-                _money.format(customer.advanceTotal),
-                'Advance paid',
+                _money.format(customer.bookingAmountTotal),
+                'Booking amount',
               ),
             ),
           ],
@@ -1022,10 +965,7 @@ class _WaitDeliveryCustomerScreenState
       children: [
         FittedBox(
           fit: BoxFit.scaleDown,
-          child: Text(
-            value,
-            style: AppTheme.heading(size: 17),
-          ),
+          child: Text(value, style: AppTheme.heading(size: 17)),
         ),
         const SizedBox(height: 1),
         Text(
@@ -1047,18 +987,35 @@ class _WaitDeliveryCustomerScreenState
   }
 
   // ---------------------------------------------------------------------------
+  // DELIVERY DATE — shared across the whole batch.
+  // ---------------------------------------------------------------------------
+
+  Widget _deliveryDateCard(BookingDeliveryCustomer customer) {
+    final date = _deliveryDateOr(customer);
+
+    return WizardSectionCard(
+      title: 'Delivery',
+      icon: Icons.today_outlined,
+      children: [
+        WizardDateField(
+          label: 'Delivery Date',
+          helper: 'Applies to every selected booking below.',
+          date: date,
+          onTap: _delivering ? () {} : () => _pickDeliveryDate(customer),
+        ),
+      ],
+    );
+  }
+
+  // ---------------------------------------------------------------------------
   // SELECTOR
   // ---------------------------------------------------------------------------
 
-  Widget _selectorBar(WaitDeliveryCustomer customer) {
+  Widget _selectorBar(BookingDeliveryCustomer customer) {
     final total = customer.sales.length;
     final count = _picked(customer).length;
 
-    final bool? value = count == total
-        ? true
-        : count == 0
-        ? false
-        : null;
+    final bool? value = count == total ? true : (count == 0 ? false : null);
 
     void toggleAll() {
       if (_delivering) return;
@@ -1071,9 +1028,7 @@ class _WaitDeliveryCustomerScreenState
             ..clear()
             ..addAll(customer.sales.map((entry) => entry.id));
 
-          for (final entry in customer.sales) {
-            _syncAutoAmount(entry);
-          }
+          _syncAllAutoAmounts(customer);
         }
       });
     }
@@ -1110,10 +1065,7 @@ class _WaitDeliveryCustomerScreenState
                   ),
                 ),
               ),
-              Text(
-                '$count of $total selected',
-                style: AppTheme.body(size: 10.5),
-              ),
+              Text('$count of $total selected', style: AppTheme.body(size: 10.5)),
             ],
           ),
         ),
@@ -1125,10 +1077,9 @@ class _WaitDeliveryCustomerScreenState
   // BOOKING CARD
   // ---------------------------------------------------------------------------
 
-  Widget _bookingCard(WaitDeliverySale entry) {
+  Widget _bookingCard(BookingDeliveryCustomer customer, BookingDeliverySale entry) {
     final selected = _selected.contains(entry.id);
-    final pickup = _pickupWeightOf(entry);
-    final due = entry.remainingAt(pickup);
+    final due = _finalAmountOf(customer, entry);
 
     return Container(
       width: double.infinity,
@@ -1144,7 +1095,6 @@ class _WaitDeliveryCustomerScreenState
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          // Header: tick + booking + live amount due.
           InkWell(
             onTap: _delivering
                 ? null
@@ -1154,7 +1104,7 @@ class _WaitDeliveryCustomerScreenState
                   _selected.remove(entry.id);
                 } else {
                   _selected.add(entry.id);
-                  _syncAutoAmount(entry);
+                  _syncAutoAmount(customer, entry);
                 }
               });
             },
@@ -1171,7 +1121,7 @@ class _WaitDeliveryCustomerScreenState
                     setState(() {
                       if (value == true) {
                         _selected.add(entry.id);
-                        _syncAutoAmount(entry);
+                        _syncAutoAmount(customer, entry);
                       } else {
                         _selected.remove(entry.id);
                       }
@@ -1182,21 +1132,11 @@ class _WaitDeliveryCustomerScreenState
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Row(
-                        children: [
-                          Flexible(
-                            child: Text(
-                              'Booking ${entry.id}',
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: AppTheme.heading(size: 14),
-                            ),
-                          ),
-                          if (entry.isFixedPrice) ...[
-                            const SizedBox(width: 6),
-                            _fixedPriceTag(),
-                          ],
-                        ],
+                      Text(
+                        'Booking ${entry.id}',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: AppTheme.heading(size: 14),
                       ),
                       Text(
                         '${_goats(entry.goats.length)} · Booked '
@@ -1216,60 +1156,42 @@ class _WaitDeliveryCustomerScreenState
                       _money.format(due),
                       style: AppTheme.heading(
                         size: 14,
-                        color: selected
-                            ? AppColors.darkGreen
-                            : AppColors.textGrey,
+                        color: selected ? AppColors.darkGreen : AppColors.textGrey,
                       ),
                     ),
-                    Text(
-                      'Due',
-                      style: AppTheme.body(size: 9.5),
-                    ),
+                    Text('Due', style: AppTheme.body(size: 9.5)),
                   ],
                 ),
               ],
             ),
           ),
-
           Padding(
             padding: const EdgeInsets.only(left: 8),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
                 const SizedBox(height: 6),
-
                 Wrap(
                   spacing: 5,
                   runSpacing: 5,
                   children: [
-                    entry.isFixedPrice
-                        ? _infoChip(
-                      Icons.sell_outlined,
-                      '${_money.format(entry.saleValueAt(pickup))} '
-                          'fixed price',
-                    )
-                        : _infoChip(
-                      Icons.sell_outlined,
-                      '${_money.format(entry.ratePerKg)}/kg booked rate',
+                    _infoChip(
+                      Icons.calendar_today_outlined,
+                      'Holding since ${_dateFormat.format(entry.holdingStart)}',
                     ),
                     _infoChip(
                       Icons.payments_outlined,
-                      '${_money.format(entry.advancePaid)} advance',
+                      '${_money.format(entry.bookingAmount)} booking amount',
                     ),
                   ],
                 ),
-
                 const Divider(height: 18, color: AppColors.divider),
-
-                for (final goat in entry.goats) _goatRow(goat, selected),
-
+                for (final goat in entry.goats) _goatRow(goat),
                 const SizedBox(height: 12),
-
-                _calcBox(entry, pickup, due),
-
+                _calcBox(customer, entry, due),
                 if (selected && due > 0) ...[
                   const SizedBox(height: 10),
-                  _bookingAmountField(entry, due),
+                  _bookingAmountField(customer, entry, due),
                 ],
               ],
             ),
@@ -1279,34 +1201,8 @@ class _WaitDeliveryCustomerScreenState
     );
   }
 
-  Widget _fixedPriceTag() {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-      decoration: BoxDecoration(
-        color: AppColors.tradingBlue.withOpacity(0.12),
-        borderRadius: BorderRadius.circular(8),
-      ),
-      child: Text(
-        'Fixed price',
-        style: TextStyle(
-          color: AppColors.tradingBlue,
-          fontSize: 8.5,
-          fontWeight: FontWeight.w700,
-        ),
-      ),
-    );
-  }
-
-  Widget _goatRow(Goat goat, bool selected) {
-    final controller = _weightControllerFor(goat);
-
-    final invalid = _submitted &&
-        selected &&
-        (double.tryParse(controller.text.trim()) ?? 0) <= 0;
-
-    final breed = goat.breed.trim().isEmpty
-        ? 'Breed not specified'
-        : goat.breed.trim();
+  Widget _goatRow(Goat goat) {
+    final breed = goat.breed.trim().isEmpty ? 'Breed not specified' : goat.breed.trim();
 
     return Padding(
       padding: const EdgeInsets.only(bottom: 9),
@@ -1314,9 +1210,7 @@ class _WaitDeliveryCustomerScreenState
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           _goatAvatar(goat),
-
           const SizedBox(width: 9),
-
           Expanded(
             child: Padding(
               padding: const EdgeInsets.only(top: 4),
@@ -1339,100 +1233,12 @@ class _WaitDeliveryCustomerScreenState
               ),
             ),
           ),
-
-          const SizedBox(width: 8),
-
-          SizedBox(
-            width: 108,
-            child: TextField(
-              controller: controller,
-              enabled: selected && !_delivering,
-              keyboardType: const TextInputType.numberWithOptions(
-                decimal: true,
-              ),
-              inputFormatters: [
-                FilteringTextInputFormatter.allow(
-                  RegExp(r'^\d*\.?\d{0,2}'),
-                ),
-              ],
-              textAlign: TextAlign.right,
-              onChanged: (_) => setState(() {}),
-              style: AppTheme.body(
-                size: 12.5,
-                color: AppColors.textDark,
-                weight: FontWeight.w600,
-              ),
-              decoration: InputDecoration(
-                isDense: true,
-                labelText: 'Pickup wt',
-                labelStyle: AppTheme.body(size: 10.5),
-                suffixText: 'kg',
-                suffixStyle: AppTheme.body(size: 11),
-                errorText: invalid ? 'Required' : null,
-                errorStyle: const TextStyle(fontSize: 9.5),
-                filled: true,
-                fillColor: selected ? Colors.white : AppColors.paleGreen,
-                contentPadding: const EdgeInsets.symmetric(
-                  horizontal: 10,
-                  vertical: 9,
-                ),
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(10),
-                  borderSide: const BorderSide(color: AppColors.divider),
-                ),
-                enabledBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(10),
-                  borderSide: const BorderSide(color: AppColors.divider),
-                ),
-                disabledBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(10),
-                  borderSide: BorderSide(
-                    color: AppColors.divider.withOpacity(0.6),
-                  ),
-                ),
-                focusedBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(10),
-                  borderSide: const BorderSide(
-                    color: AppColors.darkGreen,
-                    width: 1.4,
-                  ),
-                ),
-                errorBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(10),
-                  borderSide: const BorderSide(color: AppColors.error),
-                ),
-                focusedErrorBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(10),
-                  borderSide: const BorderSide(
-                    color: AppColors.error,
-                    width: 1.4,
-                  ),
-                ),
-              ),
-            ),
-          ),
         ],
       ),
     );
   }
 
-  /// Tap the photo to view it full-screen (pinch to zoom). With no photo
-  /// the paw logo is shown and is not tappable.
   Widget _goatAvatar(Goat goat) {
-    final box = _goatAvatarBox(goat);
-    final photo = goat.photo;
-    if (photo == null || photo.isEmpty) return box;
-
-    return GestureDetector(
-      behavior: HitTestBehavior.opaque,
-      onTap: () => Navigator.of(context).push(
-        fastRoute(FullscreenImageViewer(imageBytes: photo, title: goat.id)),
-      ),
-      child: box,
-    );
-  }
-
-  Widget _goatAvatarBox(Goat goat) {
     return Container(
       width: 44,
       height: 44,
@@ -1449,11 +1255,7 @@ class _WaitDeliveryCustomerScreenState
         cacheWidth: 132,
       )
           : const Center(
-        child: Icon(
-          GoatIcons.paw,
-          size: 19,
-          color: AppColors.stockTeal,
-        ),
+        child: Icon(GoatIcons.paw, size: 19, color: AppColors.stockTeal),
       ),
     );
   }
@@ -1473,18 +1275,17 @@ class _WaitDeliveryCustomerScreenState
           const SizedBox(width: 4),
           Text(
             text,
-            style: AppTheme.body(
-              size: 10,
-              color: AppColors.textDark,
-              weight: FontWeight.w500,
-            ),
+            style: AppTheme.body(size: 10, color: AppColors.textDark, weight: FontWeight.w500),
           ),
         ],
       ),
     );
   }
 
-  Widget _calcBox(WaitDeliverySale entry, double pickup, double due) {
+  Widget _calcBox(BookingDeliveryCustomer customer, BookingDeliverySale entry, double due) {
+    final days = _holdingDaysOf(customer, entry);
+    final charges = _holdingChargesOf(customer, entry);
+
     return Container(
       padding: const EdgeInsets.all(11),
       decoration: BoxDecoration(
@@ -1494,38 +1295,26 @@ class _WaitDeliveryCustomerScreenState
       ),
       child: Column(
         children: [
-          _calcRow('Pickup weight', '${_trim(pickup)} kg'),
+          _calcRow('Goat Sale Amount', _money.format(entry.sale.totalSaleAmount)),
           const SizedBox(height: 6),
           _calcRow(
-            entry.isFixedPrice
-                ? 'Goat value (fixed price)'
-                : '${_trim(pickup)} kg × ${_money.format(entry.ratePerKg)}',
-            _money.format(entry.saleValueAt(pickup)),
+            'Holding Charges ($days day${days == 1 ? '' : 's'} × '
+                '${_money.format(entry.holdingChargePerDay)})',
+            _money.format(charges),
           ),
           const SizedBox(height: 6),
-          _calcRow(
-            'Advance paid',
-            '− ${_money.format(entry.advancePaid)}',
-          ),
+          _calcRow('Booking Amount Paid', '− ${_money.format(entry.bookingAmount)}'),
           const Padding(
             padding: EdgeInsets.symmetric(vertical: 7),
             child: Divider(height: 1, color: AppColors.divider),
           ),
-          _calcRow(
-            'Final Amount Due',
-            _money.format(due),
-            emphasized: true,
-          ),
+          _calcRow('Final Amount Due', _money.format(due), emphasized: true),
         ],
       ),
     );
   }
 
-  Widget _calcRow(
-      String label,
-      String value, {
-        bool emphasized = false,
-      }) {
+  Widget _calcRow(String label, String value, {bool emphasized = false}) {
     return Row(
       children: [
         Expanded(
@@ -1533,9 +1322,7 @@ class _WaitDeliveryCustomerScreenState
             label,
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
-            style: emphasized
-                ? AppTheme.heading(size: 12.5)
-                : AppTheme.body(size: 10.5),
+            style: emphasized ? AppTheme.heading(size: 12.5) : AppTheme.body(size: 10.5),
           ),
         ),
         const SizedBox(width: 8),
@@ -1543,11 +1330,7 @@ class _WaitDeliveryCustomerScreenState
           value,
           style: emphasized
               ? AppTheme.heading(size: 14, color: AppColors.darkGreen)
-              : AppTheme.body(
-            size: 11,
-            color: AppColors.textDark,
-            weight: FontWeight.w600,
-          ),
+              : AppTheme.body(size: 11, color: AppColors.textDark, weight: FontWeight.w600),
         ),
       ],
     );
@@ -1555,131 +1338,99 @@ class _WaitDeliveryCustomerScreenState
 
   /// Per-booking "amount received now" field, shown once a booking with
   /// something due is selected.
-  Widget _bookingAmountField(WaitDeliverySale entry, double due) {
+  Widget _bookingAmountField(BookingDeliveryCustomer customer, BookingDeliverySale entry, double due) {
     final controller = _amountControllerFor(entry);
-    final invalid = _submitted && !_amountValid(entry);
+    final invalid = _submitted && !_amountValid(customer, entry);
 
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
+    return Row(
       children: [
-        Row(
-          children: [
-            Expanded(
-              child: TextField(
-                controller: controller,
-                enabled: !_delivering,
-                keyboardType: const TextInputType.numberWithOptions(
-                  decimal: true,
-                ),
-                inputFormatters: [
-                  FilteringTextInputFormatter.allow(
-                    RegExp(r'^\d*\.?\d{0,2}'),
-                  ),
-                ],
-                onChanged: (_) {
-                  setState(() {
-                    _amountEdited.add(entry.id);
-                  });
-                },
-                style: AppTheme.body(
-                  size: 12.5,
-                  color: AppColors.textDark,
-                  weight: FontWeight.w600,
-                ),
-                decoration: InputDecoration(
-                  isDense: true,
-                  labelText: 'Amount Received Now',
-                  labelStyle: AppTheme.body(size: 10.5),
-                  prefixText: '₹ ',
-                  prefixStyle: AppTheme.body(size: 12),
-                  errorText: invalid
-                      ? (_onCredit
-                      ? 'More than the amount due'
-                      : 'Must equal the full ${_money.format(due)}')
-                      : null,
-                  errorStyle: const TextStyle(fontSize: 9.5),
-                  filled: true,
-                  fillColor: Colors.white,
-                  contentPadding: const EdgeInsets.symmetric(
-                    horizontal: 10,
-                    vertical: 10,
-                  ),
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(10),
-                    borderSide: const BorderSide(color: AppColors.divider),
-                  ),
-                  enabledBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(10),
-                    borderSide: const BorderSide(color: AppColors.divider),
-                  ),
-                  focusedBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(10),
-                    borderSide: const BorderSide(
-                      color: AppColors.darkGreen,
-                      width: 1.4,
-                    ),
-                  ),
-                  errorBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(10),
-                    borderSide: const BorderSide(color: AppColors.error),
-                  ),
-                  focusedErrorBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(10),
-                    borderSide: const BorderSide(
-                      color: AppColors.error,
-                      width: 1.4,
-                    ),
-                  ),
-                ),
+        Expanded(
+          child: TextField(
+            controller: controller,
+            enabled: !_delivering,
+            keyboardType: const TextInputType.numberWithOptions(decimal: true),
+            inputFormatters: [
+              FilteringTextInputFormatter.allow(RegExp(r'^\d*\.?\d{0,2}')),
+            ],
+            onChanged: (_) {
+              setState(() {
+                _amountEdited.add(entry.id);
+              });
+            },
+            style: AppTheme.body(size: 12.5, color: AppColors.textDark, weight: FontWeight.w600),
+            decoration: InputDecoration(
+              isDense: true,
+              labelText: 'Amount Received Now',
+              labelStyle: AppTheme.body(size: 10.5),
+              prefixText: '₹ ',
+              prefixStyle: AppTheme.body(size: 12),
+              errorText: invalid
+                  ? (_onCredit ? 'More than the amount due' : 'Must equal the full ${_money.format(due)}')
+                  : null,
+              errorStyle: const TextStyle(fontSize: 9.5),
+              filled: true,
+              fillColor: Colors.white,
+              contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(10),
+                borderSide: const BorderSide(color: AppColors.divider),
+              ),
+              enabledBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(10),
+                borderSide: const BorderSide(color: AppColors.divider),
+              ),
+              focusedBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(10),
+                borderSide: const BorderSide(color: AppColors.darkGreen, width: 1.4),
+              ),
+              errorBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(10),
+                borderSide: const BorderSide(color: AppColors.error),
+              ),
+              focusedErrorBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(10),
+                borderSide: const BorderSide(color: AppColors.error, width: 1.4),
               ),
             ),
-            if (_onCredit) ...[
-              const SizedBox(width: 8),
-              TextButton(
-                onPressed: _delivering
-                    ? null
-                    : () {
-                  setState(() {
-                    _amountEdited.remove(entry.id);
-                    controller.text = _plainMoney(due);
-                  });
-                },
-                style: TextButton.styleFrom(
-                  padding: const EdgeInsets.symmetric(horizontal: 8),
-                ),
-                child: Text(
-                  'Full',
-                  style: AppTheme.body(
-                    size: 11,
-                    color: AppColors.darkGreen,
-                    weight: FontWeight.w700,
-                  ),
-                ),
-              ),
-            ],
-          ],
+          ),
         ),
+        if (_onCredit) ...[
+          const SizedBox(width: 8),
+          TextButton(
+            onPressed: _delivering
+                ? null
+                : () {
+              setState(() {
+                _amountEdited.remove(entry.id);
+                controller.text = _plainMoney(due);
+              });
+            },
+            style: TextButton.styleFrom(padding: const EdgeInsets.symmetric(horizontal: 8)),
+            child: Text(
+              'Full',
+              style: AppTheme.body(size: 11, color: AppColors.darkGreen, weight: FontWeight.w700),
+            ),
+          ),
+        ],
       ],
     );
   }
 
   // ---------------------------------------------------------------------------
   // BATCH PAYMENT — Sell on Credit + payment method, applies to every
-  // selected booking.
+  // selected booking. This is the option the old single-sale-only
+  // Booking / Holding batch flow was missing.
   // ---------------------------------------------------------------------------
 
-  Widget _batchPaymentCard(List<WaitDeliverySale> picked) {
-    final anyDue = picked.any((entry) => _remainingOf(entry) > 0);
+  Widget _batchPaymentCard(BookingDeliveryCustomer customer, List<BookingDeliverySale> picked) {
+    final anyDue = picked.any((entry) => _finalAmountOf(customer, entry) > 0);
 
     if (picked.isEmpty) {
       return Container(
         width: double.infinity,
         padding: const EdgeInsets.all(14),
         decoration: AppTheme.card(radius: 16),
-        child: Text(
-          'Select at least one booking to deliver.',
-          style: AppTheme.body(size: 11.5),
-        ),
+        child: Text('Select at least one booking to deliver.', style: AppTheme.body(size: 11.5)),
       );
     }
 
@@ -1690,15 +1441,11 @@ class _WaitDeliveryCustomerScreenState
         decoration: AppTheme.card(radius: 16),
         child: Row(
           children: [
-            const Icon(
-              Icons.check_circle_outline_rounded,
-              size: 16,
-              color: AppColors.success,
-            ),
+            const Icon(Icons.check_circle_outline_rounded, size: 16, color: AppColors.success),
             const SizedBox(width: 8),
             Expanded(
               child: Text(
-                'The advance already covers every selected booking — '
+                'The booking amount already covers every selected booking — '
                     'nothing more to collect.',
                 style: AppTheme.body(size: 11),
               ),
@@ -1715,16 +1462,10 @@ class _WaitDeliveryCustomerScreenState
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
-            'Payment (applies to selected bookings)',
-            style: AppTheme.heading(size: 12.5),
-          ),
-
+          Text('Payment (applies to selected bookings)', style: AppTheme.heading(size: 12.5)),
           const SizedBox(height: 10),
-
-          _creditSwitch(),
-
-          if (_totalReceivedNow(picked) > 0) ...[
+          _creditSwitch(customer),
+          if (_totalReceivedNow(customer, picked) > 0) ...[
             const SizedBox(height: 12),
             _paymentMethodPicker(),
           ],
@@ -1733,13 +1474,11 @@ class _WaitDeliveryCustomerScreenState
     );
   }
 
-  Widget _creditSwitch() {
+  Widget _creditSwitch(BookingDeliveryCustomer customer) {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
       decoration: BoxDecoration(
-        color: _onCredit
-            ? AppColors.error.withOpacity(0.06)
-            : AppColors.paleGreen,
+        color: _onCredit ? AppColors.error.withOpacity(0.06) : AppColors.paleGreen,
         borderRadius: BorderRadius.circular(13),
       ),
       child: Row(
@@ -1750,22 +1489,15 @@ class _WaitDeliveryCustomerScreenState
               children: [
                 Text(
                   'Sell on Credit',
-                  style: AppTheme.body(
-                    size: 12,
-                    color: AppColors.textDark,
-                    weight: FontWeight.w700,
-                  ),
+                  style: AppTheme.body(size: 12, color: AppColors.textDark, weight: FontWeight.w700),
                 ),
                 Text(
                   _onCredit
-                      ? 'Whatever is not received now is added to each '
+                      ? 'Whatever is not received now is added to the '
                       'customer\'s outstanding balance.'
                       : 'Off — the full amount due is received now on '
                       'every selected booking.',
-                  style: AppTheme.body(
-                    size: 10,
-                    color: AppColors.textGrey,
-                  ),
+                  style: AppTheme.body(size: 10, color: AppColors.textGrey),
                 ),
               ],
             ),
@@ -1789,9 +1521,10 @@ class _WaitDeliveryCustomerScreenState
                 } else {
                   // Off -> the full amount is expected on every booking.
                   _amountEdited.clear();
-                  _amounts.forEach((id, controller) {
+                  for (final controller in _amounts.values) {
                     controller.text = '';
-                  });
+                  }
+                  _syncAllAutoAmounts(customer);
                 }
               });
             },
@@ -1807,19 +1540,13 @@ class _WaitDeliveryCustomerScreenState
       children: [
         Text(
           'Payment Method',
-          style: AppTheme.body(
-            size: 12,
-            color: AppColors.textGrey,
-            weight: FontWeight.w600,
-          ),
+          style: AppTheme.body(size: 12, color: AppColors.textGrey, weight: FontWeight.w600),
         ),
         const SizedBox(height: 8),
         Wrap(
           spacing: 8,
           runSpacing: 8,
-          children: WaitDeliveryService.instance.paymentMethods.map((
-              method,
-              ) {
+          children: BookingDeliveryService.instance.paymentMethods.map((method) {
             final selected = _method == method;
 
             return ChoiceChip(
@@ -1838,9 +1565,7 @@ class _WaitDeliveryCustomerScreenState
                 fontWeight: FontWeight.w600,
                 color: selected ? AppColors.darkGreen : AppColors.textDark,
               ),
-              side: BorderSide(
-                color: selected ? AppColors.primaryGreen : AppColors.divider,
-              ),
+              side: BorderSide(color: selected ? AppColors.primaryGreen : AppColors.divider),
             );
           }).toList(),
         ),
@@ -1858,25 +1583,19 @@ class _WaitDeliveryCustomerScreenState
   // BOTTOM BAR
   // ---------------------------------------------------------------------------
 
-  Widget _bottomBar(WaitDeliveryCustomer customer) {
+  Widget _bottomBar(BookingDeliveryCustomer customer) {
     final picked = _picked(customer);
     final goatCount = _goatCountOf(picked);
-    final left = _totalLeftAfterReceipt(picked);
+    final left = _totalLeftAfterReceipt(customer, picked);
     final all = picked.length == customer.sales.length;
     final canDeliver = picked.isNotEmpty && !_delivering;
 
     return Container(
       decoration: BoxDecoration(
         color: Colors.white,
-        border: const Border(
-          top: BorderSide(color: AppColors.divider),
-        ),
+        border: const Border(top: BorderSide(color: AppColors.divider)),
         boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.05),
-            blurRadius: 12,
-            offset: const Offset(0, -3),
-          ),
+          BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 12, offset: const Offset(0, -3)),
         ],
       ),
       padding: const EdgeInsets.fromLTRB(14, 10, 14, 12),
@@ -1898,8 +1617,7 @@ class _WaitDeliveryCustomerScreenState
                       Text(
                         picked.isEmpty
                             ? 'No booking selected'
-                            : '${_goats(goatCount)} · '
-                            '${picked.length} '
+                            : '${_goats(goatCount)} · ${picked.length} '
                             '${picked.length == 1 ? 'booking' : 'bookings'}',
                         style: AppTheme.body(size: 9.5),
                       ),
@@ -1907,9 +1625,7 @@ class _WaitDeliveryCustomerScreenState
                   ),
                 ),
                 Text(
-                  _money.format(
-                    left > 0 ? left : _totalReceivedNow(picked),
-                  ),
+                  _money.format(left > 0 ? left : _totalReceivedNow(customer, picked)),
                   style: AppTheme.heading(
                     size: 19,
                     color: left > 0 ? AppColors.warning : AppColors.darkGreen,
@@ -1917,9 +1633,7 @@ class _WaitDeliveryCustomerScreenState
                 ),
               ],
             ),
-
             const SizedBox(height: 10),
-
             SizedBox(
               width: double.infinity,
               height: 48,
@@ -1929,35 +1643,22 @@ class _WaitDeliveryCustomerScreenState
                     ? const SizedBox(
                   width: 18,
                   height: 18,
-                  child: CircularProgressIndicator(
-                    strokeWidth: 2.2,
-                    color: Colors.white,
-                  ),
+                  child: CircularProgressIndicator(strokeWidth: 2.2, color: Colors.white),
                 )
                     : const Icon(Icons.local_shipping_outlined, size: 18),
                 label: Text(
-                  _delivering
-                      ? 'Delivering…'
-                      : all
-                      ? 'Deliver All at Once'
-                      : 'Deliver Selected',
+                  _delivering ? 'Delivering…' : (all ? 'Deliver All at Once' : 'Deliver Selected'),
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: AppTheme.heading(
-                    size: 13.5,
-                    color: Colors.white,
-                  ),
+                  style: AppTheme.heading(size: 13.5, color: Colors.white),
                 ),
                 style: ElevatedButton.styleFrom(
                   backgroundColor: AppColors.darkGreen,
                   foregroundColor: Colors.white,
-                  disabledBackgroundColor:
-                  AppColors.darkGreen.withOpacity(0.35),
+                  disabledBackgroundColor: AppColors.darkGreen.withOpacity(0.35),
                   disabledForegroundColor: Colors.white,
                   elevation: 0,
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(13),
-                  ),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(13)),
                 ),
               ),
             ),

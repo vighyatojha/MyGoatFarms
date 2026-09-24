@@ -89,6 +89,17 @@ class Goat {
   final DateTime? movedToOwnPalaiAt;
 
   // ---------------------------------------------------------------------
+  // WAIT ON DELIVERY
+  // ---------------------------------------------------------------------
+
+  /// When the goat was put on Wait on Delivery (stamped by
+  /// SalesService.saveWaitForDelivery). Null for goats that went on Wait
+  /// on Delivery before this was recorded. The farm's Hoof Cutting
+  /// cadence is counted from this day — see
+  /// FirestoreService.syncOwnPalaiFarmReminders.
+  final DateTime? waitOnDeliveryAt;
+
+  // ---------------------------------------------------------------------
   // SALE (Phase 4)
   // ---------------------------------------------------------------------
 
@@ -134,6 +145,7 @@ class Goat {
     this.photoContentType,
     this.createdAt,
     this.movedToOwnPalaiAt,
+    this.waitOnDeliveryAt,
     this.saleId,
     this.gender = '',
     this.height = 0,
@@ -343,6 +355,20 @@ class Goat {
       currentStatus.trim().toLowerCase() ==
           statusWaitOnDelivery.toLowerCase();
 
+  /// True for the goats that follow the farm's Health Reminder Settings
+  /// (Profile > Health Reminder Settings): Own Palai goats, and goats on
+  /// Wait on Delivery, which are still on the farm until they are picked
+  /// up. Their vaccination / hoof cutting / hair trimming dates are armed
+  /// from the farm settings and raise notifications when due.
+  bool get followsFarmHealthSchedule => isOwnPalai || isWaitOnDelivery;
+
+  /// [followsFarmHealthSchedule] as `currentStatus` values, for Firestore
+  /// `whereIn` queries.
+  static const List<String> farmHealthScheduleStatuses = [
+    statusOwnPalai,
+    statusWaitOnDelivery,
+  ];
+
   bool get isInCustomerPalai =>
       currentStatus.trim().toLowerCase() ==
           statusInCustomerPalai.toLowerCase();
@@ -514,6 +540,9 @@ class Goat {
 
       movedToOwnPalaiAt:
       dateFrom('movedToOwnPalaiAt'),
+
+      waitOnDeliveryAt:
+      dateFrom('waitOnDeliveryAt'),
 
       saleId:
       data['saleId'] as String?,

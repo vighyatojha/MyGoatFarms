@@ -5,6 +5,7 @@ import 'package:timezone/timezone.dart' as tz;
 import '../models/health_reminder_settings_model.dart';
 import '../models/trading_goat_health_record.dart';
 import 'firestore_service.dart';
+import 'goat_service.dart';
 import 'notification_service.dart';
 
 /// Schedules the "7 days before / 1 day before / due today" health
@@ -149,7 +150,8 @@ class HealthReminderScheduler {
 
   /// Re-derives and re-schedules reminders for every Customer-Palai goat's
   /// vaccination / hoof-cutting / hair-trimming records and every Own-Palai
-  /// (Trading) goat's health records, across the farm.
+  /// and Wait-on-Delivery (Trading) goat's health records, across the
+  /// farm.
   ///
   /// flutter_local_notifications' scheduled alarms are cleared by
   /// Android when the phone reboots and are NOT automatically
@@ -157,8 +159,9 @@ class HealthReminderScheduler {
   /// addition to scheduling at creation time) so a reboot doesn't
   /// silently drop upcoming reminders.
   Future<void> rescheduleAllForFarm(String farmId) async {
-    // Make sure every Own Palai goat carries the farm's current Health
-    // Reminder Settings before its reminders are read back and scheduled.
+    // Make sure every Own Palai and Wait on Delivery goat carries the
+    // farm's current Health Reminder Settings before its reminders are
+    // read back and scheduled.
     await syncOwnPalaiFarmReminders(farmId);
 
     try {
@@ -363,6 +366,51 @@ class HealthReminderScheduler {
     required String recordId,
   }) {
     return cancelForEvent('trade_${goatId}_${recordType}_$recordId');
+  }
+
+  /// Cancels every on-device reminder of one Trading goat: its farm-
+  /// schedule records and every record logged for it. Call this once the
+  /// goat has left the farm (a Wait on Delivery goat that has been picked
+  /// up), so a sold goat never raises a vaccination / hoof / hair alert.
+  ///
+  /// Best-effort and never throws — a record that cannot be read is
+  /// skipped, and the farm-schedule ids are always cancelled.
+  Future<void> cancelForTradingGoat({
+    required String farmId,
+    required String goatId,
+  }) async {
+    final keys = <(String, String)>{
+      for (final type in GoatHealthRecordType.values)
+        if (GoatHealthRecord.followsFarmSettings(type))
+          (type.name, GoatHealthRecord.farmScheduleId(type)),
+    };
+
+    try {
+      final records = await GoatService.instance
+          .healthRecordsStream(farmId: farmId, goatId: goatId)
+          .first
+          .timeout(const Duration(seconds: 10));
+
+      for (final record in records) {
+        keys.add((record.type.name, record.id));
+      }
+    } catch (e) {
+      debugPrint('HealthReminderScheduler: could not list records of '
+          '$goatId to cancel: $e');
+    }
+
+    for (final (recordType, recordId) in keys) {
+      try {
+        await cancelForTradingRecord(
+          goatId: goatId,
+          recordType: recordType,
+          recordId: recordId,
+        );
+      } catch (e) {
+        debugPrint('HealthReminderScheduler: cancel $goatId/$recordId '
+            'failed: $e');
+      }
+    }
   }
 
   // ---------------------------------------------------------------------
