@@ -1,5 +1,7 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 
+import '../utils/palai_proration.dart';
+
 /// One goat's line in the goat-wise Palai breakdown of a [MonthlyBill].
 ///
 /// This is a snapshot taken at the moment the bill was generated — the
@@ -16,17 +18,70 @@ class GoatBillingLine {
   /// The Palai amount entered for this goat for this specific bill.
   final double palaiAmount;
 
+  /// Pro-rating snapshot. All three are null for full-month lines and
+  /// for bills saved before pro-rating existed, or when the owner typed
+  /// their own amount instead of the calculated one.
+  ///
+  /// palaiAmount = monthlyRate ÷ daysInMonth × billableDays
+  final int? billableDays;
+  final int? daysInMonth;
+  final double? monthlyRate;
+
   const GoatBillingLine({
     required this.goatId,
     required this.label,
     required this.palaiAmount,
+    this.billableDays,
+    this.daysInMonth,
+    this.monthlyRate,
   });
+
+  /// Builds a line from the amount the owner ended up with.
+  ///
+  /// The day-count is only attached when [amount] still equals the
+  /// calculated pro-rated amount. If the owner overrode the amount by
+  /// hand, the line is saved as a plain amount so a bill/PDF never claims
+  /// "20 of 30 days" for a number that was not calculated that way.
+  factory GoatBillingLine.forGoat({
+    required String goatId,
+    required String label,
+    required double amount,
+    required PalaiProration proration,
+  }) {
+    final matches = (amount - proration.amount).abs() < 0.01;
+    return GoatBillingLine(
+      goatId: goatId,
+      label: label,
+      palaiAmount: amount,
+      billableDays: matches && proration.isPartialMonth
+          ? proration.billableDays
+          : null,
+      daysInMonth: matches && proration.isPartialMonth
+          ? proration.daysInMonth
+          : null,
+      monthlyRate:
+      matches && proration.isPartialMonth ? proration.monthlyCharge : null,
+    );
+  }
+
+  /// True when this goat was billed for only part of the month.
+  bool get isPartialMonth =>
+      billableDays != null &&
+          daysInMonth != null &&
+          billableDays! < daysInMonth!;
+
+  /// Label for bills/PDFs, e.g. "Bruno (20 of 30 days)".
+  String get displayLabel =>
+      isPartialMonth ? '$label ($billableDays of $daysInMonth days)' : label;
 
   factory GoatBillingLine.fromMap(Map<String, dynamic> map) {
     return GoatBillingLine(
       goatId: map['goatId']?.toString() ?? '',
       label: map['label']?.toString() ?? '',
       palaiAmount: (map['palaiAmount'] as num?)?.toDouble() ?? 0,
+      billableDays: (map['billableDays'] as num?)?.toInt(),
+      daysInMonth: (map['daysInMonth'] as num?)?.toInt(),
+      monthlyRate: (map['monthlyRate'] as num?)?.toDouble(),
     );
   }
 
@@ -35,6 +90,9 @@ class GoatBillingLine {
       'goatId': goatId,
       'label': label,
       'palaiAmount': palaiAmount,
+      if (billableDays != null) 'billableDays': billableDays,
+      if (daysInMonth != null) 'daysInMonth': daysInMonth,
+      if (monthlyRate != null) 'monthlyRate': monthlyRate,
     };
   }
 }

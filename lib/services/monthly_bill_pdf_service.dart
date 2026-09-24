@@ -594,9 +594,21 @@ class MonthlyBillPdfService {
   // ===========================================================================
 
   pw.Widget _buildChargesTable(MonthlyBill bill,) {
+    // Goats that joined part-way through the month are explained right
+    // under the Palai line, e.g.
+    //   Bruno: 20 of 30 days (Rs 3,000 / 30 x 20)
+    final proratedNotes = bill.goatBreakdown
+        .where((g) => g.isPartialMonth && g.monthlyRate != null)
+        .map((g) =>
+    '${g.label}: ${g.billableDays} of ${g.daysInMonth} days '
+        '(${_currency(g.monthlyRate!)} / ${g.daysInMonth} x ${g.billableDays})')
+        .toList();
+
     final rows = <List<String>>[
       [
-        'Monthly Palai Charges',
+        proratedNotes.isEmpty
+            ? 'Monthly Palai Charges'
+            : 'Monthly Palai Charges\n${proratedNotes.join('\n')}',
         _currency(bill.palaiCharges),
       ],
       [

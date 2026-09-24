@@ -11,6 +11,7 @@ import 'package:printing/printing.dart';
 import '../models/bill_settings_model.dart';
 import '../models/monthly_bill_model.dart';
 import '../models/palai_models.dart';
+import '../utils/palai_proration.dart';
 
 /// One dated weigh-in on a goat's weight history — the arrival weight,
 /// or a weight recorded on a past GENERATED report (GoatReport.endWeight,
@@ -1207,7 +1208,7 @@ class CustomerGoatsProgressReportPdfService {
           if (bill.goatBreakdown.isNotEmpty) ...[
             _billingHeading('CURRENT MONTH PALAI'),
             pw.SizedBox(height: 5),
-            for (final line in bill.goatBreakdown) _billingRow(line.label, _currency(line.palaiAmount)),
+            for (final line in bill.goatBreakdown) _billingRow(line.displayLabel, _currency(line.palaiAmount)),
             pw.SizedBox(height: 4),
             pw.Divider(color: PdfColors.green200),
             pw.SizedBox(height: 7),
@@ -1219,7 +1220,16 @@ class CustomerGoatsProgressReportPdfService {
                 entry.goat.name.trim().isNotEmpty
                     ? entry.goat.name
                     : (entry.goat.goatCode.trim().isNotEmpty ? entry.goat.goatCode : entry.goat.tagNumber),
-                _currency(entry.goat.pricing),
+                // Older bills with no saved breakdown: pro-rate for the
+                // bill's month instead of printing the full monthly price.
+                _currency(
+                  PalaiProrationCalculator.calculate(
+                    monthlyCharge: entry.goat.pricing,
+                    joiningDate: entry.goat.checkInDate,
+                    year: bill.year,
+                    month: bill.month,
+                  ).amount,
+                ),
               ),
             pw.SizedBox(height: 4),
             pw.Divider(color: PdfColors.green200),

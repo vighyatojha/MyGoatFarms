@@ -7,6 +7,7 @@ import '../models/final_checkout_report_model.dart';
 import '../models/goat_history_models.dart';
 import '../models/monthly_report_model.dart';
 import '../models/palai_models.dart';
+import '../utils/palai_proration.dart';
 
 /// Service for the structured Monthly Report.
 ///
@@ -458,7 +459,14 @@ class MonthlyReportService {
           checkInDate: goat.checkInDate,
           previousWeight: previousWeight,
           currentWeight: currentWeight,
-          monthlyCharge: goat.pricing,
+          // Pro-rated: the goat's first month is charged only from its
+          // check-in date; every later month is the full monthly price.
+          monthlyCharge: PalaiProrationCalculator.calculate(
+            monthlyCharge: goat.pricing,
+            joiningDate: goat.checkInDate,
+            year: monthStart.year,
+            month: monthStart.month,
+          ).amount,
           packageName: goat.monthlyPackage,
           healthStatus: goat.healthStatus,
           vaccination: pickDetail(monthHealth, 'Vaccination'),

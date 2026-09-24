@@ -6,6 +6,7 @@ import '../../models/monthly_bill_model.dart';
 import '../../models/palai_models.dart';
 import '../../services/firestore_service.dart';
 import '../../services/monthly_billing_service.dart';
+import '../../utils/palai_proration.dart';
 
 /// Goat-wise Monthly Bill generation.
 ///
@@ -256,13 +257,27 @@ class _MonthlyBillGenerateScreenState
           text: (savedLine?.palaiAmount ?? 0).toStringAsFixed(2),
         );
       }
-      return TextEditingController(text: goat.pricing.toStringAsFixed(2));
+      return TextEditingController(
+        text: _prorationFor(goat).amount.toStringAsFixed(2),
+      );
     });
+  }
+
+  /// Pro-rated Palai charge for [goat] in the selected billing month.
+  /// Monthly price ÷ days in month × days the goat is actually at the
+  /// farm (from its Palai check-in date to month end).
+  PalaiProration _prorationFor(PalaiGoat goat) {
+    return PalaiProrationCalculator.calculate(
+      monthlyCharge: goat.pricing,
+      joiningDate: goat.checkInDate,
+      year: _selectedMonth.year,
+      month: _selectedMonth.month,
+    );
   }
 
   double _enteredPalai(PalaiGoat goat) {
     final controller = _palaiControllers[goat.id];
-    if (controller == null) return goat.pricing;
+    if (controller == null) return _prorationFor(goat).amount;
     return double.tryParse(controller.text.trim()) ?? 0;
   }
 
@@ -273,10 +288,11 @@ class _MonthlyBillGenerateScreenState
     final label = g.name.trim().isNotEmpty
         ? g.name
         : (g.goatCode.trim().isNotEmpty ? g.goatCode : g.tagNumber);
-    return GoatBillingLine(
+    return GoatBillingLine.forGoat(
       goatId: g.id,
       label: label,
-      palaiAmount: _enteredPalai(g),
+      amount: _enteredPalai(g),
+      proration: _prorationFor(g),
     );
   }).toList();
 
@@ -544,9 +560,24 @@ class _MonthlyBillGenerateScreenState
               border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
             ),
           ),
+          if (!_isEditing && _prorationFor(goat).isPartialMonth) ...[
+            const SizedBox(height: 6),
+            Text(
+              _prorationNote(goat),
+              style: AppTheme.body(size: 11, color: AppColors.textMuted),
+            ),
+          ],
         ],
       ),
     );
+  }
+
+  /// e.g. "Joined 11 Apr 2026 • 20 of 30 days • ₹3,000 ÷ 30 × 20"
+  String _prorationNote(PalaiGoat goat) {
+    final p = _prorationFor(goat);
+    final joined = DateFormat('d MMM yyyy').format(goat.checkInDate);
+    return 'Joined $joined • ${p.label} • '
+        '${_currency(p.monthlyCharge)} ÷ ${p.daysInMonth} × ${p.billableDays}';
   }
 
   // ----------------------------------------------------------------
@@ -750,6 +781,14 @@ class _MonthlyBillGenerateScreenState
     if (selected == null) return;
     setState(() {
       _selectedMonth = DateTime(selected.year, selected.month);
+      // New bill: re-calculate every goat's default for the new month.
+      // (When editing a saved bill the saved amounts are kept as-is.)
+      if (!_isEditing) {
+        for (final goat in _lastLoadedGoats) {
+          _palaiControllers[goat.id]?.text =
+              _prorationFor(goat).amount.toStringAsFixed(2);
+        }
+      }
     });
   }
 

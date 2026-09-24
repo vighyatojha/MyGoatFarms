@@ -10,6 +10,7 @@ import 'package:printing/printing.dart';
 import '../models/bill_settings_model.dart';
 import '../models/monthly_bill_model.dart';
 import '../models/palai_models.dart';
+import '../utils/palai_proration.dart';
 
 /// Builds ONE consolidated PDF report covering every goat (or every
 /// selected goat) under a single Palai customer — as opposed to
@@ -437,7 +438,7 @@ class CustomerGoatsReportPdfService {
             ),
             pw.SizedBox(height: 3),
             for (final line in bill.goatBreakdown)
-              _billRow(line.label, _currency(line.palaiAmount), small: true),
+              _billRow(line.displayLabel, _currency(line.palaiAmount), small: true),
             pw.SizedBox(height: 3),
             pw.Divider(color: PdfColors.grey300, height: 1),
             pw.SizedBox(height: 6),
@@ -452,7 +453,16 @@ class CustomerGoatsReportPdfService {
                 goat.name.trim().isNotEmpty
                     ? goat.name
                     : (goat.goatCode.trim().isNotEmpty ? goat.goatCode : goat.tagNumber),
-                _currency(goat.pricing),
+                // Older bills with no saved breakdown: pro-rate for the
+                // bill's month instead of printing the full monthly price.
+                _currency(
+                  PalaiProrationCalculator.calculate(
+                    monthlyCharge: goat.pricing,
+                    joiningDate: goat.checkInDate,
+                    year: bill.year,
+                    month: bill.month,
+                  ).amount,
+                ),
                 small: true,
               ),
             pw.SizedBox(height: 3),

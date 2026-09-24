@@ -13,6 +13,7 @@ import '../../services/customer_goats_progress_report_pdf_service.dart';
 import '../../services/firestore_service.dart';
 import '../../services/image_service.dart';
 import '../../services/monthly_billing_service.dart';
+import '../../utils/palai_proration.dart';
 import '../../widgets/fast_route.dart';
 import 'monthly_bill_generate_screen.dart';
 
@@ -209,13 +210,23 @@ class _CustomerGoatsProgressReportScreenState
     double addedPalai = 0;
 
     for (final goat in missingGoats) {
-      final double amount = goat.pricing < 0 ? 0.0 : goat.pricing.toDouble();
+      // A goat that joined part-way through the bill's month is charged
+      // only for the days it is here: monthly price ÷ days in month ×
+      // days remaining (joining day included).
+      final proration = PalaiProrationCalculator.calculate(
+        monthlyCharge: goat.pricing < 0 ? 0.0 : goat.pricing.toDouble(),
+        joiningDate: goat.checkInDate,
+        year: bill.year,
+        month: bill.month,
+      );
+      final double amount = proration.amount;
 
       updatedBreakdown.add(
-        GoatBillingLine(
+        GoatBillingLine.forGoat(
           goatId: goat.id,
           label: _goatLabel(goat),
-          palaiAmount: amount,
+          amount: amount,
+          proration: proration,
         ),
       );
 
@@ -539,16 +550,36 @@ class _CustomerGoatsProgressReportScreenState
     return _palaiControllers.putIfAbsent(
       goat.id,
           () => TextEditingController(
-        text: goat.pricing.toStringAsFixed(2),
+        text: _prorationFor(goat).amount.toStringAsFixed(2),
       ),
     );
+  }
+
+  /// Pro-rated Palai charge for [goat] in the current billing month:
+  /// monthly price ÷ days in month × days the goat has been at the farm.
+  PalaiProration _prorationFor(PalaiGoat goat) {
+    final now = DateTime.now();
+    return PalaiProrationCalculator.calculate(
+      monthlyCharge: goat.pricing,
+      joiningDate: goat.checkInDate,
+      year: now.year,
+      month: now.month,
+    );
+  }
+
+  /// e.g. "Joined 11 Apr 2026 • 20 of 30 days • ₹3,000 ÷ 30 × 20"
+  String _prorationNote(PalaiGoat goat) {
+    final p = _prorationFor(goat);
+    final joined = DateFormat('d MMM yyyy').format(goat.checkInDate);
+    return 'Joined $joined • ${p.label} • '
+        '${_currency(p.monthlyCharge)} ÷ ${p.daysInMonth} × ${p.billableDays}';
   }
 
   double _enteredPalai(PalaiGoat goat) {
     final controller = _palaiControllers[goat.id];
 
     if (controller == null) {
-      return goat.pricing;
+      return _prorationFor(goat).amount;
     }
 
     return double.tryParse(controller.text.trim()) ?? 0;
@@ -560,10 +591,11 @@ class _CustomerGoatsProgressReportScreenState
   );
 
   List<GoatBillingLine> get _goatBreakdown => _selectedGoats.map((goat) {
-    return GoatBillingLine(
+    return GoatBillingLine.forGoat(
       goatId: goat.id,
       label: _goatLabel(goat),
-      palaiAmount: _enteredPalai(goat),
+      amount: _enteredPalai(goat),
+      proration: _prorationFor(goat),
     );
   }).toList();
 
@@ -1550,7 +1582,7 @@ class _CustomerGoatsProgressReportScreenState
           padding:
           const EdgeInsets.only(bottom: 4),
           child: _billingRow(
-            line.label,
+            line.displayLabel,
             _currency(line.palaiAmount),
           ),
         ),
@@ -1920,6 +1952,16 @@ class _CustomerGoatsProgressReportScreenState
               ),
             ),
           ),
+          if (_prorationFor(goat).isPartialMonth) ...[
+            const SizedBox(height: 6),
+            Text(
+              _prorationNote(goat),
+              style: AppTheme.body(
+                size: 11,
+                color: AppColors.textMuted,
+              ),
+            ),
+          ],
         ],
       ),
     );

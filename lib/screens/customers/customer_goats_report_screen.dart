@@ -9,6 +9,7 @@ import '../../models/palai_models.dart';
 import '../../services/customer_goats_report_pdf_service.dart';
 import '../../services/firestore_service.dart';
 import '../../services/monthly_billing_service.dart';
+import '../../utils/palai_proration.dart';
 import '../../widgets/fast_route.dart';
 import 'monthly_bill_generate_screen.dart';
 
@@ -248,13 +249,27 @@ class _CustomerGoatsReportScreenState
   TextEditingController _palaiControllerFor(PalaiGoat goat) {
     return _palaiControllers.putIfAbsent(
       goat.id,
-          () => TextEditingController(text: goat.pricing.toStringAsFixed(2)),
+          () => TextEditingController(
+        text: _prorationFor(goat).amount.toStringAsFixed(2),
+      ),
+    );
+  }
+
+  /// Pro-rated Palai charge for [goat] in the current billing month:
+  /// monthly price ÷ days in month × days the goat has been at the farm.
+  PalaiProration _prorationFor(PalaiGoat goat) {
+    final now = DateTime.now();
+    return PalaiProrationCalculator.calculate(
+      monthlyCharge: goat.pricing,
+      joiningDate: goat.checkInDate,
+      year: now.year,
+      month: now.month,
     );
   }
 
   double _enteredPalai(PalaiGoat goat) {
     final controller = _palaiControllers[goat.id];
-    if (controller == null) return goat.pricing;
+    if (controller == null) return _prorationFor(goat).amount;
     return double.tryParse(controller.text.trim()) ?? 0;
   }
 
@@ -269,10 +284,11 @@ class _CustomerGoatsReportScreenState
     final label = g.name.trim().isNotEmpty
         ? g.name
         : (g.goatCode.trim().isNotEmpty ? g.goatCode : g.tagNumber);
-    return GoatBillingLine(
+    return GoatBillingLine.forGoat(
       goatId: g.id,
       label: label,
-      palaiAmount: _enteredPalai(g),
+      amount: _enteredPalai(g),
+      proration: _prorationFor(g),
     );
   }).toList();
 
@@ -760,7 +776,7 @@ class _CustomerGoatsReportScreenState
                   for (final line in existing.goatBreakdown)
                     Padding(
                       padding: const EdgeInsets.only(bottom: 4),
-                      child: _billingRow(line.label, _currency(line.palaiAmount)),
+                      child: _billingRow(line.displayLabel, _currency(line.palaiAmount)),
                     ),
                   const Divider(height: 14),
                 ],
@@ -998,9 +1014,24 @@ class _CustomerGoatsReportScreenState
               border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
             ),
           ),
+          if (_prorationFor(goat).isPartialMonth) ...[
+            const SizedBox(height: 6),
+            Text(
+              _prorationNote(goat),
+              style: AppTheme.body(size: 11, color: AppColors.textMuted),
+            ),
+          ],
         ],
       ),
     );
+  }
+
+  /// e.g. "Joined 11 Apr 2026 • 20 of 30 days • ₹3,000 ÷ 30 × 20"
+  String _prorationNote(PalaiGoat goat) {
+    final p = _prorationFor(goat);
+    final joined = DateFormat('d MMM yyyy').format(goat.checkInDate);
+    return 'Joined $joined • ${p.label} • '
+        '${_currency(p.monthlyCharge)} ÷ ${p.daysInMonth} × ${p.billableDays}';
   }
 
   Widget _billingRow(String label, String value, {bool bold = false}) {
