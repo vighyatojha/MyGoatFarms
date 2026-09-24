@@ -1,4 +1,3 @@
-import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
@@ -17,26 +16,17 @@ import '../../services/monthly_billing_service.dart';
 import '../../widgets/fast_route.dart';
 import 'monthly_bill_generate_screen.dart';
 
-/// Lets the owner generate ONE consolidated Progress Report covering all
-/// (or a chosen subset of) the goats under a single Palai customer —
-/// laid out like the reference "Monthly Report": a numbered card per
-/// goat showing its previous photo next to a freshly captured photo,
-/// weight & gain, and the latest health update.
+/// Consolidated Progress Report for all active goats belonging to one
+/// Palai customer.
 ///
-/// This is the multi-goat sibling of GenerateReportScreen. It is a
-/// direct evolution of CustomerGoatsReportScreen: same goat-selection
-/// step, but instead of building a flat summary table it also collects
-/// one camera photo per selected goat, then saves an individual
-/// [GoatReport] for each goat (same Firestore path GenerateReportScreen
-/// uses: `.../goats/{goatId}/reports/{reportId}`) so:
-///   - the goat's "Report" badge / reportsCount stay accurate, and
-///   - the NEXT time a progress report is generated for that goat, this
-///     report's photo becomes the "previous" photo automatically.
-///
-/// "Previous" photo rule:
-///   - 1st report ever for a goat -> the check-in ("Before Palai") photo.
-///   - Every report after that   -> the photo saved with that goat's
-///     most recently generated report.
+/// Important billing rule:
+/// - All active goats are part of the current-month bill.
+/// - If the current-month bill already exists but was created before a
+///   newly-added active goat was registered, the missing goat is added to
+///   that SAME bill document.
+/// - Existing goat amounts already saved on the bill are preserved.
+/// - A newly missing goat uses its current Palai pricing as its bill line.
+/// - No duplicate monthly bill is created.
 class CustomerGoatsProgressReportScreen extends StatefulWidget {
   final String farmId;
   final PalaiCustomer customer;
@@ -52,33 +42,15 @@ class CustomerGoatsProgressReportScreen extends StatefulWidget {
       _CustomerGoatsProgressReportScreenState();
 }
 
-/// What we know about a goat's *previous* state before this report is
-/// generated — fetched once, right before the capture step, so the
-/// capture step (and the final PDF) always has somewhere to pull a
-/// "previous" photo/weight from even if the goat has no earlier report.
 class _PreviousInfo {
   final Uint8List bytes;
   final String label;
   final DateTime date;
   final double? weight;
   final HealthRecordEntry? latestHealthRecord;
-
-  // Bug fix (item 7): Vaccination / Hoof Cutting / Hair Trimming are read
-  // from each goat's own dedicated record subcollection — the same ones
-  // shown on CustomerGoatVaccinationScreen / CustomerGoatHoofScreen /
-  // CustomerGoatHairScreen — instead of the single shared health-record
-  // snapshot above. Null means no record exists yet for that goat.
   final DateTime? latestVaccinationDate;
   final DateTime? latestHoofCuttingDate;
   final DateTime? latestHairTrimmingDate;
-
-  // FIX: full Arrival + past-report weight history for this goat, so
-  // the PDF's Weight & Gain box can show Arrival / last-3-months /
-  // Current instead of only Previous/Current. Built the same way as
-  // GoatWeightProgressTab's chain — Arrival weight plus every past
-  // GoatReport.endWeight, dated by GoatReport.generatedAt. Does NOT
-  // include the report being generated right now (that's currentWeight
-  // on GoatProgressEntry) since it hasn't been saved yet at fetch time.
   final List<GoatWeightPoint> weightChain;
 
   const _PreviousInfo({
@@ -111,68 +83,27 @@ class _CustomerGoatsProgressReportScreenState
   final Map<String, PickedImage> _capturedByGoatId = {};
   String? _capturingGoatId;
 
-  /// One weight-entry controller per goat, created lazily as each goat's
-  /// capture tile is built, and reused across rebuilds so the owner's
-  /// typing isn't lost mid-flow.
   final Map<String, TextEditingController> _weightControllers = {};
-
-  // ------------------------------------------------------------------
-  // CURRENT-MONTH CALCULATION
-  //
-  //   Current Month Palai (per goat, editable)
-  //         +
-  //   Current Outstanding (customer's current balance — zero if none)
-  //         −
-  //   Current Advance (customer's current advance — zero if none)
-  //         =
-  //   Current Amount Due
-  //
-  // IMPORTANT: this is a current-period calculation only. Historical
-  // payments and old bills are NEVER summed/subtracted again here —
-  // Current Outstanding and Current Advance are read fresh from the
-  // customer's live profile and nothing else feeds into them.
-  // ------------------------------------------------------------------
-
-  /// One editable "Monthly Palai Amount" controller per selected goat.
-  /// Seeded from that goat's registered [PalaiGoat.pricing] as a
-  /// starting point, but the owner can freely change it — this is the
-  /// custom, per-goat, current-month Palai amount, not a fixed default.
   final Map<String, TextEditingController> _palaiControllers = {};
 
-  /// The customer's CURRENT outstanding balance, re-fetched fresh (not
-  /// from `widget.customer`, which may be stale) the moment we enter the
-  /// capture step. This is the customer's real current balance — never
-  /// a sum of old bills, old payments, or previous months.
-  double _currentOutstanding = 0;
+  final TextEditingController _outstandingController =
+  TextEditingController();
+  final TextEditingController _advanceController =
+  TextEditingController();
 
-  /// The customer's CURRENT advance balance (credit), re-fetched fresh at
-  /// the same time as [_currentOutstanding]. Applied against the total
-  /// before the remainder becomes the customer's new outstanding amount.
+  double _currentOutstanding = 0;
   double _currentAdvanceAvailable = 0;
 
-  /// If a monthly bill for the current month already exists for this
-  /// customer, it's loaded here so we don't create a duplicate — we
-  /// just reuse its numbers in the report instead.
   MonthlyBill? _existingMonthlyBill;
 
   bool _loadingBilling = false;
   String? _billingLoadError;
-
-  /// Current Outstanding and Current Advance — the two customer-level
-  /// numbers the owner can edit for a fresh bill. Prefilled from the
-  /// customer's live balance as a starting point (zero when there is
-  /// none) but fully customizable; whatever is typed here is exactly
-  /// what gets saved, alongside the goat-wise Palai amounts. There is no
-  /// "amount paid" field here — this entry only records what is owed,
-  /// never a payment.
-  final TextEditingController _outstandingController = TextEditingController();
-  final TextEditingController _advanceController = TextEditingController();
-
   bool _generating = false;
 
   @override
   void initState() {
     super.initState();
+
     _goatsStream = FirestoreService.instance.goatsForCustomerStream(
       widget.farmId,
       widget.customer.id,
@@ -187,14 +118,16 @@ class _CustomerGoatsProgressReportScreenState
     for (final controller in _palaiControllers.values) {
       controller.dispose();
     }
+
     _outstandingController.dispose();
     _advanceController.dispose();
+
     super.dispose();
   }
 
-  // ================================================================
-  // SELECTION (Phase 1)
-  // ================================================================
+  // =====================================================================
+  // SELECTION
+  // =====================================================================
 
   void _toggleSelectAll(List<PalaiGoat> goats) {
     setState(() {
@@ -218,43 +151,104 @@ class _CustomerGoatsProgressReportScreenState
     });
   }
 
-  List<PalaiGoat> get _selectedGoats =>
-      _lastLoadedGoats.where((g) => _selectedIds.contains(g.id)).toList();
+  List<PalaiGoat> get _selectedGoats => _lastLoadedGoats
+      .where((g) => _selectedIds.contains(g.id))
+      .toList();
 
-  Future<void> _continueToCapture() async {
-    if (_selectedGoats.isEmpty) {
-      _showSnack('Select at least one goat to include in the report.');
-      return;
-    }
+  // =====================================================================
+  // BILLING
+  // =====================================================================
 
-    setState(() {
-      _phase = _Phase.capturing;
-      _loadingPrevious = true;
-    });
-
-    try {
-      final results = await Future.wait(_selectedGoats.map(_fetchPrevious));
-      await _loadBillingInfo();
-      if (!mounted) return;
-      setState(() {
-        for (int i = 0; i < _selectedGoats.length; i++) {
-          _previousByGoatId[_selectedGoats[i].id] = results[i];
-        }
-        _loadingPrevious = false;
-      });
-    } catch (e) {
-      if (!mounted) return;
-      setState(() {
-        _phase = _Phase.selecting;
-        _loadingPrevious = false;
-      });
-      _showSnack('Could not load previous report data: $e', isError: true);
-    }
+  String _monthlyBillId(String customerId, int year, int month) {
+    final periodKey = '$year-${month.toString().padLeft(2, '0')}';
+    return 'monthly_${customerId}_$periodKey';
   }
 
-  /// Loads the customer's current pending/outstanding amount, and checks
-  /// whether a monthly bill already exists for the current month so we
-  /// don't accidentally create a duplicate one.
+  String _goatLabel(PalaiGoat goat) {
+    return goat.name.trim().isNotEmpty
+        ? goat.name.trim()
+        : (goat.goatCode.trim().isNotEmpty
+        ? goat.goatCode.trim()
+        : (goat.tagNumber.trim().isNotEmpty
+        ? goat.tagNumber.trim()
+        : goat.id));
+  }
+
+  /// FIX:
+  /// The old Progress Report screen treated an already-generated monthly
+  /// bill as permanently final even when a new active goat had been added
+  /// to Palai afterwards.
+  ///
+  /// Example:
+  ///   bill has 3 goatBreakdown lines
+  ///   active Palai goats = 4
+  ///
+  /// The fourth goat must be added to the existing current-month bill.
+  ///
+  /// Existing lines are never changed. Only active goats whose goatId is
+  /// missing from the saved breakdown are appended, using their current
+  /// Palai pricing.
+  Future<MonthlyBill> _syncMissingActiveGoatsIntoBill({
+    required MonthlyBill bill,
+    required List<PalaiGoat> activeGoats,
+  }) async {
+    final missingGoats = activeGoats.where((goat) {
+      return !bill.goatBreakdown.any(
+            (line) => line.goatId == goat.id,
+      );
+    }).toList();
+
+    if (missingGoats.isEmpty) {
+      return bill;
+    }
+
+    final updatedBreakdown = <GoatBillingLine>[
+      ...bill.goatBreakdown,
+    ];
+
+    double addedPalai = 0;
+
+    for (final goat in missingGoats) {
+      final double amount = goat.pricing < 0 ? 0.0 : goat.pricing.toDouble();
+
+      updatedBreakdown.add(
+        GoatBillingLine(
+          goatId: goat.id,
+          label: _goatLabel(goat),
+          palaiAmount: amount,
+        ),
+      );
+
+      addedPalai += amount;
+    }
+
+    final updatedBill =
+    await MonthlyBillingService.instance.updateCurrentMonthMonthlyBill(
+      farmId: widget.farmId,
+      customerId: widget.customer.id,
+      billId: bill.id,
+
+      // Preserve everything already billed and only add the missing
+      // active goats' Palai charges.
+      palaiCharges: bill.palaiCharges + addedPalai,
+
+      // Preserve the original billing snapshot. Do NOT use the live
+      // pendingAmount here because this bill already affected it.
+      currentOutstanding: bill.previousOutstanding,
+
+      // Passing the bill's own previous advance contribution lets the
+      // service restore/re-apply the same advance without draining it
+      // twice.
+      currentAdvance: bill.advanceApplied,
+
+      goatBreakdown: updatedBreakdown,
+      goatCount: updatedBreakdown.length,
+      notes: bill.notes,
+    );
+
+    return updatedBill;
+  }
+
   Future<void> _loadBillingInfo() async {
     setState(() {
       _loadingBilling = true;
@@ -268,36 +262,51 @@ class _CustomerGoatsProgressReportScreenState
       );
 
       final now = DateTime.now();
-      final billId = _monthlyBillId(widget.customer.id, now.year, now.month);
+      final billId = _monthlyBillId(
+        widget.customer.id,
+        now.year,
+        now.month,
+      );
 
-      final existingBill = await MonthlyBillingService.instance.getMonthlyBill(
+      MonthlyBill? existingBill =
+      await MonthlyBillingService.instance.getMonthlyBill(
         farmId: widget.farmId,
         billId: billId,
       );
 
+      // IMPORTANT:
+      // Always compare the existing current-month bill against the
+      // currently active Palai goats. This is what fixes the exact case
+      // shown in the screenshot: 4 active goats but only 3 saved bill
+      // lines.
+      if (existingBill != null) {
+        existingBill = await _syncMissingActiveGoatsIntoBill(
+          bill: existingBill,
+          activeGoats: _lastLoadedGoats,
+        );
+      }
+
       if (!mounted) return;
 
       setState(() {
-        _currentOutstanding = freshCustomer?.pendingAmount ?? widget.customer.pendingAmount;
-        _currentAdvanceAvailable = freshCustomer?.advanceAmount ?? widget.customer.advanceAmount;
+        _currentOutstanding =
+            freshCustomer?.pendingAmount ?? widget.customer.pendingAmount;
+        _currentAdvanceAvailable =
+            freshCustomer?.advanceAmount ?? widget.customer.advanceAmount;
+
         _existingMonthlyBill = existingBill;
         _loadingBilling = false;
 
         if (existingBill == null) {
-          // Current Outstanding and Current Advance are prefilled ONLY
-          // from the customer's live current balance — zero if there is
-          // none. This month's goat-wise Palai amount is a completely
-          // separate line item (see _palaiControllers) and must NEVER be
-          // folded into Current Outstanding here. That mixing is exactly
-          // the old bug: it made the outstanding figure look like it
-          // already contained this month's charges, so the final total
-          // silently double-counted them.
-          _outstandingController.text = _currentOutstanding.toStringAsFixed(2);
-          _advanceController.text = _currentAdvanceAvailable.toStringAsFixed(2);
+          _outstandingController.text =
+              _currentOutstanding.toStringAsFixed(2);
+          _advanceController.text =
+              _currentAdvanceAvailable.toStringAsFixed(2);
         }
       });
     } catch (e) {
       if (!mounted) return;
+
       setState(() {
         _loadingBilling = false;
         _billingLoadError = 'Could not load billing info: $e';
@@ -305,31 +314,7 @@ class _CustomerGoatsProgressReportScreenState
     }
   }
 
-  /// Mirrors MonthlyBillingService's private document-ID format so we can
-  /// look up "does this month already have a bill" without needing a new
-  /// public method on the service.
-  String _monthlyBillId(String customerId, int year, int month) {
-    final periodKey = '$year-${month.toString().padLeft(2, '0')}';
-    return 'monthly_${customerId}_$periodKey';
-  }
-
-  /// Sends the owner to the goat-wise Monthly Billing screen to finish
-  /// or fix this month's bill, then refreshes this screen's billing
-  /// info when they come back — so if they fixed a ₹0-Palai bill there,
-  /// this screen (and the eventual PDF) picks up the corrected numbers
-  /// immediately instead of still showing the stale snapshot.
-  ///
-  /// - If a bill already exists for this month with ₹0 Current Month
-  ///   Palai, this opens it in EDIT mode (same bill document gets
-  ///   corrected in place).
-  /// - Otherwise it opens in CREATE mode for this month.
-  ///
-  /// Either way `cameFromProgressReport: true` is passed so that screen
-  /// shows "Done" instead of "Generate Monthly Bill" — the owner is
-  /// being sent there to finish something, not to start a fresh,
-  /// independent billing flow.
   Future<void> _openMonthlyBillingToFix() async {
-    final now = DateTime.now();
     final existing = _existingMonthlyBill;
     final needsFix = existing != null && existing.palaiCharges <= 0;
 
@@ -350,9 +335,11 @@ class _CustomerGoatsProgressReportScreenState
     await _loadBillingInfo();
   }
 
+  // =====================================================================
+  // PREVIOUS GOAT DATA
+  // =====================================================================
+
   Future<_PreviousInfo> _fetchPrevious(PalaiGoat goat) async {
-    // Fired off together (not one-at-a-time) so adding the new lookups
-    // below doesn't add sequential round trips per goat.
     final results = await Future.wait([
       FirestoreService.instance.getLatestGoatReport(
         widget.farmId,
@@ -364,10 +351,6 @@ class _CustomerGoatsProgressReportScreenState
         widget.customer.id,
         goat.id,
       ),
-      // Bug fix (item 7): pulled from each goat's own dedicated
-      // Vaccination / Hoof Cutting / Hair Trimming record subcollection
-      // (the same data source their tabs use), not the shared health
-      // record snapshot above.
       FirestoreService.instance.getLatestVaccinationDate(
         widget.farmId,
         widget.customer.id,
@@ -383,11 +366,12 @@ class _CustomerGoatsProgressReportScreenState
         widget.customer.id,
         goat.id,
       ),
-      // FIX: every past report for this goat (not just the latest one),
-      // so the PDF's Weight & Gain box can show a full Arrival / monthly
-      // chain — same source GoatWeightProgressTab's chain uses.
       FirestoreService.instance
-          .goatReportsStream(widget.farmId, widget.customer.id, goat.id)
+          .goatReportsStream(
+        widget.farmId,
+        widget.customer.id,
+        goat.id,
+      )
           .first,
     ]);
 
@@ -427,88 +411,110 @@ class _CustomerGoatsProgressReportScreenState
     );
   }
 
-  /// Arrival weight + every past report's endWeight, dated by that
-  /// report's generatedAt — exactly the same chain GoatWeightProgressTab
-  /// builds, minus the report being generated right now (it isn't saved
-  /// yet at this point, so it can't be in `reports`).
-  List<GoatWeightPoint> _buildWeightChain(PalaiGoat goat, List<GoatReport> reports) {
+  List<GoatWeightPoint> _buildWeightChain(
+      PalaiGoat goat,
+      List<GoatReport> reports,
+      ) {
     final points = <GoatWeightPoint>[
       GoatWeightPoint(
         date: goat.farmArrivalDate ?? goat.checkInDate,
         weight: goat.weightAtCheckIn,
         source: 'Arrival',
       ),
-      for (final r in reports)
-        if (r.endWeight != null)
+      for (final report in reports)
+        if (report.endWeight != null)
           GoatWeightPoint(
-            date: r.generatedAt,
-            weight: r.endWeight!,
-            source: r.notes.isNotEmpty ? r.notes : 'Report',
+            date: report.generatedAt,
+            weight: report.endWeight!,
+            source: report.notes.isNotEmpty ? report.notes : 'Report',
           ),
     ];
+
     points.sort((a, b) => a.date.compareTo(b.date));
     return points;
   }
 
-  void _backToSelecting() {
-    setState(() {
-      _phase = _Phase.selecting;
-      _previousByGoatId.clear();
-      _capturedByGoatId.clear();
-      for (final controller in _weightControllers.values) {
-        controller.dispose();
-      }
-      _weightControllers.clear();
-      for (final controller in _palaiControllers.values) {
-        controller.dispose();
-      }
-      _palaiControllers.clear();
+  Future<void> _continueToCapture() async {
+    if (_selectedGoats.isEmpty) {
+      _showSnack('Select at least one goat to include in the report.');
+      return;
+    }
 
-      _existingMonthlyBill = null;
-      _billingLoadError = null;
-      _currentOutstanding = 0;
-      _currentAdvanceAvailable = 0;
-      _outstandingController.clear();
-      _advanceController.clear();
+    setState(() {
+      _phase = _Phase.capturing;
+      _loadingPrevious = true;
     });
+
+    try {
+      final results = await Future.wait(
+        _selectedGoats.map(_fetchPrevious),
+      );
+
+      // Billing is loaded only after _lastLoadedGoats has been populated
+      // from the same active-goat stream, so the bill comparison sees all
+      // current Palai goats.
+      await _loadBillingInfo();
+
+      if (!mounted) return;
+
+      setState(() {
+        for (int i = 0; i < _selectedGoats.length; i++) {
+          _previousByGoatId[_selectedGoats[i].id] = results[i];
+        }
+
+        _loadingPrevious = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+
+      setState(() {
+        _phase = _Phase.selecting;
+        _loadingPrevious = false;
+      });
+
+      _showSnack(
+        'Could not load previous report data: $e',
+        isError: true,
+      );
+    }
   }
 
-  // ================================================================
-  // CAPTURE (Phase 2)
-  // ================================================================
+  // =====================================================================
+  // CAPTURE / WEIGHT
+  // =====================================================================
 
   Future<void> _capturePhoto(String goatId) async {
     setState(() => _capturingGoatId = goatId);
+
     try {
       final picked = await ImageService.instance.pickFromCamera(
         maxStoredBytes: 200 * 1024,
         maxDimension: 480,
       );
+
       if (picked != null && mounted) {
         setState(() => _capturedByGoatId[goatId] = picked);
       }
     } on ImageTooLargeException catch (e) {
       _showSnack(e.message, isError: true);
     } catch (_) {
-      _showSnack('Could not capture photo. Please try again.', isError: true);
+      _showSnack(
+        'Could not capture photo. Please try again.',
+        isError: true,
+      );
     } finally {
-      if (mounted) setState(() => _capturingGoatId = null);
+      if (mounted) {
+        setState(() => _capturingGoatId = null);
+      }
     }
   }
 
-  bool get _allPhotosCaptured =>
-      _selectedGoats.every((g) => _capturedByGoatId.containsKey(g.id));
-
-  /// Controller for a given goat's "new weight" field. Created once,
-  /// pre-filled with the previous known weight (if any) as a starting
-  /// point so the owner only has to adjust it rather than type from
-  /// scratch — but they can still clear it and leave it blank.
   TextEditingController _weightControllerFor(String goatId) {
     return _weightControllers.putIfAbsent(goatId, () {
-      final previous = _previousByGoatId[goatId];
-      final initial = previous?.weight;
+      final previous = _previousByGoatId[goatId]?.weight;
+
       return TextEditingController(
-        text: initial != null ? initial.toStringAsFixed(1) : '',
+        text: previous != null ? previous.toStringAsFixed(1) : '',
       );
     });
   }
@@ -516,121 +522,126 @@ class _CustomerGoatsProgressReportScreenState
   double? _enteredWeight(String goatId) {
     final controller = _weightControllers[goatId];
     if (controller == null) return null;
+
     return double.tryParse(controller.text.trim());
   }
 
-  bool get _allWeightsEntered => _selectedGoats.every((g) {
-    final weight = _enteredWeight(g.id);
+  bool get _allPhotosCaptured => _selectedGoats.every(
+        (goat) => _capturedByGoatId.containsKey(goat.id),
+  );
+
+  bool get _allWeightsEntered => _selectedGoats.every((goat) {
+    final weight = _enteredWeight(goat.id);
     return weight != null && weight > 0;
   });
 
-  /// Controller for a given goat's "Monthly Palai Amount" — the custom,
-  /// editable, current-month Palai amount for that goat. Seeded from the
-  /// goat's registered [PalaiGoat.pricing] the first time it's built, as
-  /// a starting point only; the owner can freely change it to whatever
-  /// this month's real amount is (e.g. GP-11 → ₹2,800). Changing one
-  /// goat's amount never affects any other goat's amount or total.
   TextEditingController _palaiControllerFor(PalaiGoat goat) {
     return _palaiControllers.putIfAbsent(
       goat.id,
-          () => TextEditingController(text: goat.pricing.toStringAsFixed(2)),
+          () => TextEditingController(
+        text: goat.pricing.toStringAsFixed(2),
+      ),
     );
   }
 
   double _enteredPalai(PalaiGoat goat) {
     final controller = _palaiControllers[goat.id];
-    if (controller == null) return goat.pricing;
+
+    if (controller == null) {
+      return goat.pricing;
+    }
+
     return double.tryParse(controller.text.trim()) ?? 0;
   }
 
-  /// Sum of each *selected* goat's current-month Palai amount, exactly
-  /// as typed in that goat's own "Monthly Palai Amount" field. This is
-  /// the ONLY thing that feeds "Current Month Palai" — it is a
-  /// completely separate line from Current Outstanding and Current
-  /// Advance below, and is never combined with them before display.
-  double get _palaiChargesTotal =>
-      _selectedGoats.fold<double>(0, (sum, g) => sum + _enteredPalai(g));
+  double get _palaiChargesTotal => _selectedGoats.fold<double>(
+    0,
+        (sum, goat) => sum + _enteredPalai(goat),
+  );
 
-  /// Goat-wise breakdown, saved with the bill as a permanent snapshot —
-  /// so the bill always shows exactly what each goat's Palai amount was
-  /// that month, even if the goat's registered price changes later.
-  List<GoatBillingLine> get _goatBreakdown => _selectedGoats.map((g) {
-    final label = g.name.trim().isNotEmpty
-        ? g.name
-        : (g.goatCode.trim().isNotEmpty ? g.goatCode : g.tagNumber);
+  List<GoatBillingLine> get _goatBreakdown => _selectedGoats.map((goat) {
     return GoatBillingLine(
-      goatId: g.id,
-      label: label,
-      palaiAmount: _enteredPalai(g),
+      goatId: goat.id,
+      label: _goatLabel(goat),
+      palaiAmount: _enteredPalai(goat),
     );
   }).toList();
 
-  /// Current Outstanding and Current Advance, exactly as typed by the
-  /// owner. Nothing else feeds into them — no reconstruction from old
-  /// bills or payment history. Defaults to zero when the field is empty
-  /// or the customer simply has no current outstanding/advance.
   double get _enteredOutstanding =>
       double.tryParse(_outstandingController.text.trim()) ?? 0;
 
   double get _enteredAdvance =>
       double.tryParse(_advanceController.text.trim()) ?? 0;
 
-  /// Current Month Palai + Current Outstanding − Current Advance,
-  /// floored at zero — this is exactly what gets written as the
-  /// customer's new outstanding balance.
-  double get _currentAmountDue =>
-      (_palaiChargesTotal + _enteredOutstanding - _enteredAdvance)
-          .clamp(0, double.infinity)
-          .toDouble();
+  double get _currentAmountDue => (_palaiChargesTotal +
+      _enteredOutstanding -
+      _enteredAdvance)
+      .clamp(0, double.infinity)
+      .toDouble();
 
-  /// True once billing is ready to include in the report: either an
-  /// existing bill for this month was found (nothing more to enter), or
-  /// every selected goat has a valid Palai amount entered.
   bool get _billingReady {
     if (_loadingBilling) return false;
-    if (_existingMonthlyBill != null) return true;
+
+    if (_existingMonthlyBill != null) {
+      return _existingMonthlyBill!.goatBreakdown.length >=
+          _selectedGoats.length;
+    }
+
     if (_selectedGoats.isEmpty) return false;
-    return _selectedGoats.every((g) {
-      final controller = _palaiControllers[g.id];
+
+    return _selectedGoats.every((goat) {
+      final controller = _palaiControllers[goat.id];
+
       if (controller == null) return false;
+
       final value = double.tryParse(controller.text.trim());
+
       return value != null && value >= 0;
     });
   }
 
   bool get _readyToGenerate =>
-      _allPhotosCaptured && _allWeightsEntered && _billingReady;
+      _allPhotosCaptured &&
+          _allWeightsEntered &&
+          _billingReady;
 
-  // ================================================================
+  // =====================================================================
   // GENERATE
-  // ================================================================
+  // =====================================================================
 
   Future<void> _generate({required bool share}) async {
     if (!_allPhotosCaptured) {
-      _showSnack('Take a photo for every goat before generating the report.');
+      _showSnack(
+        'Take a photo for every goat before generating the report.',
+      );
       return;
     }
 
     if (!_allWeightsEntered) {
-      _showSnack('Enter the current weight for every goat before generating the report.');
+      _showSnack(
+        'Enter the current weight for every goat before generating the report.',
+      );
       return;
     }
 
     if (!_billingReady) {
-      _showSnack('Enter the Monthly Palai Amount for every goat before generating the report.');
+      _showSnack(
+        'Billing is not ready for every active goat.',
+      );
       return;
     }
 
     setState(() => _generating = true);
 
     try {
-      final farm = await FirestoreService.instance.getFarmById(widget.farmId);
+      final farm = await FirestoreService.instance.getFarmById(
+        widget.farmId,
+      );
 
       final originalBillSettings =
           farm?.billSettings ?? const BillSettings();
 
-      final billSettings =
-      originalBillSettings.billLogo != null &&
+      final billSettings = originalBillSettings.billLogo != null &&
           originalBillSettings.billLogo!.isNotEmpty
           ? originalBillSettings
           : originalBillSettings.copyWith(
@@ -641,21 +652,14 @@ class _CustomerGoatsProgressReportScreenState
 
       final now = DateTime.now();
 
-      // ------------------------------------------------------------
-      // BILLING — reuse this month's bill if one already exists,
-      // otherwise create it now from three separate numbers:
-      //   - this month's goat-wise Palai total (_palaiChargesTotal)
-      //   - Current Outstanding (the customer's real current balance)
-      //   - Current Advance (the customer's real current advance)
-      // These are never merged before being saved — see
-      // createCurrentMonthMonthlyBill for the current-month-only rule.
-      // ------------------------------------------------------------
       MonthlyBill monthlyBill;
+
       if (_existingMonthlyBill != null) {
         monthlyBill = _existingMonthlyBill!;
       } else {
         try {
-          monthlyBill = await MonthlyBillingService.instance.createCurrentMonthMonthlyBill(
+          monthlyBill =
+          await MonthlyBillingService.instance.createCurrentMonthMonthlyBill(
             farmId: widget.farmId,
             customerId: widget.customer.id,
             year: now.year,
@@ -668,14 +672,20 @@ class _CustomerGoatsProgressReportScreenState
             notes: 'Auto-generated with Progress Report.',
           );
         } on StateError {
-          // Someone else generated this month's bill in the meantime —
-          // fall back to reading it instead of failing the whole report.
-          final billId = _monthlyBillId(widget.customer.id, now.year, now.month);
-          final existing = await MonthlyBillingService.instance.getMonthlyBill(
+          final billId = _monthlyBillId(
+            widget.customer.id,
+            now.year,
+            now.month,
+          );
+
+          final existing =
+          await MonthlyBillingService.instance.getMonthlyBill(
             farmId: widget.farmId,
             billId: billId,
           );
+
           if (existing == null) rethrow;
+
           monthlyBill = existing;
         }
       }
@@ -687,26 +697,24 @@ class _CustomerGoatsProgressReportScreenState
         final captured = _capturedByGoatId[goat.id]!;
         final currentWeight = _enteredWeight(goat.id)!;
 
-        entries.add(GoatProgressEntry(
-          goat: goat,
-          previousImageBytes: previous.bytes,
-          previousLabel: previous.label,
-          previousDate: previous.date,
-          previousWeight: previous.weight,
-          currentImageBytes: captured.bytes,
-          currentDate: now,
-          currentWeight: currentWeight,
-          weightChain: previous.weightChain,
-          latestHealthRecord: previous.latestHealthRecord,
-          latestVaccinationDate: previous.latestVaccinationDate,
-          latestHoofCuttingDate: previous.latestHoofCuttingDate,
-          latestHairTrimmingDate: previous.latestHairTrimmingDate,
-        ));
+        entries.add(
+          GoatProgressEntry(
+            goat: goat,
+            previousImageBytes: previous.bytes,
+            previousLabel: previous.label,
+            previousDate: previous.date,
+            previousWeight: previous.weight,
+            currentImageBytes: captured.bytes,
+            currentDate: now,
+            currentWeight: currentWeight,
+            weightChain: previous.weightChain,
+            latestHealthRecord: previous.latestHealthRecord,
+            latestVaccinationDate: previous.latestVaccinationDate,
+            latestHoofCuttingDate: previous.latestHoofCuttingDate,
+            latestHairTrimmingDate: previous.latestHairTrimmingDate,
+          ),
+        );
 
-        // Save this goat's own report under its existing report history —
-        // same path/pattern as GenerateReportScreen — so reportStatus /
-        // reportsCount stay accurate and the next progress report finds
-        // this photo as its "previous" photo.
         final report = GoatReport(
           id: '',
           type: GoatReportType.progress,
@@ -715,7 +723,8 @@ class _CustomerGoatsProgressReportScreenState
           generatedAt: now,
           startWeight: previous.weight,
           endWeight: currentWeight,
-          healthStatus: previous.latestHealthRecord?.healthStatus.isNotEmpty == true
+          healthStatus:
+          previous.latestHealthRecord?.healthStatus.isNotEmpty == true
               ? previous.latestHealthRecord!.healthStatus
               : goat.healthStatus,
           images: [
@@ -734,10 +743,6 @@ class _CustomerGoatsProgressReportScreenState
           report,
         );
 
-        // Record the freshly-entered weight as a health record too, so it
-        // becomes the goat's new "current weight" everywhere in the app
-        // (goat list, health history, and the next progress report's
-        // "previous weight").
         await FirestoreService.instance.addHealthRecord(
           widget.farmId,
           widget.customer.id,
@@ -749,24 +754,16 @@ class _CustomerGoatsProgressReportScreenState
             deworming: '',
             hoofCutting: '',
             medicineGiven: '',
-            healthStatus: previous.latestHealthRecord?.healthStatus.isNotEmpty == true
+            healthStatus:
+            previous.latestHealthRecord?.healthStatus.isNotEmpty == true
                 ? previous.latestHealthRecord!.healthStatus
                 : goat.healthStatus,
-            doctorNotes: 'Recorded during Progress Report generation.',
+            doctorNotes:
+            'Recorded during Progress Report generation.',
             recordedAt: now,
           ),
         );
 
-        // --------------------------------------------------------
-        // FIX: also save this report-day photo as a MonthlyPhoto,
-        // so it shows up in the goat's Photos & Growth timeline —
-        // previously the only place this photo lived was inside
-        // the GoatReport itself, so a goat could have several
-        // reports' worth of photos with nothing at all showing in
-        // Photos & Growth unless the owner separately used "Add
-        // Photo" there. This keeps every report-day photo AND every
-        // manually-added photo together in one full visual record.
-        // --------------------------------------------------------
         await FirestoreService.instance.addMonthlyPhoto(
           widget.farmId,
           widget.customer.id,
@@ -799,29 +796,21 @@ class _CustomerGoatsProgressReportScreenState
       }
     } catch (e) {
       if (!mounted) return;
-      _showSnack('Could not generate report: $e', isError: true);
+
+      _showSnack(
+        'Could not generate report: $e',
+        isError: true,
+      );
     } finally {
-      if (mounted) setState(() => _generating = false);
+      if (mounted) {
+        setState(() => _generating = false);
+      }
     }
   }
 
-  // ================================================================
-  // HELPERS
-  // ================================================================
-
-  void _showSnack(String message, {bool isError = false}) {
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(message),
-        backgroundColor: isError ? AppColors.error : null,
-      ),
-    );
-  }
-
-  // ================================================================
-  // BUILD
-  // ================================================================
+  // =====================================================================
+  // MAIN BUILD
+  // =====================================================================
 
   @override
   Widget build(BuildContext context) {
@@ -832,41 +821,53 @@ class _CustomerGoatsProgressReportScreenState
         elevation: 0,
         foregroundColor: AppColors.textDark,
         leading: _phase == _Phase.capturing
-            ? IconButton(icon: const Icon(Icons.arrow_back), onPressed: _generating ? null : _backToSelecting)
+            ? IconButton(
+          icon: const Icon(Icons.arrow_back),
+          onPressed:
+          _generating ? null : _backToSelecting,
+        )
             : null,
-        title: Text('Progress Report', style: AppTheme.heading(size: 17)),
+        title: Text(
+          'Progress Report',
+          style: AppTheme.heading(size: 17),
+        ),
       ),
-      body: _phase == _Phase.selecting ? _buildSelectingPhase() : _buildCapturingPhase(),
+      body: _phase == _Phase.selecting
+          ? _buildSelectingPhase()
+          : _buildCapturingPhase(),
     );
   }
 
-  // -------------------------------------------------------------------
-  // Phase 1 UI — select goats (same shape as CustomerGoatsReportScreen)
-  // -------------------------------------------------------------------
+  // =====================================================================
+  // SELECTING PHASE
+  // =====================================================================
 
   Widget _buildSelectingPhase() {
     return StreamBuilder<List<PalaiGoat>>(
       stream: _goatsStream,
       builder: (context, snapshot) {
         if (snapshot.connectionState == ConnectionState.waiting) {
-          return const Center(child: CircularProgressIndicator(color: AppColors.primaryGreen));
+          return const Center(
+            child: CircularProgressIndicator(
+              color: AppColors.primaryGreen,
+            ),
+          );
         }
 
-        // Only goats still boarded under this customer belong in a
-        // Progress Report — a goat that has already been checked out is
-        // no longer under Palai care, so it's excluded here (same rule
-        // used by the checkout and billing screens).
         final goats = (snapshot.data ?? [])
-            .where((g) => !g.isCheckedOut)
+            .where((goat) => !goat.isCheckedOut)
             .toList();
+
         _lastLoadedGoats = goats;
 
         if (_selectedIds.isEmpty && goats.isNotEmpty) {
-          _selectedIds.addAll(goats.map((g) => g.id));
+          _selectedIds.addAll(goats.map((goat) => goat.id));
         }
 
         if (goats.isEmpty) {
-          final hadAnyGoats = (snapshot.data ?? []).isNotEmpty;
+          final hadAnyGoats =
+              (snapshot.data ?? []).isNotEmpty;
+
           return _buildEmptyState(
             allCheckedOut: hadAnyGoats,
           );
@@ -875,7 +876,9 @@ class _CustomerGoatsProgressReportScreenState
         return Column(
           children: [
             _buildHeaderCard(goats),
-            Expanded(child: _buildGoatsSelectionList(goats)),
+            Expanded(
+              child: _buildGoatsSelectionList(goats),
+            ),
             _buildSelectionBottomBar(),
           ],
         );
@@ -898,18 +901,26 @@ class _CustomerGoatsProgressReportScreenState
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(widget.customer.name, style: AppTheme.heading(size: 15)),
+                  Text(
+                    widget.customer.name,
+                    style: AppTheme.heading(size: 15),
+                  ),
                   const SizedBox(height: 3),
                   Text(
                     '${_selectedIds.length} of ${goats.length} goats selected',
-                    style: AppTheme.body(size: 11, color: AppColors.textMuted),
+                    style: AppTheme.body(
+                      size: 11,
+                      color: AppColors.textMuted,
+                    ),
                   ),
                 ],
               ),
             ),
             TextButton(
               onPressed: () => _toggleSelectAll(goats),
-              child: Text(allSelected ? 'Deselect All' : 'Select All'),
+              child: Text(
+                allSelected ? 'Deselect All' : 'Select All',
+              ),
             ),
           ],
         ),
@@ -926,7 +937,9 @@ class _CustomerGoatsProgressReportScreenState
         final selected = _selectedIds.contains(goat.id);
         final goatId = goat.goatCode.trim().isNotEmpty
             ? goat.goatCode
-            : (goat.tagNumber.trim().isNotEmpty ? goat.tagNumber : goat.id);
+            : (goat.tagNumber.trim().isNotEmpty
+            ? goat.tagNumber
+            : goat.id);
 
         return Container(
           margin: const EdgeInsets.only(bottom: 10),
@@ -940,21 +953,30 @@ class _CustomerGoatsProgressReportScreenState
               children: [
                 Flexible(
                   child: Text(
-                    goat.name.trim().isNotEmpty ? goat.name : goatId,
+                    goat.name.trim().isNotEmpty
+                        ? goat.name
+                        : goatId,
                     style: AppTheme.heading(size: 13),
                     overflow: TextOverflow.ellipsis,
                   ),
                 ),
                 const SizedBox(width: 6),
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 7,
+                    vertical: 2,
+                  ),
                   decoration: BoxDecoration(
-                    color: AppColors.primaryGreen.withOpacity(0.12),
+                    color:
+                    AppColors.primaryGreen.withOpacity(0.12),
                     borderRadius: BorderRadius.circular(6),
                   ),
                   child: Text(
                     'ID: $goatId',
-                    style: AppTheme.body(size: 10, color: AppColors.primaryGreen),
+                    style: AppTheme.body(
+                      size: 10,
+                      color: AppColors.primaryGreen,
+                    ),
                   ),
                 ),
               ],
@@ -962,7 +984,10 @@ class _CustomerGoatsProgressReportScreenState
             subtitle: Text(
               '${goat.breed.isNotEmpty ? goat.breed : 'Breed unknown'} • '
                   '${goat.healthStatus.isNotEmpty ? goat.healthStatus : 'No health status'}',
-              style: AppTheme.body(size: 11, color: AppColors.textMuted),
+              style: AppTheme.body(
+                size: 11,
+                color: AppColors.textMuted,
+              ),
             ),
           ),
         );
@@ -975,21 +1000,31 @@ class _CustomerGoatsProgressReportScreenState
       padding: const EdgeInsets.fromLTRB(16, 10, 16, 16),
       decoration: BoxDecoration(
         color: Colors.white,
-        boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 8, offset: const Offset(0, -2))],
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.05),
+            blurRadius: 8,
+            offset: const Offset(0, -2),
+          ),
+        ],
       ),
       child: SafeArea(
         top: false,
         child: SizedBox(
           width: double.infinity,
           child: ElevatedButton.icon(
-            onPressed: _loadingPrevious ? null : _continueToCapture,
+            onPressed:
+            _loadingPrevious ? null : _continueToCapture,
             icon: const Icon(Icons.camera_alt_outlined),
             label: const Text('Continue to Photos'),
             style: ElevatedButton.styleFrom(
               backgroundColor: AppColors.primaryGreen,
               foregroundColor: Colors.white,
-              padding: const EdgeInsets.symmetric(vertical: 14),
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+              padding:
+              const EdgeInsets.symmetric(vertical: 14),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(10),
+              ),
             ),
           ),
         ),
@@ -997,7 +1032,9 @@ class _CustomerGoatsProgressReportScreenState
     );
   }
 
-  Widget _buildEmptyState({bool allCheckedOut = false}) {
+  Widget _buildEmptyState({
+    bool allCheckedOut = false,
+  }) {
     return Center(
       child: Padding(
         padding: const EdgeInsets.all(30),
@@ -1006,18 +1043,34 @@ class _CustomerGoatsProgressReportScreenState
           children: [
             Container(
               padding: const EdgeInsets.all(18),
-              decoration: BoxDecoration(color: AppColors.primaryGreen.withOpacity(0.10), shape: BoxShape.circle),
-              child: const Icon(GoatIcons.paw, size: 35, color: AppColors.primaryGreen),
+              decoration: BoxDecoration(
+                color:
+                AppColors.primaryGreen.withOpacity(0.10),
+                shape: BoxShape.circle,
+              ),
+              child: const Icon(
+                GoatIcons.paw,
+                size: 35,
+                color: AppColors.primaryGreen,
+              ),
             ),
             const SizedBox(height: 14),
-            Text(allCheckedOut ? 'No active goats' : 'No goats found', style: AppTheme.heading(size: 15)),
+            Text(
+              allCheckedOut
+                  ? 'No active goats'
+                  : 'No goats found',
+              style: AppTheme.heading(size: 15),
+            ),
             const SizedBox(height: 6),
             Text(
               allCheckedOut
                   ? 'All of this customer\'s goats have already been checked out of Palai.'
                   : 'This customer has no goats under Palai yet.',
               textAlign: TextAlign.center,
-              style: AppTheme.body(size: 12, color: AppColors.textMuted),
+              style: AppTheme.body(
+                size: 12,
+                color: AppColors.textMuted,
+              ),
             ),
           ],
         ),
@@ -1025,20 +1078,26 @@ class _CustomerGoatsProgressReportScreenState
     );
   }
 
-  // -------------------------------------------------------------------
-  // Phase 2 UI — capture one photo per selected goat
-  // -------------------------------------------------------------------
+  // =====================================================================
+  // CAPTURING PHASE
+  // =====================================================================
 
   Widget _buildCapturingPhase() {
     if (_loadingPrevious) {
-      return const Center(child: CircularProgressIndicator(color: AppColors.primaryGreen));
+      return const Center(
+        child: CircularProgressIndicator(
+          color: AppColors.primaryGreen,
+        ),
+      );
     }
 
     final goats = _selectedGoats;
+
     final capturedCount = _capturedByGoatId.length;
-    final weighedCount = goats.where((g) {
-      final w = _enteredWeight(g.id);
-      return w != null && w > 0;
+
+    final weighedCount = goats.where((goat) {
+      final weight = _enteredWeight(goat.id);
+      return weight != null && weight > 0;
     }).length;
 
     return Column(
@@ -1053,20 +1112,30 @@ class _CustomerGoatsProgressReportScreenState
               children: [
                 Expanded(
                   child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
+                    crossAxisAlignment:
+                    CrossAxisAlignment.start,
                     children: [
-                      Text('Take a photo & weight for each goat', style: AppTheme.heading(size: 14)),
+                      Text(
+                        'Take a photo & weight for each goat',
+                        style: AppTheme.heading(size: 14),
+                      ),
                       const SizedBox(height: 3),
                       Text(
-                        '$capturedCount of ${goats.length} photos • $weighedCount of ${goats.length} weights'
+                        '$capturedCount of ${goats.length} photos • '
+                            '$weighedCount of ${goats.length} weights'
                             '${_billingReady ? ' • billing ready' : ' • billing pending'}',
-                        style: AppTheme.body(size: 11, color: AppColors.textMuted),
+                        style: AppTheme.body(
+                          size: 11,
+                          color: AppColors.textMuted,
+                        ),
                       ),
                     ],
                   ),
                 ),
                 Icon(
-                  _readyToGenerate ? Icons.check_circle : Icons.camera_alt_outlined,
+                  _readyToGenerate
+                      ? Icons.check_circle
+                      : Icons.camera_alt_outlined,
                   color: AppColors.primaryGreen,
                 ),
               ],
@@ -1075,12 +1144,14 @@ class _CustomerGoatsProgressReportScreenState
         ),
         Expanded(
           child: ListView.builder(
-            padding: const EdgeInsets.fromLTRB(16, 4, 16, 16),
+            padding:
+            const EdgeInsets.fromLTRB(16, 4, 16, 16),
             itemCount: goats.length + 1,
             itemBuilder: (context, index) {
               if (index == goats.length) {
                 return _buildBillingCard();
               }
+
               return _captureTile(goats[index]);
             },
           ),
@@ -1096,88 +1167,157 @@ class _CustomerGoatsProgressReportScreenState
     final previous = _previousByGoatId[goat.id];
     final goatId = goat.goatCode.trim().isNotEmpty
         ? goat.goatCode
-        : (goat.tagNumber.trim().isNotEmpty ? goat.tagNumber : goat.id);
-    final weightController = _weightControllerFor(goat.id);
+        : (goat.tagNumber.trim().isNotEmpty
+        ? goat.tagNumber
+        : goat.id);
+
+    final weightController =
+    _weightControllerFor(goat.id);
 
     return Container(
       margin: const EdgeInsets.only(bottom: 10),
       decoration: AppTheme.card(radius: 14),
       padding: const EdgeInsets.all(12),
       child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+        crossAxisAlignment:
+        CrossAxisAlignment.start,
         children: [
           Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
+            crossAxisAlignment:
+            CrossAxisAlignment.start,
             children: [
               ClipRRect(
-                borderRadius: BorderRadius.circular(10),
-                child: (previous != null && previous.bytes.isNotEmpty)
-                    ? Image.memory(previous.bytes, width: 52, height: 52, fit: BoxFit.cover)
+                borderRadius:
+                BorderRadius.circular(10),
+                child:
+                previous != null &&
+                    previous.bytes.isNotEmpty
+                    ? Image.memory(
+                  previous.bytes,
+                  width: 52,
+                  height: 52,
+                  fit: BoxFit.cover,
+                )
                     : Container(
                   width: 52,
                   height: 52,
                   color: AppColors.lightGreen,
-                  child: const Icon(Icons.image_not_supported_outlined, color: AppColors.textMuted, size: 20),
+                  child: const Icon(
+                    Icons
+                        .image_not_supported_outlined,
+                    color:
+                    AppColors.textMuted,
+                    size: 20,
+                  ),
                 ),
               ),
               const SizedBox(width: 10),
               Expanded(
                 child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+                  crossAxisAlignment:
+                  CrossAxisAlignment.start,
                   children: [
                     Row(
                       children: [
                         Flexible(
                           child: Text(
-                            goat.name.trim().isNotEmpty ? goat.name : goatId,
-                            style: AppTheme.heading(size: 13),
-                            overflow: TextOverflow.ellipsis,
+                            goat.name.trim().isNotEmpty
+                                ? goat.name
+                                : goatId,
+                            style:
+                            AppTheme.heading(
+                              size: 13,
+                            ),
+                            overflow:
+                            TextOverflow.ellipsis,
                           ),
                         ),
                         const SizedBox(width: 6),
                         Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
-                          decoration: BoxDecoration(
-                            color: AppColors.primaryGreen.withOpacity(0.12),
-                            borderRadius: BorderRadius.circular(5),
+                          padding:
+                          const EdgeInsets
+                              .symmetric(
+                            horizontal: 6,
+                            vertical: 1,
+                          ),
+                          decoration:
+                          BoxDecoration(
+                            color: AppColors
+                                .primaryGreen
+                                .withOpacity(0.12),
+                            borderRadius:
+                            BorderRadius.circular(5),
                           ),
                           child: Text(
                             'ID: $goatId',
-                            style: AppTheme.body(size: 9, color: AppColors.primaryGreen),
+                            style: AppTheme.body(
+                              size: 9,
+                              color: AppColors
+                                  .primaryGreen,
+                            ),
                           ),
                         ),
                       ],
                     ),
                     const SizedBox(height: 2),
                     Text(
-                      previous != null ? 'Previous: ${previous.label}' : '',
-                      style: AppTheme.body(size: 10, color: AppColors.textMuted),
+                      previous != null
+                          ? 'Previous: ${previous.label}'
+                          : '',
+                      style: AppTheme.body(
+                        size: 10,
+                        color: AppColors.textMuted,
+                      ),
                     ),
                   ],
                 ),
               ),
               const SizedBox(width: 10),
               GestureDetector(
-                onTap: capturing ? null : () => _capturePhoto(goat.id),
+                onTap: capturing
+                    ? null
+                    : () => _capturePhoto(goat.id),
                 child: Container(
                   width: 64,
                   height: 64,
                   decoration: BoxDecoration(
                     color: Colors.white,
-                    borderRadius: BorderRadius.circular(12),
+                    borderRadius:
+                    BorderRadius.circular(12),
                     border: Border.all(
-                      color: captured != null ? AppColors.primaryGreen : AppColors.primaryGreen.withOpacity(0.4),
-                      width: captured != null ? 2 : 1.5,
+                      color: captured != null
+                          ? AppColors.primaryGreen
+                          : AppColors.primaryGreen
+                          .withOpacity(0.4),
+                      width:
+                      captured != null ? 2 : 1.5,
                     ),
                   ),
                   child: capturing
-                      ? const Center(child: CircularProgressIndicator(strokeWidth: 2, color: AppColors.primaryGreen))
+                      ? const Center(
+                    child:
+                    CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color:
+                      AppColors.primaryGreen,
+                    ),
+                  )
                       : captured != null
                       ? ClipRRect(
-                    borderRadius: BorderRadius.circular(10.5),
-                    child: Image.memory(captured.bytes, fit: BoxFit.cover),
+                    borderRadius:
+                    BorderRadius.circular(
+                        10.5),
+                    child: Image.memory(
+                      captured.bytes,
+                      fit: BoxFit.cover,
+                    ),
                   )
-                      : const Icon(Icons.camera_alt, color: AppColors.primaryGreen, size: 24),
+                      : const Icon(
+                    Icons.camera_alt,
+                    color:
+                    AppColors.primaryGreen,
+                    size: 24,
+                  ),
                 ),
               ),
             ],
@@ -1186,46 +1326,70 @@ class _CustomerGoatsProgressReportScreenState
           const Divider(height: 1),
           const SizedBox(height: 10),
           Row(
-            crossAxisAlignment: CrossAxisAlignment.center,
+            crossAxisAlignment:
+            CrossAxisAlignment.center,
             children: [
               Expanded(
                 flex: 4,
                 child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+                  crossAxisAlignment:
+                  CrossAxisAlignment.start,
                   children: [
                     Text(
                       'Last weight',
-                      style: AppTheme.body(size: 10, color: AppColors.textMuted),
+                      style: AppTheme.body(
+                        size: 10,
+                        color: AppColors.textMuted,
+                      ),
                     ),
                     const SizedBox(height: 2),
                     Text(
                       previous?.weight != null
                           ? '${previous!.weight!.toStringAsFixed(1)} kg'
                           : 'Not recorded',
-                      style: AppTheme.heading(size: 13),
+                      style:
+                      AppTheme.heading(size: 13),
                     ),
                   ],
                 ),
               ),
               const SizedBox(width: 10),
-              Icon(Icons.arrow_forward, size: 16, color: AppColors.textMuted),
+              Icon(
+                Icons.arrow_forward,
+                size: 16,
+                color: AppColors.textMuted,
+              ),
               const SizedBox(width: 10),
               Expanded(
                 flex: 5,
                 child: TextField(
                   controller: weightController,
-                  keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                  keyboardType:
+                  const TextInputType.numberWithOptions(
+                    decimal: true,
+                  ),
                   onChanged: (_) => setState(() {}),
                   style: AppTheme.heading(size: 13),
                   decoration: InputDecoration(
                     isDense: true,
                     labelText: 'New weight (kg)',
-                    labelStyle: AppTheme.body(size: 11, color: AppColors.textMuted),
-                    contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(8),
+                    labelStyle: AppTheme.body(
+                      size: 11,
+                      color: AppColors.textMuted,
                     ),
-                    prefixIcon: const Icon(Icons.monitor_weight_outlined, size: 18),
+                    contentPadding:
+                    const EdgeInsets.symmetric(
+                      horizontal: 10,
+                      vertical: 10,
+                    ),
+                    border: OutlineInputBorder(
+                      borderRadius:
+                      BorderRadius.circular(8),
+                    ),
+                    prefixIcon: const Icon(
+                      Icons.monitor_weight_outlined,
+                      size: 18,
+                    ),
                   ),
                 ),
               ),
@@ -1235,6 +1399,10 @@ class _CustomerGoatsProgressReportScreenState
       ),
     );
   }
+
+  // =====================================================================
+  // BILLING CARD
+  // =====================================================================
 
   String _currency(double value) {
     return NumberFormat.currency(
@@ -1244,344 +1412,464 @@ class _CustomerGoatsProgressReportScreenState
     ).format(value);
   }
 
-  // ------------------------------------------------------------------
-  // BILLING CARD — old pending amount + this month's Palai amount
-  // ------------------------------------------------------------------
-
   Widget _buildBillingCard() {
     final existing = _existingMonthlyBill;
-    final now = DateTime.now();
-    final monthLabel = DateFormat('MMMM yyyy').format(now);
+    final monthLabel =
+    DateFormat('MMMM yyyy').format(DateTime.now());
 
     return Container(
-      margin: const EdgeInsets.only(top: 4, bottom: 10),
+      margin:
+      const EdgeInsets.only(top: 4, bottom: 10),
       decoration: AppTheme.card(radius: 14),
       padding: const EdgeInsets.all(14),
       child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+        crossAxisAlignment:
+        CrossAxisAlignment.start,
         children: [
           Row(
             children: [
-              const Icon(Icons.receipt_long_outlined, color: AppColors.primaryGreen, size: 20),
+              const Icon(
+                Icons.receipt_long_outlined,
+                color: AppColors.primaryGreen,
+                size: 20,
+              ),
               const SizedBox(width: 8),
               Expanded(
-                child: Text('Monthly Billing — $monthLabel', style: AppTheme.heading(size: 14)),
+                child: Text(
+                  'Monthly Billing — $monthLabel',
+                  style: AppTheme.heading(size: 14),
+                ),
               ),
               if (existing == null)
                 IconButton(
-                  tooltip: 'Re-fetch live Outstanding & Advance',
+                  tooltip:
+                  'Re-fetch live Outstanding & Advance',
                   icon: _loadingBilling
                       ? const SizedBox(
                     width: 16,
                     height: 16,
-                    child: CircularProgressIndicator(strokeWidth: 2),
+                    child:
+                    CircularProgressIndicator(
+                      strokeWidth: 2,
+                    ),
                   )
-                      : const Icon(Icons.refresh, size: 18, color: AppColors.textMuted),
-                  onPressed: _loadingBilling ? null : _loadBillingInfo,
+                      : const Icon(
+                    Icons.refresh,
+                    size: 18,
+                    color: AppColors.textMuted,
+                  ),
+                  onPressed:
+                  _loadingBilling
+                      ? null
+                      : _loadBillingInfo,
                 ),
             ],
           ),
           const SizedBox(height: 4),
           Text(
             existing != null
-                ? 'A bill for $monthLabel was already generated for this customer. Its saved amounts are shown below exactly as recorded — generating this report again will NOT create a duplicate bill or change these numbers.'
-                : 'Set each goat\'s Monthly Palai Amount below, then Old Pending Payment and Current Advance. Nothing here is combined for you — you always see exactly what each figure is.',
-            style: AppTheme.body(size: 11, color: AppColors.textMuted),
-          ),
-          if (existing == null) ...[
-            const SizedBox(height: 10),
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-              decoration: BoxDecoration(
-                color: AppColors.warning.withOpacity(0.12),
-                borderRadius: BorderRadius.circular(8),
-                border: Border.all(color: AppColors.warning.withOpacity(0.4)),
-              ),
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Icon(Icons.info_outline, size: 16, color: AppColors.warning),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      'Current Month Calculation Only — previous monthly payments and historical transactions are not included in this calculation.',
-                      style: AppTheme.body(size: 10.5, color: AppColors.textDark),
-                    ),
-                  ),
-                ],
-              ),
+                ? 'The current-month bill is already generated. Its saved goat amounts are shown below. Missing active goats were automatically added to this same bill.'
+                : 'Set each goat\'s Monthly Palai Amount below, then Old Pending Payment and Current Advance.',
+            style: AppTheme.body(
+              size: 11,
+              color: AppColors.textMuted,
             ),
-          ],
+          ),
           const SizedBox(height: 14),
-
           if (_loadingBilling)
             const Center(
               child: Padding(
-                padding: EdgeInsets.symmetric(vertical: 12),
-                child: CircularProgressIndicator(strokeWidth: 2, color: AppColors.primaryGreen),
+                padding:
+                EdgeInsets.symmetric(vertical: 12),
+                child:
+                CircularProgressIndicator(
+                  strokeWidth: 2,
+                  color:
+                  AppColors.primaryGreen,
+                ),
               ),
             )
           else if (_billingLoadError != null)
             Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
+              crossAxisAlignment:
+              CrossAxisAlignment.start,
               children: [
-                Text(_billingLoadError!, style: AppTheme.body(size: 11, color: AppColors.error)),
+                Text(
+                  _billingLoadError!,
+                  style: AppTheme.body(
+                    size: 11,
+                    color: AppColors.error,
+                  ),
+                ),
                 const SizedBox(height: 8),
                 OutlinedButton.icon(
                   onPressed: _loadBillingInfo,
-                  icon: const Icon(Icons.refresh, size: 16),
-                  label: const Text('Retry'),
+                  icon: const Icon(
+                    Icons.refresh,
+                    size: 16,
+                  ),
+                  label:
+                  const Text('Retry'),
                 ),
               ],
             )
-          else ...[
-              if (existing != null) ...[
-                // ------------------------------------------------------
-                // EXISTING BILL — the rows below come from THAT bill's
-                // own saved snapshot, taken the moment it was generated.
-                // They are labelled "as billed" rather than "Current"
-                // because they are frozen on purpose and will never
-                // change on their own — a payment or another charge
-                // recorded against the customer AFTER this bill was
-                // generated moves the customer's live pendingAmount
-                // without touching these numbers. The callout below
-                // surfaces that live balance explicitly instead of
-                // silently hiding it, so this screen and Customer
-                // Profile never look like they disagree with no
-                // explanation.
-                // ------------------------------------------------------
-                if (existing.goatBreakdown.isNotEmpty) ...[
-                  for (final line in existing.goatBreakdown)
-                    Padding(
-                      padding: const EdgeInsets.only(bottom: 4),
-                      child: _billingRow(line.label, _currency(line.palaiAmount)),
-                    ),
-                  const Divider(height: 14),
-                ],
-                _billingRow('Current Month Palai', _currency(existing.palaiCharges)),
-                const SizedBox(height: 4),
-                _billingRow('Old Pending Payment (at time of billing)', _currency(existing.previousOutstanding)),
-                const SizedBox(height: 4),
-                _billingRow('Advance Applied (at time of billing)', '- ${_currency(existing.advanceApplied)}'),
-                const Divider(height: 20),
-                _billingRow('Total Pending Payment (as billed)', _currency(existing.totalDue), bold: true),
-                if (existing.amountPaid > 0) ...[
-                  const SizedBox(height: 4),
-                  _billingRow('Paid So Far', _currency(existing.amountPaid)),
-                ],
-                const SizedBox(height: 8),
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    Text(
-                      'Remaining On This Bill',
-                      style: AppTheme.body(size: 12, color: AppColors.textMuted),
-                    ),
-                    Row(
-                      children: [
-                        Icon(
-                          existing.remainingAmount <= 0
-                              ? Icons.check_circle
-                              : Icons.error_outline,
-                          size: 14,
-                          color: existing.remainingAmount <= 0
-                              ? AppColors.success
-                              : AppColors.warning,
-                        ),
-                        const SizedBox(width: 4),
-                        Text(
-                          existing.remainingAmount <= 0
-                              ? 'PAID'
-                              : _currency(existing.remainingAmount),
-                          style: AppTheme.heading(
-                            size: 13,
-                            color: existing.remainingAmount <= 0
-                                ? AppColors.success
-                                : AppColors.warning,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ],
-                ),
-                // ------------------------------------------------------
-                // This compares against the BILL'S OWN remainingAmount,
-                // not totalDue — a bill that's since been paid off
-                // correctly shows remainingAmount 0 above, and should
-                // NOT trigger this callout just because the original
-                // totalDue no longer matches. This only fires when the
-                // customer's live balance and this specific bill's own
-                // remaining balance genuinely disagree (a payment made
-                // outside this bill, another charge elsewhere, or
-                // leftover pre-fix data).
-                // ------------------------------------------------------
-                if ((_currentOutstanding - existing.remainingAmount).abs() > 0.5) ...[
-                  const SizedBox(height: 12),
-                  Container(
-                    width: double.infinity,
-                    padding: const EdgeInsets.all(10),
-                    decoration: BoxDecoration(
-                      color: AppColors.warning.withOpacity(0.12),
-                      borderRadius: BorderRadius.circular(8),
-                      border: Border.all(color: AppColors.warning.withOpacity(0.4)),
-                    ),
-                    child: Row(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        const Icon(Icons.info_outline, size: 16, color: AppColors.warning),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          child: Text(
-                            'Customer\'s overall outstanding today: ${_currency(_currentOutstanding)}, '
-                                'which doesn\'t match what\'s left on this specific bill '
-                                '(${_currency(existing.remainingAmount)}). This usually means another '
-                                'charge or payment was recorded outside this bill. Check Customer '
-                                'Profile for the full picture, or tap "Sync with Monthly Bills" there.',
-                            style: AppTheme.body(size: 10.5, color: AppColors.textDark),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
-                if (existing.palaiCharges <= 0) ...[
-                  const SizedBox(height: 12),
-                  Container(
-                    width: double.infinity,
-                    padding: const EdgeInsets.all(10),
-                    decoration: BoxDecoration(
-                      color: AppColors.warning.withOpacity(0.12),
-                      borderRadius: BorderRadius.circular(8),
-                      border: Border.all(color: AppColors.warning.withOpacity(0.4)),
-                    ),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Row(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            const Icon(Icons.warning_amber_rounded, size: 16, color: AppColors.warning),
-                            const SizedBox(width: 8),
-                            Expanded(
-                              child: Text(
-                                'This month\'s bill shows ₹0 Current Month Palai. Fix it in Monthly Billing before sharing this report.',
-                                style: AppTheme.body(size: 10.5, color: AppColors.textDark),
-                              ),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 8),
-                        SizedBox(
-                          width: double.infinity,
-                          child: OutlinedButton.icon(
-                            onPressed: _openMonthlyBillingToFix,
-                            icon: const Icon(Icons.build_outlined, size: 16),
-                            label: const Text('Fix in Monthly Billing'),
-                            style: OutlinedButton.styleFrom(
-                              foregroundColor: AppColors.warning,
-                              side: const BorderSide(color: AppColors.warning),
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
-              ] else ...[
-                // ------------------------------------------------------
-                // NEW BILL — nothing has been saved to Firestore yet.
-                // Each goat's Monthly Palai Amount, Current Outstanding,
-                // and Current Advance are the editable numbers. They are
-                // shown and summed SEPARATELY — never pre-combined —
-                // right up until the moment the report is generated.
-                // ------------------------------------------------------
-                _buildGoatWisePalaiEntry(),
-                const SizedBox(height: 14),
-                _billingRow('Current Month Palai', _currency(_palaiChargesTotal), bold: true),
-                const SizedBox(height: 14),
-                _billingField(
-                  controller: _outstandingController,
-                  label: 'Old Pending Payment',
-                  icon: Icons.account_balance_wallet_outlined,
-                ),
-                const SizedBox(height: 10),
-                _billingField(
-                  controller: _advanceController,
-                  label: 'Current Advance',
-                  icon: Icons.savings_outlined,
-                ),
-                const Divider(height: 24),
-                _billingRow(
-                  'Total Pending Payment',
-                  _currency(_currentAmountDue),
-                  bold: true,
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  'This will be saved to the customer\'s profile the moment you generate this report.',
-                  style: AppTheme.body(size: 10, color: AppColors.textMuted),
-                ),
-                const SizedBox(height: 10),
-                Center(
-                  child: TextButton.icon(
-                    onPressed: _openMonthlyBillingToFix,
-                    icon: const Icon(Icons.open_in_new, size: 15),
-                    label: const Text('Fill in Monthly Billing instead'),
-                  ),
-                ),
-              ],
-            ],
+          else if (existing != null)
+              ..._existingBillingRows(existing)
+            else
+              _newBillingFields(),
         ],
       ),
     );
   }
 
-  /// Editable, per-goat "Monthly Palai Amount" entry. Each goat gets its
-  /// own card clearly labelled with its ID and reference Palai Price
-  /// (e.g. "GP-11 — Palai Price: ₹2,800"), plus its own editable amount
-  /// textbox. Changing one goat's amount only ever affects that goat's
-  /// row and the overall total — never another goat's amount.
-  Widget _buildGoatWisePalaiEntry() {
-    if (_selectedGoats.isEmpty) return const SizedBox.shrink();
+  List<Widget> _existingBillingRows(
+      MonthlyBill bill,
+      ) {
+    final widgets = <Widget>[];
 
+    for (final line in bill.goatBreakdown) {
+      widgets.add(
+        Padding(
+          padding:
+          const EdgeInsets.only(bottom: 4),
+          child: _billingRow(
+            line.label,
+            _currency(line.palaiAmount),
+          ),
+        ),
+      );
+    }
+
+    if (bill.goatBreakdown.isNotEmpty) {
+      widgets.add(
+        const Divider(height: 14),
+      );
+    }
+
+    widgets.add(
+      _billingRow(
+        'Current Month Palai',
+        _currency(bill.palaiCharges),
+      ),
+    );
+
+    widgets.add(
+      const SizedBox(height: 4),
+    );
+
+    widgets.add(
+      _billingRow(
+        'Old Pending Payment (at time of billing)',
+        _currency(bill.previousOutstanding),
+      ),
+    );
+
+    widgets.add(
+      const SizedBox(height: 4),
+    );
+
+    widgets.add(
+      _billingRow(
+        'Advance Applied (at time of billing)',
+        '- ${_currency(bill.advanceApplied)}',
+      ),
+    );
+
+    widgets.add(
+      const Divider(height: 20),
+    );
+
+    widgets.add(
+      _billingRow(
+        'Total Pending Payment (as billed)',
+        _currency(bill.totalDue),
+        bold: true,
+      ),
+    );
+
+    if (bill.amountPaid > 0) {
+      widgets.add(
+        const SizedBox(height: 4),
+      );
+      widgets.add(
+        _billingRow(
+          'Paid So Far',
+          _currency(bill.amountPaid),
+        ),
+      );
+    }
+
+    widgets.add(
+      const SizedBox(height: 8),
+    );
+
+    widgets.add(
+      Row(
+        mainAxisAlignment:
+        MainAxisAlignment.spaceBetween,
+        children: [
+          Text(
+            'Remaining On This Bill',
+            style: AppTheme.body(
+              size: 12,
+              color: AppColors.textMuted,
+            ),
+          ),
+          Row(
+            children: [
+              Icon(
+                bill.remainingAmount <= 0
+                    ? Icons.check_circle
+                    : Icons.error_outline,
+                size: 14,
+                color: bill.remainingAmount <= 0
+                    ? AppColors.success
+                    : AppColors.warning,
+              ),
+              const SizedBox(width: 4),
+              Text(
+                bill.remainingAmount <= 0
+                    ? 'PAID'
+                    : _currency(
+                  bill.remainingAmount,
+                ),
+                style: AppTheme.heading(
+                  size: 13,
+                  color: bill.remainingAmount <= 0
+                      ? AppColors.success
+                      : AppColors.warning,
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+
+    if ((_currentOutstanding -
+        bill.remainingAmount)
+        .abs() >
+        0.5) {
+      widgets.add(
+        const SizedBox(height: 12),
+      );
+
+      widgets.add(
+        Container(
+          width: double.infinity,
+          padding: const EdgeInsets.all(10),
+          decoration: BoxDecoration(
+            color:
+            AppColors.warning.withOpacity(0.12),
+            borderRadius:
+            BorderRadius.circular(8),
+            border: Border.all(
+              color:
+              AppColors.warning.withOpacity(0.4),
+            ),
+          ),
+          child: Row(
+            crossAxisAlignment:
+            CrossAxisAlignment.start,
+            children: [
+              const Icon(
+                Icons.info_outline,
+                size: 16,
+                color: AppColors.warning,
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  'Customer\'s overall outstanding today: '
+                      '${_currency(_currentOutstanding)}, '
+                      'which doesn\'t match what\'s left on this specific bill '
+                      '(${_currency(bill.remainingAmount)}).',
+                  style: AppTheme.body(
+                    size: 10.5,
+                    color: AppColors.textDark,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    if (bill.palaiCharges <= 0) {
+      widgets.add(
+        const SizedBox(height: 12),
+      );
+
+      widgets.add(
+        Container(
+          width: double.infinity,
+          padding: const EdgeInsets.all(10),
+          decoration: BoxDecoration(
+            color:
+            AppColors.warning.withOpacity(0.12),
+            borderRadius:
+            BorderRadius.circular(8),
+            border: Border.all(
+              color:
+              AppColors.warning.withOpacity(0.4),
+            ),
+          ),
+          child: Column(
+            crossAxisAlignment:
+            CrossAxisAlignment.start,
+            children: [
+              Row(
+                crossAxisAlignment:
+                CrossAxisAlignment.start,
+                children: [
+                  const Icon(
+                    Icons.warning_amber_rounded,
+                    size: 16,
+                    color: AppColors.warning,
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      'This month\'s bill shows ₹0 Current Month Palai. Fix it in Monthly Billing before sharing this report.',
+                      style: AppTheme.body(
+                        size: 10.5,
+                        color: AppColors.textDark,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              SizedBox(
+                width: double.infinity,
+                child: OutlinedButton.icon(
+                  onPressed:
+                  _openMonthlyBillingToFix,
+                  icon: const Icon(
+                    Icons.build_outlined,
+                    size: 16,
+                  ),
+                  label: const Text(
+                    'Fix in Monthly Billing',
+                  ),
+                  style:
+                  OutlinedButton.styleFrom(
+                    foregroundColor:
+                    AppColors.warning,
+                    side: const BorderSide(
+                      color: AppColors.warning,
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    return widgets;
+  }
+
+  Widget _newBillingFields() {
     return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
+      crossAxisAlignment:
+      CrossAxisAlignment.start,
       children: [
-        Text('Monthly Palai Amount (per goat)', style: AppTheme.body(size: 11, color: AppColors.textMuted)),
+        Text(
+          'Monthly Palai Amount (per goat)',
+          style: AppTheme.body(
+            size: 11,
+            color: AppColors.textMuted,
+          ),
+        ),
         const SizedBox(height: 8),
         for (final goat in _selectedGoats) ...[
           _goatPalaiCard(goat),
           const SizedBox(height: 8),
         ],
+        const SizedBox(height: 6),
+        _billingRow(
+          'Current Month Palai',
+          _currency(_palaiChargesTotal),
+          bold: true,
+        ),
+        const SizedBox(height: 14),
+        _billingField(
+          controller: _outstandingController,
+          label: 'Old Pending Payment',
+          icon:
+          Icons.account_balance_wallet_outlined,
+        ),
+        const SizedBox(height: 10),
+        _billingField(
+          controller: _advanceController,
+          label: 'Current Advance',
+          icon: Icons.savings_outlined,
+        ),
+        const Divider(height: 24),
+        _billingRow(
+          'Total Pending Payment',
+          _currency(_currentAmountDue),
+          bold: true,
+        ),
+        const SizedBox(height: 4),
+        Text(
+          'This will be saved to the customer\'s profile the moment you generate this report.',
+          style: AppTheme.body(
+            size: 10,
+            color: AppColors.textMuted,
+          ),
+        ),
+        const SizedBox(height: 10),
+        Center(
+          child: TextButton.icon(
+            onPressed:
+            _openMonthlyBillingToFix,
+            icon: const Icon(
+              Icons.open_in_new,
+              size: 15,
+            ),
+            label: const Text(
+              'Fill in Monthly Billing instead',
+            ),
+          ),
+        ),
       ],
     );
   }
 
   Widget _goatPalaiCard(PalaiGoat goat) {
-    final goatId = goat.goatCode.trim().isNotEmpty
-        ? goat.goatCode
-        : (goat.tagNumber.trim().isNotEmpty ? goat.tagNumber : goat.id);
-    final label = goat.name.trim().isNotEmpty ? goat.name : goatId;
     final controller = _palaiControllerFor(goat);
 
     return Container(
       padding: const EdgeInsets.all(10),
       decoration: BoxDecoration(
-        color: AppColors.lightGreen.withOpacity(0.5),
-        borderRadius: BorderRadius.circular(10),
+        color:
+        AppColors.lightGreen.withOpacity(0.5),
+        borderRadius:
+        BorderRadius.circular(10),
       ),
       child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+        crossAxisAlignment:
+        CrossAxisAlignment.start,
         children: [
-          // "GP-11 — Palai Price: ₹2,800"
           Text.rich(
             TextSpan(
               children: [
-                TextSpan(text: label, style: AppTheme.heading(size: 13)),
                 TextSpan(
-                  text: '  •  Palai Price: ${_currency(goat.pricing)}',
-                  style: AppTheme.body(size: 11, color: AppColors.textMuted),
+                  text: _goatLabel(goat),
+                  style:
+                  AppTheme.heading(size: 13),
+                ),
+                TextSpan(
+                  text:
+                  '  •  Palai Price: ${_currency(goat.pricing)}',
+                  style: AppTheme.body(
+                    size: 11,
+                    color: AppColors.textMuted,
+                  ),
                 ),
               ],
             ),
@@ -1589,16 +1877,30 @@ class _CustomerGoatsProgressReportScreenState
           const SizedBox(height: 8),
           TextField(
             controller: controller,
-            keyboardType: const TextInputType.numberWithOptions(decimal: true),
+            keyboardType:
+            const TextInputType.numberWithOptions(
+              decimal: true,
+            ),
             onChanged: (_) => setState(() {}),
             style: AppTheme.heading(size: 13),
             decoration: InputDecoration(
               isDense: true,
-              labelText: 'Monthly Palai Amount',
-              labelStyle: AppTheme.body(size: 11, color: AppColors.textMuted),
+              labelText:
+              'Monthly Palai Amount',
+              labelStyle: AppTheme.body(
+                size: 11,
+                color: AppColors.textMuted,
+              ),
               prefixText: '₹ ',
-              contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
-              border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+              contentPadding:
+              const EdgeInsets.symmetric(
+                horizontal: 10,
+                vertical: 10,
+              ),
+              border: OutlineInputBorder(
+                borderRadius:
+                BorderRadius.circular(8),
+              ),
             ),
           ),
         ],
@@ -1606,19 +1908,31 @@ class _CustomerGoatsProgressReportScreenState
     );
   }
 
-  Widget _billingRow(String label, String value, {bool bold = false}) {
+  Widget _billingRow(
+      String label,
+      String value, {
+        bool bold = false,
+      }) {
     return Row(
       children: [
         Expanded(
           child: Text(
             label,
-            style: bold ? AppTheme.heading(size: 13) : AppTheme.body(size: 12, color: AppColors.textMuted),
+            style: bold
+                ? AppTheme.heading(size: 13)
+                : AppTheme.body(
+              size: 12,
+              color: AppColors.textMuted,
+            ),
           ),
         ),
         Text(
           value,
           style: bold
-              ? AppTheme.heading(size: 14).copyWith(color: AppColors.primaryGreen)
+              ? AppTheme.heading(
+            size: 14,
+            color: AppColors.primaryGreen,
+          )
               : AppTheme.body(size: 12),
         ),
       ],
@@ -1632,25 +1946,45 @@ class _CustomerGoatsProgressReportScreenState
   }) {
     return TextField(
       controller: controller,
-      keyboardType: const TextInputType.numberWithOptions(decimal: true),
+      keyboardType:
+      const TextInputType.numberWithOptions(
+        decimal: true,
+      ),
       onChanged: (_) => setState(() {}),
       decoration: InputDecoration(
         isDense: true,
         labelText: label,
         prefixIcon: Icon(icon, size: 18),
         prefixText: '₹ ',
-        border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
-        contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(8),
+        ),
+        contentPadding:
+        const EdgeInsets.symmetric(
+          horizontal: 10,
+          vertical: 10,
+        ),
       ),
     );
   }
 
+  // =====================================================================
+  // BOTTOM BAR / NAVIGATION
+  // =====================================================================
+
   Widget _buildCaptureBottomBar() {
     return Container(
-      padding: const EdgeInsets.fromLTRB(16, 10, 16, 16),
+      padding:
+      const EdgeInsets.fromLTRB(16, 10, 16, 16),
       decoration: BoxDecoration(
         color: Colors.white,
-        boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 8, offset: const Offset(0, -2))],
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.05),
+            blurRadius: 8,
+            offset: const Offset(0, -2),
+          ),
+        ],
       ),
       child: SafeArea(
         top: false,
@@ -1658,38 +1992,127 @@ class _CustomerGoatsProgressReportScreenState
           children: [
             Expanded(
               child: OutlinedButton.icon(
-                onPressed: (_generating || !_readyToGenerate) ? null : () => _generate(share: false),
-                icon: const Icon(Icons.visibility_outlined),
+                onPressed:
+                (_generating ||
+                    !_readyToGenerate)
+                    ? null
+                    : () => _generate(
+                  share: false,
+                ),
+                icon: const Icon(
+                  Icons.visibility_outlined,
+                ),
                 label: const Text('Preview'),
-                style: OutlinedButton.styleFrom(
-                  padding: const EdgeInsets.symmetric(vertical: 14),
-                  side: const BorderSide(color: AppColors.primaryGreen),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                style:
+                OutlinedButton.styleFrom(
+                  padding:
+                  const EdgeInsets.symmetric(
+                    vertical: 14,
+                  ),
+                  side: const BorderSide(
+                    color:
+                    AppColors.primaryGreen,
+                  ),
+                  shape:
+                  RoundedRectangleBorder(
+                    borderRadius:
+                    BorderRadius.circular(10),
+                  ),
                 ),
               ),
             ),
             const SizedBox(width: 12),
             Expanded(
               child: ElevatedButton.icon(
-                onPressed: (_generating || !_readyToGenerate) ? null : () => _generate(share: true),
+                onPressed:
+                (_generating ||
+                    !_readyToGenerate)
+                    ? null
+                    : () => _generate(
+                  share: true,
+                ),
                 icon: _generating
                     ? const SizedBox(
                   width: 18,
                   height: 18,
-                  child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                  child:
+                  CircularProgressIndicator(
+                    strokeWidth: 2,
+                    color: Colors.white,
+                  ),
                 )
-                    : const Icon(Icons.share_outlined),
-                label: Text(_generating ? 'Generating...' : 'Share Report'),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: AppColors.primaryGreen,
-                  foregroundColor: Colors.white,
-                  padding: const EdgeInsets.symmetric(vertical: 14),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                    : const Icon(
+                  Icons.share_outlined,
+                ),
+                label: Text(
+                  _generating
+                      ? 'Generating...'
+                      : 'Share Report',
+                ),
+                style:
+                ElevatedButton.styleFrom(
+                  backgroundColor:
+                  AppColors.primaryGreen,
+                  foregroundColor:
+                  Colors.white,
+                  padding:
+                  const EdgeInsets.symmetric(
+                    vertical: 14,
+                  ),
+                  shape:
+                  RoundedRectangleBorder(
+                    borderRadius:
+                    BorderRadius.circular(10),
+                  ),
                 ),
               ),
             ),
           ],
         ),
+      ),
+    );
+  }
+
+  void _backToSelecting() {
+    setState(() {
+      _phase = _Phase.selecting;
+
+      _previousByGoatId.clear();
+      _capturedByGoatId.clear();
+
+      for (final controller
+      in _weightControllers.values) {
+        controller.dispose();
+      }
+      _weightControllers.clear();
+
+      for (final controller
+      in _palaiControllers.values) {
+        controller.dispose();
+      }
+      _palaiControllers.clear();
+
+      _existingMonthlyBill = null;
+      _billingLoadError = null;
+      _currentOutstanding = 0;
+      _currentAdvanceAvailable = 0;
+
+      _outstandingController.clear();
+      _advanceController.clear();
+    });
+  }
+
+  void _showSnack(
+      String message, {
+        bool isError = false,
+      }) {
+    if (!mounted) return;
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        backgroundColor:
+        isError ? AppColors.error : null,
       ),
     );
   }

@@ -42,6 +42,7 @@ class _CustomerProfileScreenState extends State<CustomerProfileScreen> {
 
   bool _loadingCustomer = false;
   bool _syncingOutstanding = false;
+  bool _showPreviousGoats = false;
 
   StreamSubscription<DocumentSnapshot<Map<String, dynamic>>>? _farmSub;
 
@@ -105,6 +106,22 @@ class _CustomerProfileScreenState extends State<CustomerProfileScreen> {
           customerId: _customer.id,
           initialSelectedGoats: const [],
           allowSelection: true,
+        ),
+      ),
+    );
+
+    if (!mounted) return;
+
+    await _refreshCustomer();
+  }
+
+  Future<void> _checkoutGoat(PalaiGoat goat) async {
+    await Navigator.of(context).push(
+      fastRoute(
+        MultiGoatCheckoutScreen(
+          customerId: _customer.id,
+          initialSelectedGoats: [goat],
+          allowSelection: false,
         ),
       ),
     );
@@ -398,57 +415,35 @@ class _CustomerProfileScreenState extends State<CustomerProfileScreen> {
                 const SizedBox(height: 16),
 
                 // ============================================================
-                // CHECKOUT
-                // ============================================================
-
-                _buildCheckoutButton(),
-
-                const SizedBox(height: 24),
-
-                // ============================================================
-                // GOAT LIST — NOW BEFORE PAYMENT HISTORY
+                // GOAT LIST — CURRENT / PREVIOUS
                 // ============================================================
 
                 _buildSectionHeader(
                   title: 'Goats',
                   icon: GoatIcons.paw,
-                  trailing: TextButton.icon(
-                    onPressed: _openRegisterGoat,
-                    icon: const Icon(
-                      Icons.add,
-                      size: 18,
-                    ),
-                    label: const Text('Add Goat'),
-                    style: TextButton.styleFrom(
-                      foregroundColor: AppColors.primaryGreen,
-                    ),
-                  ),
                 ),
 
                 const SizedBox(height: 10),
 
                 if (!goatSnapshot.hasData)
                   const _GoatListSkeleton()
-                else if (goats.isEmpty)
-                  _emptyGoatsState()
                 else ...[
-                    _buildGoatStats(
-                      goats.length,
-                      activeGoats,
+                  _buildGoatViewSlider(
+                    currentCount: activeGoats,
+                    previousCount: goats.length - activeGoats,
+                  ),
+
+                  const SizedBox(height: 12),
+
+                  if (!_showPreviousGoats)
+                    _buildCurrentGoatsSection(
+                      goats.where((goat) => !goat.isCheckedOut).toList(),
+                    )
+                  else
+                    _buildPreviousGoatsSection(
+                      goats.where((goat) => goat.isCheckedOut).toList(),
                     ),
-
-                    const SizedBox(height: 10),
-
-                    // Keep goat cards light and simple.
-                    // Images are decoded at a small cache width.
-                    for (final goat in goats)
-                      Padding(
-                        padding: const EdgeInsets.only(
-                          bottom: 9,
-                        ),
-                        child: _goatHistoryCard(goat),
-                      ),
-                  ],
+                ],
 
                 const SizedBox(height: 22),
 
@@ -983,34 +978,284 @@ class _CustomerProfileScreenState extends State<CustomerProfileScreen> {
   }
 
   // ===========================================================================
-  // CHECKOUT
+  // GOAT VIEW SWITCHER
   // ===========================================================================
 
-  Widget _buildCheckoutButton() {
-    return SizedBox(
+  Widget _buildGoatViewSlider({
+    required int currentCount,
+    required int previousCount,
+  }) {
+    return Container(
       width: double.infinity,
-      height: 52,
-      child: ElevatedButton.icon(
-        onPressed: _openMultiGoatCheckout,
-        icon: const Icon(
-          Icons.logout_rounded,
-          size: 20,
+      padding: const EdgeInsets.all(4),
+      decoration: BoxDecoration(
+        color: AppColors.lightGreen,
+        borderRadius: BorderRadius.circular(13),
+        border: Border.all(
+          color: AppColors.primaryGreen.withOpacity(0.12),
         ),
-        label: const Text(
-          'CHECK OUT GOAT(S)',
-          style: TextStyle(
-            fontWeight: FontWeight.w700,
-            letterSpacing: 0.3,
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: _goatViewTab(
+              label: 'Current Goats',
+              count: currentCount,
+              selected: !_showPreviousGoats,
+              icon: Icons.login_rounded,
+              onTap: () {
+                if (_showPreviousGoats) {
+                  setState(() => _showPreviousGoats = false);
+                }
+              },
+            ),
           ),
-        ),
-        style: ElevatedButton.styleFrom(
-          backgroundColor: AppColors.primaryGreen,
-          foregroundColor: Colors.white,
-          elevation: 0,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(14),
+          Expanded(
+            child: _goatViewTab(
+              label: 'Previous Goats',
+              count: previousCount,
+              selected: _showPreviousGoats,
+              icon: Icons.history_rounded,
+              onTap: () {
+                if (!_showPreviousGoats) {
+                  setState(() => _showPreviousGoats = true);
+                }
+              },
+            ),
           ),
+        ],
+      ),
+    );
+  }
+
+  Widget _goatViewTab({
+    required String label,
+    required int count,
+    required bool selected,
+    required IconData icon,
+    required VoidCallback onTap,
+  }) {
+    return GestureDetector(
+      onTap: onTap,
+      behavior: HitTestBehavior.opaque,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 180),
+        padding: const EdgeInsets.symmetric(
+          horizontal: 10,
+          vertical: 10,
         ),
+        decoration: BoxDecoration(
+          color: selected ? Colors.white : Colors.transparent,
+          borderRadius: BorderRadius.circular(10),
+          boxShadow: selected
+              ? [
+            BoxShadow(
+              color: Colors.black.withOpacity(0.06),
+              blurRadius: 5,
+              offset: const Offset(0, 2),
+            ),
+          ]
+              : null,
+        ),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(
+              icon,
+              size: 16,
+              color: selected
+                  ? AppColors.primaryGreen
+                  : AppColors.textGrey,
+            ),
+            const SizedBox(width: 6),
+            Flexible(
+              child: Text(
+                '$label ($count)',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                textAlign: TextAlign.center,
+                style: AppTheme.body(
+                  size: 10,
+                  color: selected
+                      ? AppColors.darkGreen
+                      : AppColors.textGrey,
+                  weight: selected
+                      ? FontWeight.w700
+                      : FontWeight.w600,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildCurrentGoatsSection(List<PalaiGoat> currentGoats) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Expanded(
+              child: Text(
+                currentGoats.isEmpty
+                    ? 'No current goats'
+                    : '${currentGoats.length} Currently Boarded',
+                style: AppTheme.heading(size: 13),
+              ),
+            ),
+            TextButton.icon(
+              onPressed: _openRegisterGoat,
+              icon: const Icon(Icons.add, size: 17),
+              label: const Text('Add Goat'),
+              style: TextButton.styleFrom(
+                foregroundColor: AppColors.primaryGreen,
+                padding: const EdgeInsets.symmetric(horizontal: 5),
+                minimumSize: Size.zero,
+                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 8),
+        if (currentGoats.isEmpty)
+          _emptyCurrentGoatsState()
+        else
+          for (final goat in currentGoats)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 9),
+              child: _goatHistoryCard(
+                goat,
+                showCheckout: true,
+              ),
+            ),
+      ],
+    );
+  }
+
+  Widget _buildPreviousGoatsSection(List<PalaiGoat> previousGoats) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Expanded(
+              child: Text(
+                previousGoats.isEmpty
+                    ? 'No previous goats'
+                    : '${previousGoats.length} Previous Goats',
+                style: AppTheme.heading(size: 13),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 8),
+        if (previousGoats.isEmpty)
+          _emptyPreviousGoatsState()
+        else
+          for (final goat in previousGoats)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 9),
+              child: _goatHistoryCard(goat),
+            ),
+      ],
+    );
+  }
+
+  Widget _emptyCurrentGoatsState() {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(
+        vertical: 22,
+        horizontal: 18,
+      ),
+      decoration: AppTheme.card(radius: 16),
+      child: Column(
+        children: [
+          Container(
+            width: 54,
+            height: 54,
+            decoration: const BoxDecoration(
+              color: AppColors.lightGreen,
+              shape: BoxShape.circle,
+            ),
+            child: const Icon(
+              GoatIcons.paw,
+              size: 25,
+              color: AppColors.primaryGreen,
+            ),
+          ),
+          const SizedBox(height: 9),
+          Text(
+            'No current goats',
+            style: AppTheme.heading(size: 13),
+          ),
+          const SizedBox(height: 3),
+          Text(
+            'Check in a goat to see it here.',
+            textAlign: TextAlign.center,
+            style: AppTheme.body(
+              size: 9,
+              color: AppColors.textGrey,
+            ),
+          ),
+          const SizedBox(height: 11),
+          OutlinedButton.icon(
+            onPressed: _openRegisterGoat,
+            icon: const Icon(Icons.add, size: 16),
+            label: const Text('Check In Goat'),
+            style: OutlinedButton.styleFrom(
+              foregroundColor: AppColors.darkGreen,
+              side: const BorderSide(color: AppColors.primaryGreen),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(10),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _emptyPreviousGoatsState() {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(
+        vertical: 22,
+        horizontal: 18,
+      ),
+      decoration: AppTheme.card(radius: 16),
+      child: Column(
+        children: [
+          Container(
+            width: 54,
+            height: 54,
+            decoration: const BoxDecoration(
+              color: AppColors.lightGreen,
+              shape: BoxShape.circle,
+            ),
+            child: const Icon(
+              Icons.history_rounded,
+              size: 25,
+              color: AppColors.primaryGreen,
+            ),
+          ),
+          const SizedBox(height: 9),
+          Text(
+            'No previous goats',
+            style: AppTheme.heading(size: 13),
+          ),
+          const SizedBox(height: 3),
+          Text(
+            'Checked-out goats will appear here.',
+            textAlign: TextAlign.center,
+            style: AppTheme.body(
+              size: 9,
+              color: AppColors.textGrey,
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -1109,8 +1354,9 @@ class _CustomerProfileScreenState extends State<CustomerProfileScreen> {
   // ===========================================================================
 
   Widget _goatHistoryCard(
-      PalaiGoat goat,
-      ) {
+      PalaiGoat goat, {
+        bool showCheckout = false,
+      }) {
     final healthColor = _healthColor(
       goat.healthStatus,
     );
@@ -1194,37 +1440,72 @@ class _CustomerProfileScreenState extends State<CustomerProfileScreen> {
 
               const SizedBox(width: 8),
 
-              Container(
-                constraints: const BoxConstraints(
-                  maxWidth: 88,
-                ),
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 8,
-                  vertical: 5,
-                ),
-                decoration: BoxDecoration(
-                  color: goat.isCheckedOut
-                      ? AppColors.lightGreen
-                      : healthColor.withOpacity(0.11),
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Text(
-                  goat.isCheckedOut
-                      ? 'Checked Out'
-                      : goat.healthStatus,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: AppTheme.body(
-                    size: 8.5,
-                    color: goat.isCheckedOut
-                        ? AppColors.darkGreen
-                        : healthColor,
-                    weight: FontWeight.w700,
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  Container(
+                    constraints: const BoxConstraints(
+                      maxWidth: 88,
+                    ),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 5,
+                    ),
+                    decoration: BoxDecoration(
+                      color: goat.isCheckedOut
+                          ? AppColors.lightGreen
+                          : healthColor.withOpacity(0.11),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Text(
+                      goat.isCheckedOut
+                          ? 'Checked Out'
+                          : goat.healthStatus,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: AppTheme.body(
+                        size: 8.5,
+                        color: goat.isCheckedOut
+                            ? AppColors.darkGreen
+                            : healthColor,
+                        weight: FontWeight.w700,
+                      ),
+                    ),
                   ),
-                ),
+                  if (showCheckout && !goat.isCheckedOut) ...[
+                    const SizedBox(height: 4),
+                    SizedBox(
+                      height: 27,
+                      child: OutlinedButton(
+                        onPressed: () => _checkoutGoat(goat),
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: AppColors.primaryGreen,
+                          side: BorderSide(
+                            color: AppColors.primaryGreen.withOpacity(0.55),
+                          ),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 8,
+                          ),
+                          minimumSize: Size.zero,
+                          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                        ),
+                        child: const Text(
+                          'Checkout',
+                          style: TextStyle(
+                            fontSize: 9,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ],
               ),
 
-              const SizedBox(width: 2),
+              const SizedBox(width: 3),
 
               const Icon(
                 Icons.chevron_right_rounded,
