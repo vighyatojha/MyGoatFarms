@@ -746,9 +746,17 @@ class MonthlyReportService {
       DateTime monthStart,
       DateTime nextMonthStart,
       ) {
+    // Use the date the goat actually came into the farm (owner-entered
+    // arrival date). checkInDate is only when it was registered in the
+    // app, so it is the fallback for goats with no arrival date saved.
+    // This keeps "was the goat here this month" consistent with the
+    // pro-rated Palai billing start date.
     final checkInDate = _readDate(
-      goatData['checkInDate'],
-    );
+      goatData['farmArrivalDate'],
+    ) ??
+        _readDate(
+          goatData['checkInDate'],
+        );
 
     final checkOutDate = _readDate(
       goatData['checkOutDate'],
@@ -758,7 +766,7 @@ class MonthlyReportService {
       return false;
     }
 
-    // Goat checked in after this month.
+    // Goat arrived after this month.
     if (!checkInDate.isBefore(nextMonthStart)) {
       return false;
     }
