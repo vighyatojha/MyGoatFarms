@@ -996,11 +996,39 @@ class SalesService {
     // 2. Trading-side transaction.
     // -----------------------------------------------------------------
 
+    // The Trading sale's unpaid goat amount becomes part of the same
+    // customer's Customer Palai pending balance.
+    final palaiCustomerRef =
+    _palaiCustomers(farmId).doc(palaiCustomerId);
+
     // Not `late final`: Firestore may re-run the transaction closure
     // on contention, which would assign this more than once.
     String saleId = '';
 
     await _db.runTransaction((transaction) async {
+      // Read the Palai customer before any transaction writes.
+      final palaiCustomerSnap =
+      await transaction.get(palaiCustomerRef);
+
+      if (!palaiCustomerSnap.exists) {
+        throw StateError(
+          'The Customer Palai record could not be found.',
+        );
+      }
+
+      final palaiCustomerData =
+          palaiCustomerSnap.data() ?? <String, dynamic>{};
+
+      final existingPalaiPending =
+          (palaiCustomerData['pendingAmount'] as num?)
+              ?.toDouble() ??
+              0.0;
+
+      final tradingPending =
+      draft.remainingBalancePalai < 0
+          ? 0.0
+          : draft.remainingBalancePalai;
+
       for (final goat in draft.selectedGoats) {
         final snap = await transaction.get(_goats(farmId).doc(goat.id));
 
@@ -1786,6 +1814,17 @@ class SalesService {
 
       final sale = Sale.fromDoc(saleSnap);
 
+      DocumentReference<Map<String, dynamic>>? palaiCustomerRef;
+      DocumentSnapshot<Map<String, dynamic>>? palaiCustomerSnap;
+
+      if (sale.palaiCustomerId != null &&
+          sale.palaiCustomerId!.trim().isNotEmpty) {
+        palaiCustomerRef =
+            _palaiCustomers(farmId).doc(sale.palaiCustomerId!);
+        palaiCustomerSnap =
+        await transaction.get(palaiCustomerRef);
+      }
+
       if (!sale.isDelivered) {
         throw StateError(
           'A balance can only be collected after the goat has been '
@@ -1838,6 +1877,34 @@ class SalesService {
           paid: sale.billAmountPaid + paid,
         ),
       });
+
+      // A balance payment against a Trading sale that was transferred
+      // to Customer Palai also settles the same customer's Palai
+      // pending balance. Never let it go below zero.
+      if (palaiCustomerRef != null &&
+          palaiCustomerSnap != null &&
+          palaiCustomerSnap.exists) {
+        final palaiData =
+            palaiCustomerSnap.data() ?? <String, dynamic>{};
+
+        final currentPalaiPending =
+            (palaiData['pendingAmount'] as num?)
+                ?.toDouble() ??
+                0.0;
+
+        final updatedPalaiPending =
+        (currentPalaiPending - paid)
+            .clamp(0.0, double.infinity)
+            .toDouble();
+
+        transaction.update(
+          palaiCustomerRef,
+          {
+            'pendingAmount': updatedPalaiPending,
+            'updatedAt': FieldValue.serverTimestamp(),
+          },
+        );
+      }
 
       if (revenueDelta > 0) {
         final trimmedNote = note.trim();
