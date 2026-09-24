@@ -339,11 +339,14 @@ class _GoatStockListScreenState
     // An Available stock goat opens its profile — Photos and health
     // records (Vaccination, Hoof Cutting, Hair Trimming, Medicine), kept
     // in step with the farm's Health Reminder Settings. Its full details
-    // are one tap away from there (the info button). Every other status
-    // keeps opening the details screen.
+    // are one tap away from there (the info button). So does a goat on
+    // Wait on Delivery — it is still on the farm, and its profile has the
+    // Complete Delivery button. Every other status keeps opening the
+    // details screen.
     Navigator.of(context).push(
       fastRoute(
-        _hasStatus(goat, Goat.statusAvailable)
+        (_hasStatus(goat, Goat.statusAvailable) ||
+            _hasStatus(goat, Goat.statusWaitOnDelivery))
             ? OwnPalaiGoatProfileScreen(
           farmId: farmId,
           goat: goat,

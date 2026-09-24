@@ -43,7 +43,7 @@ class BookingDeliverySale {
 
   DateTime get holdingStart => sale.holdingStart;
 
-  DateTime get bookedAt => sale.createdAt ?? sale.holdingStart;
+  DateTime get bookedAt => sale.saleDate ?? sale.holdingStart;
 
   /// Holding days from [holdingStart] to [deliveryDate], both days
   /// counted — mirrors Sale.holdingDaysBetween/

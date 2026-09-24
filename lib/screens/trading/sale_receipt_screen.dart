@@ -359,7 +359,7 @@ class _SaleReceiptScreenState extends State<SaleReceiptScreen> {
           Icons.receipt_long_outlined,
           [
             _row('Receipt / Sale ID', sale.id),
-            _row('Sale Date', _date(sale.createdAt)),
+            _row('Sale Date', _date(sale.saleDate)),
             _row('Status', _statusLabel(sale)),
             _row('Delivery Type', _deliveryType(sale)),
           ],

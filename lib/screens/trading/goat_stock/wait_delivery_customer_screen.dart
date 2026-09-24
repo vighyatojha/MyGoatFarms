@@ -12,6 +12,7 @@ import '../../../services/goat_service.dart';
 import '../../../widgets/fast_route.dart';
 import '../../palai/fullscreen_image_viewer.dart';
 import '../../../services/wait_delivery_service.dart';
+import '../own_palai/own_palai_goat_profile_screen.dart';
 
 /// Wait on Delivery — one customer.
 ///
@@ -1343,6 +1344,20 @@ class _WaitDeliveryCustomerScreenState
     );
   }
 
+  /// A waiting goat is still on the farm, so it has the same profile as an
+  /// Own Palai goat — weight, photos and health records — plus a Complete
+  /// Delivery button.
+  void _openProfile(Goat goat) {
+    Navigator.of(context).push(
+      fastRoute(
+        OwnPalaiGoatProfileScreen(
+          farmId: widget.farmId,
+          goat: goat,
+        ),
+      ),
+    );
+  }
+
   Widget _goatRow(Goat goat, bool selected) {
     final controller = _weightControllerFor(goat);
 
@@ -1364,24 +1379,47 @@ class _WaitDeliveryCustomerScreenState
           const SizedBox(width: 9),
 
           Expanded(
-            child: Padding(
-              padding: const EdgeInsets.only(top: 4),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    goat.id,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: AppTheme.heading(size: 13.5),
-                  ),
-                  Text(
-                    '$breed · ${goat.age}',
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: AppTheme.body(size: 10.5),
-                  ),
-                ],
+            child: InkWell(
+              onTap: _delivering ? null : () => _openProfile(goat),
+              borderRadius: BorderRadius.circular(8),
+              child: Padding(
+                padding: const EdgeInsets.only(top: 4, bottom: 2),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      goat.id,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: AppTheme.heading(size: 13.5),
+                    ),
+                    Text(
+                      '$breed · ${goat.age}',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: AppTheme.body(size: 10.5),
+                    ),
+                    const SizedBox(height: 2),
+                    Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          'Weight & health',
+                          style: AppTheme.body(
+                            size: 10.5,
+                            color: AppColors.stockTeal,
+                            weight: FontWeight.w600,
+                          ),
+                        ),
+                        const Icon(
+                          Icons.chevron_right,
+                          size: 14,
+                          color: AppColors.stockTeal,
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
               ),
             ),
           ),

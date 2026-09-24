@@ -9,6 +9,7 @@ import '../../../goat_icons.dart';
 import '../../../models/goat_model.dart';
 import '../../../models/health_reminder_settings_model.dart';
 import '../../../models/purchase_costing.dart';
+import '../../../models/sale_model.dart';
 import '../../../models/trading_goat_health_record.dart';
 import '../../../models/trading_goat_weight_entry.dart';
 import '../../../models/trading_purchase_model.dart';
@@ -16,13 +17,16 @@ import '../../../services/firestore_service.dart';
 import '../../../services/goat_service.dart';
 import '../../../services/health_reminder_scheduler.dart';
 import '../../../services/image_service.dart';
+import '../../../services/sales_service.dart';
 import '../../../services/trading_service.dart';
 import '../../../widgets/fast_route.dart';
 import '../../../widgets/image_source_sheet.dart';
 import '../../../widgets/reminder_cadence_selector.dart';
 import '../../../widgets/reminder_date_selector.dart';
 import '../../palai/fullscreen_image_viewer.dart';
+import '../goat_stock/complete_wait_for_delivery_screen.dart';
 import '../goat_stock/goat_stock_detail_screen.dart';
+import '../sale_receipt_screen.dart';
 
 /// Own Palai goat profile — same tabbed layout as the customer Palai
 /// GoatProfileScreen, but:
@@ -39,6 +43,16 @@ import '../goat_stock/goat_stock_detail_screen.dart';
 /// [FirestoreService.syncOwnPalaiFarmReminders]) and raise notifications
 /// when due. The [tabOverview] / [tabPurchase] / [tabProgress] indexes are
 /// simply not shown there, so a deep link to one of them opens on Photos.
+///
+/// WAIT ON DELIVERY PROFILE — a goat that has been sold on Wait for
+/// Delivery (see [Goat.isWaitOnDelivery]) is still on the farm until the
+/// customer picks it up, so the farm keeps looking after it. It opens this
+/// same screen with every tab, so weight (with a photo) and health records
+/// (Vaccination, Hoof Cutting, Hair Trimming, Medicine) are logged exactly
+/// like an Own Palai goat. It differs in three small ways: the header and
+/// Overview say "Wait on Delivery" instead of "Own Palai", the Overview
+/// gains a Sale card (customer, price, advance), and a Complete Delivery
+/// button sits at the bottom, which opens [CompleteWaitForDeliveryScreen].
 class OwnPalaiGoatProfileScreen extends StatefulWidget {
   final String farmId;
   final Goat goat;
@@ -103,6 +117,13 @@ class _OwnPalaiGoatProfileScreenState extends State<OwnPalaiGoatProfileScreen>
   /// Available stock goat: Photos + health tabs only (see class doc).
   bool get _stock => widget.goat.isAvailable;
 
+  /// Sold on Wait for Delivery and not yet picked up (see class doc).
+  bool get _waiting => widget.goat.isWaitOnDelivery;
+
+  /// The open sale this goat is waiting on — read once, for the Overview
+  /// Sale card. Null for every goat that is not waiting on delivery.
+  Future<Sale?>? _saleFuture;
+
   /// The `OwnPalaiGoatProfileScreen.tab…` indexes that are shown.
   late final List<int> _visibleTabs = _stock
       ? const [
@@ -154,6 +175,11 @@ class _OwnPalaiGoatProfileScreenState extends State<OwnPalaiGoatProfileScreen>
         ? Future.value(null)
         : TradingService.instance.getPurchase(widget.farmId, purchaseId);
 
+    final saleId = (widget.goat.saleId ?? '').trim();
+    _saleFuture = (_waiting && saleId.isNotEmpty)
+        ? SalesService.instance.getSale(widget.farmId, saleId)
+        : Future<Sale?>.value(null);
+
     // Apply the farm's Health Reminder Settings to this goat (Vaccination /
     // Hoof Cutting / Hair Trimming dates). This is what fixes a goat that
     // was already in Own Palai before its schedule existed, or whose farm
@@ -183,8 +209,14 @@ class _OwnPalaiGoatProfileScreenState extends State<OwnPalaiGoatProfileScreen>
   Widget build(BuildContext context) {
     final goat = widget.goat;
 
+    // The Complete Delivery bar is hidden while the keyboard is up (weight
+    // and notes forms), so it never covers the field being typed in.
+    final keyboardOpen = MediaQuery.of(context).viewInsets.bottom > 0;
+
     return Scaffold(
       backgroundColor: AppColors.paleGreen,
+      bottomNavigationBar:
+      (_waiting && !keyboardOpen) ? _buildCompleteDeliveryBar() : null,
       appBar: AppBar(
         backgroundColor: AppColors.paleGreen,
         elevation: 0,
@@ -193,8 +225,9 @@ class _OwnPalaiGoatProfileScreenState extends State<OwnPalaiGoatProfileScreen>
         actions: [
           // A stock profile has no Overview / Purchase tabs, so the goat's
           // full details (breed, colour, purchase & origin) stay one tap
-          // away.
-          if (_stock)
+          // away. A Wait on Delivery goat gets the same button, which is
+          // also the way to its sale receipt.
+          if (_stock || _waiting)
             IconButton(
               tooltip: 'Goat details',
               icon: const Icon(Icons.info_outline_rounded),
@@ -361,6 +394,8 @@ class _OwnPalaiGoatProfileScreenState extends State<OwnPalaiGoatProfileScreen>
                     const SizedBox(width: 6),
                     _stock
                         ? _pill('Available', AppColors.success)
+                        : _waiting
+                        ? _pill('Wait on Delivery', AppColors.info)
                         : _pill('Own Palai', AppColors.stockTeal),
                     const SizedBox(width: 4),
                     Flexible(
@@ -383,6 +418,12 @@ class _OwnPalaiGoatProfileScreenState extends State<OwnPalaiGoatProfileScreen>
                           'Gender', goat.gender.isEmpty ? '—' : goat.gender),
                       if (goat.breed.trim().isNotEmpty)
                         _miniStat('Breed', goat.breed.trim()),
+                    ] else if (_waiting && goat.waitOnDeliveryAt != null) ...[
+                      _miniStat(
+                          'Waiting',
+                          '${DateTime.now().difference(goat.waitOnDeliveryAt!).inDays} days'),
+                      _miniStat('Since',
+                          DateFormat('d MMM').format(goat.waitOnDeliveryAt!)),
                     ] else ...[
                       _miniStat('Days Owned', '$daysOwned'),
                       _miniStat('Bought',
@@ -466,13 +507,153 @@ class _OwnPalaiGoatProfileScreenState extends State<OwnPalaiGoatProfileScreen>
           title: 'Status',
           child: Row(
             children: [
-              const Icon(Icons.circle, size: 10, color: AppColors.success),
+              Icon(Icons.circle,
+                  size: 10,
+                  color: _waiting ? AppColors.info : AppColors.success),
               const SizedBox(width: 8),
-              Text('Active in Own Palai', style: AppTheme.body(size: 12.5)),
+              Text(
+                _waiting
+                    ? 'Wait on Delivery — awaiting pickup'
+                    : 'Active in Own Palai',
+                style: AppTheme.body(size: 12.5),
+              ),
             ],
           ),
         ),
+        if (_waiting) ...[
+          const SizedBox(height: 12),
+          _buildSaleCard(),
+        ],
       ],
+    );
+  }
+
+  // ---------------------------------------------------------------------------
+  // WAIT ON DELIVERY — sale card + Complete Delivery
+  // ---------------------------------------------------------------------------
+
+  /// Who the goat is waiting for and what was agreed. Read-only — the
+  /// money side is handled on the Complete Delivery screen.
+  Widget _buildSaleCard() {
+    return FutureBuilder<Sale?>(
+      future: _saleFuture,
+      builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return const _SectionCard(
+            title: 'Sale',
+            child: _SectionSkeleton(rows: 4),
+          );
+        }
+
+        if (snapshot.hasError) {
+          return _SectionCard(
+            title: 'Sale',
+            child: _errorText('Could not load sale', snapshot.error!),
+          );
+        }
+
+        final sale = snapshot.data;
+
+        if (sale == null) {
+          return _SectionCard(
+            title: 'Sale',
+            child: _emptyMessage(
+              Icons.info_outline,
+              'No linked sale record was found for this goat.',
+            ),
+          );
+        }
+
+        final booked = sale.bookingWeight ?? 0;
+
+        return _SectionCard(
+          title: 'Sale',
+          child: _kvColumn([
+            ('Customer', sale.customerName),
+            if (sale.mobile.trim().isNotEmpty) ('Mobile', sale.mobile),
+            (
+            'Price',
+            sale.isFixedPrice
+                ? '${_money(sale.fixedSalePrice ?? sale.totalSaleAmount)}  (fixed price)'
+                : '₹${(sale.bookingPricePerKg ?? sale.sellingPricePerKg).toStringAsFixed(2)}/kg  (booked rate)',
+            ),
+            (
+            'Advance Paid',
+            _money(sale.bookingAdvanceAmount ?? 0),
+            ),
+            if (booked > 0)
+              ('Weight at Booking', '${booked.toStringAsFixed(1)} kg'),
+          ]),
+        );
+      },
+    );
+  }
+
+  /// Bottom bar of a Wait on Delivery profile: the way on to the existing
+  /// Complete Delivery screen.
+  Widget _buildCompleteDeliveryBar() {
+    return SafeArea(
+      top: false,
+      child: Container(
+        padding: const EdgeInsets.fromLTRB(14, 8, 14, 10),
+        decoration: const BoxDecoration(
+          color: AppColors.paleGreen,
+          border: Border(top: BorderSide(color: AppColors.divider)),
+        ),
+        child: SizedBox(
+          width: double.infinity,
+          height: 48,
+          child: ElevatedButton.icon(
+            onPressed: _openCompleteDelivery,
+            icon: const Icon(Icons.check_circle_outline_rounded, size: 18),
+            label: const Text(
+              'Complete Delivery',
+              style: TextStyle(fontWeight: FontWeight.w700, fontSize: 13),
+            ),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppColors.primaryGreen,
+              foregroundColor: Colors.white,
+              elevation: 0,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// Same hand-off as Goat Stock's details screen: Complete Delivery pops
+  /// `true` once the pickup is saved, and the person lands on the sale
+  /// receipt in place of this profile (the goat is no longer waiting, so
+  /// this profile would be out of date).
+  Future<void> _openCompleteDelivery() async {
+    final completed = await Navigator.of(context).push<bool>(
+      fastRoute(
+        CompleteWaitForDeliveryScreen(
+          farmId: widget.farmId,
+          goat: widget.goat,
+        ),
+      ),
+    );
+
+    if (completed != true || !mounted) return;
+
+    final saleId = (widget.goat.saleId ?? '').trim();
+
+    if (saleId.isEmpty) {
+      Navigator.of(context).pop();
+      return;
+    }
+
+    Navigator.of(context).pushReplacement(
+      fastRoute(
+        SaleReceiptScreen(
+          farmId: widget.farmId,
+          saleId: saleId,
+        ),
+      ),
     );
   }
 

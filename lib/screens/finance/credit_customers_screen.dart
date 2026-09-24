@@ -310,7 +310,7 @@ class _CreditCustomersScreenState extends State<CreditCustomersScreen> {
                       Text(
                         '${credit.saleCount} sale'
                             '${credit.saleCount == 1 ? '' : 's'}'
-                            '${since == null ? '' : ' · since ${DateFormat('dd MMM yyyy').format(since)}'}',
+                            '${since == null ? '' : ' · sold ${DateFormat('dd MMM yyyy').format(since)}'}',
                         style: AppTheme.body(
                           size: 10,
                           color: AppColors.textGrey,

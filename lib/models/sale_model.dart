@@ -342,6 +342,22 @@ class Sale {
 
   bool get isMultiGoat => goatIds.length > 1;
 
+  /// The day the sale was made (the order / booking was taken).
+  ///
+  /// This is the date to show for a sale everywhere a "sale date" is
+  /// wanted — the Receivables list, the receipt, booking lists. It is
+  /// deliberately NOT the delivery day: a Wait for Delivery / Booking
+  /// sale is delivered later, and delivering it must never move its sale
+  /// date to "today". Never falls back to DateTime.now(); null just
+  /// means the date is not known yet (e.g. the server timestamp of a
+  /// just-saved sale has not come back), and callers show nothing.
+  DateTime? get saleDate => createdAt ?? holdingStartDate ?? transferDate;
+
+  /// The day the goat(s) were actually handed over, when that is known
+  /// and different in kind from [saleDate] (Booking / Wait for Delivery
+  /// completed later). Null for a sale that is not delivered yet.
+  DateTime? get deliveredOn => deliveryCompletedAt ?? holdingEndDate;
+
   /// The first day of a Booking's holding: the saved start date, or the
   /// day the sale was created for bookings saved before that date was
   /// stored.

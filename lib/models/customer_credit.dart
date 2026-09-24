@@ -52,7 +52,7 @@ class CustomerCredit {
     DateTime? oldest;
 
     for (final sale in sales) {
-      final date = sale.createdAt;
+      final date = sale.saleDate;
 
       if (date == null) continue;
 
@@ -119,8 +119,8 @@ class CustomerCredit {
     for (final entry in byKey.entries) {
       final list = entry.value
         ..sort((a, b) {
-          final aDate = a.createdAt ?? DateTime.fromMillisecondsSinceEpoch(0);
-          final bDate = b.createdAt ?? DateTime.fromMillisecondsSinceEpoch(0);
+          final aDate = a.saleDate ?? DateTime.fromMillisecondsSinceEpoch(0);
+          final bDate = b.saleDate ?? DateTime.fromMillisecondsSinceEpoch(0);
 
           return aDate.compareTo(bDate);
         });

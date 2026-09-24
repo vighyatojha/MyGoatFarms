@@ -449,11 +449,11 @@ class SaleReceiptPdfService {
           ),
           _infoItem(
             'Date of Sale',
-            sale.createdAt == null
+            sale.saleDate == null
                 ? '-'
                 : DateFormat(
               'dd MMM yyyy',
-            ).format(sale.createdAt!),
+            ).format(sale.saleDate!),
           ),
           _infoItem(
             'No. of Goats',
@@ -1310,7 +1310,7 @@ class SaleReceiptPdfService {
     final date = DateFormat(
       'yyyyMMdd',
     ).format(
-      sale.createdAt ?? DateTime.now(),
+      sale.saleDate ?? DateTime.now(),
     );
 
     final cleaned = id.replaceAll(

@@ -35,7 +35,7 @@ class WaitDeliverySale {
   /// Total weight recorded at booking.
   double get bookedWeight => sale.bookingWeight ?? 0;
 
-  DateTime get bookedAt => sale.createdAt ?? DateTime.now();
+  DateTime get bookedAt => sale.saleDate ?? sale.holdingStart;
 
   /// What the goats are worth at [pickupWeight]: pickup weight x the
   /// booking-time rate, or the agreed fixed price, whatever the weight

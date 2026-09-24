@@ -289,7 +289,17 @@ class _CreditCustomerDetailScreenState
   }
 
   Widget _saleCard(Sale sale) {
-    final date = sale.createdAt;
+    // The SALE date (when the order / booking was taken) — never the
+    // delivery day. The delivery day is shown separately, after it.
+    final date = sale.saleDate;
+    final delivered = sale.deliveredOn;
+
+    final dateParts = <String>[
+      _deliveryLabel(sale),
+      if (date != null) 'Sold ${DateFormat('dd MMM yyyy').format(date)}',
+      if (delivered != null && !sale.isDeliverNow)
+        'Delivered ${DateFormat('dd MMM yyyy').format(delivered)}',
+    ];
 
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
@@ -313,8 +323,7 @@ class _CreditCustomerDetailScreenState
                       ),
                     ),
                     Text(
-                      '${_deliveryLabel(sale)}'
-                          '${date == null ? '' : ' · ${DateFormat('dd MMM yyyy').format(date)}'}',
+                      dateParts.join(' · '),
                       style: AppTheme.body(
                         size: 10.5,
                         color: AppColors.textGrey,
