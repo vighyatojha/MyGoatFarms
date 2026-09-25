@@ -2024,10 +2024,12 @@ class FirestoreService {
   Stream<double> todaysIncomeStream(String farmId) {
     final start = DateTime.now();
     final startOfDay = DateTime(start.year, start.month, start.day);
+    final startOfNextDay = startOfDay.add(const Duration(days: 1));
     return _farms
         .doc(farmId)
         .collection('transactions')
         .where('date', isGreaterThanOrEqualTo: Timestamp.fromDate(startOfDay))
+        .where('date', isLessThan: Timestamp.fromDate(startOfNextDay))
         .snapshots()
         .map((snap) {
       double total = 0;
@@ -4488,11 +4490,18 @@ class FirestoreService {
 
   Future<void> markAllNotificationsRead(String farmId) async {
     final snap = await _notifications(farmId).where('isRead', isEqualTo: false).get().timeout(timeout);
-    final batch = _db.batch();
-    for (final doc in snap.docs) {
-      batch.update(doc.reference, {'isRead': true});
+    // Firestore batches are capped at 500 writes — chunk instead of
+    // putting every unread notification into a single batch, or this
+    // throws once a farm has 500+ unread notifications.
+    const chunkSize = 400;
+    for (var i = 0; i < snap.docs.length; i += chunkSize) {
+      final chunk = snap.docs.skip(i).take(chunkSize);
+      final batch = _db.batch();
+      for (final doc in chunk) {
+        batch.update(doc.reference, {'isRead': true});
+      }
+      await batch.commit().timeout(timeout);
     }
-    await batch.commit().timeout(timeout);
   }
 
   /// Deletes one notification — **owner only**.
@@ -4513,9 +4522,11 @@ class FirestoreService {
       String farmId,
       String notificationId,
       ) async {
-    await _notifications(farmId)
-        .doc(notificationId)
-        .delete()
-        .timeout(timeout);
+    await FirebaseFunctions.instance
+        .httpsCallable('deleteNotification')
+        .call({
+      'farmId': farmId,
+      'notificationId': notificationId,
+    }).timeout(timeout);
   }
 }

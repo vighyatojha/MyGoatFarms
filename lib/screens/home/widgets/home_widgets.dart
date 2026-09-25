@@ -135,7 +135,16 @@ class ActivityTile extends StatelessWidget {
     } else if (today.difference(that).inDays == 1) {
       return 'Yesterday';
     }
-    return '${today.difference(that).inDays} Days Ago';
+    // A corrupt/clock-skewed record can carry a future timestamp; without
+    // this guard `today.difference(that).inDays` goes negative and the
+    // tile reads "-2 Days Ago".
+    final days = today.difference(that).inDays;
+    if (days < 0) {
+      final h = dt.hour % 12 == 0 ? 12 : dt.hour % 12;
+      final m = dt.minute.toString().padLeft(2, '0');
+      return '$h:$m ${dt.hour >= 12 ? 'PM' : 'AM'}';
+    }
+    return '$days Days Ago';
   }
 
   @override

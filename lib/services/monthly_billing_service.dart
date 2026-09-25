@@ -1899,6 +1899,22 @@ class MonthlyBillingService {
   }
 
   // ===========================================================================
+  // ALL BILLS FOR A FARM (search)
+  // ===========================================================================
+
+  /// Realtime stream of every monthly bill across the whole farm,
+  /// regardless of customer — used by Home's search bar to look bills up
+  /// by bill number without needing a customerId up front.
+  Stream<List<MonthlyBill>> allBillsStream(String farmId) {
+    return _bills(farmId).snapshots().map(
+          (snapshot) => snapshot.docs
+          .where((doc) => doc.data()['type']?.toString() == 'monthly')
+          .map(MonthlyBill.fromDoc)
+          .toList(),
+    );
+  }
+
+  // ===========================================================================
   // CUSTOMER MONTHLY BILL STREAM
   // ===========================================================================
 

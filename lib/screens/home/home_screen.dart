@@ -25,6 +25,7 @@ import '../profile/farm_activity_screen.dart';
 import '../profile/profile_screen.dart';
 import 'notification_screen.dart';
 import 'health_records_screen.dart';
+import 'home_search_screen.dart';
 import '../palai/goat_list_screen.dart';
 import '../palai/receive_payment_screen.dart';
 import '../trading/own_palai/own_palai_list_screen.dart';
@@ -73,12 +74,26 @@ class _HomeScreenState extends State<HomeScreen> {
   void dispose() {
     _farmSub?.cancel();
     _partnerSub?.cancel();
+    _searchController.dispose();
     super.dispose();
   }
 
   Future<void> _loadFarmData() async {
     final uid = FirebaseAuth.instance.currentUser?.uid;
-    if (uid == null) return;
+    if (uid == null) {
+      // Returning here with no state update left `_loadingFarm` stuck at
+      // `true` forever — the skeleton would spin indefinitely with no
+      // way out (e.g. a token-refresh race, or auth flipping briefly
+      // while Home is still mounted). Fall through to the existing
+      // "not linked / try again" screen instead of hanging silently.
+      if (!mounted) return;
+      setState(() {
+        _farm = null;
+        _farmId = null;
+        _loadingFarm = false;
+      });
+      return;
+    }
 
     // Resolves the farm for BOTH farm owners and partners — a partner's
     // uid never matches a farm's own `authUid`, so looking that up alone
@@ -372,6 +387,17 @@ class _HomeScreenState extends State<HomeScreen> {
           Expanded(
             child: TextField(
               controller: _searchController,
+              readOnly: true,
+              onTap: () {
+                if (_farmId == null) {
+                  _showMessage('Farm information is still loading. Please try again.', isError: true);
+                  return;
+                }
+                Navigator.of(context).push(fastRoute(HomeSearchScreen(
+                  farmId: _farmId!,
+                  initialQuery: _searchController.text,
+                )));
+              },
               decoration: InputDecoration(
                 hintText: 'Search Goat ID, Customer, Batch, Invoice...',
                 hintStyle: AppTheme.body(size: 12.5),
@@ -440,8 +466,12 @@ class _HomeScreenState extends State<HomeScreen> {
                   builder: (context, snap) {
                     final value = snap.data ?? 0;
                     return StatCard(
+                      // "Income & Payments" read as gross money received,
+                      // but todaysIncomeStream() nets income − expenses —
+                      // a farmer with big expenses could see a low/negative
+                      // number under a label that never says "net".
                       icon: Icons.currency_rupee,
-                      label: "Income & Payments",
+                      label: "Net Income (Today)",
                       value: snap.hasData ? '₹${value.toStringAsFixed(0)}' : '—',
                       color: AppColors.warning,
                       onTap: () => Navigator.of(context)
@@ -476,8 +506,13 @@ class _HomeScreenState extends State<HomeScreen> {
                 child: StreamBuilder<List<StockItem>>(
                   stream: FirestoreService.instance.stockItemsStream(farmId, type: StockType.feed),
                   builder: (context, snap) {
+                    // Use totalKg, not quantity — quantity is the bag COUNT
+                    // for Bag-unit feed, not a weight, so summing it here
+                    // undercounts (e.g. "5" instead of "125 kg" for 5 bags
+                    // of 25kg). totalKg is the normalized, authoritative
+                    // weight for both Kg- and Bag-unit stock.
                     final totalKg = (snap.data ?? [])
-                        .fold<double>(0, (sum, item) => sum + item.quantity);
+                        .fold<double>(0, (sum, item) => sum + item.totalKg);
                     return StatCard(
                       icon: Icons.grass_outlined,
                       label: 'Feed in Stock',

@@ -59,13 +59,20 @@ class ActivityLog {
     return ActivityLog(
       id: doc.id,
       type: ActivityType.values.firstWhere(
-        (e) => e.name == data['type'],
+            (e) => e.name == data['type'],
         orElse: () => ActivityType.paymentReceived,
       ),
       title: data['title'] ?? '',
       subtitle: data['subtitle'] ?? '',
       module: data['module'] ?? 'home',
-      timestamp: (data['timestamp'] as Timestamp?)?.toDate() ?? DateTime.now(),
+      // Activities are queried `orderBy('timestamp', descending: true)`,
+      // so falling back to DateTime.now() for a record with no/corrupt
+      // timestamp made it jump to the TOP of Recent Activity and read as
+      // happening right now. Fall back to epoch instead, so a record
+      // missing this field sinks to the bottom rather than lying about
+      // when it happened.
+      timestamp: (data['timestamp'] as Timestamp?)?.toDate() ??
+          DateTime.fromMillisecondsSinceEpoch(0),
       actorUid: data['actorUid'] as String?,
       actorName: data['actorName'] as String?,
       actorRole: data['actorRole'] as String?,
