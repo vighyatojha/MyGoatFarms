@@ -7,6 +7,7 @@ import '../../models/sale_model.dart';
 import '../../services/firestore_service.dart';
 import '../../services/sales_service.dart';
 import '../../widgets/fast_route.dart';
+import '../../widgets/finance/payment_reminder_service.dart';
 import '../trading/sale_receipt_screen.dart';
 
 /// One customer's outstanding goat-sale balance: the total they owe and
@@ -42,11 +43,29 @@ class _CreditCustomerDetailScreenState
     extends State<CreditCustomerDetailScreen> {
   late final Stream<List<CustomerCredit>> _stream;
 
+  // Used in the WhatsApp reminder text ("...reminder from <farm name>").
+  String _farmName = '';
+
   @override
   void initState() {
     super.initState();
 
     _stream = SalesService.instance.creditCustomersStream(widget.farmId);
+    _loadFarmName();
+  }
+
+  Future<void> _loadFarmName() async {
+    final farm = await FirestoreService.instance.getFarmById(widget.farmId);
+    if (!mounted) return;
+    setState(() => _farmName = farm?.farmName ?? '');
+  }
+
+  void _sendReminder(CustomerCredit credit) {
+    showPaymentReminderSheet(
+      context,
+      customers: [ReminderRecipient.fromCustomerCredit(credit)],
+      farmName: _farmName,
+    );
   }
 
   String _currency(num value) {
@@ -283,6 +302,28 @@ class _CreditCustomerDetailScreenState
               ],
             ),
           ),
+          if (credit.totalDue > 0 && credit.mobile.trim().isNotEmpty) ...[
+            const SizedBox(height: 10),
+            SizedBox(
+              width: double.infinity,
+              child: OutlinedButton.icon(
+                onPressed: () => _sendReminder(credit),
+                icon: const Icon(Icons.chat, size: 18, color: Color(0xFF25D366)),
+                label: const Text(
+                  'Send WhatsApp Reminder',
+                  style: TextStyle(fontWeight: FontWeight.w700),
+                ),
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: AppColors.textDark,
+                  side: const BorderSide(color: Color(0xFF25D366)),
+                  padding: const EdgeInsets.symmetric(vertical: 11),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                ),
+              ),
+            ),
+          ],
         ],
       ),
     );

@@ -6,6 +6,7 @@ import '../../models/customer_credit.dart';
 import '../../services/firestore_service.dart';
 import '../../services/sales_service.dart';
 import '../../widgets/fast_route.dart';
+import '../../widgets/finance/payment_reminder_service.dart';
 import 'credit_customer_detail_screen.dart';
 
 /// Customers on Credit — every customer whose payment for a goat sale is
@@ -37,6 +38,9 @@ class _CreditCustomersScreenState extends State<CreditCustomersScreen> {
   final TextEditingController _searchController = TextEditingController();
   String _search = '';
 
+  // Used in the WhatsApp reminder text ("...reminder from <farm name>").
+  String _farmName = '';
+
   @override
   void initState() {
     super.initState();
@@ -44,12 +48,33 @@ class _CreditCustomersScreenState extends State<CreditCustomersScreen> {
     // Created once, so typing in the search box doesn't restart the
     // Firestore listener.
     _stream = SalesService.instance.creditCustomersStream(widget.farmId);
+    _loadFarmName();
+  }
+
+  Future<void> _loadFarmName() async {
+    final farm = await FirestoreService.instance.getFarmById(widget.farmId);
+    if (!mounted) return;
+    setState(() => _farmName = farm?.farmName ?? '');
   }
 
   @override
   void dispose() {
     _searchController.dispose();
     super.dispose();
+  }
+
+  /// Opens the WhatsApp reminder sheet for [targets], keeping only
+  /// customers who actually still owe money.
+  void _openReminders(List<CustomerCredit> targets) {
+    final owing = targets
+        .where((c) => c.totalDue > 0)
+        .map(ReminderRecipient.fromCustomerCredit)
+        .toList();
+    showPaymentReminderSheet(
+      context,
+      customers: owing,
+      farmName: _farmName,
+    );
   }
 
   String _currency(num value) {
@@ -84,6 +109,28 @@ class _CreditCustomersScreenState extends State<CreditCustomersScreen> {
           'Customers on Credit',
           style: AppTheme.heading(size: 18),
         ),
+        actions: [
+          StreamBuilder<List<CustomerCredit>>(
+            stream: _stream,
+            builder: (context, snapshot) {
+              final all = snapshot.data ?? const <CustomerCredit>[];
+              return TextButton.icon(
+                onPressed: all.isEmpty ? null : () => _openReminders(all),
+                icon: const Icon(Icons.notifications_active_outlined, size: 18),
+                label: Text(
+                  'Send Reminder',
+                  style: AppTheme.body(
+                    size: 12,
+                    color: AppColors.darkGreen,
+                    weight: FontWeight.w700,
+                  ),
+                ),
+                style: TextButton.styleFrom(foregroundColor: AppColors.darkGreen),
+              );
+            },
+          ),
+          const SizedBox(width: 4),
+        ],
       ),
       body: SafeArea(
         child: StreamBuilder<List<CustomerCredit>>(
@@ -320,6 +367,17 @@ class _CreditCustomersScreenState extends State<CreditCustomersScreen> {
                   ),
                 ),
                 const SizedBox(width: 8),
+                if (credit.totalDue > 0 && credit.mobile.trim().isNotEmpty)
+                  IconButton(
+                    tooltip: 'Send WhatsApp reminder',
+                    visualDensity: VisualDensity.compact,
+                    onPressed: () => _openReminders([credit]),
+                    icon: const Icon(
+                      Icons.chat,
+                      size: 20,
+                      color: Color(0xFF25D366),
+                    ),
+                  ),
                 Column(
                   crossAxisAlignment: CrossAxisAlignment.end,
                   children: [

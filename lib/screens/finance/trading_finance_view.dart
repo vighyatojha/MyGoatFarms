@@ -1,13 +1,16 @@
 import 'package:flutter/material.dart';
 
 import '../../app_theme.dart';
+import '../../models/customer_credit.dart';
 import '../../models/finance_scope.dart';
 import '../../models/finance_summary_model.dart';
 import '../../models/trading_finance_summary.dart';
 import '../../services/finance_service.dart';
 import '../../services/firestore_service.dart';
+import '../../services/sales_service.dart';
 import '../../widgets/fast_route.dart';
 import '../../widgets/finance/finance_widgets.dart';
+import '../../widgets/finance/payment_reminder_service.dart';
 import 'credit_customers_screen.dart';
 import 'expense_list_screen.dart';
 import 'finance_range.dart';
@@ -41,13 +44,24 @@ class TradingFinanceView extends StatefulWidget {
 
 class _TradingFinanceViewState extends State<TradingFinanceView> {
   bool _loading = true;
+  bool _sendingReminders = false;
   TradingFinanceSummary _summary = TradingFinanceSummary.empty;
   List<FinanceTransactionRow> _recent = [];
+
+  // Used in the WhatsApp reminder text ("...reminder from <farm name>").
+  String _farmName = '';
 
   @override
   void initState() {
     super.initState();
     _load();
+    _loadFarmName();
+  }
+
+  Future<void> _loadFarmName() async {
+    final farm = await FirestoreService.instance.getFarmById(widget.farmId);
+    if (!mounted) return;
+    setState(() => _farmName = farm?.farmName ?? '');
   }
 
   @override
@@ -101,6 +115,51 @@ class _TradingFinanceViewState extends State<TradingFinanceView> {
 
   void _openCredit() => _push(CreditCustomersScreen(farmId: widget.farmId));
 
+  /// One-tap WhatsApp reminders for every goat-sale customer who still
+  /// owes money — without leaving the Trading tab. Pulls the current
+  /// credit list once (same source as the Receivables figure above) and
+  /// opens the same reminder sheet the Credit screen uses.
+  Future<void> _openReminders() async {
+    if (_sendingReminders) return;
+    setState(() => _sendingReminders = true);
+
+    try {
+      final all = await SalesService.instance
+          .creditCustomersStream(widget.farmId)
+          .first;
+
+      if (!mounted) return;
+
+      final owing = all.where((c) => c.totalDue > 0).toList();
+
+      if (owing.isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('No customers currently owe money on goat sales.'),
+            backgroundColor: AppColors.darkGreen,
+          ),
+        );
+        return;
+      }
+
+      await showPaymentReminderSheet(
+        context,
+        customers: owing.map(ReminderRecipient.fromCustomerCredit).toList(),
+        farmName: _farmName,
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(FirestoreService.instance.describeError(e)),
+          backgroundColor: AppColors.error,
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => _sendingReminders = false);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return RefreshIndicator(
@@ -141,6 +200,13 @@ class _TradingFinanceViewState extends State<TradingFinanceView> {
                 ),
               ),
             ],
+          ),
+          const SizedBox(height: 8),
+          FinanceNavChip(
+            label: _sendingReminders ? 'Loading...' : 'Send WhatsApp Reminder',
+            icon: Icons.chat,
+            iconColor: const Color(0xFF25D366),
+            onTap: _sendingReminders ? null : _openReminders,
           ),
           const SizedBox(height: 18),
           Text('Recent Trading Activity', style: AppTheme.heading(size: 15)),

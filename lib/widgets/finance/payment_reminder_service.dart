@@ -3,7 +3,49 @@ import 'package:flutter/services.dart';
 
 import '../../app_theme.dart';
 import '../../models/palai_models.dart';
+import '../../models/customer_credit.dart';
 import '../../services/payment_reminder_service.dart';
+
+/// A single person the reminder sheet can message — just enough to build
+/// and send the WhatsApp text, whatever screen (and whatever underlying
+/// model — a Palai [PalaiCustomer], a goat-sale [CustomerCredit], etc.)
+/// the reminder was opened from.
+class ReminderRecipient {
+  /// Stable id, used only to remember who this row already sent to
+  /// (ticks the row) while the sheet is open.
+  final String id;
+
+  final String name;
+  final String mobile;
+
+  /// Amount currently pending from this person.
+  final double pendingAmount;
+
+  const ReminderRecipient({
+    required this.id,
+    required this.name,
+    required this.mobile,
+    required this.pendingAmount,
+  });
+
+  /// From a Customer Ledger (Palai) customer.
+  factory ReminderRecipient.fromPalaiCustomer(PalaiCustomer c) =>
+      ReminderRecipient(
+        id: c.id,
+        name: c.name,
+        mobile: c.mobileNumber,
+        pendingAmount: c.pendingAmount,
+      );
+
+  /// From a goat-sale "Customer on Credit" entry.
+  factory ReminderRecipient.fromCustomerCredit(CustomerCredit c) =>
+      ReminderRecipient(
+        id: c.key,
+        name: c.name,
+        mobile: c.mobile,
+        pendingAmount: c.totalDue,
+      );
+}
 
 /// Bottom sheet for sending WhatsApp payment reminders.
 ///
@@ -13,7 +55,7 @@ import '../../services/payment_reminder_service.dart';
 /// owner can see who is left when working down the list.
 Future<void> showPaymentReminderSheet(
     BuildContext context, {
-      required List<PalaiCustomer> customers,
+      required List<ReminderRecipient> customers,
       required String farmName,
     }) {
   return showModalBottomSheet<void>(
@@ -32,7 +74,7 @@ Future<void> showPaymentReminderSheet(
 }
 
 class _PaymentReminderSheet extends StatefulWidget {
-  final List<PalaiCustomer> customers;
+  final List<ReminderRecipient> customers;
   final String farmName;
 
   const _PaymentReminderSheet({
@@ -71,18 +113,18 @@ class _PaymentReminderSheetState extends State<_PaymentReminderSheet> {
     return parsed < 1 ? 1 : parsed;
   }
 
-  String _messageFor(PalaiCustomer c) => _service.buildMessage(
+  String _messageFor(ReminderRecipient c) => _service.buildMessage(
     customerName: c.name,
     pendingAmount: c.pendingAmount,
     days: _days,
     farmName: widget.farmName,
   );
 
-  Future<void> _send(PalaiCustomer c) async {
+  Future<void> _send(ReminderRecipient c) async {
     await _service.saveDays(_days);
 
     final opened = await _service.openWhatsApp(
-      mobile: c.mobileNumber,
+      mobile: c.mobile,
       message: _messageFor(c),
     );
 
@@ -94,7 +136,7 @@ class _PaymentReminderSheetState extends State<_PaymentReminderSheet> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
-            _service.normalizePhone(c.mobileNumber) == null
+            _service.normalizePhone(c.mobile) == null
                 ? "${c.name}'s mobile number looks invalid."
                 : 'Could not open WhatsApp.',
           ),
@@ -243,7 +285,7 @@ class _PaymentReminderSheetState extends State<_PaymentReminderSheet> {
     );
   }
 
-  Widget _row(PalaiCustomer c) {
+  Widget _row(ReminderRecipient c) {
     final sent = _sent.contains(c.id);
 
     return Container(

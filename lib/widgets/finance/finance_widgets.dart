@@ -253,39 +253,48 @@ class FinanceActionButton extends StatelessWidget {
 class FinanceNavChip extends StatelessWidget {
   final String label;
   final IconData icon;
-  final VoidCallback onTap;
+  final VoidCallback? onTap;
+
+  /// Defaults to [AppColors.darkGreen] when not given.
+  final Color? iconColor;
 
   const FinanceNavChip({
     super.key,
     required this.label,
     required this.icon,
     required this.onTap,
+    this.iconColor,
   });
 
   @override
   Widget build(BuildContext context) {
+    final disabled = onTap == null;
+
     return GestureDetector(
       onTap: onTap,
-      child: Container(
-        padding: const EdgeInsets.symmetric(vertical: 11),
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(13),
-          border: Border.all(color: AppColors.divider),
-        ),
-        child: Column(
-          children: [
-            Icon(icon, color: AppColors.darkGreen, size: 18),
-            const SizedBox(height: 5),
-            Text(
-              label,
-              style: AppTheme.body(
-                size: 11,
-                color: AppColors.textDark,
-                weight: FontWeight.w700,
+      child: Opacity(
+        opacity: disabled ? 0.5 : 1,
+        child: Container(
+          padding: const EdgeInsets.symmetric(vertical: 11),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(13),
+            border: Border.all(color: AppColors.divider),
+          ),
+          child: Column(
+            children: [
+              Icon(icon, color: iconColor ?? AppColors.darkGreen, size: 18),
+              const SizedBox(height: 5),
+              Text(
+                label,
+                style: AppTheme.body(
+                  size: 11,
+                  color: AppColors.textDark,
+                  weight: FontWeight.w700,
+                ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );

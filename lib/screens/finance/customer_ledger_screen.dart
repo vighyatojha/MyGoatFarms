@@ -50,7 +50,10 @@ class _CustomerLedgerScreenState extends State<CustomerLedgerScreen> {
   /// Opens the reminder sheet for [targets], keeping only customers who
   /// actually owe money.
   void _openReminders(List<PalaiCustomer> targets) {
-    final owing = targets.where((c) => c.pendingAmount > 0).toList();
+    final owing = targets
+        .where((c) => c.pendingAmount > 0)
+        .map(ReminderRecipient.fromPalaiCustomer)
+        .toList();
     showPaymentReminderSheet(
       context,
       customers: owing,
