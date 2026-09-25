@@ -7,6 +7,7 @@ import '../../widgets/fast_route.dart';
 import '../../widgets/farm_not_linked_state.dart';
 
 import '../../widgets/goat_credit_cards.dart';
+import '../../widgets/finance/payment_reminder_service.dart';
 import 'customer_ledger_detail_screen.dart';
 
 class CustomerLedgerScreen extends StatefulWidget {
@@ -18,7 +19,9 @@ class CustomerLedgerScreen extends StatefulWidget {
 
 class _CustomerLedgerScreenState extends State<CustomerLedgerScreen> {
   String? _farmId;
+  String _farmName = '';
   bool _loadingFarm = true;
+  List<PalaiCustomer> _allCustomers = const [];
   String _search = '';
   final _searchController = TextEditingController();
 
@@ -30,11 +33,29 @@ class _CustomerLedgerScreenState extends State<CustomerLedgerScreen> {
 
   Future<void> _loadFarm() async {
     final id = await FirestoreService.instance.currentFarmId();
+    String farmName = '';
+    if (id != null) {
+      // Used in the reminder text ("...reminder from <farm name>").
+      final farm = await FirestoreService.instance.getFarmById(id);
+      farmName = farm?.farmName ?? '';
+    }
     if (!mounted) return;
     setState(() {
       _farmId = id;
+      _farmName = farmName;
       _loadingFarm = false;
     });
+  }
+
+  /// Opens the reminder sheet for [targets], keeping only customers who
+  /// actually owe money.
+  void _openReminders(List<PalaiCustomer> targets) {
+    final owing = targets.where((c) => c.pendingAmount > 0).toList();
+    showPaymentReminderSheet(
+      context,
+      customers: owing,
+      farmName: _farmName,
+    );
   }
 
   @override
@@ -63,6 +84,22 @@ class _CustomerLedgerScreenState extends State<CustomerLedgerScreen> {
         foregroundColor: AppColors.textDark,
         titleSpacing: 4,
         title: Text('Customer Ledger', style: AppTheme.heading(size: 18)),
+        actions: [
+          TextButton.icon(
+            onPressed: _farmId == null ? null : () => _openReminders(_allCustomers),
+            icon: const Icon(Icons.notifications_active_outlined, size: 18),
+            label: Text(
+              'Send Reminder',
+              style: AppTheme.body(
+                size: 12,
+                color: AppColors.darkGreen,
+                weight: FontWeight.w700,
+              ),
+            ),
+            style: TextButton.styleFrom(foregroundColor: AppColors.darkGreen),
+          ),
+          const SizedBox(width: 4),
+        ],
       ),
       body: SafeArea(
         child: _loadingFarm
@@ -111,6 +148,9 @@ class _CustomerLedgerScreenState extends State<CustomerLedgerScreen> {
                       child: CircularProgressIndicator(color: AppColors.primaryGreen),
                     );
                   }
+                  // Keep the unfiltered list so "Send Reminder" covers
+                  // everyone who owes money, not just the search result.
+                  _allCustomers = snapshot.data!;
                   final customers = _filter(snapshot.data!);
                   if (customers.isEmpty) {
                     return Center(
@@ -166,6 +206,17 @@ class _CustomerLedgerScreenState extends State<CustomerLedgerScreen> {
                 ],
               ),
             ),
+            if (customer.pendingAmount > 0)
+              IconButton(
+                tooltip: 'Send WhatsApp reminder',
+                visualDensity: VisualDensity.compact,
+                onPressed: () => _openReminders([customer]),
+                icon: const Icon(
+                  Icons.chat,
+                  size: 20,
+                  color: Color(0xFF25D366),
+                ),
+              ),
             Column(
               crossAxisAlignment: CrossAxisAlignment.end,
               children: [

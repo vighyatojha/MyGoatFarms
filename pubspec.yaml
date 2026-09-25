@@ -46,6 +46,10 @@ dependencies:
   printing: ^5.13.4
   path_provider: ^2.1.4
 
+  # Added for Customer Ledger WhatsApp payment reminders (opens WhatsApp
+  # with the message pre-filled for each customer).
+  url_launcher: ^6.3.1
+
 dev_dependencies:
   flutter_test:
     sdk: flutter
