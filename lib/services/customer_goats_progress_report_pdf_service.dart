@@ -1223,9 +1223,10 @@ class CustomerGoatsProgressReportPdfService {
                 // Older bills with no saved breakdown: pro-rate for the
                 // bill's month instead of printing the full monthly price.
                 _currency(
-                  PalaiProrationCalculator.calculate(
+                  PalaiProrationCalculator.calculateForStay(
                     monthlyCharge: entry.goat.pricing,
                     joiningDate: entry.goat.billingStartDate,
+                    leavingDate: entry.goat.checkOutDate,
                     year: bill.year,
                     month: bill.month,
                   ).amount,

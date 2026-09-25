@@ -259,9 +259,10 @@ class _CustomerGoatsReportScreenState
   /// monthly price ÷ days in month × days the goat has been at the farm.
   PalaiProration _prorationFor(PalaiGoat goat) {
     final now = DateTime.now();
-    return PalaiProrationCalculator.calculate(
+    return PalaiProrationCalculator.calculateForStay(
       monthlyCharge: goat.pricing,
       joiningDate: goat.billingStartDate,
+      leavingDate: goat.checkOutDate,
       year: now.year,
       month: now.month,
     );

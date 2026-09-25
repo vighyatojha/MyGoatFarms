@@ -461,9 +461,10 @@ class MonthlyReportService {
           currentWeight: currentWeight,
           // Pro-rated: the goat's first month is charged only from its
           // check-in date; every later month is the full monthly price.
-          monthlyCharge: PalaiProrationCalculator.calculate(
+          monthlyCharge: PalaiProrationCalculator.calculateForStay(
             monthlyCharge: goat.pricing,
             joiningDate: goat.billingStartDate,
+            leavingDate: goat.checkOutDate,
             year: monthStart.year,
             month: monthStart.month,
           ).amount,

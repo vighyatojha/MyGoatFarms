@@ -213,9 +213,10 @@ class _CustomerGoatsProgressReportScreenState
       // A goat that joined part-way through the bill's month is charged
       // only for the days it is here: monthly price ÷ days in month ×
       // days remaining (joining day included).
-      final proration = PalaiProrationCalculator.calculate(
+      final proration = PalaiProrationCalculator.calculateForStay(
         monthlyCharge: goat.pricing < 0 ? 0.0 : goat.pricing.toDouble(),
         joiningDate: goat.billingStartDate,
+        leavingDate: goat.checkOutDate,
         year: bill.year,
         month: bill.month,
       );
@@ -559,9 +560,10 @@ class _CustomerGoatsProgressReportScreenState
   /// monthly price ÷ days in month × days the goat has been at the farm.
   PalaiProration _prorationFor(PalaiGoat goat) {
     final now = DateTime.now();
-    return PalaiProrationCalculator.calculate(
+    return PalaiProrationCalculator.calculateForStay(
       monthlyCharge: goat.pricing,
       joiningDate: goat.billingStartDate,
+      leavingDate: goat.checkOutDate,
       year: now.year,
       month: now.month,
     );
