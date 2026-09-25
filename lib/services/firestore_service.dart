@@ -2764,6 +2764,24 @@ class FirestoreService {
     return quantity;
   }
 
+  /// Deterministic doc ID for a stock item that doesn't exist yet, derived
+  /// from its type + name instead of a random auto-ID. Two concurrent
+  /// addStock() calls for the very same brand-new item (a UI retry, or two
+  /// people entering "Maize Bran" for the first time moments apart) always
+  /// compute this same ID, so they contend over one document and Firestore's
+  /// transaction retry serializes them into a single item instead of two
+  /// duplicate docs. Sanitized to stay a valid Firestore doc ID (no '/', and
+  /// never '.', '..', or the reserved "__...__" pattern).
+  String _stockItemDocId(String typeStr, String itemName) {
+    final normalized = itemName
+        .trim()
+        .toLowerCase()
+        .replaceAll(RegExp(r'[^a-z0-9]+'), '_')
+        .replaceAll(RegExp(r'^_+|_+$'), '');
+    final safeName = normalized.isEmpty ? 'item' : normalized;
+    return 'stock_${typeStr}_$safeName';
+  }
+
   /// Adds stock (creates the item if it doesn't exist yet, matching on name
   /// + type so a feed item and a medicine item can share the same name) and
   /// logs the movement.
@@ -2812,6 +2830,13 @@ class FirestoreService {
 
     final entryKg = _toKg(quantity, unit, weightPerBag);
 
+    // Resolve which document this purchase belongs on. An item that's
+    // already on record (found here as before) keeps using its own doc ID.
+    // A name+type that has never been stocked gets a *deterministic* ID
+    // (see _stockItemDocId) instead of a random auto-ID — that's what lets
+    // the transaction below correctly serialize two concurrent "first ever"
+    // purchases of the same brand-new item onto one document, rather than
+    // each independently deciding "no existing doc" and creating its own.
     final existing = await _stockItems(farmId)
         .where('name', isEqualTo: itemName)
         .where('type', isEqualTo: typeStr)
@@ -2819,49 +2844,48 @@ class FirestoreService {
         .get()
         .timeout(timeout);
 
-    String itemId;
-    // The final resolved fields written to the stock item doc, and what
-    // this specific movement's own quantity/unit end up being (a merge
-    // against a differently-unit'd existing item converts the *movement*
-    // quantity too, so the activity log matches what actually got saved).
-    late final String finalUnit;
-    late final double? finalWeightPerBag;
-    late final double finalQuantity;
-    late final double finalTotalKg;
-    late final double movementQuantity;
-    late final String movementUnit;
-    late final double? movementWeightPerBag;
-    late final double? movementKg;
+    final itemId = existing.docs.isNotEmpty
+        ? existing.docs.first.id
+        : _stockItemDocId(typeStr, itemName);
+    final itemRef = _stockItems(farmId).doc(itemId);
 
-    if (existing.docs.isEmpty) {
-      finalUnit = unit;
-      finalWeightPerBag = weightPerBag;
-      finalQuantity = quantity;
-      finalTotalKg = entryKg;
-      movementQuantity = quantity;
-      movementUnit = unit;
-      movementWeightPerBag = isBag ? weightPerBag : null;
-      movementKg = isBag ? entryKg : null;
+    // This movement's own quantity/unit as logged in the activity feed —
+    // always what was physically entered, regardless of how the merge
+    // below ends up expressing the item's running total.
+    final movementQuantity = quantity;
+    final movementUnit = unit;
+    final movementWeightPerBag = isBag ? weightPerBag : null;
+    final movementKg = isBag ? entryKg : null;
 
-      final ref = await _stockItems(farmId).add(StockItem(
-        id: '',
-        name: itemName,
-        type: type,
-        quantity: finalQuantity,
-        unit: finalUnit,
-        weightPerBag: finalWeightPerBag,
-        totalKg: finalTotalKg,
-        lowStockThreshold: lowStockThreshold,
-        lastUpdated: DateTime.now(),
-        photo: photo,
-        photoContentType: photo != null ? photoContentType : null,
-        description: description,
-      ).toMap()).timeout(timeout);
-      itemId = ref.id;
-    } else {
-      final doc = existing.docs.first;
-      itemId = doc.id;
-      final data = doc.data();
+    // Everything below runs as one atomic read-modify-write, the same
+    // compare-and-swap pattern useStock() uses: two concurrent addStock()
+    // calls for the same item (a genuine simultaneous purchase, or a client
+    // retry after a timed-out-but-actually-committed write) each re-read
+    // the item fresh *inside* the transaction, so Firestore serializes the
+    // two writes instead of one silently clobbering the other's total —
+    // and a create-vs-create race resolves the same way, onto one doc.
+    await _db.runTransaction((txn) async {
+      final snap = await txn.get(itemRef);
+
+      if (!snap.exists) {
+        txn.set(itemRef, StockItem(
+          id: '',
+          name: itemName,
+          type: type,
+          quantity: quantity,
+          unit: unit,
+          weightPerBag: weightPerBag,
+          totalKg: entryKg,
+          lowStockThreshold: lowStockThreshold,
+          lastUpdated: DateTime.now(),
+          photo: photo,
+          photoContentType: photo != null ? photoContentType : null,
+          description: description,
+        ).toMap());
+        return;
+      }
+
+      final data = snap.data()!;
       final existingUnit = (data['unit'] ?? 'kg').toString();
       final existingIsBag = existingUnit.trim().toLowerCase() == 'bag';
       final existingQty = (data['quantity'] ?? 0).toDouble();
@@ -2871,6 +2895,11 @@ class FirestoreService {
 
       final sameUnit = existingUnit.trim().toLowerCase() == unit.trim().toLowerCase();
       final sameBagWeight = !isBag || existingWeightPerBag == null || existingWeightPerBag == weightPerBag;
+
+      final String finalUnit;
+      final double? finalWeightPerBag;
+      final double finalQuantity;
+      final double finalTotalKg;
 
       if (sameUnit && sameBagWeight) {
         // Simple case: same unit (and, for Bag, same bag weight) as what's
@@ -2909,12 +2938,7 @@ class FirestoreService {
             : finalTotalKg;
       }
 
-      movementQuantity = quantity;
-      movementUnit = unit;
-      movementWeightPerBag = isBag ? weightPerBag : null;
-      movementKg = isBag ? entryKg : null;
-
-      await _stockItems(farmId).doc(itemId).update({
+      txn.update(itemRef, {
         'quantity': finalQuantity,
         'unit': finalUnit,
         if (finalWeightPerBag != null) 'weightPerBag': finalWeightPerBag,
@@ -2928,8 +2952,8 @@ class FirestoreService {
         if (photo != null) 'photo': Blob(photo),
         if (photo != null && photoContentType != null) 'photoContentType': photoContentType,
         if (description != null && description.trim().isNotEmpty) 'description': description.trim(),
-      }).timeout(timeout);
-    }
+      });
+    }).timeout(timeout);
 
     final actor = await getCurrentActor();
 

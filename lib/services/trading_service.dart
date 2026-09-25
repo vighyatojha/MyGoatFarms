@@ -676,103 +676,140 @@ class TradingService {
       );
     }
 
-    final purchase =
-    await getPurchase(
-      farmId,
-      purchaseId,
-    );
+    final purchaseRef = _tradingPurchases(farmId).doc(purchaseId);
 
-    if (purchase == null) {
-      throw StateError(
-        'Purchase $purchaseId was not found.',
+    await _db.runTransaction((transaction) async {
+      // ---------------------------------------------------------------
+      // 1. Read first — a Firestore transaction requires every read to
+      //    happen before any write.
+      // ---------------------------------------------------------------
+
+      final purchaseSnap = await transaction.get(purchaseRef);
+
+      if (!purchaseSnap.exists) {
+        throw StateError(
+          'Purchase $purchaseId was not found.',
+        );
+      }
+
+      final purchase = TradingPurchase.fromDoc(purchaseSnap);
+
+      // Compare-and-swap guard: without this, a retry (e.g. the
+      // read-back below timing out after the first commit already
+      // succeeded) would re-run this whole method and increment the
+      // dashboard summary a second time for goats already counted.
+      if (!purchase.isReceivingPending) {
+        throw StateError(
+          'Receiving for purchase $purchaseId has already been '
+              'completed or is in an unexpected state '
+              '("${purchase.receivingStatus}").',
+        );
+      }
+
+      // Aligned with complete_receiving_screen.dart's submit guard: at
+      // least one goat must survive. (Previously this only rejected
+      // mortality > totalGoats, technically permitting 0 survivors,
+      // which disagreed with the UI's stricter rule.)
+      if (mortality >= purchase.totalGoats) {
+        throw ArgumentError(
+          'At least one goat must survive — mortality cannot equal or '
+              'exceed total goats.',
+        );
+      }
+
+      if (totalWeightAfterArrival > purchase.totalWeightAtPurchase) {
+        throw ArgumentError(
+          'Arrival weight cannot be greater than purchase weight.',
+        );
+      }
+
+      // ---------------------------------------------------------------
+      // 2. Compute the costing.
+      //    Grand total now includes the transport costs entered at
+      //    receiving (before, it stayed at the bare purchase amount
+      //    forever).
+      // ---------------------------------------------------------------
+
+      final costing = PurchaseCosting(
+        totalGoats: purchase.totalGoats,
+        weightAtPurchase: purchase.totalWeightAtPurchase,
+        pricePerKg: purchase.pricePerKg,
+        weightAfterArrival: totalWeightAfterArrival,
+        mortality: mortality,
+        transportCost: transportCost,
+        loadingCharges: loadingCharges,
+        unloadingCharges: unloadingCharges,
+        otherExpenses: otherExpenses,
       );
-    }
 
-    if (mortality > purchase.totalGoats) {
-      throw ArgumentError(
-        'Mortality cannot be greater than total goats.',
-      );
-    }
+      final weightLoss = costing.weightLoss;
+      final effectiveCostPerKg = costing.effectiveCostPerKg;
 
-    if (totalWeightAfterArrival > purchase.totalWeightAtPurchase) {
-      throw ArgumentError(
-        'Arrival weight cannot be greater than purchase weight.',
-      );
-    }
+      // ---------------------------------------------------------------
+      // 3. Update the purchase doc.
+      // ---------------------------------------------------------------
 
-    // Grand total now includes the transport costs entered at receiving
-    // (before, it stayed at the bare purchase amount forever).
-    final costing = PurchaseCosting(
-      totalGoats: purchase.totalGoats,
-      weightAtPurchase: purchase.totalWeightAtPurchase,
-      pricePerKg: purchase.pricePerKg,
-      weightAfterArrival: totalWeightAfterArrival,
-      mortality: mortality,
-      transportCost: transportCost,
-      loadingCharges: loadingCharges,
-      unloadingCharges: unloadingCharges,
-      otherExpenses: otherExpenses,
-    );
-
-    final weightLoss = costing.weightLoss;
-
-    final effectiveCostPerKg = costing.effectiveCostPerKg;
-
-    final batch = _db.batch();
-
-    batch.update(
-      _tradingPurchases(farmId).doc(purchaseId),
-      {
-        'receivingStatus': 'completed',
-        'dateReceivedAtFarm':
-        Timestamp.fromDate(
-          dateReceivedAtFarm,
-        ),
-        'totalWeightAfterArrival':
-        totalWeightAfterArrival,
-        'weightLoss': weightLoss,
-        'mortality': mortality,
-        'remarks': remarks.trim(),
-        'transportCost': transportCost,
-        'loadingCharges': loadingCharges,
-        'unloadingCharges': unloadingCharges,
-        'otherExpenses': otherExpenses,
-        'totalTransportExpenses': costing.totalExpenses,
-        'grandTotal': costing.grandTotal,
-        'effectiveCostPerKg':
-        effectiveCostPerKg,
-        // Goats left to register = survivors minus any already registered.
-        'pendingCount': costing.survivingGoats > purchase.registeredCount
-            ? costing.survivingGoats - purchase.registeredCount
-            : 0,
-        'updatedAt':
-        FieldValue.serverTimestamp(),
-      },
-    );
-
-    // These goats were NOT counted in totalStock / pendingRegistrations
-    // when the purchase was first saved (see savePurchase()), because
-    // receiving was still pending then. Now that receiving is
-    // confirmed, add the surviving goats (mortality subtracted) to the
-    // dashboard summary.
-    final survivingGoats = purchase.totalGoats - mortality;
-
-    if (survivingGoats > 0) {
-      batch.set(
-        _summaryDoc(farmId),
+      transaction.update(
+        purchaseRef,
         {
-          'totalStock': FieldValue.increment(survivingGoats),
-          'pendingRegistrations':
-          FieldValue.increment(survivingGoats),
+          'receivingStatus': 'completed',
+          'dateReceivedAtFarm':
+          Timestamp.fromDate(
+            dateReceivedAtFarm,
+          ),
+          'totalWeightAfterArrival':
+          totalWeightAfterArrival,
+          'weightLoss': weightLoss,
+          'mortality': mortality,
+          'remarks': remarks.trim(),
+          'transportCost': transportCost,
+          'loadingCharges': loadingCharges,
+          'unloadingCharges': unloadingCharges,
+          'otherExpenses': otherExpenses,
+          'totalTransportExpenses': costing.totalExpenses,
+          'grandTotal': costing.grandTotal,
+          'effectiveCostPerKg':
+          effectiveCostPerKg,
+          // Goats left to register = survivors minus any already registered.
+          'pendingCount': costing.survivingGoats > purchase.registeredCount
+              ? costing.survivingGoats - purchase.registeredCount
+              : 0,
+          'updatedAt':
+          FieldValue.serverTimestamp(),
         },
-        SetOptions(merge: true),
       );
-    }
 
-    await batch.commit().timeout(_timeout);
+      // ---------------------------------------------------------------
+      // 4. Dashboard aggregate. These goats were NOT counted in
+      //    totalStock / pendingRegistrations when the purchase was
+      //    first saved (see savePurchase()), because receiving was
+      //    still pending then. Now that receiving is confirmed (and
+      //    guarded above to run at most once), add the surviving
+      //    goats (mortality subtracted) to the dashboard summary.
+      // ---------------------------------------------------------------
 
-    final updated =
-    await getPurchase(
+      final survivingGoats = purchase.totalGoats - mortality;
+
+      if (survivingGoats > 0) {
+        transaction.set(
+          _summaryDoc(farmId),
+          {
+            'totalStock': FieldValue.increment(survivingGoats),
+            'pendingRegistrations':
+            FieldValue.increment(survivingGoats),
+          },
+          SetOptions(merge: true),
+        );
+      }
+
+    }).timeout(_timeout);
+
+    // Read the committed doc back for the return value. This is safe to
+    // retry on failure now: unlike the old batch-based version, a retry
+    // re-enters the transaction above, which will see `receivingStatus`
+    // already `'completed'` and throw via the guard instead of
+    // incrementing the dashboard summary a second time.
+    final updated = await getPurchase(
       farmId,
       purchaseId,
     );
