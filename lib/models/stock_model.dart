@@ -1,6 +1,22 @@
+import 'dart:typed_data';
+
 import 'package:cloud_firestore/cloud_firestore.dart';
 
 enum StockType { feed, medicine }
+
+/// Shared pluralization for count-based stock units ("Bottle" → "Bottles",
+/// "Unit" → "Units"), used by both [StockItem] and [StockMovement] so a
+/// quantity of anything other than 1 never reads as "3 Bottle".
+String pluralizedStockUnit(String unit, double quantity) {
+  final trimmed = unit.trim();
+  if (quantity == 1) return trimmed;
+  final lower = trimmed.toLowerCase();
+  if (lower == 'bottle') return 'Bottles';
+  if (lower == 'unit') return 'Units';
+  if (lower == 'kg' || lower == 'bag') return trimmed; // handled elsewhere
+  if (trimmed.endsWith('s')) return trimmed;
+  return '${trimmed}s';
+}
 
 /// A single stock item (a type of feed or medicine) tracked in quantity.
 ///
@@ -28,6 +44,19 @@ class StockItem {
   final double lowStockThreshold;
   final DateTime lastUpdated;
 
+  /// A reference photo of this item (e.g. the medicine bottle/label), so
+  /// labourers who can't read the name can still recognize it visually.
+  /// Stored as raw bytes directly on the stock item's Firestore document
+  /// (a `Blob`), the same pattern as [FarmModel.profileImage] — no
+  /// Storage bucket, no public URL. See [ImageService] for how it's
+  /// picked/compressed before being saved.
+  final Uint8List? photo;
+  final String? photoContentType;
+
+  /// Free-text notes on what this item is / looks like / is used for —
+  /// shown alongside the photo so new labour can identify it confidently.
+  final String? description;
+
   StockItem({
     required this.id,
     required this.name,
@@ -38,7 +67,19 @@ class StockItem {
     required this.totalKg,
     required this.lowStockThreshold,
     required this.lastUpdated,
+    this.photo,
+    this.photoContentType,
+    this.description,
   });
+
+  bool get hasPhoto => photo != null && photo!.isNotEmpty;
+  bool get hasDescription => description != null && description!.trim().isNotEmpty;
+
+  /// Proper plural for count-based units ("Bottle" → "Bottles", "Unit" →
+  /// "Units") so a quantity of, say, 3 medicine bottles never reads as
+  /// "3 Bottle". Weight-based units (Kg/Bag) are handled separately by
+  /// [quantityLabel] and never go through this.
+  String unitLabel(double forQuantity) => pluralizedStockUnit(unit, forQuantity);
 
   bool get isBagUnit => unit.trim().toLowerCase() == 'bag';
   bool get isKgUnit => unit.trim().toLowerCase() == 'kg';
@@ -69,7 +110,9 @@ class StockItem {
 
   /// Short line for list rows, e.g. "5 Bags", "8 Bags + 25 KG", "100 KG".
   String get quantityLabel {
-    if (!isWeightBased) return '${quantity.toStringAsFixed(quantity % 1 == 0 ? 0 : 1)} $unit';
+    if (!isWeightBased) {
+      return '${quantity.toStringAsFixed(quantity % 1 == 0 ? 0 : 1)} ${unitLabel(quantity)}';
+    }
     if (isKgUnit) return '${totalKg.toStringAsFixed(totalKg % 1 == 0 ? 0 : 1)} KG';
     if (needsBagWeight) return '${quantity.toStringAsFixed(0)} Bags (weight required)';
     final bags = wholeBags;
@@ -121,6 +164,8 @@ class StockItem {
     final totalKg = storedTotalKg ??
         (isBag ? (quantity * (weightPerBag ?? 0)) : quantity);
 
+    final photoField = data['photo'];
+
     return StockItem(
       id: doc.id,
       name: data['name'] ?? '',
@@ -131,6 +176,9 @@ class StockItem {
       totalKg: totalKg,
       lowStockThreshold: (data['lowStockThreshold'] ?? 0).toDouble(),
       lastUpdated: (data['lastUpdated'] as Timestamp?)?.toDate() ?? DateTime.now(),
+      photo: photoField is Blob ? photoField.bytes : null,
+      photoContentType: data['photoContentType'] as String?,
+      description: data['description'] as String?,
     );
   }
 
@@ -144,6 +192,9 @@ class StockItem {
       'totalKg': totalKg,
       'lowStockThreshold': lowStockThreshold,
       'lastUpdated': FieldValue.serverTimestamp(),
+      if (photo != null) 'photo': Blob(photo!),
+      if (photoContentType != null) 'photoContentType': photoContentType,
+      if (description != null && description!.trim().isNotEmpty) 'description': description!.trim(),
     };
   }
 }
@@ -224,7 +275,7 @@ class StockMovement {
       final kg = kgAmount ?? (quantity * weightPerBag!);
       return '${quantity.toStringAsFixed(quantity % 1 == 0 ? 0 : 1)} $bagWord (${kg.toStringAsFixed(kg % 1 == 0 ? 0 : 1)} KG)';
     }
-    return '${quantity.toStringAsFixed(quantity % 1 == 0 ? 0 : 1)} $unit';
+    return '${quantity.toStringAsFixed(quantity % 1 == 0 ? 0 : 1)} ${pluralizedStockUnit(unit, quantity)}';
   }
 
   Map<String, dynamic> toMap() {

@@ -56,13 +56,13 @@ class PaymentReminderService {
     final dayText = days == 1 ? '1 day' : '$days days';
     final from = farmName.trim().isEmpty ? '' : ' from ${farmName.trim()}';
 
-    return 'Namaste ${customerName.trim()} 🙏\n\n'
+    return 'Assalamualaikum ${customerName.trim()},\n\n'
         'This is a friendly reminder$from.\n\n'
-        'An amount of *${formatAmount(pendingAmount)}* is pending '
-        'in your account.\n'
-        'Kindly clear the payment within *$dayText*.\n\n'
-        'If you have already paid, please ignore this message. '
-        'Thank you!';
+        'An amount of ${formatAmount(pendingAmount)} is currently pending '
+        'in your account. Kindly clear the outstanding payment within '
+        '$dayText.\n\n'
+        'If you have already made the payment, please ignore this message.\n\n'
+        'Thank you for your cooperation.';
   }
 
   // ---------------------------------------------------------------------

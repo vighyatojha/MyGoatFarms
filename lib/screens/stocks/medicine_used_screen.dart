@@ -80,7 +80,7 @@ class _MedicineUsedScreenState extends State<MedicineUsedScreen> {
     }
 
     if (quantity > item.quantity) {
-      _message('Only ${item.quantity.toStringAsFixed(0)} ${item.unit} is available.', error: true);
+      _message('Only ${item.quantity.toStringAsFixed(0)} ${item.unitLabel(item.quantity)} is available.', error: true);
       return;
     }
 
@@ -105,7 +105,7 @@ class _MedicineUsedScreenState extends State<MedicineUsedScreen> {
           id: '',
           type: ActivityType.medicineUsed,
           title: 'Medicine Used',
-          subtitle: '${quantity.toStringAsFixed(0)} ${item.unit} of ${item.name} used'
+          subtitle: '${quantity.toStringAsFixed(0)} ${item.unitLabel(quantity)} of ${item.name} used'
               '${_notesController.text.trim().isEmpty ? '' : ' — ${_notesController.text.trim()}'}',
           module: 'stock',
           timestamp: DateTime.now(),
@@ -159,14 +159,14 @@ class _MedicineUsedScreenState extends State<MedicineUsedScreen> {
                 Text('Confirm medicine usage', style: AppTheme.heading(size: 17)),
                 const SizedBox(height: 5),
                 Text(
-                  '${quantity.toStringAsFixed(0)} ${item.unit} will be deducted from ${item.name}.',
+                  '${quantity.toStringAsFixed(0)} ${item.unitLabel(quantity)} will be deducted from ${item.name}.',
                   textAlign: TextAlign.center,
                   style: AppTheme.body(size: 12),
                 ),
                 const SizedBox(height: 16),
-                _summaryRow('Current stock', '${item.quantity.toStringAsFixed(0)} ${item.unit}'),
-                _summaryRow('Used now', '${quantity.toStringAsFixed(0)} ${item.unit}'),
-                _summaryRow('Remaining', '${remaining.toStringAsFixed(0)} ${item.unit}', highlight: true),
+                _summaryRow('Current stock', '${item.quantity.toStringAsFixed(0)} ${item.unitLabel(item.quantity)}'),
+                _summaryRow('Used now', '${quantity.toStringAsFixed(0)} ${item.unitLabel(quantity)}'),
+                _summaryRow('Remaining', '${remaining.toStringAsFixed(0)} ${item.unitLabel(remaining)}', highlight: true),
                 const SizedBox(height: 18),
                 Row(
                   children: [
@@ -357,7 +357,7 @@ class _MedicineUsedScreenState extends State<MedicineUsedScreen> {
                       child: Text(item.name, style: AppTheme.body(size: 13, color: AppColors.textDark, weight: FontWeight.w600)),
                     ),
                     Text(
-                      '${item.quantity.toStringAsFixed(0)} ${item.unit}',
+                      '${item.quantity.toStringAsFixed(0)} ${item.unitLabel(item.quantity)}',
                       style: AppTheme.body(size: 11, color: low ? AppColors.error : AppColors.info, weight: FontWeight.w700),
                     ),
                   ],
@@ -400,7 +400,7 @@ class _MedicineUsedScreenState extends State<MedicineUsedScreen> {
               const SizedBox(width: 9),
               Expanded(child: Text('Available stock', style: AppTheme.body(size: 12, weight: FontWeight.w600))),
               Text(
-                '${item.quantity.toStringAsFixed(0)} ${item.unit}',
+                '${item.quantity.toStringAsFixed(0)} ${item.unitLabel(item.quantity)}',
                 style: AppTheme.heading(size: 16, color: low ? AppColors.error : AppColors.info),
               ),
             ],

@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -10,6 +11,8 @@ import '../../models/expense_model.dart';
 import '../../models/supplier_model.dart';
 import '../../services/firestore_service.dart';
 import '../../services/finance_service.dart';
+import '../../services/image_service.dart';
+import '../../widgets/photo_viewer_screen.dart';
 
 // The medicine screens use a blue theme (AppColors.info) instead of the
 // app's default green, matching the medicine card color on the Stock
@@ -30,6 +33,15 @@ class _AddMedicineScreenState extends State<AddMedicineScreen> {
   final _quantityController = TextEditingController();
   final _thresholdController = TextEditingController(text: '5');
   final _notesController = TextEditingController();
+  final _descriptionController = TextEditingController();
+
+  // --- Photo (so new labour can identify the medicine by sight) ---
+  // A newly-picked photo waiting to be saved. Null means "no change" —
+  // if an existing medicine already has a photo, it's shown via
+  // [_existingPhoto] and left untouched unless the user picks a new one.
+  Uint8List? _newPhotoBytes;
+  Uint8List? _existingPhoto;
+  bool _pickingPhoto = false;
 
   // --- Purchase cost (Finance integration) ---
   final _totalCostController = TextEditingController();
@@ -71,6 +83,7 @@ class _AddMedicineScreenState extends State<AddMedicineScreen> {
     _quantityController.dispose();
     _thresholdController.dispose();
     _notesController.dispose();
+    _descriptionController.dispose();
     _totalCostController.dispose();
     _supplierController.dispose();
     super.dispose();
@@ -146,6 +159,11 @@ class _AddMedicineScreenState extends State<AddMedicineScreen> {
             ? _selectedSupplier!.name
             : (_supplierController.text.trim().isEmpty ? null : _supplierController.text.trim()),
         paymentMethod: totalCost > 0 ? (_isCredit ? FinancePaymentMethods.credit : _paymentMethod) : null,
+        photo: _newPhotoBytes,
+        photoContentType: _newPhotoBytes != null ? 'image/jpeg' : null,
+        description: _descriptionController.text.trim().isEmpty
+            ? null
+            : _descriptionController.text.trim(),
       );
 
       await FirestoreService.instance.logActivity(
@@ -287,6 +305,28 @@ class _AddMedicineScreenState extends State<AddMedicineScreen> {
                   Text(
                     'You will see a low-stock warning when the quantity reaches this level.',
                     style: AppTheme.body(size: 11, color: AppColors.textGrey),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 14),
+              _section(
+                title: 'Photo & Description',
+                icon: Icons.photo_camera_outlined,
+                children: [
+                  _photoPicker(),
+                  const SizedBox(height: 12),
+                  _field(
+                    controller: _descriptionController,
+                    label: 'Description',
+                    hint: 'What it looks like / what it\'s used for',
+                    icon: Icons.description_outlined,
+                    maxLines: 3,
+                    optional: true,
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    'Shown on the Stock screen so any labourer can identify this medicine by sight, even if they can\'t read the name.',
+                    style: AppTheme.body(size: 10, color: AppColors.textGrey),
                   ),
                 ],
               ),
@@ -902,11 +942,14 @@ class _AddMedicineScreenState extends State<AddMedicineScreen> {
             Container(
               width: 42,
               height: 42,
+              clipBehavior: Clip.antiAlias,
               decoration: BoxDecoration(
                 color: AppColors.info.withOpacity(.10),
                 shape: BoxShape.circle,
               ),
-              child: const Icon(Icons.medication_rounded, color: AppColors.info),
+              child: item.hasPhoto
+                  ? Image.memory(item.photo!, fit: BoxFit.cover)
+                  : const Icon(Icons.medication_rounded, color: AppColors.info),
             ),
             const SizedBox(width: 12),
             Expanded(
@@ -916,7 +959,7 @@ class _AddMedicineScreenState extends State<AddMedicineScreen> {
                   Text(item.name, style: AppTheme.heading(size: 13)),
                   const SizedBox(height: 3),
                   Text(
-                    'Current stock: ${item.quantity.toStringAsFixed(item.quantity % 1 == 0 ? 0 : 1)} ${item.unit}',
+                    'Current stock: ${item.quantityLabel}',
                     style: AppTheme.body(size: 11, color: AppColors.textGrey),
                   ),
                 ],
@@ -957,6 +1000,11 @@ class _AddMedicineScreenState extends State<AddMedicineScreen> {
       _thresholdController.text = item.lowStockThreshold.toStringAsFixed(
         item.lowStockThreshold % 1 == 0 ? 0 : 1,
       );
+      // Show what's already on file; only overwritten if the user
+      // explicitly picks a new photo or edits the description below.
+      _existingPhoto = item.hasPhoto ? item.photo : null;
+      _newPhotoBytes = null;
+      _descriptionController.text = item.description ?? '';
     });
   }
 
@@ -1016,6 +1064,9 @@ class _AddMedicineScreenState extends State<AddMedicineScreen> {
       _nameController.text = name.trim();
       _unit = 'Bottle';
       _thresholdController.text = '5';
+      _existingPhoto = null;
+      _newPhotoBytes = null;
+      _descriptionController.clear();
     });
   }
 
@@ -1039,12 +1090,12 @@ class _AddMedicineScreenState extends State<AddMedicineScreen> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  'Current stock  ${item.quantity.toStringAsFixed(item.quantity % 1 == 0 ? 0 : 1)} ${item.unit}',
+                  'Current stock  ${item.quantity.toStringAsFixed(item.quantity % 1 == 0 ? 0 : 1)} ${item.unitLabel(item.quantity)}',
                   style: AppTheme.body(size: 11, color: AppColors.textGrey),
                 ),
                 if (newQuantity > 0)
                   Text(
-                    'After addition  ${projected.toStringAsFixed(projected % 1 == 0 ? 0 : 1)} ${item.unit}',
+                    'After addition  ${projected.toStringAsFixed(projected % 1 == 0 ? 0 : 1)} ${item.unitLabel(projected)}',
                     style: AppTheme.body(
                       size: 12,
                       color: AppColors.info,
@@ -1102,6 +1153,153 @@ class _AddMedicineScreenState extends State<AddMedicineScreen> {
                 ),
               );
             }).toList(),
+          ),
+        ),
+      ],
+    );
+  }
+
+  // ---------------------------------------------------------------------
+  // PHOTO (identification for labour)
+  // ---------------------------------------------------------------------
+
+  Uint8List? get _displayedPhoto => _newPhotoBytes ?? _existingPhoto;
+
+  Future<void> _pickPhoto({required bool fromCamera}) async {
+    if (_pickingPhoto) return;
+    setState(() => _pickingPhoto = true);
+    try {
+      final picked = fromCamera
+          ? await ImageService.instance.pickFromCamera()
+          : await ImageService.instance.pickFromGallery();
+      if (picked == null) return;
+      setState(() {
+        _newPhotoBytes = picked.bytes;
+      });
+    } on ImageTooLargeException catch (e) {
+      _message(e.message, error: true);
+    } catch (_) {
+      _message('Could not load that photo. Please try again.', error: true);
+    } finally {
+      if (mounted) setState(() => _pickingPhoto = false);
+    }
+  }
+
+  void _removePhoto() {
+    setState(() {
+      _newPhotoBytes = null;
+      _existingPhoto = null;
+    });
+  }
+
+  void _viewPhotoFullScreen(Uint8List bytes) {
+    PhotoViewerScreen.open(context, bytes, title: _nameController.text.trim());
+  }
+
+  void _showPhotoSourceSheet() {
+    showModalBottomSheet(
+      context: context,
+      showDragHandle: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(26)),
+      ),
+      builder: (sheetContext) {
+        return SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              ListTile(
+                leading: const Icon(Icons.photo_library_outlined, color: AppColors.info),
+                title: const Text('Choose from gallery'),
+                onTap: () {
+                  Navigator.pop(sheetContext);
+                  _pickPhoto(fromCamera: false);
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.photo_camera_outlined, color: AppColors.info),
+                title: const Text('Take a photo'),
+                onTap: () {
+                  Navigator.pop(sheetContext);
+                  _pickPhoto(fromCamera: true);
+                },
+              ),
+              if (_displayedPhoto != null)
+                ListTile(
+                  leading: const Icon(Icons.delete_outline, color: AppColors.error),
+                  title: const Text('Remove photo', style: TextStyle(color: AppColors.error)),
+                  onTap: () {
+                    Navigator.pop(sheetContext);
+                    _removePhoto();
+                  },
+                ),
+              const SizedBox(height: 8),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _photoPicker() {
+    final photo = _displayedPhoto;
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        GestureDetector(
+          onTap: photo != null ? () => _viewPhotoFullScreen(photo) : null,
+          child: Container(
+            width: 72,
+            height: 72,
+            clipBehavior: Clip.antiAlias,
+            decoration: BoxDecoration(
+              color: AppColors.info.withOpacity(.08),
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(color: AppColors.info.withOpacity(.20)),
+            ),
+            child: _pickingPhoto
+                ? const Center(
+              child: SizedBox(
+                width: 22,
+                height: 22,
+                child: CircularProgressIndicator(strokeWidth: 2, color: AppColors.info),
+              ),
+            )
+                : photo != null
+                ? Image.memory(photo, fit: BoxFit.cover)
+                : const Icon(Icons.medication_outlined, color: AppColors.info, size: 28),
+          ),
+        ),
+        const SizedBox(width: 12),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                photo != null ? 'Photo added' : 'Add a photo of the medicine',
+                style: AppTheme.body(size: 12, color: AppColors.textDark, weight: FontWeight.w700),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                photo != null
+                    ? 'Tap the photo to view it full-size.'
+                    : 'A photo of the bottle/label helps new labour recognize it.',
+                style: AppTheme.body(size: 10, color: AppColors.textGrey),
+              ),
+              const SizedBox(height: 8),
+              OutlinedButton.icon(
+                onPressed: _pickingPhoto ? null : _showPhotoSourceSheet,
+                icon: Icon(photo != null ? Icons.edit_outlined : Icons.add_a_photo_outlined, size: 16),
+                label: Text(photo != null ? 'Change Photo' : 'Add Photo'),
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: AppColors.info,
+                  side: BorderSide(color: AppColors.info.withOpacity(.35)),
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                  textStyle: const TextStyle(fontSize: 11, fontWeight: FontWeight.w700),
+                ),
+              ),
+            ],
           ),
         ),
       ],

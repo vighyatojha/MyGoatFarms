@@ -2793,6 +2793,15 @@ class FirestoreService {
         double? totalCost,
         String? supplierName,
         String? paymentMethod,
+        // Reference photo + description, shown on the Stock list/detail
+        // view so labour who can't read the name can still recognize the
+        // item. Both are optional and, on a merge into an existing item
+        // (see below), only overwrite what's already stored when a new
+        // value is actually supplied — so adding more stock of something
+        // already photographed never has to re-attach the photo.
+        Uint8List? photo,
+        String? photoContentType,
+        String? description,
       }) async {
     final typeStr = type == StockType.medicine ? 'medicine' : 'feed';
     final isBag = unit.trim().toLowerCase() == 'bag';
@@ -2844,6 +2853,9 @@ class FirestoreService {
         totalKg: finalTotalKg,
         lowStockThreshold: lowStockThreshold,
         lastUpdated: DateTime.now(),
+        photo: photo,
+        photoContentType: photo != null ? photoContentType : null,
+        description: description,
       ).toMap()).timeout(timeout);
       itemId = ref.id;
     } else {
@@ -2909,6 +2921,13 @@ class FirestoreService {
         'totalKg': finalTotalKg,
         'lowStockThreshold': lowStockThreshold,
         'lastUpdated': FieldValue.serverTimestamp(),
+        // Only overwrite the photo/description when this purchase actually
+        // supplied a new one — otherwise leave whatever's already on the
+        // item alone, so a plain "add 10 more bottles" doesn't wipe the
+        // photo that was set the first time this medicine was added.
+        if (photo != null) 'photo': Blob(photo),
+        if (photo != null && photoContentType != null) 'photoContentType': photoContentType,
+        if (description != null && description.trim().isNotEmpty) 'description': description.trim(),
       }).timeout(timeout);
     }
 
@@ -3319,6 +3338,45 @@ class FirestoreService {
       'profileImage': FieldValue.delete(),
       'profileImageContentType': FieldValue.delete(),
       'updatedAt': FieldValue.serverTimestamp(),
+    }).timeout(timeout);
+  }
+
+  /// Sets or replaces a stock item's reference photo directly (e.g. from
+  /// the Stock screen's detail view), without having to go through
+  /// [addStock]. Same Firestore-`Blob` storage as [updateProfileImage].
+  Future<void> updateStockItemPhoto(
+      String farmId,
+      String stockItemId,
+      Uint8List bytes,
+      String contentType,
+      ) async {
+    await _stockItems(farmId).doc(stockItemId).update({
+      'photo': Blob(bytes),
+      'photoContentType': contentType,
+      'lastUpdated': FieldValue.serverTimestamp(),
+    }).timeout(timeout);
+  }
+
+  Future<void> removeStockItemPhoto(String farmId, String stockItemId) async {
+    await _stockItems(farmId).doc(stockItemId).update({
+      'photo': FieldValue.delete(),
+      'photoContentType': FieldValue.delete(),
+      'lastUpdated': FieldValue.serverTimestamp(),
+    }).timeout(timeout);
+  }
+
+  /// Sets or clears a stock item's description (pass an empty string to
+  /// clear it) — used by the Stock screen's detail view so a description
+  /// can be added/edited without recording a new stock movement.
+  Future<void> updateStockItemDescription(
+      String farmId,
+      String stockItemId,
+      String description,
+      ) async {
+    final trimmed = description.trim();
+    await _stockItems(farmId).doc(stockItemId).update({
+      'description': trimmed.isEmpty ? FieldValue.delete() : trimmed,
+      'lastUpdated': FieldValue.serverTimestamp(),
     }).timeout(timeout);
   }
 

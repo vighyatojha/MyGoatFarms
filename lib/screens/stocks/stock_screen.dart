@@ -15,6 +15,7 @@ import 'feed_used_screen.dart';
 import 'medicine_used_screen.dart';
 
 import '../../widgets/farm_not_linked_state.dart';
+import '../../widgets/photo_viewer_screen.dart';
 
 class StockScreen extends StatefulWidget {
   const StockScreen({super.key});
@@ -1517,29 +1518,37 @@ class _StockScreenState extends State<StockScreen> {
               children: [
                 Row(
                   children: [
-                    Container(
-                      width: 40,
-                      height: 40,
-                      decoration:
-                      BoxDecoration(
-                        color: color
-                            .withOpacity(
-                          0.10,
+                    GestureDetector(
+                      onTap: item.hasPhoto
+                          ? () => PhotoViewerScreen.open(context, item.photo!, title: item.name)
+                          : null,
+                      child: Container(
+                        width: 40,
+                        height: 40,
+                        clipBehavior: Clip.antiAlias,
+                        decoration:
+                        BoxDecoration(
+                          color: color
+                              .withOpacity(
+                            0.10,
+                          ),
+                          shape:
+                          BoxShape
+                              .circle,
                         ),
-                        shape:
-                        BoxShape
-                            .circle,
-                      ),
-                      child: Icon(
-                        type ==
-                            StockType
-                                .feed
-                            ? Icons
-                            .grass_rounded
-                            : Icons
-                            .medication_rounded,
-                        color: color,
-                        size: 21,
+                        child: item.hasPhoto
+                            ? Image.memory(item.photo!, fit: BoxFit.cover)
+                            : Icon(
+                          type ==
+                              StockType
+                                  .feed
+                              ? Icons
+                              .grass_rounded
+                              : Icons
+                              .medication_rounded,
+                          color: color,
+                          size: 21,
+                        ),
                       ),
                     ),
 
@@ -1865,29 +1874,37 @@ class _StockScreenState extends State<StockScreen> {
 
                 Row(
                   children: [
-                    Container(
-                      width: 52,
-                      height: 52,
-                      decoration:
-                      BoxDecoration(
-                        color: color
-                            .withOpacity(
-                          0.10,
+                    GestureDetector(
+                      onTap: item.hasPhoto
+                          ? () => PhotoViewerScreen.open(context, item.photo!, title: item.name)
+                          : null,
+                      child: Container(
+                        width: 52,
+                        height: 52,
+                        clipBehavior: Clip.antiAlias,
+                        decoration:
+                        BoxDecoration(
+                          color: color
+                              .withOpacity(
+                            0.10,
+                          ),
+                          shape:
+                          BoxShape
+                              .circle,
                         ),
-                        shape:
-                        BoxShape
-                            .circle,
-                      ),
-                      child: Icon(
-                        item.type ==
-                            StockType
-                                .feed
-                            ? Icons
-                            .grass_rounded
-                            : Icons
-                            .medication_rounded,
-                        color: color,
-                        size: 26,
+                        child: item.hasPhoto
+                            ? Image.memory(item.photo!, fit: BoxFit.cover)
+                            : Icon(
+                          item.type ==
+                              StockType
+                                  .feed
+                              ? Icons
+                              .grass_rounded
+                              : Icons
+                              .medication_rounded,
+                          color: color,
+                          size: 26,
+                        ),
                       ),
                     ),
 
@@ -1937,6 +1954,31 @@ class _StockScreenState extends State<StockScreen> {
                   ],
                 ),
 
+                if (item.hasDescription) ...[
+                  const SizedBox(height: 14),
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: AppColors.paleGreen,
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Icon(Icons.info_outline_rounded, color: color, size: 16),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            item.description!,
+                            style: AppTheme.body(size: 11, color: AppColors.textDark),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+
                 const SizedBox(
                   height: 18,
                 ),
@@ -1965,7 +2007,7 @@ class _StockScreenState extends State<StockScreen> {
                         title:
                         'Low Threshold',
                         value:
-                        '${item.lowStockThreshold.toStringAsFixed(0)} ${item.unit}',
+                        '${item.lowStockThreshold.toStringAsFixed(0)} ${item.unitLabel(item.lowStockThreshold)}',
                         color:
                         item.isLowStock
                             ? AppColors
