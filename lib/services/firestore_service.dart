@@ -21,6 +21,7 @@ import '../models/notification_model.dart';
 import '../models/supplier_model.dart';
 import '../models/goat_model.dart';
 import '../models/trading_goat_health_record.dart';
+import '../models/expense_categories.dart';
 import 'sales_service.dart';
 
 /// One upcoming/due health reminder for a Customer-Palai goat —
@@ -3204,6 +3205,17 @@ class FirestoreService {
 
     final supplierRef = _suppliers(farmId).doc(supplierId);
     final ledgerRef = _supplierLedger(farmId).doc();
+    // The part of this payment that clears an earlier credit purchase
+    // (see FinanceService.addExpense / ExpenseModel.isUnpaidCredit) is
+    // real cash leaving the farm right now — Finance never saw that
+    // purchase as a cash expense, so it has to be recorded here,
+    // exactly when the money actually moves, or it would never show up
+    // in Net Cash Flow, the Cash/Online tracker or Recent Transactions
+    // at all. Any part beyond what was owed becomes a supplier advance
+    // (see advanceAdded below) and is not an expense yet — it's prepaid
+    // credit, not money spent on anything.
+    final transactionRef =
+    _farms.doc(farmId).collection('transactions').doc();
 
     await _db.runTransaction<void>((transaction) async {
       final snapshot = await transaction.get(supplierRef);
@@ -3216,6 +3228,7 @@ class FirestoreService {
 
       final pendingBefore = (data['pendingAmount'] ?? 0).toDouble();
       final advanceBefore = (data['advanceAmount'] ?? 0).toDouble();
+      final supplierName = (data['name'] ?? '').toString();
 
       final appliedToPending = amount.clamp(0, pendingBefore).toDouble();
       final pendingAfter = pendingBefore - appliedToPending;
@@ -3241,6 +3254,24 @@ class FirestoreService {
         'date': FieldValue.serverTimestamp(),
         'createdAt': FieldValue.serverTimestamp(),
       });
+
+      if (appliedToPending > 0) {
+        transaction.set(transactionRef, {
+          'amount': appliedToPending,
+          'isIncome': false,
+          'category': ExpenseCategories.supplierPayment,
+          'note': supplierName.isEmpty
+              ? 'Supplier payment'
+              : 'Supplier payment — $supplierName'
+              '${note.trim().isEmpty ? '' : ' · ${note.trim()}'}',
+          'paymentMethod': paymentMethod.trim(),
+          'date': FieldValue.serverTimestamp(),
+          'createdAt': FieldValue.serverTimestamp(),
+          'status': 'active',
+          'referenceType': 'supplierPayment',
+          'referenceId': ledgerRef.id,
+        });
+      }
     }).timeout(timeout);
   }
 

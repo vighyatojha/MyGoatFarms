@@ -122,10 +122,24 @@ class FinanceService {
     final actor = await FirestoreService.instance.getCurrentActor();
 
     final expenseRef = _expenses(farmId).doc();
-    final transactionRef = _transactions(farmId).doc();
     final activityRef = _activities(farmId).doc();
 
     final batch = _db.batch();
+
+    // A "Buy on Credit" purchase (paymentMethod: Credit) has NOT been
+    // paid for — it's a liability owed to the supplier, not cash out
+    // the door. Finance is cash-based throughout (see class doc), so
+    // this must not get a mirrored `transactions` doc: that doc is
+    // exactly what Net Cash Flow, the Cash/Online tracker, and Home's
+    // today's-net-income figure sum. The expense doc itself is still
+    // written, so the purchase stays visible/auditable in the Expense
+    // List — it's just excluded from every cash total (see
+    // ExpenseModel.isUnpaidCredit and its use throughout this file).
+    // The real cash outflow is recorded later, when the supplier is
+    // actually paid — see FirestoreService.recordSupplierPayment.
+    final isUnpaidCredit =
+        expense.paymentMethod.trim().toLowerCase() == 'credit';
+    final transactionRef = isUnpaidCredit ? null : _transactions(farmId).doc();
 
     batch.set(
       expenseRef,
@@ -137,21 +151,23 @@ class FinanceService {
       )
       // The mirrored transaction id is stored on the expense so a
       // later edit/void can find and update it without a query.
-        ..addAll({'transactionId': transactionRef.id}),
+        ..addAll({if (transactionRef != null) 'transactionId': transactionRef.id}),
     );
 
-    batch.set(transactionRef, {
-      'amount': expense.amount,
-      'isIncome': false,
-      'category': expense.category,
-      'note': expense.title.trim(),
-      'paymentMethod': expense.paymentMethod,
-      'date': Timestamp.fromDate(expense.date),
-      'createdAt': FieldValue.serverTimestamp(),
-      'status': 'active',
-      'referenceType': 'expense',
-      'referenceId': expenseRef.id,
-    });
+    if (transactionRef != null) {
+      batch.set(transactionRef, {
+        'amount': expense.amount,
+        'isIncome': false,
+        'category': expense.category,
+        'note': expense.title.trim(),
+        'paymentMethod': expense.paymentMethod,
+        'date': Timestamp.fromDate(expense.date),
+        'createdAt': FieldValue.serverTimestamp(),
+        'status': 'active',
+        'referenceType': 'expense',
+        'referenceId': expenseRef.id,
+      });
+    }
 
     final activitySubtitle =
         '${expense.category} · ₹${expense.amount.toStringAsFixed(0)}'
@@ -185,6 +201,14 @@ class FinanceService {
   /// Updates an expense in place. The mirrored `transactions` doc is
   /// updated to match so aggregation stays correct — this does not
   /// create a second transaction.
+  ///
+  /// A credit purchase has no mirrored transaction at all (see
+  /// [addExpense]), so editing one that is still on credit does not
+  /// invent one — and if the payment method changes away from Credit
+  /// here (the person realizes it was actually paid), a transaction is
+  /// created now so it starts counting as a cash expense. The reverse
+  /// (changing a paid expense to Credit) voids the existing mirrored
+  /// transaction so it stops counting.
   Future<void> updateExpense(
       String farmId,
       String expenseId,
@@ -201,19 +225,51 @@ class FinanceService {
     }
 
     final transactionId = (snap.data()?['transactionId'] ?? '').toString();
+    final isCreditNow = updated.paymentMethod.trim().toLowerCase() == 'credit';
 
     final batch = _db.batch();
-    batch.update(expenseRef, updated.toUpdateMap());
+    final expenseUpdateMap = Map<String, dynamic>.from(updated.toUpdateMap());
 
     if (transactionId.isNotEmpty) {
-      batch.update(_transactions(farmId).doc(transactionId), {
+      if (isCreditNow) {
+        // No longer a cash outflow — drop the mirrored transaction so
+        // it stops counting toward Net Cash Flow / the Cash-Online
+        // tracker, the same as it never being created in the first
+        // place for a new credit purchase.
+        batch.update(_transactions(farmId).doc(transactionId), {
+          'status': 'voided',
+        });
+      } else {
+        batch.update(_transactions(farmId).doc(transactionId), {
+          'amount': updated.amount,
+          'category': updated.category,
+          'note': updated.title.trim(),
+          'paymentMethod': updated.paymentMethod,
+          'date': Timestamp.fromDate(updated.date),
+          'status': 'active',
+        });
+      }
+    } else if (!isCreditNow) {
+      // Was Credit (so no mirrored transaction was ever created) and
+      // is now actually paid — create it now, exactly like addExpense
+      // would have if this payment method had been chosen originally.
+      final newTransactionRef = _transactions(farmId).doc();
+      batch.set(newTransactionRef, {
         'amount': updated.amount,
+        'isIncome': false,
         'category': updated.category,
         'note': updated.title.trim(),
         'paymentMethod': updated.paymentMethod,
         'date': Timestamp.fromDate(updated.date),
+        'createdAt': FieldValue.serverTimestamp(),
+        'status': 'active',
+        'referenceType': 'expense',
+        'referenceId': expenseRef.id,
       });
+      expenseUpdateMap['transactionId'] = newTransactionRef.id;
     }
+
+    batch.update(expenseRef, expenseUpdateMap);
 
     final actor = await FirestoreService.instance.getCurrentActor();
     final activityRef = _activities(farmId).doc();
@@ -629,6 +685,12 @@ class FinanceService {
     for (final doc in expensesSnap.docs) {
       final data = doc.data();
       if (data['status'] == 'voided') continue;
+      // Not yet paid — a liability owed to the supplier, not cash out
+      // the door. See ExpenseModel.isUnpaidCredit.
+      if ((data['paymentMethod'] ?? '').toString().trim().toLowerCase() ==
+          'credit') {
+        continue;
+      }
       if (scope != null && !FinanceScopeRules.expenseMapBelongsTo(scope, data)) {
         continue;
       }
@@ -741,6 +803,10 @@ class FinanceService {
     for (final doc in expenseSnap.docs) {
       final expense = ExpenseModel.fromDoc(doc);
       if (expense.isVoided) continue;
+      // Not yet paid — excluded from the cash-movements feed, same as
+      // every other cash-based Finance total. See ExpenseModel.
+      // isUnpaidCredit.
+      if (expense.isUnpaidCredit) continue;
       if (scope != null &&
           !FinanceScopeRules.expenseBelongsTo(
             scope,
@@ -859,6 +925,11 @@ class FinanceService {
     for (final doc in expensesSnap.docs) {
       final data = doc.data();
       if (data['status'] == 'voided') continue;
+      // Not yet paid — see ExpenseModel.isUnpaidCredit.
+      if ((data['paymentMethod'] ?? '').toString().trim().toLowerCase() ==
+          'credit') {
+        continue;
+      }
       if (!FinanceScopeRules.expenseMapBelongsTo(FinanceScope.trading, data)) {
         continue;
       }

@@ -23,6 +23,12 @@ class ExpenseCategories {
   static const String hoofCuttingSelf = 'Hoof Cutting (Self)';
   static const String other = 'Other';
 
+  /// The real cash expense recorded when a supplier credit purchase is
+  /// actually paid off — see FirestoreService.recordSupplierPayment.
+  /// Not a manual-entry category (deliberately excluded from [all],
+  /// same reasoning as [FinancePaymentMethods.credit]).
+  static const String supplierPayment = 'Supplier Payment';
+
   static const List<String> all = [
     feed,
     medicine,

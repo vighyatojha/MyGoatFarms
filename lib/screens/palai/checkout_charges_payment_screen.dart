@@ -7,6 +7,8 @@ import '../../goat_icons.dart';
 import '../../models/bill_settings_model.dart';
 import '../../models/palai_models.dart';
 import '../../services/firestore_service.dart';
+import '../../services/monthly_billing_service.dart';
+import '../../utils/palai_proration.dart';
 import 'final_checkout_report_screen.dart';
 
 /// Data carried from the Review Checkout screen into
@@ -73,9 +75,26 @@ class _CheckoutChargesPaymentScreenState
   void initState() {
     super.initState();
 
+    // FIX: this used to default to each goat's FULL monthly `pricing`,
+    // even for a goat checking out mid-month — over-charging for days
+    // the goat was never here, and duplicating whatever that goat had
+    // already accrued on this month's live Monthly Bill. Pro-rate from
+    // the goat's joining date to TODAY (the checkout date) instead, the
+    // same way a mid-month check-in is already pro-rated.
+    final now = DateTime.now();
     final defaultCharges = widget.goats.fold<double>(
       0,
-          (sum, item) => sum + item.goat.pricing,
+          (sum, item) {
+        final proration = PalaiProrationCalculator.calculateForStay(
+          monthlyCharge:
+          item.goat.pricing < 0 ? 0.0 : item.goat.pricing.toDouble(),
+          joiningDate: item.goat.billingStartDate,
+          leavingDate: now,
+          year: now.year,
+          month: now.month,
+        );
+        return sum + proration.amount;
+      },
     );
 
     _chargesController = TextEditingController(
@@ -459,6 +478,22 @@ class _CheckoutChargesPaymentScreenState
                           : null,
                     );
                   }
+
+                  // FIX: Final Checkout settles the customer through a
+                  // separate bill system (createMonthlyBill above) than
+                  // MonthlyBillingService's own live Monthly Bill. Without
+                  // this, that Monthly Bill kept showing its old
+                  // remainingAmount forever — still "counting" a goat
+                  // that had just been checked out and fully paid for —
+                  // and blocked future payments with a mismatch error.
+                  // Checkout requires pendingAmount to be zero before it
+                  // gets here, so any Monthly Bill still open at this
+                  // point is stale and safe to close out.
+                  await MonthlyBillingService.instance
+                      .closeOpenBillsIfCustomerSettled(
+                    farmId: widget.farmId,
+                    customerId: widget.customerId,
+                  );
                 },
               ),
         ),

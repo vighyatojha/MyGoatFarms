@@ -221,7 +221,14 @@ class _ExpenseListScreenState extends State<ExpenseListScreen> {
                     );
                   }
 
-                  final total = items.fold<double>(0, (sum, e) => sum + e.amount);
+                  // Unpaid credit purchases are shown for audit/record
+                  // (spec §29), but Finance is cash-based, so they stay
+                  // out of "Total" the same way they stay out of Net
+                  // Cash Flow, the Cash/Online tracker and Recent
+                  // Transactions — see ExpenseModel.isUnpaidCredit.
+                  final total = items
+                      .where((e) => !e.isUnpaidCredit)
+                      .fold<double>(0, (sum, e) => sum + e.amount);
 
                   return ListView.builder(
                     padding: const EdgeInsets.fromLTRB(16, 0, 16, 90),
@@ -280,6 +287,15 @@ class _ExpenseListScreenState extends State<ExpenseListScreen> {
                     '${expense.category} · ${DateFormat('dd MMM yyyy').format(expense.date)}',
                     style: AppTheme.body(size: 11, color: AppColors.textGrey),
                   ),
+                  if (expense.isUnpaidCredit)
+                    Text(
+                      'On Credit — not yet paid, excluded from totals',
+                      style: AppTheme.body(
+                        size: 10,
+                        color: AppColors.textGrey,
+                        weight: FontWeight.w600,
+                      ),
+                    ),
                   if (expense.supplierName != null && expense.supplierName!.isNotEmpty)
                     Text(
                       expense.supplierName!,

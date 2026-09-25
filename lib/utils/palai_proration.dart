@@ -59,25 +59,70 @@ class PalaiProrationCalculator {
     required int year,
     required int month,
   }) {
-    final total = daysInMonth(year, month);
+    return calculateForStay(
+      monthlyCharge: monthlyCharge,
+      joiningDate: joiningDate,
+      leavingDate: null,
+      year: year,
+      month: month,
+    );
+  }
 
-    int billable;
-    if (joiningDate == null) {
-      billable = total;
-    } else {
-      final monthStart = DateTime(year, month, 1);
-      final monthEnd = DateTime(year, month, total);
-      // Compare on date only, ignoring time of day.
+  /// Pro-rates [monthlyCharge] for the billing month [year]/[month],
+  /// accounting for BOTH ends of the goat's stay:
+  ///
+  /// * [joiningDate] — same rule as [calculate]: null or on/before the
+  ///   1st of the month means the goat was already there at month start.
+  /// * [leavingDate] — the date the goat checked out (or `null` if the
+  ///   goat is still checked in, in which case billing runs to month
+  ///   end exactly like [calculate]). The leaving day itself IS billed
+  ///   (the goat was still on the farm that day), mirroring how the
+  ///   joining day is billed.
+  ///
+  /// This is what [calculate] was missing: without a [leavingDate], a
+  /// goat checked out mid-month was always charged for the WHOLE
+  /// remainder of the month it never actually stayed for, which is what
+  /// let Final Checkout's default Palai charge silently double the
+  /// amount already sitting in that month's Monthly Bill.
+  static PalaiProration calculateForStay({
+    required double monthlyCharge,
+    required DateTime? joiningDate,
+    required DateTime? leavingDate,
+    required int year,
+    required int month,
+  }) {
+    final total = daysInMonth(year, month);
+    final monthStart = DateTime(year, month, 1);
+    final monthEnd = DateTime(year, month, total);
+
+    // Compare on date only, ignoring time of day.
+    var effectiveStart = monthStart;
+    if (joiningDate != null) {
       final joined =
       DateTime(joiningDate.year, joiningDate.month, joiningDate.day);
-
-      if (!joined.isAfter(monthStart)) {
-        billable = total;
-      } else if (joined.isAfter(monthEnd)) {
-        billable = 0;
-      } else {
-        billable = total - joined.day + 1;
+      if (joined.isAfter(monthStart)) {
+        effectiveStart = joined;
       }
+    }
+
+    var effectiveEnd = monthEnd;
+    if (leavingDate != null) {
+      final left =
+      DateTime(leavingDate.year, leavingDate.month, leavingDate.day);
+      if (left.isBefore(monthEnd)) {
+        effectiveEnd = left;
+      }
+    }
+
+    int billable;
+    if (effectiveStart.isAfter(monthEnd) ||
+        effectiveEnd.isBefore(monthStart) ||
+        effectiveEnd.isBefore(effectiveStart)) {
+      // Joined after the month ended, or left before the month began —
+      // the goat wasn't here at all during this billing month.
+      billable = 0;
+    } else {
+      billable = effectiveEnd.difference(effectiveStart).inDays + 1;
     }
 
     final raw = monthlyCharge / total * billable;

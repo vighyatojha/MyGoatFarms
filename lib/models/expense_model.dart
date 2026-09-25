@@ -40,6 +40,18 @@ class ExpenseModel {
   final String? referenceType;
   final String? referenceId;
 
+  /// True when this expense was bought on credit from a supplier and
+  /// hasn't actually been paid for yet. Finance is cash-based (spec:
+  /// money counts when it moves), so an unpaid credit purchase is a
+  /// liability, not a cash outflow — it must never count toward Net
+  /// Cash Flow, the Cash/Online tracker, or any "total spent" figure
+  /// until it is actually settled (see FirestoreService.
+  /// recordSupplierPayment, which records the real cash expense at
+  /// that point). It still shows in the expense list itself, tagged
+  /// as unpaid, for audit purposes — see spec Rule 7 / §29.
+  bool get isUnpaidCredit =>
+      status != 'voided' && paymentMethod.trim().toLowerCase() == 'credit';
+
   const ExpenseModel({
     required this.id,
     required this.title,
