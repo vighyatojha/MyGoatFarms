@@ -148,8 +148,29 @@ class PartnerModel {
   final String email;
   final String authUid;
   final DateTime? createdAt;
-  final bool isActive;
+
+  /// Raw approval lifecycle state stored on the document: one of
+  /// 'active', 'pending', 'rejected', 'disabled'. Partners created
+  /// through the older [FirestoreService.createPartner] path never had
+  /// this field written at all, so it's treated as 'active' for those
+  /// legacy docs (see [fromDoc]) rather than silently locking existing
+  /// partners out.
+  final String status;
+
   final PartnerPermissions permissions;
+
+  /// True only for partners the owner has actually approved. This used
+  /// to read a Firestore field (`isActive`) that no write path ever set,
+  /// so it always evaluated to true regardless of a partner's real
+  /// approval state — including partners still sitting in 'pending'.
+  /// It now derives from [status] instead.
+  bool get isActive => status == 'active';
+
+  bool get isPending => status == 'pending';
+
+  bool get isRejected => status == 'rejected';
+
+  bool get isDisabled => status == 'disabled';
 
   /// The id of the farm this partner belongs to — i.e. the id of the
   /// `farms/{farmId}` document that owns the `partners` subcollection
@@ -166,7 +187,7 @@ class PartnerModel {
     required this.authUid,
     required this.farmId,
     this.createdAt,
-    this.isActive = true,
+    this.status = 'active',
     this.permissions = const PartnerPermissions(),
   });
 
@@ -185,7 +206,11 @@ class PartnerModel {
       // grandparent (parent.parent) is the farms/{farmId} document.
       farmId: doc.reference.parent.parent?.id ?? '',
       createdAt: (data['createdAt'] as Timestamp?)?.toDate(),
-      isActive: data['isActive'] != false,
+      // Legacy docs (created before the approval workflow existed) have
+      // no 'status' field at all — treat those as already active rather
+      // than pending, so partners added before this change don't
+      // suddenly lose access.
+      status: (data['status'] as String?) ?? 'active',
       permissions: PartnerPermissions.fromMap(
         data['permissions'] as Map<String, dynamic>?,
       ),

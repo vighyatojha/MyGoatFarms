@@ -3,6 +3,8 @@ import 'package:flutter/material.dart';
 import '../../app_theme.dart';
 import '../../models/partner_model.dart';
 import '../../services/firestore_service.dart';
+import '../../widgets/add_partner_sheet.dart';
+import '../../widgets/partner_approval_sheet.dart';
 import 'partner_profile_screen.dart';
 
 class PartnerManagementScreen extends StatelessWidget {
@@ -29,6 +31,13 @@ class PartnerManagementScreen extends StatelessWidget {
         foregroundColor: AppColors.darkGreen,
         elevation: 0,
         scrolledUnderElevation: 0,
+        actions: [
+          IconButton(
+            tooltip: 'Add Partner',
+            onPressed: () => _showAddPartnerSheet(context),
+            icon: const Icon(Icons.person_add_alt_1_outlined),
+          ),
+        ],
       ),
       body: StreamBuilder<List<PartnerModel>>(
         stream: FirestoreService.instance.partnersStream(farmId),
@@ -43,8 +52,11 @@ class PartnerManagementScreen extends StatelessWidget {
 
           final partners = snapshot.data ?? const <PartnerModel>[];
 
+          final pending = partners.where((p) => p.isPending).toList();
+          final others = partners.where((p) => !p.isPending).toList();
+
           final activeCount = partners.where((p) => p.isActive).length;
-          final inactiveCount = partners.length - activeCount;
+          final inactiveCount = partners.length - activeCount - pending.length;
 
           return ListView(
             physics: const AlwaysScrollableScrollPhysics(),
@@ -61,14 +73,33 @@ class PartnerManagementScreen extends StatelessWidget {
 
               const SizedBox(height: 22),
 
-              if (partners.isNotEmpty) ...[
+              if (pending.isNotEmpty) ...[
+                _buildSectionHeader(
+                  title: 'Pending Approval',
+                  subtitle: 'New partners waiting for you to approve them',
+                  count: pending.length,
+                ),
+                const SizedBox(height: 10),
+                ...pending.map(
+                      (partner) => Padding(
+                    padding: const EdgeInsets.only(bottom: 10),
+                    child: _PendingPartnerCard(
+                      farmId: farmId,
+                      partner: partner,
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 22),
+              ],
+
+              if (others.isNotEmpty) ...[
                 _buildSectionHeader(
                   title: 'Farm Partners',
                   subtitle: 'People who have access to this farm',
-                  count: partners.length,
+                  count: others.length,
                 ),
                 const SizedBox(height: 10),
-                ...partners.map(
+                ...others.map(
                       (partner) => Padding(
                     padding: const EdgeInsets.only(bottom: 10),
                     child: _PartnerCard(
@@ -77,12 +108,25 @@ class PartnerManagementScreen extends StatelessWidget {
                     ),
                   ),
                 ),
-              ] else
+              ] else if (pending.isEmpty)
                 _buildEmptyState(),
             ],
           );
         },
       ),
+    );
+  }
+
+  Future<void> _showAddPartnerSheet(BuildContext context) {
+    return showModalBottomSheet<bool>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      backgroundColor: AppColors.paleGreen,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+      ),
+      builder: (_) => AddPartnerSheet(farmId: farmId),
     );
   }
 
@@ -437,7 +481,7 @@ class _PartnerCard extends StatelessWidget {
               Column(
                 crossAxisAlignment: CrossAxisAlignment.end,
                 children: [
-                  _StatusBadge(isActive: partner.isActive),
+                  _StatusBadge(status: partner.status),
                   const SizedBox(height: 8),
                   const Icon(
                     Icons.chevron_right,
@@ -449,6 +493,225 @@ class _PartnerCard extends StatelessWidget {
             ],
           ),
         ),
+      ),
+    );
+  }
+}
+
+/// Card for a partner still waiting on approval. Unlike [_PartnerCard],
+/// tapping it doesn't open [PartnerProfileScreen] (there's nothing to show
+/// there yet — no permissions, no activity) — it offers Approve/Reject
+/// directly, since that's the only thing to do with a pending partner.
+class _PendingPartnerCard extends StatefulWidget {
+  final String farmId;
+  final PartnerModel partner;
+
+  const _PendingPartnerCard({
+    required this.farmId,
+    required this.partner,
+  });
+
+  @override
+  State<_PendingPartnerCard> createState() => _PendingPartnerCardState();
+}
+
+class _PendingPartnerCardState extends State<_PendingPartnerCard> {
+  bool _working = false;
+
+  Future<void> _approve() async {
+    await showModalBottomSheet<bool>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (_) => PartnerApprovalSheet(
+        farmId: widget.farmId,
+        partner: widget.partner,
+      ),
+    );
+  }
+
+  Future<void> _reject() async {
+    final name = widget.partner.name.trim().isEmpty
+        ? 'this partner'
+        : widget.partner.name.trim();
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        backgroundColor: Colors.white,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(18),
+        ),
+        title: const Text(
+          'Reject partner?',
+          style: TextStyle(fontWeight: FontWeight.w800),
+        ),
+        content: Text(
+          '$name will not get access to this farm. You can add them '
+              'again later if this was a mistake.',
+          style: AppTheme.body(size: 12, color: AppColors.textGrey),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(
+              backgroundColor: AppColors.error,
+              foregroundColor: Colors.white,
+            ),
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('Reject'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true || !mounted) return;
+
+    setState(() => _working = true);
+
+    try {
+      await FirestoreService.instance.rejectPartner(
+        farmId: widget.farmId,
+        partnerId: widget.partner.id,
+      );
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(FirestoreService.instance.describeError(e)),
+            backgroundColor: AppColors.error,
+          ),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _working = false);
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final partner = widget.partner;
+
+    final name = partner.name.trim().isEmpty
+        ? 'Unnamed partner'
+        : partner.name.trim();
+
+    final contact = partner.email.trim().isNotEmpty
+        ? partner.email.trim()
+        : partner.mobileNumber.trim().isNotEmpty
+        ? partner.mobileNumber.trim()
+        : 'No contact information';
+
+    return Container(
+      decoration: AppTheme.card(radius: 18),
+      padding: const EdgeInsets.all(14),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                width: 44,
+                height: 44,
+                decoration: BoxDecoration(
+                  color: AppColors.warning.withValues(alpha: .12),
+                  borderRadius: BorderRadius.circular(14),
+                ),
+                child: const Icon(
+                  Icons.hourglass_top_rounded,
+                  size: 22,
+                  color: AppColors.warning,
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      name,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: AppTheme.body(
+                        size: 13,
+                        color: AppColors.textDark,
+                        weight: FontWeight.w800,
+                      ),
+                    ),
+                    const SizedBox(height: 3),
+                    Text(
+                      contact,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: AppTheme.body(size: 10, color: AppColors.textGrey),
+                    ),
+                  ],
+                ),
+              ),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                decoration: BoxDecoration(
+                  color: AppColors.warning.withValues(alpha: .12),
+                  borderRadius: BorderRadius.circular(999),
+                ),
+                child: const Text(
+                  'PENDING',
+                  style: TextStyle(
+                    color: AppColors.warning,
+                    fontSize: 8,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              Expanded(
+                child: OutlinedButton(
+                  onPressed: _working ? null : _reject,
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: AppColors.error,
+                    side: const BorderSide(color: AppColors.error),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(11),
+                    ),
+                  ),
+                  child: _working
+                      ? const SizedBox(
+                    width: 16,
+                    height: 16,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: AppColors.error,
+                    ),
+                  )
+                      : const Text('Reject'),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: FilledButton(
+                  onPressed: _working ? null : _approve,
+                  style: FilledButton.styleFrom(
+                    backgroundColor: AppColors.primaryGreen,
+                    foregroundColor: Colors.white,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(11),
+                    ),
+                  ),
+                  child: const Text('Approve'),
+                ),
+              ),
+            ],
+          ),
+        ],
       ),
     );
   }
@@ -480,15 +743,27 @@ class _PartnerBadge extends StatelessWidget {
 }
 
 class _StatusBadge extends StatelessWidget {
-  final bool isActive;
+  final String status;
 
   const _StatusBadge({
-    required this.isActive,
+    required this.status,
   });
 
   @override
   Widget build(BuildContext context) {
-    final color = isActive ? AppColors.success : AppColors.textGrey;
+    final label = switch (status) {
+      'active' => 'Active',
+      'pending' => 'Pending',
+      'rejected' => 'Rejected',
+      'disabled' => 'Disabled',
+      _ => 'Inactive',
+    };
+
+    final color = switch (status) {
+      'active' => AppColors.success,
+      'pending' => AppColors.warning,
+      _ => AppColors.textGrey,
+    };
 
     return Container(
       padding: const EdgeInsets.symmetric(
@@ -503,15 +778,17 @@ class _StatusBadge extends StatelessWidget {
         mainAxisSize: MainAxisSize.min,
         children: [
           Icon(
-            isActive
+            status == 'active'
                 ? Icons.check_circle
+                : status == 'pending'
+                ? Icons.hourglass_top_rounded
                 : Icons.pause_circle_outline,
             size: 11,
             color: color,
           ),
           const SizedBox(width: 4),
           Text(
-            isActive ? 'Active' : 'Inactive',
+            label,
             style: TextStyle(
               color: color,
               fontSize: 8,

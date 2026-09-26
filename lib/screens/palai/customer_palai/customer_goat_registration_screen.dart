@@ -234,13 +234,21 @@ class _CustomerGoatRegistrationScreenState
       final partnerDoc = partnerQuery.docs.first;
       final partnerData = partnerDoc.data();
 
-      if (partnerData['isActive'] == false) {
+      // 'isActive' is never actually written by any partner write path —
+      // approval lifecycle lives in 'status' ('active' / 'pending' /
+      // 'rejected' / 'disabled'). Missing 'status' means a legacy partner
+      // doc from before the approval workflow existed, which is treated
+      // as active.
+      final status = (partnerData['status'] as String?) ?? 'active';
+
+      if (status != 'active') {
         if (mounted) {
           setState(() {
             _permissionChecked = true;
             _canRegister = false;
-            _permissionMessage =
-            'Your partner account has been deactivated by the farm owner.';
+            _permissionMessage = status == 'pending'
+                ? 'Your partner account is still waiting for the farm owner\'s approval.'
+                : 'Your partner account has been deactivated by the farm owner.';
           });
         }
         return;

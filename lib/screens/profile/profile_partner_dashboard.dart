@@ -1,4 +1,3 @@
-
 import 'package:flutter/material.dart';
 
 import '../../app_theme.dart';
@@ -107,14 +106,14 @@ class ProfilePartnerDashboard extends StatelessWidget {
           const SizedBox(height: 10),
           ...partners.take(5).map(
                 (partner) => Padding(
-                  padding: const EdgeInsets.only(bottom: 8),
-                  child: _PartnerTile(
-                    farmId: farmId,
-                    partner: partner,
-                    isOwner: isOwner,
-                  ),
-                ),
+              padding: const EdgeInsets.only(bottom: 8),
+              child: _PartnerTile(
+                farmId: farmId,
+                partner: partner,
+                isOwner: isOwner,
               ),
+            ),
+          ),
           if (partners.length > 5)
             Align(
               alignment: Alignment.centerRight,
@@ -331,7 +330,7 @@ class _PartnerTile extends StatelessWidget {
                   ],
                 ),
               ),
-              _StatusBadge(active: partner.isActive),
+              _StatusBadge(status: partner.status),
               const SizedBox(width: 4),
               const Icon(Icons.chevron_right, size: 19),
             ],
@@ -343,24 +342,36 @@ class _PartnerTile extends StatelessWidget {
 }
 
 class _StatusBadge extends StatelessWidget {
-  final bool active;
+  final String status;
 
-  const _StatusBadge({required this.active});
+  const _StatusBadge({required this.status});
 
   @override
   Widget build(BuildContext context) {
+    final label = switch (status) {
+      'active' => 'ACTIVE',
+      'pending' => 'PENDING',
+      'rejected' => 'REJECTED',
+      'disabled' => 'DISABLED',
+      _ => 'INACTIVE',
+    };
+
+    final color = switch (status) {
+      'active' => AppColors.primaryGreen,
+      'pending' => AppColors.warning,
+      _ => Colors.grey.shade700,
+    };
+
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 4),
       decoration: BoxDecoration(
-        color: active
-            ? AppColors.primaryGreen.withValues(alpha: .10)
-            : Colors.grey.withValues(alpha: .10),
+        color: color.withValues(alpha: .10),
         borderRadius: BorderRadius.circular(999),
       ),
       child: Text(
-        active ? 'ACTIVE' : 'INACTIVE',
+        label,
         style: TextStyle(
-          color: active ? AppColors.primaryGreen : Colors.grey.shade700,
+          color: color,
           fontSize: 9,
           fontWeight: FontWeight.w900,
         ),

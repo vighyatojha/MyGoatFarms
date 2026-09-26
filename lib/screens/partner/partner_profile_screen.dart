@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../../app_theme.dart';
 import '../../models/partner_model.dart';
 import '../../services/firestore_service.dart';
+import '../../widgets/partner_approval_sheet.dart';
 import '../profile/farm_activity_screen.dart';
 
 class PartnerProfileScreen extends StatefulWidget {
@@ -21,6 +22,7 @@ class PartnerProfileScreen extends StatefulWidget {
 
 class _PartnerProfileScreenState extends State<PartnerProfileScreen> {
   bool _removing = false;
+  bool _updatingStatus = false;
 
   String get farmId => widget.farmId;
   PartnerModel get partner => widget.partner;
@@ -30,9 +32,74 @@ class _PartnerProfileScreenState extends State<PartnerProfileScreen> {
     return name.isEmpty ? 'Unnamed partner' : name;
   }
 
+  /// Approving from here reuses the same permission-picker sheet the
+  /// pending-approval card in PartnerManagementScreen uses. It works for
+  /// any non-active status (pending, rejected, or disabled) — there's no
+  /// separate "re-enable" flow, since re-approving with a fresh set of
+  /// permissions covers re-enabling too.
+  Future<void> _approve() async {
+    final approved = await showModalBottomSheet<bool>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (_) => PartnerApprovalSheet(
+        farmId: farmId,
+        partner: partner,
+      ),
+    );
+
+    // The sheet already shows its own success SnackBar; this screen has
+    // no live stream of its own (it was handed a snapshot of the
+    // partner), so pop back to PartnerManagementScreen's StreamBuilder
+    // list, which will show the updated status.
+    if (approved == true && mounted) {
+      Navigator.of(context).pop();
+    }
+  }
+
+  Future<void> _disable() async {
+    if (_updatingStatus) return;
+
+    setState(() => _updatingStatus = true);
+
+    try {
+      await FirestoreService.instance.disablePartner(
+        farmId: farmId,
+        partnerId: partner.id,
+      );
+
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('$_partnerName\'s access has been disabled.'),
+          backgroundColor: AppColors.darkGreen,
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+
+      Navigator.of(context).pop();
+    } catch (e) {
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(FirestoreService.instance.describeError(e)),
+          backgroundColor: AppColors.error,
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    } finally {
+      if (mounted) {
+        setState(() => _updatingStatus = false);
+      }
+    }
+  }
+
   Future<void> _confirmRemove() async {
     final confirmed = await showDialog<bool>(
       context: context,
+
       builder: (dialogContext) {
         return AlertDialog(
           backgroundColor: Colors.white,
@@ -239,7 +306,7 @@ class _PartnerProfileScreenState extends State<PartnerProfileScreen> {
             children: [
               const _PartnerBadge(),
               const SizedBox(width: 7),
-              _StatusBadge(isActive: partner.isActive),
+              _StatusBadge(status: partner.status),
             ],
           ),
 
@@ -398,18 +465,64 @@ class _PartnerProfileScreenState extends State<PartnerProfileScreen> {
   }
 
   Widget _buildAccessSection() {
+    final (icon, label, verified) = switch (partner.status) {
+      'active' => (
+      Icons.check_circle_outline,
+      'Active — partner can access this farm',
+      true,
+      ),
+      'pending' => (
+      Icons.hourglass_top_rounded,
+      'Pending — waiting for your approval',
+      false,
+      ),
+      'rejected' => (
+      Icons.block_outlined,
+      'Rejected — this partner was not approved',
+      false,
+      ),
+      'disabled' => (
+      Icons.pause_circle_outline,
+      'Disabled — partner access is currently turned off',
+      false,
+      ),
+      _ => (
+      Icons.pause_circle_outline,
+      'Inactive — partner access is currently disabled',
+      false,
+      ),
+    };
+
     return _sectionCard(
       title: 'Partner Access',
       icon: Icons.admin_panel_settings_outlined,
-      child: _infoRow(
-        partner.isActive
-            ? Icons.check_circle_outline
-            : Icons.pause_circle_outline,
-        'ACCESS STATUS',
-        partner.isActive
-            ? 'Active — partner can access this farm'
-            : 'Inactive — partner access is currently disabled',
-        verified: partner.isActive,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _infoRow(icon, 'ACCESS STATUS', label, verified: verified),
+          if (!partner.isActive) ...[
+            const SizedBox(height: 12),
+            SizedBox(
+              width: double.infinity,
+              height: 44,
+              child: FilledButton.icon(
+                onPressed: _updatingStatus ? null : _approve,
+                style: FilledButton.styleFrom(
+                  backgroundColor: AppColors.primaryGreen,
+                  foregroundColor: Colors.white,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                ),
+                icon: const Icon(Icons.check_circle_outline, size: 18),
+                label: Text(
+                  partner.isPending ? 'Approve Partner' : 'Re-approve Partner',
+                  style: const TextStyle(fontWeight: FontWeight.w800),
+                ),
+              ),
+            ),
+          ],
+        ],
       ),
     );
   }
@@ -464,6 +577,42 @@ class _PartnerProfileScreenState extends State<PartnerProfileScreen> {
             ),
           ),
           const SizedBox(height: 14),
+          if (partner.isActive) ...[
+            SizedBox(
+              width: double.infinity,
+              height: 46,
+              child: OutlinedButton.icon(
+                onPressed: _updatingStatus ? null : _disable,
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: AppColors.textGrey,
+                  disabledForegroundColor:
+                  AppColors.textGrey.withValues(alpha: .55),
+                  side: BorderSide(color: AppColors.textGrey),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                ),
+                icon: _updatingStatus
+                    ? const SizedBox(
+                  width: 16,
+                  height: 16,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    color: AppColors.textGrey,
+                  ),
+                )
+                    : const Icon(Icons.pause_circle_outline, size: 19),
+                label: Text(
+                  _updatingStatus ? 'Disabling...' : 'Disable Partner',
+                  style: const TextStyle(
+                    fontWeight: FontWeight.w800,
+                    fontSize: 12,
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(height: 10),
+          ],
           SizedBox(
             width: double.infinity,
             height: 46,
@@ -692,15 +841,25 @@ class _PartnerBadge extends StatelessWidget {
 }
 
 class _StatusBadge extends StatelessWidget {
-  final bool isActive;
+  final String status;
 
-  const _StatusBadge({
-    required this.isActive,
-  });
+  const _StatusBadge({required this.status});
 
   @override
   Widget build(BuildContext context) {
-    final color = isActive ? AppColors.success : AppColors.textGrey;
+    final label = switch (status) {
+      'active' => 'ACTIVE',
+      'pending' => 'PENDING',
+      'rejected' => 'REJECTED',
+      'disabled' => 'DISABLED',
+      _ => 'INACTIVE',
+    };
+
+    final color = switch (status) {
+      'active' => AppColors.success,
+      'pending' => AppColors.warning,
+      _ => AppColors.textGrey,
+    };
 
     return Container(
       padding: const EdgeInsets.symmetric(
@@ -715,15 +874,17 @@ class _StatusBadge extends StatelessWidget {
         mainAxisSize: MainAxisSize.min,
         children: [
           Icon(
-            isActive
+            status == 'active'
                 ? Icons.check_circle
+                : status == 'pending'
+                ? Icons.hourglass_top_rounded
                 : Icons.pause_circle_outline,
             size: 12,
             color: color,
           ),
           const SizedBox(width: 4),
           Text(
-            isActive ? 'Active' : 'Inactive',
+            label,
             style: TextStyle(
               color: color,
               fontSize: 8,

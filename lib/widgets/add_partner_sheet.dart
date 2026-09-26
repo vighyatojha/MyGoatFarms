@@ -1,10 +1,9 @@
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
-import '../../../app_theme.dart';
-import '../../../models/partner_model.dart';
-import '../../../services/firestore_service.dart';
-import '../../../services/partner_auth_service.dart';
+import '../app_theme.dart';
+import '../services/firestore_service.dart';
+import '../services/partner_auth_service.dart';
 
 class AddPartnerSheet extends StatefulWidget {
   final String farmId;
@@ -45,9 +44,14 @@ class _AddPartnerSheetState extends State<AddPartnerSheet> {
 
     setState(() => _saving = true);
 
+    // Create the Firebase Auth account first, but hold it as a handle
+    // rather than committing it immediately. If the Firestore write
+    // below fails, we roll this back instead of leaving an orphaned
+    // Auth account with no partner document and no farm attached to it.
+    PartnerAccountHandle? accountHandle;
+
     try {
-      final uid =
-      await PartnerAuthService.instance.createPartnerAccount(
+      accountHandle = await PartnerAuthService.instance.createPartnerAccount(
         email: _email.text.trim(),
         password: _password.text,
       );
@@ -57,8 +61,10 @@ class _AddPartnerSheetState extends State<AddPartnerSheet> {
         name: _name.text.trim(),
         mobileNumber: _mobile.text.trim(),
         email: _email.text.trim(),
-        authUid: uid,
+        authUid: accountHandle.uid,
       );
+
+      await accountHandle.finalize();
 
       if (!mounted) return;
 
@@ -73,8 +79,10 @@ class _AddPartnerSheetState extends State<AddPartnerSheet> {
         ),
       );
     } on FirebaseAuthException catch (e) {
+      await accountHandle?.rollback();
       _error(_authError(e.code));
     } catch (e) {
+      await accountHandle?.rollback();
       _error(
         FirestoreService.instance.describeError(e),
       );
@@ -92,7 +100,7 @@ class _AddPartnerSheetState extends State<AddPartnerSheet> {
       case 'invalid-email':
         return 'Please enter a valid email address.';
       case 'weak-password':
-        return 'Password must contain at least 6 characters.';
+        return 'Password must contain at least 8 characters.';
       default:
         return 'Could not create partner account.';
     }
@@ -216,8 +224,8 @@ class _AddPartnerSheetState extends State<AddPartnerSheet> {
                     ),
                   ),
                   validator: (value) {
-                    if (value == null || value.length < 6) {
-                      return 'Minimum 6 characters';
+                    if (value == null || value.length < 8) {
+                      return 'Minimum 8 characters';
                     }
                     return null;
                   },
