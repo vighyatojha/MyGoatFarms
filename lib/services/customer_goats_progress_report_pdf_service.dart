@@ -9,6 +9,7 @@ import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
 
 import '../models/bill_settings_model.dart';
+import '../models/customer_credit.dart';
 import '../models/monthly_bill_model.dart';
 import '../models/palai_models.dart';
 import '../utils/palai_proration.dart';
@@ -99,6 +100,14 @@ class CustomerGoatsProgressReportPdfService {
     required BillSettings billSettings,
     MonthlyBill? monthlyBill,
     double? currentOutstanding,
+
+    /// What this customer still owes on unpaid Trading goat sales (e.g.
+    /// a goat that arrived via a "Transfer to Palai" sale) — the same
+    /// live figure [SalesService.creditForPerson] and the Goat sale
+    /// credit card on Customer Profile use. Purely a printed line and a
+    /// combined total on this PDF; the underlying bill/customer records
+    /// are never touched by passing it in here.
+    CustomerCredit? goatSaleCredit,
   }) async {
     final regularFont = await PdfGoogleFonts.notoSansRegular();
     final boldFont = await PdfGoogleFonts.notoSansBold();
@@ -151,6 +160,7 @@ class CustomerGoatsProgressReportPdfService {
           billSettings: billSettings,
           monthlyBill: monthlyBill,
           currentOutstanding: currentOutstanding,
+          goatSaleCredit: goatSaleCredit,
         ),
       ),
     );
@@ -164,6 +174,7 @@ class CustomerGoatsProgressReportPdfService {
     required BillSettings billSettings,
     MonthlyBill? monthlyBill,
     double? currentOutstanding,
+    CustomerCredit? goatSaleCredit,
   }) async {
     final bytes = await generatePdf(
       customer: customer,
@@ -171,6 +182,7 @@ class CustomerGoatsProgressReportPdfService {
       billSettings: billSettings,
       monthlyBill: monthlyBill,
       currentOutstanding: currentOutstanding,
+      goatSaleCredit: goatSaleCredit,
     );
 
     await Printing.layoutPdf(
@@ -185,6 +197,7 @@ class CustomerGoatsProgressReportPdfService {
     required BillSettings billSettings,
     MonthlyBill? monthlyBill,
     double? currentOutstanding,
+    CustomerCredit? goatSaleCredit,
   }) async {
     final bytes = await generatePdf(
       customer: customer,
@@ -192,6 +205,7 @@ class CustomerGoatsProgressReportPdfService {
       billSettings: billSettings,
       monthlyBill: monthlyBill,
       currentOutstanding: currentOutstanding,
+      goatSaleCredit: goatSaleCredit,
     );
 
     await Printing.sharePdf(
@@ -206,6 +220,7 @@ class CustomerGoatsProgressReportPdfService {
     required BillSettings billSettings,
     MonthlyBill? monthlyBill,
     double? currentOutstanding,
+    CustomerCredit? goatSaleCredit,
   }) async {
     final bytes = await generatePdf(
       customer: customer,
@@ -213,6 +228,7 @@ class CustomerGoatsProgressReportPdfService {
       billSettings: billSettings,
       monthlyBill: monthlyBill,
       currentOutstanding: currentOutstanding,
+      goatSaleCredit: goatSaleCredit,
     );
 
     final directory = await getApplicationDocumentsDirectory();
@@ -256,6 +272,7 @@ class CustomerGoatsProgressReportPdfService {
     required BillSettings billSettings,
     required MonthlyBill? monthlyBill,
     required double? currentOutstanding,
+    CustomerCredit? goatSaleCredit,
   }) {
     final content = <pw.Widget>[];
 
@@ -316,6 +333,7 @@ class CustomerGoatsProgressReportPdfService {
           monthlyBill,
           entries,
           currentOutstanding: currentOutstanding,
+          goatSaleCredit: goatSaleCredit,
         ),
       );
     } else {
@@ -1141,6 +1159,7 @@ class CustomerGoatsProgressReportPdfService {
       MonthlyBill bill,
       List<GoatProgressEntry> entries, {
         double? currentOutstanding,
+        CustomerCredit? goatSaleCredit,
       }) {
     // ------------------------------------------------------------------
     // A monthly bill is a frozen snapshot: its Old Pending / Current
@@ -1164,6 +1183,16 @@ class CustomerGoatsProgressReportPdfService {
     final otherChanges = balanceNow - (billedTotal - paidSinceBilling);
     final balanceHasMoved =
         paidSinceBilling > 0.5 || otherChanges.abs() > 0.5;
+
+    // Goat Sale Credit (Trading) — what this customer still owes on
+    // unpaid Trading goat sales (this includes a goat that arrived via
+    // a "Transfer to Palai" sale). This is a live figure
+    // (SalesService.creditForPerson()), never frozen the way this
+    // bill's own lines are, so it is added on top of whichever total
+    // is already being shown (the frozen billed total, or the moved
+    // "Balance Due Now") rather than folded into either of those
+    // numbers directly.
+    final goatSaleCreditAmount = goatSaleCredit?.totalDue ?? 0;
 
     final statusBackground = bill.isPaid
         ? PdfColors.green100
@@ -1269,6 +1298,33 @@ class CustomerGoatsProgressReportPdfService {
               emphasize: true,
             ),
           ),
+          // Goat Sale Credit (Trading) — kept as its own line and
+          // combined into one grand total below, rather than folded
+          // into the box above, since that box mirrors the bill/live
+          // Palai balance only and Goat Sale Credit is tracked on the
+          // sale itself.
+          if (goatSaleCreditAmount > 0) ...[
+            pw.SizedBox(height: 8),
+            pw.Divider(color: PdfColors.green200),
+            pw.SizedBox(height: 5),
+            _billingRow('Goat Sale Credit (Trading)', _currency(goatSaleCreditAmount)),
+            pw.SizedBox(height: 5),
+            pw.Container(
+              width: double.infinity,
+              padding: const pw.EdgeInsets.all(10),
+              decoration: pw.BoxDecoration(color: PdfColors.green100, borderRadius: const pw.BorderRadius.all(pw.Radius.circular(7))),
+              child: _billingRow(
+                'TOTAL OWED TO THE FARM (PALAI + GOAT SALE)',
+                _currency((balanceHasMoved ? balanceNow : billedTotal) + goatSaleCreditAmount),
+                emphasize: true,
+              ),
+            ),
+            pw.SizedBox(height: 6),
+            pw.Text(
+              'Goat Sale Credit is the balance still due on a Trading goat sale (e.g. a goat transferred in via "Transfer to Palai") and is kept on the sale itself, separate from the Palai balance above.',
+              style: const pw.TextStyle(fontSize: 7, color: PdfColors.grey600, fontStyle: pw.FontStyle.italic),
+            ),
+          ],
           pw.SizedBox(height: 8),
           pw.Text(
             balanceHasMoved

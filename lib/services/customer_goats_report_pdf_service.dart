@@ -8,6 +8,7 @@ import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
 
 import '../models/bill_settings_model.dart';
+import '../models/customer_credit.dart';
 import '../models/monthly_bill_model.dart';
 import '../models/palai_models.dart';
 import '../utils/palai_proration.dart';
@@ -33,6 +34,14 @@ class CustomerGoatsReportPdfService {
     required List<PalaiGoat> goats,
     required BillSettings billSettings,
     MonthlyBill? bill,
+
+    /// What this customer still owes on unpaid Trading goat sales (e.g.
+    /// a goat that arrived via a "Transfer to Palai" sale) — the same
+    /// live figure [SalesService.creditForPerson] and the Goat sale
+    /// credit card on Customer Profile use. Purely a printed line and a
+    /// combined total on this PDF; the underlying bill/customer records
+    /// are never touched by passing it in here.
+    CustomerCredit? goatSaleCredit,
   }) async {
     // -------------------------------------------------------------------
     // Unicode font (so ₹ renders correctly instead of a broken glyph —
@@ -67,7 +76,7 @@ class CustomerGoatsReportPdfService {
           _buildSummary(goats),
           if (bill != null) ...[
             pw.SizedBox(height: 18),
-            _buildBillingSummary(bill, goats),
+            _buildBillingSummary(bill, goats, goatSaleCredit),
           ],
           pw.SizedBox(height: 22),
           _buildThankYou(billSettings),
@@ -83,12 +92,14 @@ class CustomerGoatsReportPdfService {
     required List<PalaiGoat> goats,
     required BillSettings billSettings,
     MonthlyBill? bill,
+    CustomerCredit? goatSaleCredit,
   }) async {
     final bytes = await generatePdf(
       customer: customer,
       goats: goats,
       billSettings: billSettings,
       bill: bill,
+      goatSaleCredit: goatSaleCredit,
     );
 
     await Printing.layoutPdf(
@@ -102,12 +113,14 @@ class CustomerGoatsReportPdfService {
     required List<PalaiGoat> goats,
     required BillSettings billSettings,
     MonthlyBill? bill,
+    CustomerCredit? goatSaleCredit,
   }) async {
     final bytes = await generatePdf(
       customer: customer,
       goats: goats,
       billSettings: billSettings,
       bill: bill,
+      goatSaleCredit: goatSaleCredit,
     );
 
     await Printing.sharePdf(
@@ -121,12 +134,14 @@ class CustomerGoatsReportPdfService {
     required List<PalaiGoat> goats,
     required BillSettings billSettings,
     MonthlyBill? bill,
+    CustomerCredit? goatSaleCredit,
   }) async {
     final bytes = await generatePdf(
       customer: customer,
       goats: goats,
       billSettings: billSettings,
       bill: bill,
+      goatSaleCredit: goatSaleCredit,
     );
 
     final directory = await getApplicationDocumentsDirectory();
@@ -383,7 +398,12 @@ class CustomerGoatsReportPdfService {
   // BILLING SUMMARY (only rendered when a MonthlyBill is passed in)
   // ===========================================================================
 
-  pw.Widget _buildBillingSummary(MonthlyBill bill, List<PalaiGoat> goats) {
+  pw.Widget _buildBillingSummary(
+      MonthlyBill bill,
+      List<PalaiGoat> goats,
+      CustomerCredit? goatSaleCredit,
+      ) {
+    final goatSaleCreditAmount = goatSaleCredit?.totalDue ?? 0;
     return pw.Container(
       width: double.infinity,
       decoration: pw.BoxDecoration(
@@ -488,6 +508,30 @@ class CustomerGoatsReportPdfService {
             'Current Month Calculation Only — previous monthly payments and historical transactions are not included above.',
             style: const pw.TextStyle(fontSize: 6.5, color: PdfColors.grey600, fontStyle: pw.FontStyle.italic),
           ),
+          // Goat Sale Credit (Trading) — what this customer still owes
+          // on unpaid Trading goat sales (this includes a goat that
+          // arrived via a "Transfer to Palai" sale). Kept as its own
+          // line and combined into one "Total owed" figure below rather
+          // than folded into "Current Amount Due" above, since that
+          // figure is the bill's own frozen snapshot and this is a
+          // live number that can move independently of the bill.
+          if (goatSaleCreditAmount > 0) ...[
+            pw.SizedBox(height: 8),
+            pw.Divider(color: PdfColors.grey300, height: 1),
+            pw.SizedBox(height: 6),
+            _billRow('Goat Sale Credit (Trading)', _currency(goatSaleCreditAmount)),
+            pw.SizedBox(height: 3),
+            _billRow(
+              'Total Owed To The Farm (Palai + Goat Sale)',
+              _currency(bill.totalDue + goatSaleCreditAmount),
+              emphasize: true,
+            ),
+            pw.SizedBox(height: 3),
+            pw.Text(
+              'Goat Sale Credit is the balance still due on a Trading goat sale (e.g. a goat transferred in via "Transfer to Palai") and is kept on the sale itself, separate from this bill.',
+              style: const pw.TextStyle(fontSize: 6.5, color: PdfColors.grey600, fontStyle: pw.FontStyle.italic),
+            ),
+          ],
           pw.SizedBox(height: 6),
           pw.Text(
             'Bill No: ${bill.billNumber}',

@@ -6,6 +6,7 @@ import 'package:intl/intl.dart';
 import '../../app_theme.dart';
 import '../../goat_icons.dart';
 import '../../models/bill_settings_model.dart';
+import '../../models/customer_credit.dart';
 import '../../models/monthly_bill_model.dart' show MonthlyBill, GoatBillingLine;
 import '../../models/palai_models.dart';
 import '../../models/report_models.dart';
@@ -13,6 +14,7 @@ import '../../services/customer_goats_progress_report_pdf_service.dart';
 import '../../services/firestore_service.dart';
 import '../../services/image_service.dart';
 import '../../services/monthly_billing_service.dart';
+import '../../services/sales_service.dart';
 import '../../utils/palai_proration.dart';
 import '../../widgets/fast_route.dart';
 import 'monthly_bill_generate_screen.dart';
@@ -94,6 +96,24 @@ class _CustomerGoatsProgressReportScreenState
 
   double _currentOutstanding = 0;
   double _currentAdvanceAvailable = 0;
+
+  /// This customer's unpaid Trading goat sales (e.g. a goat "Transfer to
+  /// Palai" sale that still has a balance due), re-fetched fresh at the
+  /// same time as [_currentOutstanding]. Null when they owe nothing on
+  /// any sale.
+  ///
+  /// Kept SEPARATE from [_currentOutstanding] (`customer.pendingAmount`,
+  /// which only tracks Palai boarding dues) — never merged into it or
+  /// saved on top of it, since `pendingAmount` is also what payment
+  /// settlement (`settleSalesInTransaction`) reads and writes. It is
+  /// only surfaced as its own labelled line and folded into the
+  /// on-screen "Total Pending Payment" total so this report never
+  /// silently excludes a pending Trading balance.
+  CustomerCredit? _goatSaleCredit;
+
+  /// Convenience accessor for [_goatSaleCredit]'s total — 0 when there is
+  /// none.
+  double get _goatSaleCreditAmount => _goatSaleCredit?.totalDue ?? 0;
 
   MonthlyBill? _existingMonthlyBill;
 
@@ -298,6 +318,18 @@ class _CustomerGoatsProgressReportScreenState
         );
       }
 
+      // Same lookup the Goat sale credit card on the customer's profile
+      // uses (by mobile number, else customer id, else name), so this
+      // report and that card always agree on what's still owed on
+      // Trading goat sales — including a goat that came in via a
+      // "Transfer to Palai" sale.
+      final goatSaleCredit = await SalesService.instance.creditForPerson(
+        widget.farmId,
+        customerId: widget.customer.id,
+        mobile: freshCustomer?.mobileNumber ?? widget.customer.mobileNumber,
+        name: freshCustomer?.name ?? widget.customer.name,
+      );
+
       if (!mounted) return;
 
       setState(() {
@@ -305,6 +337,7 @@ class _CustomerGoatsProgressReportScreenState
             freshCustomer?.pendingAmount ?? widget.customer.pendingAmount;
         _currentAdvanceAvailable =
             freshCustomer?.advanceAmount ?? widget.customer.advanceAmount;
+        _goatSaleCredit = goatSaleCredit;
 
         _existingMonthlyBill = existingBill;
         _loadingBilling = false;
@@ -607,9 +640,17 @@ class _CustomerGoatsProgressReportScreenState
   double get _enteredAdvance =>
       double.tryParse(_advanceController.text.trim()) ?? 0;
 
+  /// Current Month Palai + Old Pending Payment − Current Advance +
+  /// Goat Sale Credit (Trading), floored at zero.
+  ///
+  /// The Trading goat-sale credit is added here purely for DISPLAY —
+  /// it is never written into `currentOutstanding` when the monthly
+  /// bill is created/updated (see [_generate]), so it never touches
+  /// `pendingAmount` or the payment-settlement logic that field feeds.
   double get _currentAmountDue => (_palaiChargesTotal +
       _enteredOutstanding -
-      _enteredAdvance)
+      _enteredAdvance +
+      _goatSaleCreditAmount)
       .clamp(0, double.infinity)
       .toDouble();
 
@@ -818,14 +859,24 @@ class _CustomerGoatsProgressReportScreenState
       // figure as Customer Profile and Customer Ledger), not only the
       // frozen numbers the bill was generated with.
       double? liveOutstanding;
+      CustomerCredit? liveGoatSaleCredit;
       try {
         final liveCustomer = await FirestoreService.instance.getCustomer(
           widget.farmId,
           widget.customer.id,
         );
         liveOutstanding = liveCustomer?.pendingAmount;
+        liveGoatSaleCredit = await SalesService.instance.creditForPerson(
+          widget.farmId,
+          customerId: widget.customer.id,
+          mobile: liveCustomer?.mobileNumber ?? widget.customer.mobileNumber,
+          name: liveCustomer?.name ?? widget.customer.name,
+        );
       } catch (_) {
-        // Falls back to the bill's own remaining balance in the PDF.
+        // Falls back to the bill's own remaining balance, and to
+        // whatever Goat Sale Credit was already loaded on screen, in
+        // the PDF.
+        liveGoatSaleCredit = _goatSaleCredit;
       }
 
       if (share) {
@@ -835,6 +886,7 @@ class _CustomerGoatsProgressReportScreenState
           billSettings: billSettings,
           monthlyBill: monthlyBill,
           currentOutstanding: liveOutstanding,
+          goatSaleCredit: liveGoatSaleCredit,
         );
       } else {
         await CustomerGoatsProgressReportPdfService.instance.preview(
@@ -843,6 +895,7 @@ class _CustomerGoatsProgressReportScreenState
           billSettings: billSettings,
           monthlyBill: monthlyBill,
           currentOutstanding: liveOutstanding,
+          goatSaleCredit: liveGoatSaleCredit,
         );
       }
     } catch (e) {
@@ -1697,6 +1750,50 @@ class _CustomerGoatsProgressReportScreenState
       ),
     );
 
+    // Goat Sale Credit (Trading) — what this customer still owes on
+    // unpaid Trading goat sales (this includes a goat that arrived via
+    // a "Transfer to Palai" sale). This is SalesService.creditForPerson()'s
+    // live number, the same source the Goat sale credit card on
+    // Customer Profile uses, so it is never frozen on the bill the way
+    // `bill`'s own numbers are — it always reflects what is owed today.
+    // Kept as its own line rather than folded into "Total Pending
+    // Payment (as billed)" above (which is a permanent snapshot), and
+    // combined here into one "Total owed" figure so nothing pending
+    // from a Trading sale is silently left out of this report.
+    if (_goatSaleCreditAmount > 0) {
+      widgets.add(const SizedBox(height: 12));
+      widgets.add(
+        Container(
+          width: double.infinity,
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+          decoration: BoxDecoration(
+            color: AppColors.error.withOpacity(0.06),
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              _billingRow('Goat Sale Credit (Trading)', _currency(_goatSaleCreditAmount)),
+              const SizedBox(height: 4),
+              Text(
+                'Still owed on ${_goatSaleCredit!.saleCount} Trading goat sale'
+                    '${_goatSaleCredit!.saleCount == 1 ? '' : 's'} (e.g. a goat '
+                    'transferred in via "Transfer to Palai"). Kept on the sale '
+                    'itself, so it is separate from this bill\'s own numbers above.',
+                style: AppTheme.body(size: 10, color: AppColors.textMuted),
+              ),
+              const Divider(height: 16),
+              _billingRow(
+                'Total owed to the farm (this bill + goat sale)',
+                _currency(bill.remainingAmount + _goatSaleCreditAmount),
+                bold: true,
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
     if ((_currentOutstanding -
         bill.remainingAmount)
         .abs() >
@@ -1859,6 +1956,25 @@ class _CustomerGoatsProgressReportScreenState
           label: 'Current Advance',
           icon: Icons.savings_outlined,
         ),
+        // Goat Sale Credit (Trading) — what this customer still owes
+        // on unpaid Trading goat sales, e.g. a goat that came in via a
+        // "Transfer to Palai" sale (SalesService.creditForPerson(),
+        // the same source the Goat sale credit card on Customer
+        // Profile uses). Shown as its own line and folded into Total
+        // Pending Payment below, but NEVER written into Old Pending
+        // Payment itself — pendingAmount and the payment-settlement
+        // logic it feeds are left untouched.
+        if (_goatSaleCreditAmount > 0) ...[
+          const SizedBox(height: 10),
+          _billingRow('Goat Sale Credit (Trading)', _currency(_goatSaleCreditAmount)),
+          const SizedBox(height: 4),
+          Text(
+            'Still owed on ${_goatSaleCredit!.saleCount} Trading goat sale'
+                '${_goatSaleCredit!.saleCount == 1 ? '' : 's'}. Included below in '
+                'Total Pending Payment.',
+            style: AppTheme.body(size: 10, color: AppColors.textMuted),
+          ),
+        ],
         const Divider(height: 24),
         _billingRow(
           'Total Pending Payment',
@@ -2157,6 +2273,7 @@ class _CustomerGoatsProgressReportScreenState
       _billingLoadError = null;
       _currentOutstanding = 0;
       _currentAdvanceAvailable = 0;
+      _goatSaleCredit = null;
 
       _outstandingController.clear();
       _advanceController.clear();

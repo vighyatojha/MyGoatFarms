@@ -36,13 +36,17 @@ import '../sale_receipt_screen.dart';
 ///
 /// STOCK PROFILE — a goat that is still Available stock (see
 /// [Goat.isAvailable]) opens the same screen in a slimmer form: it has no
-/// owner and nothing to track beyond its care, so it only has the Photos
-/// and health tabs (Health, Vaccination, Hoof Cutting, Hair Trimming,
-/// Medicine). Like an Own Palai goat it follows the farm's Health Reminder
-/// Settings — its dates are armed from them when the profile opens (see
+/// owner and no growth/weight tracking to do yet, so the Overview and
+/// Progress tabs are hidden. It DOES get the Purchase tab — the same
+/// detailed purchase & cost breakdown shown for every other goat — so its
+/// purchase price, supplier (seller) details and purchase date are always
+/// one tap away, plus the Photos and health tabs (Health, Vaccination,
+/// Hoof Cutting, Hair Trimming, Medicine). Like an Own Palai goat it
+/// follows the farm's Health Reminder Settings — its dates are armed from
+/// them when the profile opens (see
 /// [FirestoreService.syncOwnPalaiFarmReminders]) and raise notifications
-/// when due. The [tabOverview] / [tabPurchase] / [tabProgress] indexes are
-/// simply not shown there, so a deep link to one of them opens on Photos.
+/// when due. The [tabOverview] / [tabProgress] indexes are simply not
+/// shown there, so a deep link to one of them opens on Purchase instead.
 ///
 /// WAIT ON DELIVERY PROFILE — a goat that has been sold on Wait for
 /// Delivery (see [Goat.isWaitOnDelivery]) is still on the farm until the
@@ -114,7 +118,8 @@ class _OwnPalaiGoatProfileScreenState extends State<OwnPalaiGoatProfileScreen>
   late final TabController _tabController;
   Future<TradingPurchase?>? _purchaseFuture;
 
-  /// Available stock goat: Photos + health tabs only (see class doc).
+  /// Available stock goat: Purchase + Photos + health tabs only (see class
+  /// doc).
   bool get _stock => widget.goat.isAvailable;
 
   /// Sold on Wait for Delivery and not yet picked up (see class doc).
@@ -127,6 +132,7 @@ class _OwnPalaiGoatProfileScreenState extends State<OwnPalaiGoatProfileScreen>
   /// The `OwnPalaiGoatProfileScreen.tab…` indexes that are shown.
   late final List<int> _visibleTabs = _stock
       ? const [
+    OwnPalaiGoatProfileScreen.tabPurchase,
     OwnPalaiGoatProfileScreen.tabPhotos,
     OwnPalaiGoatProfileScreen.tabHealth,
     OwnPalaiGoatProfileScreen.tabVaccination,
@@ -171,7 +177,10 @@ class _OwnPalaiGoatProfileScreenState extends State<OwnPalaiGoatProfileScreen>
       initialIndex: _positionOf(widget.initialTabIndex),
     );
     final purchaseId = widget.goat.purchaseId.trim();
-    _purchaseFuture = (_stock || purchaseId.isEmpty)
+    // Fetched for every goat that has a linked purchase — including
+    // Available stock goats, whose Purchase tab shows the same purchase
+    // price / supplier / date breakdown as every other goat.
+    _purchaseFuture = purchaseId.isEmpty
         ? Future.value(null)
         : TradingService.instance.getPurchase(widget.farmId, purchaseId);
 
@@ -223,10 +232,10 @@ class _OwnPalaiGoatProfileScreenState extends State<OwnPalaiGoatProfileScreen>
         foregroundColor: AppColors.textDark,
         title: Text(goat.id, style: AppTheme.heading(size: 16)),
         actions: [
-          // A stock profile has no Overview / Purchase tabs, so the goat's
-          // full details (breed, colour, purchase & origin) stay one tap
-          // away. A Wait on Delivery goat gets the same button, which is
-          // also the way to its sale receipt.
+          // A stock profile has no Overview tab, so the goat's full details
+          // (breed, colour, purchase & origin) stay one tap away. A Wait on
+          // Delivery goat gets the same button, which is also the way to
+          // its sale receipt.
           if (_stock || _waiting)
             IconButton(
               tooltip: 'Goat details',
