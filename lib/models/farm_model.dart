@@ -14,6 +14,17 @@ class FarmModel {
   final String logoUrl; // legacy field, kept for backward compatibility
   final String authUid;
 
+  /// 'Pending' | 'Active' | 'Rejected' | 'Blocked' | 'Expired' — set by the
+  /// admin panel (see approveFarm/rejectFarm/blockFarm in the admin's
+  /// db.js). A farm document has no `status` field at all until the admin
+  /// acts on it for the first time, so a missing field means the same
+  /// thing here as it does there: 'Pending'.
+  final String status;
+
+  /// Set by the admin panel when [status] is 'Rejected' — the reason shown
+  /// to the farm owner. Empty when not rejected or no reason was given.
+  final String rejectionReason;
+
   /// The farm's photo/logo, stored as raw bytes directly on this document
   /// (Firestore `Blob`) — no Storage bucket, no public URL required.
   final Uint8List? profileImage;
@@ -44,6 +55,8 @@ class FarmModel {
     required this.address,
     required this.logoUrl,
     required this.authUid,
+    this.status = 'Pending',
+    this.rejectionReason = '',
     this.profileImage,
     this.profileImageContentType,
     this.preferredLanguage = 'en',
@@ -59,6 +72,7 @@ class FarmModel {
     final farmName = data['farmName'] ?? '';
     final address = data['address'] ?? '';
     final mobileNumber = data['mobileNumber'] ?? '';
+    final rejection = data['rejection'] as Map<String, dynamic>?;
     return FarmModel(
       id: doc.id,
       farmName: farmName,
@@ -68,6 +82,8 @@ class FarmModel {
       address: address,
       logoUrl: data['logoUrl'] ?? '',
       authUid: data['authUid'] ?? '',
+      status: (data['status'] as String?) ?? 'Pending',
+      rejectionReason: (rejection?['reason'] as String?) ?? '',
       profileImage: imageField is Blob ? imageField.bytes : null,
       profileImageContentType: data['profileImageContentType'] as String?,
       preferredLanguage: data['preferredLanguage'] as String? ?? 'en',

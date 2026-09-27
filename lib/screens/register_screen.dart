@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 
 import '../app_theme.dart';
 import '../services/firestore_service.dart';
+import 'farm_approval_pending_screen.dart';
 
 class RegisterScreen extends StatefulWidget {
   const RegisterScreen({super.key});
@@ -895,7 +896,7 @@ class _EmailVerificationScreenState
     final firestore = FirestoreService.instance;
 
     try {
-      await firestore
+      final farm = await firestore
           .createFarm(
         authUid: user.uid,
         farmName: widget.farmName,
@@ -907,8 +908,18 @@ class _EmailVerificationScreenState
 
       if (!mounted) return;
 
-      Navigator.of(context).pushNamedAndRemoveUntil(
-        '/home',
+      // The farm document has just been created with no `status` field —
+      // which the admin panel (and FarmModel.fromDoc) both treat as
+      // 'Pending' — so every new farm lands on the waiting screen instead
+      // of Home until an admin approves it.
+      Navigator.of(context).pushAndRemoveUntil(
+        MaterialPageRoute(
+          builder: (_) => FarmApprovalPendingScreen(
+            farmId: farm.id,
+            farmName: farm.farmName,
+            ownerName: farm.ownerName,
+          ),
+        ),
             (route) => false,
       );
     } on TimeoutException {

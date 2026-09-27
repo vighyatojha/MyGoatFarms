@@ -7,12 +7,14 @@ import 'package:provider/provider.dart';
 
 import 'app_theme.dart';
 import 'firebase_options.dart';
+import 'services/firestore_service.dart';
 import 'services/locale_provider.dart';
 import 'services/notification_service.dart';
 import 'screens/splash_screen.dart';
 import 'screens/login_screen.dart';
 import 'screens/register_screen.dart';
 import 'screens/main_shell.dart';
+import 'screens/farm_approval_pending_screen.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -48,6 +50,10 @@ class _AppBootstrapState extends State<_AppBootstrap> {
   LocaleProvider? _localeProvider;
 
   bool _initialized = false;
+
+  /// '/login', '/home', or '/pending-approval' — resolved once, here,
+  /// before the real MaterialApp is built. See [_resolveInitialRoute].
+  String _initialRoute = '/login';
 
   @override
   void initState() {
@@ -85,6 +91,11 @@ class _AppBootstrapState extends State<_AppBootstrap> {
       debugPrint('Firebase initialization failed: $e');
     }
 
+    // Only safe to touch FirebaseAuth/Firestore once Firebase itself
+    // finished initializing successfully.
+    final initialRoute =
+    firebaseError == null ? await _resolveInitialRoute() : '/login';
+
     // Wait for locale initialization to finish.
     try {
       await localeFuture;
@@ -105,8 +116,46 @@ class _AppBootstrapState extends State<_AppBootstrap> {
     setState(() {
       _firebaseError = firebaseError;
       _localeProvider = localeProvider;
+      _initialRoute = initialRoute;
       _initialized = true;
     });
+  }
+
+  /// Decides whether a signed-in user should land on Home, the
+  /// approval-pending screen, or (if nobody's signed in) Login.
+  ///
+  /// Registration already sends a brand-new farm owner to
+  /// [FarmApprovalPendingScreen] directly — see register_screen.dart. This
+  /// covers the other way an owner can end up there: they close the app
+  /// while still pending/rejected and reopen it later, when Firebase Auth
+  /// alone would otherwise say "signed in" and send them straight to Home.
+  ///
+  /// Deliberately fails open to '/home' on any error (no Firestore
+  /// connection, slow network, unexpected data). This check exists to
+  /// protect *unapproved* signups from reaching the app early, not to
+  /// gate every launch on Firestore being reachable — an already-approved
+  /// farm owner should never be locked out of their own data because this
+  /// one extra read failed or timed out.
+  Future<String> _resolveInitialRoute() async {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) return '/login';
+
+    try {
+      final farm = await FirestoreService.instance
+          .getFarmForUser(user.uid)
+          .timeout(const Duration(seconds: 8));
+
+      if (farm == null) return '/home'; // let MainShell's own "not linked" state handle it
+
+      if (farm.status == 'Pending' || farm.status == 'Rejected') {
+        return '/pending-approval';
+      }
+
+      return '/home';
+    } catch (e) {
+      debugPrint('_resolveInitialRoute: farm status check failed, defaulting to /home: $e');
+      return '/home';
+    }
   }
 
   Future<void> _initializeFirebase() async {
@@ -164,6 +213,7 @@ class _AppBootstrapState extends State<_AppBootstrap> {
     return MyGoatFarmsApp(
       firebaseError: _firebaseError,
       localeProvider: _localeProvider,
+      initialRoute: _initialRoute,
     );
   }
 }
@@ -175,10 +225,16 @@ class MyGoatFarmsApp extends StatelessWidget {
   final String? firebaseError;
   final LocaleProvider? localeProvider;
 
+  /// '/login', '/home', or '/pending-approval' — already resolved by
+  /// _AppBootstrapState._resolveInitialRoute() before this widget is
+  /// built, so no FirebaseAuth/Firestore access needs to happen here.
+  final String initialRoute;
+
   const MyGoatFarmsApp({
     super.key,
     this.firebaseError,
     this.localeProvider,
+    this.initialRoute = '/login',
   });
 
   @override
@@ -198,16 +254,6 @@ class MyGoatFarmsApp extends StatelessWidget {
         ),
       );
     }
-
-    /*
-     * Firebase is guaranteed to be initialized at this point.
-     *
-     * Therefore it is now safe to check the current user.
-     */
-    final User? currentUser = FirebaseAuth.instance.currentUser;
-
-    final String initialRoute =
-    currentUser != null ? '/home' : '/login';
 
     return ChangeNotifierProvider<LocaleProvider>.value(
       value: localeProvider ?? LocaleProvider(),
@@ -253,7 +299,11 @@ class MyGoatFarmsApp extends StatelessWidget {
          * land on.
          */
         onGenerateInitialRoutes: (String initialRouteName) {
-          final Widget page = initialRouteName == '/home' ? const MainShell() : const LoginScreen();
+          final Widget page = switch (initialRouteName) {
+            '/home' => const MainShell(),
+            '/pending-approval' => const FarmApprovalPendingScreen(),
+            _ => const LoginScreen(),
+          };
           return [
             MaterialPageRoute(
               builder: (_) => page,
@@ -267,6 +317,7 @@ class MyGoatFarmsApp extends StatelessWidget {
           '/login': (context) => const LoginScreen(),
           '/register': (context) => const RegisterScreen(),
           '/home': (context) => const MainShell(),
+          '/pending-approval': (context) => const FarmApprovalPendingScreen(),
         },
       ),
     );

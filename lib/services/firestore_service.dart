@@ -6,6 +6,7 @@ import 'package:cloud_functions/cloud_functions.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart';
 
+import '../models/admin_contact_model.dart';
 import '../models/bill_settings_model.dart';
 import '../models/farm_model.dart';
 import '../models/hair_trimming_record.dart';
@@ -1821,6 +1822,30 @@ class FirestoreService {
     } catch (e) {
       debugPrint('FirestoreService.getFarmById error: $e');
       return null;
+    }
+  }
+
+  /// The admin's name/phone/email, shown on [FarmApprovalPendingScreen]
+  /// while a farm is waiting on approval. Lives in a single well-known
+  /// document, `config/adminContact`, so it can be updated from the admin
+  /// panel without an app release.
+  ///
+  /// Falls back to [AdminContact.fallback] if the document doesn't exist
+  /// yet or the read fails for any reason — this is contact information on
+  /// a screen a brand-new, not-yet-approved user sees, so it must never
+  /// come back blank or throw.
+  Future<AdminContact> getAdminContact() async {
+    try {
+      final doc = await FirebaseFirestore.instance
+          .collection('config')
+          .doc('adminContact')
+          .get()
+          .timeout(timeout);
+      if (!doc.exists) return AdminContact.fallback;
+      return AdminContact.fromMap(doc.data());
+    } catch (e) {
+      debugPrint('FirestoreService.getAdminContact error: $e');
+      return AdminContact.fallback;
     }
   }
 
