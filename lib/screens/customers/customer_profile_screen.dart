@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
 
 import '../../app_theme.dart';
@@ -330,90 +331,55 @@ class _CustomerProfileScreenState extends State<CustomerProfileScreen> {
 
     return Scaffold(
       backgroundColor: AppColors.paleGreen,
-
       appBar: AppBar(
-        backgroundColor: AppColors.paleGreen,
+        backgroundColor: Colors.white,
+        surfaceTintColor: Colors.white,
         elevation: 0,
         foregroundColor: AppColors.textDark,
-        titleSpacing: 4,
-        title: Text(
-          _customer.name,
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-          style: AppTheme.heading(
-            size: 18,
-          ),
+        centerTitle: true,
+        title: Text('Customer', style: AppTheme.heading(size: 17)),
+        leading: IconButton(
+          tooltip: 'Back',
+          onPressed: () => Navigator.of(context).maybePop(),
+          icon: const Icon(Icons.arrow_back_rounded, size: 20),
         ),
         actions: [
           IconButton(
             tooltip: 'Edit customer',
             onPressed: _openEdit,
-            icon: const Icon(
-              Icons.edit_outlined,
-            ),
+            icon: const Icon(Icons.edit_outlined, size: 20),
           ),
+          const SizedBox(width: 4),
         ],
       ),
-
       body: RefreshIndicator(
         color: AppColors.primaryGreen,
         onRefresh: _refreshCustomer,
-
         child: StreamBuilder<List<PalaiGoat>>(
           stream: FirestoreService.instance.goatsForCustomerStream(
             widget.farmId,
             _customer.id,
           ),
-
           builder: (context, goatSnapshot) {
             final goats = goatSnapshot.data ?? const <PalaiGoat>[];
-
-            final activeGoats = goats
-                .where(
-                  (goat) => !goat.isCheckedOut,
-            )
-                .length;
+            final currentGoats = goats.where((goat) => !goat.isCheckedOut).toList(growable: false);
+            final previousGoats = goats.where((goat) => goat.isCheckedOut).toList(growable: false);
 
             return ListView(
               physics: const AlwaysScrollableScrollPhysics(),
-              padding: const EdgeInsets.fromLTRB(
-                16,
-                8,
-                16,
-                32,
-              ),
-
+              padding: const EdgeInsets.fromLTRB(14, 12, 14, 28),
               children: [
-                // ============================================================
-                // CUSTOMER INFORMATION
-                // ============================================================
-
                 _buildCustomerInformationSection(),
-
                 const SizedBox(height: 18),
-
-                // ============================================================
-                // FINANCIAL SUMMARY
-                // ============================================================
-
                 _buildSectionHeader(
-                  title: 'Payment Information',
+                  title: 'PAYMENT INFORMATION',
                   icon: Icons.account_balance_wallet_outlined,
+                  trailing: _sectionPill('Outstanding & Fees'),
                 ),
-
                 const SizedBox(height: 10),
-
-                _buildFinancialSummary(
-                  outstanding,
-                  advance,
-                ),
-
-                const SizedBox(height: 12),
-
+                _buildFinancialSummary(outstanding, advance),
+                const SizedBox(height: 9),
                 _buildFinancialActions(),
-
-                // What this customer still owes on goat sales (sold on
-                // credit). Hidden when they owe nothing.
                 GoatCreditProfileCard(
                   farmId: widget.farmId,
                   customerId: _customer.id,
@@ -421,65 +387,150 @@ class _CustomerProfileScreenState extends State<CustomerProfileScreen> {
                   name: _customer.name,
                   palaiOutstanding: _customer.pendingAmount,
                 ),
-
-                const SizedBox(height: 14),
-
+                const SizedBox(height: 12),
                 _buildMonthlyBillingButton(),
-
-                const SizedBox(height: 10),
-
+                const SizedBox(height: 8),
                 _buildGoatsReportButton(),
-
-                const SizedBox(height: 16),
-
-                // ============================================================
-                // GOAT LIST — CURRENT / PREVIOUS
-                // ============================================================
-
+                const SizedBox(height: 18),
                 _buildSectionHeader(
-                  title: 'Goats',
+                  title: 'BOARDED LIVESTOCK',
                   icon: GoatIcons.paw,
+                  trailing: TextButton.icon(
+                    onPressed: _openRegisterGoat,
+                    icon: const Icon(Icons.add, size: 15),
+                    label: const Text('Add Goat'),
+                    style: TextButton.styleFrom(
+                      foregroundColor: AppColors.primaryGreen,
+                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+                      minimumSize: Size.zero,
+                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    ),
+                  ),
                 ),
-
-                const SizedBox(height: 10),
-
+                const SizedBox(height: 9),
                 if (!goatSnapshot.hasData)
                   const _GoatListSkeleton()
                 else ...[
                   _buildGoatViewSlider(
-                    currentCount: activeGoats,
-                    previousCount: goats.length - activeGoats,
+                    currentCount: currentGoats.length,
+                    previousCount: previousGoats.length,
                   ),
-
-                  const SizedBox(height: 12),
-
+                  const SizedBox(height: 10),
                   if (!_showPreviousGoats)
-                    _buildCurrentGoatsSection(
-                      goats.where((goat) => !goat.isCheckedOut).toList(),
-                    )
+                    _buildCurrentGoatsSection(currentGoats)
                   else
-                    _buildPreviousGoatsSection(
-                      goats.where((goat) => goat.isCheckedOut).toList(),
-                    ),
+                    _buildPreviousGoatsSection(previousGoats),
                 ],
-
-                const SizedBox(height: 22),
-
-                // ============================================================
-                // PAYMENT HISTORY — ALWAYS LAST SECTION
-                // ============================================================
-
+                const SizedBox(height: 18),
                 _buildPaymentHistory(),
-
-                const SizedBox(height: 12),
+                const SizedBox(height: 8),
               ],
             );
           },
         ),
       ),
+      bottomNavigationBar: _buildPendingDuesBar(outstanding),
     );
   }
 
+  Widget _sectionPill(String text) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
+      decoration: BoxDecoration(
+        color: AppColors.lightGreen,
+        borderRadius: BorderRadius.circular(20),
+      ),
+      child: Text(
+        text,
+        style: AppTheme.body(size: 8.5, color: AppColors.darkGreen, weight: FontWeight.w700),
+      ),
+    );
+  }
+
+  Widget _buildPendingDuesBar(double outstanding) {
+    return SafeArea(
+      top: false,
+      child: Container(
+        padding: const EdgeInsets.fromLTRB(14, 9, 14, 10),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withOpacity(0.07),
+              blurRadius: 12,
+              offset: const Offset(0, -3),
+            ),
+          ],
+        ),
+        child: Row(
+          children: [
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    'PALAI PENDING DUES',
+                    style: AppTheme.body(size: 8, color: AppColors.textGrey, weight: FontWeight.w800),
+                  ),
+                  const SizedBox(height: 1),
+                  Text(
+                    _rupees(outstanding),
+                    style: AppTheme.heading(
+                      size: 17,
+                      color: outstanding > 0 ? AppColors.error : AppColors.darkGreen,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            Container(
+              width: 42,
+              height: 42,
+              decoration: const BoxDecoration(
+                color: AppColors.paleGreen,
+                shape: BoxShape.circle,
+              ),
+              child: IconButton(
+                tooltip: 'Copy customer phone',
+                onPressed: () async {
+                  await Clipboard.setData(ClipboardData(text: _customer.mobileNumber));
+                  if (!mounted) return;
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text('Customer phone number copied.'),
+                      behavior: SnackBarBehavior.floating,
+                    ),
+                  );
+                },
+                icon: const Icon(Icons.phone_outlined, size: 19, color: AppColors.textDark),
+              ),
+            ),
+            const SizedBox(width: 8),
+            SizedBox(
+              height: 42,
+              child: ElevatedButton.icon(
+                onPressed: _openAddPayment,
+                icon: const Icon(Icons.add, size: 17),
+                label: const Text('Collect Dues'),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppColors.primaryGreen,
+                  foregroundColor: Colors.white,
+                  elevation: 0,
+                  padding: const EdgeInsets.symmetric(horizontal: 15),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // ===========================================================================
+  // SECTION HEADER
+  ===========================================================================
   // ===========================================================================
   // SECTION HEADER
   // ===========================================================================
@@ -492,30 +543,23 @@ class _CustomerProfileScreenState extends State<CustomerProfileScreen> {
     return Row(
       children: [
         Container(
-          width: 36,
-          height: 36,
-          decoration: const BoxDecoration(
+          width: 27,
+          height: 27,
+          decoration: BoxDecoration(
             color: AppColors.lightGreen,
-            shape: BoxShape.circle,
+            borderRadius: BorderRadius.circular(9),
           ),
-          child: Icon(
-            icon,
-            size: 19,
-            color: AppColors.primaryGreen,
-          ),
+          child: Icon(icon, size: 15, color: AppColors.primaryGreen),
         ),
-
-        const SizedBox(width: 10),
-
+        const SizedBox(width: 8),
         Expanded(
           child: Text(
             title,
-            style: AppTheme.heading(
-              size: 17,
-            ),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: AppTheme.heading(size: 12.5, color: AppColors.darkGreen),
           ),
         ),
-
         if (trailing != null) trailing,
       ],
     );
@@ -524,143 +568,158 @@ class _CustomerProfileScreenState extends State<CustomerProfileScreen> {
   // ===========================================================================
   // CUSTOMER INFORMATION
   // ===========================================================================
+  // ===========================================================================
+  // CUSTOMER INFORMATION
+  // ===========================================================================
 
   Widget _buildCustomerInformationSection() {
+    final name = _customer.name.trim();
+    final initial = name.isNotEmpty ? name[0].toUpperCase() : '?';
+
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.all(16),
-      decoration: AppTheme.card(
-        radius: 18,
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: AppColors.primaryGreen.withOpacity(0.08)),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.025),
+            blurRadius: 10,
+            offset: const Offset(0, 3),
+          ),
+        ],
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+      child: Row(
         children: [
-          Row(
-            children: [
-              Container(
-                width: 56,
-                height: 56,
-                decoration: const BoxDecoration(
-                  color: AppColors.lightGreen,
-                  shape: BoxShape.circle,
-                ),
-                alignment: Alignment.center,
-                child: Text(
-                  _customer.name.trim().isNotEmpty
-                      ? _customer.name.trim()[0].toUpperCase()
-                      : '?',
-                  style: AppTheme.heading(
-                    size: 21,
-                    color: AppColors.darkGreen,
+          Container(
+            width: 58,
+            height: 58,
+            decoration: BoxDecoration(
+              color: AppColors.primaryGreen,
+              borderRadius: BorderRadius.circular(17),
+            ),
+            alignment: Alignment.center,
+            child: Stack(
+              clipBehavior: Clip.none,
+              children: [
+                Center(
+                  child: Text(
+                    initial,
+                    style: AppTheme.heading(size: 23, color: Colors.white),
                   ),
                 ),
-              ),
-
-              const SizedBox(width: 14),
-
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+                Positioned(
+                  right: -3,
+                  bottom: -3,
+                  child: Container(
+                    width: 17,
+                    height: 17,
+                    decoration: BoxDecoration(
+                      color: AppColors.success,
+                      shape: BoxShape.circle,
+                      border: Border.all(color: Colors.white, width: 2),
+                    ),
+                    child: const Icon(Icons.check, size: 10, color: Colors.white),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
                   children: [
-                    Text(
-                      _customer.name,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: AppTheme.heading(
-                        size: 17,
+                    Expanded(
+                      child: Text(
+                        _customer.name,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: AppTheme.heading(size: 16),
                       ),
                     ),
-
-                    const SizedBox(height: 3),
-
-                    Row(
-                      children: [
-                        const Icon(
-                          Icons.phone_outlined,
-                          size: 14,
-                          color: AppColors.textGrey,
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                      decoration: BoxDecoration(
+                        color: AppColors.lightGreen,
+                        borderRadius: BorderRadius.circular(20),
+                      ),
+                      child: Text(
+                        'Active Client',
+                        style: AppTheme.body(
+                          size: 7.5,
+                          color: AppColors.darkGreen,
+                          weight: FontWeight.w800,
                         ),
-                        const SizedBox(width: 5),
-                        Expanded(
-                          child: Text(
-                            _customer.mobileNumber,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: AppTheme.body(
-                              size: 11,
-                              color: AppColors.textGrey,
-                            ),
-                          ),
-                        ),
-                      ],
+                      ),
                     ),
                   ],
                 ),
-              ),
-
-              if (_loadingCustomer)
-                const SizedBox(
-                  width: 17,
-                  height: 17,
-                  child: CircularProgressIndicator(
-                    strokeWidth: 2,
-                    color: AppColors.primaryGreen,
-                  ),
-                ),
-            ],
-          ),
-
-          if (_customer.address.trim().isNotEmpty) ...[
-            const SizedBox(height: 14),
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.all(11),
-              decoration: BoxDecoration(
-                color: AppColors.paleGreen,
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Icon(
-                    Icons.location_on_outlined,
-                    size: 17,
-                    color: AppColors.primaryGreen,
-                  ),
-                  const SizedBox(width: 7),
-                  Expanded(
-                    child: Text(
-                      _customer.address,
-                      style: AppTheme.body(
-                        size: 11,
-                        color: AppColors.textDark,
+                const SizedBox(height: 4),
+                Row(
+                  children: [
+                    const Icon(Icons.phone_outlined, size: 13, color: AppColors.textGrey),
+                    const SizedBox(width: 4),
+                    Flexible(
+                      child: Text(
+                        _customer.mobileNumber,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: AppTheme.body(size: 9.5, color: AppColors.textGrey),
                       ),
                     ),
+                    const SizedBox(width: 8),
+                    Container(
+                      width: 3,
+                      height: 3,
+                      decoration: const BoxDecoration(
+                        color: AppColors.textGrey,
+                        shape: BoxShape.circle,
+                      ),
+                    ),
+                    const SizedBox(width: 7),
+                    Flexible(
+                      child: Text(
+                        _customer.package.isNotEmpty ? _customer.package : 'Palai',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: AppTheme.body(size: 9.5, color: AppColors.textGrey),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: AppColors.paleGreen,
+                    borderRadius: BorderRadius.circular(8),
                   ),
-                ],
+                  child: Text(
+                    'Joined ' + DateFormat('dd MMM yyyy').format(_customer.joiningDate),
+                    style: AppTheme.body(
+                      size: 7.5,
+                      color: AppColors.darkGreen,
+                      weight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          if (_loadingCustomer)
+            const SizedBox(
+              width: 16,
+              height: 16,
+              child: CircularProgressIndicator(
+                strokeWidth: 1.8,
+                color: AppColors.primaryGreen,
               ),
             ),
-          ],
-
-          const SizedBox(height: 13),
-
-          Row(
-            children: [
-              const Icon(
-                Icons.calendar_today_outlined,
-                size: 15,
-                color: AppColors.textGrey,
-              ),
-              const SizedBox(width: 7),
-              Text(
-                'Joined ${DateFormat('dd MMM yyyy').format(_customer.joiningDate)}',
-                style: AppTheme.body(
-                  size: 10,
-                  color: AppColors.textGrey,
-                ),
-              ),
-            ],
-          ),
         ],
       ),
     );
@@ -669,55 +728,50 @@ class _CustomerProfileScreenState extends State<CustomerProfileScreen> {
   // ===========================================================================
   // FINANCIAL SUMMARY
   // ===========================================================================
+  // ===========================================================================
+  // FINANCIAL SUMMARY
+  // ===========================================================================
 
-  Widget _buildFinancialSummary(
-      double outstanding,
-      double advance,
-      ) {
+  Widget _buildFinancialSummary(double outstanding, double advance) {
     return Column(
       children: [
         Row(
           children: [
             Expanded(
               child: _financialCard(
-                icon: Icons.receipt_long_outlined,
                 label: 'Outstanding',
                 value: _rupees(outstanding),
-                color: outstanding > 0
-                    ? AppColors.error
-                    : AppColors.success,
+                color: outstanding > 0 ? AppColors.error : AppColors.success,
+                icon: Icons.receipt_long_outlined,
+                helper: outstanding > 0 ? 'Pending payment' : 'No pending dues',
               ),
             ),
-
-            const SizedBox(width: 10),
-
+            const SizedBox(width: 9),
             Expanded(
               child: _financialCard(
-                icon: Icons.account_balance_wallet_outlined,
                 label: 'Advance',
                 value: _rupees(advance),
                 color: AppColors.success,
+                icon: Icons.account_balance_wallet_outlined,
+                helper: advance > 0 ? 'Available balance' : 'No advance balance',
               ),
             ),
           ],
         ),
-
-        const SizedBox(height: 10),
-
+        const SizedBox(height: 9),
         Container(
           width: double.infinity,
-          padding: const EdgeInsets.symmetric(
-            horizontal: 14,
-            vertical: 12,
-          ),
-          decoration: AppTheme.card(
-            radius: 14,
+          padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 8),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(13),
+            border: Border.all(color: AppColors.divider),
           ),
           child: Row(
             children: [
               Container(
-                width: 40,
-                height: 40,
+                width: 33,
+                height: 33,
                 decoration: const BoxDecoration(
                   color: AppColors.lightGreen,
                   shape: BoxShape.circle,
@@ -725,61 +779,51 @@ class _CustomerProfileScreenState extends State<CustomerProfileScreen> {
                 child: const Icon(
                   Icons.account_balance_outlined,
                   color: AppColors.primaryGreen,
-                  size: 20,
+                  size: 17,
                 ),
               ),
-
-              const SizedBox(width: 11),
-
+              const SizedBox(width: 9),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      'Current Balance',
+                      'NET BALANCE',
                       style: AppTheme.body(
-                        size: 10,
+                        size: 7.5,
                         color: AppColors.textGrey,
+                        weight: FontWeight.w800,
                       ),
                     ),
-
                     const SizedBox(height: 2),
-
                     Text(
                       outstanding > 0
-                          ? 'Customer owes ${_rupees(outstanding)}'
+                          ? 'Customer owes ' + _rupees(outstanding)
                           : advance > 0
-                          ? 'Customer has ${_rupees(advance)} advance'
-                          : 'Account is settled',
-                      style: AppTheme.heading(
-                        size: 12,
-                        color: outstanding > 0
-                            ? AppColors.error
-                            : AppColors.darkGreen,
+                              ? 'Customer has ' + _rupees(advance) + ' advance'
+                              : 'Account is settled',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: AppTheme.body(
+                        size: 10,
+                        color: outstanding > 0 ? AppColors.error : AppColors.darkGreen,
+                        weight: FontWeight.w700,
                       ),
                     ),
                   ],
                 ),
               ),
-
               IconButton(
                 tooltip: 'Sync with Monthly Bills',
-                onPressed: _syncingOutstanding
-                    ? null
-                    : _syncOutstandingWithBills,
+                visualDensity: VisualDensity.compact,
+                onPressed: _syncingOutstanding ? null : _syncOutstandingWithBills,
                 icon: _syncingOutstanding
                     ? const SizedBox(
-                  width: 18,
-                  height: 18,
-                  child: CircularProgressIndicator(
-                    strokeWidth: 2,
-                  ),
-                )
-                    : const Icon(
-                  Icons.sync_rounded,
-                  size: 20,
-                  color: AppColors.textGrey,
-                ),
+                        width: 17,
+                        height: 17,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.sync_rounded, size: 18, color: AppColors.textGrey),
               ),
             ],
           ),
@@ -793,46 +837,37 @@ class _CustomerProfileScreenState extends State<CustomerProfileScreen> {
     required String label,
     required String value,
     required Color color,
+    required String helper,
   }) {
     return Container(
-      padding: const EdgeInsets.all(14),
-      decoration: AppTheme.card(
-        radius: 15,
+      padding: const EdgeInsets.fromLTRB(12, 11, 12, 10),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(15),
+        border: Border.all(color: color.withOpacity(0.18)),
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+      child: Row(
         children: [
           Container(
-            width: 34,
-            height: 34,
+            width: 30,
+            height: 30,
             decoration: BoxDecoration(
-              color: color.withOpacity(0.12),
+              color: color.withOpacity(0.10),
               shape: BoxShape.circle,
             ),
-            child: Icon(
-              icon,
-              size: 17,
-              color: color,
-            ),
+            child: Icon(icon, size: 15, color: color),
           ),
-
-          const SizedBox(height: 8),
-
-          Text(
-            value,
-            style: AppTheme.heading(
-              size: 18,
-              color: color,
-            ),
-          ),
-
-          const SizedBox(height: 2),
-
-          Text(
-            label,
-            style: AppTheme.body(
-              size: 10,
-              color: AppColors.textGrey,
+          const SizedBox(width: 8),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(label, style: AppTheme.body(size: 8.5, color: AppColors.textGrey, weight: FontWeight.w700)),
+                const SizedBox(height: 2),
+                Text(value, maxLines: 1, overflow: TextOverflow.ellipsis, style: AppTheme.heading(size: 18, color: color)),
+                const SizedBox(height: 1),
+                Text(helper, maxLines: 1, overflow: TextOverflow.ellipsis, style: AppTheme.body(size: 7.5, color: color, weight: FontWeight.w600)),
+              ],
             ),
           ),
         ],
@@ -843,6 +878,9 @@ class _CustomerProfileScreenState extends State<CustomerProfileScreen> {
   // ===========================================================================
   // FINANCIAL ACTIONS
   // ===========================================================================
+  // ===========================================================================
+  // FINANCIAL ACTIONS
+  // ===========================================================================
 
   Widget _buildFinancialActions() {
     return Row(
@@ -850,50 +888,29 @@ class _CustomerProfileScreenState extends State<CustomerProfileScreen> {
         Expanded(
           child: ElevatedButton.icon(
             onPressed: _openAddPayment,
-            icon: const Icon(
-              Icons.payments_outlined,
-              size: 18,
-            ),
-            label: const Text(
-              'Add Payment',
-            ),
+            icon: const Icon(Icons.add, size: 17),
+            label: const Text('Add Payment'),
             style: ElevatedButton.styleFrom(
               backgroundColor: AppColors.primaryGreen,
               foregroundColor: Colors.white,
               elevation: 0,
-              padding: const EdgeInsets.symmetric(
-                vertical: 13,
-              ),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(12),
-              ),
+              padding: const EdgeInsets.symmetric(vertical: 11),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(11)),
             ),
           ),
         ),
-
-        const SizedBox(width: 9),
-
+        const SizedBox(width: 8),
         Expanded(
           child: OutlinedButton.icon(
             onPressed: _openAddOutstanding,
-            icon: const Icon(
-              Icons.add_card_outlined,
-              size: 18,
-            ),
-            label: const Text(
-              'Add Outstanding',
-            ),
+            icon: const Icon(Icons.add_card_outlined, size: 17),
+            label: const Text('Add Outstanding'),
             style: OutlinedButton.styleFrom(
               foregroundColor: AppColors.darkGreen,
-              side: const BorderSide(
-                color: AppColors.primaryGreen,
-              ),
-              padding: const EdgeInsets.symmetric(
-                vertical: 13,
-              ),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(12),
-              ),
+              backgroundColor: Colors.white,
+              side: const BorderSide(color: AppColors.divider),
+              padding: const EdgeInsets.symmetric(vertical: 11),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(11)),
             ),
           ),
         ),
@@ -904,12 +921,15 @@ class _CustomerProfileScreenState extends State<CustomerProfileScreen> {
   // ===========================================================================
   // MONTHLY BILLS
   // ===========================================================================
+  // ===========================================================================
+  // MONTHLY BILLS
+  // ===========================================================================
 
   Widget _buildMonthlyBillingButton() {
     return _actionCard(
       icon: Icons.receipt_long_outlined,
       title: 'Monthly Bills',
-      subtitle: 'Generate and manage monthly bills',
+      subtitle: 'Generate & manage monthly billing',
       onTap: _openMonthlyBills,
     );
   }
@@ -918,7 +938,7 @@ class _CustomerProfileScreenState extends State<CustomerProfileScreen> {
     return _actionCard(
       icon: Icons.analytics_outlined,
       title: 'Goats Report',
-      subtitle: 'Generate a progress report for this customer',
+      subtitle: 'View health, weight & boarding history',
       onTap: _openGoatsReport,
     );
   }
@@ -933,61 +953,42 @@ class _CustomerProfileScreenState extends State<CustomerProfileScreen> {
       color: Colors.transparent,
       child: InkWell(
         onTap: onTap,
-        borderRadius: BorderRadius.circular(15),
-        child: Container(
-          padding: const EdgeInsets.all(13),
-          decoration: AppTheme.card(
-            radius: 15,
+        borderRadius: BorderRadius.circular(14),
+        child: Ink(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(color: AppColors.divider),
           ),
           child: Row(
             children: [
               Container(
-                width: 42,
-                height: 42,
-                decoration: const BoxDecoration(
+                width: 34,
+                height: 34,
+                decoration: BoxDecoration(
                   color: AppColors.lightGreen,
-                  shape: BoxShape.circle,
+                  borderRadius: BorderRadius.circular(10),
                 ),
-                child: Icon(
-                  icon,
-                  color: AppColors.primaryGreen,
-                  size: 20,
-                ),
+                child: Icon(icon, color: AppColors.primaryGreen, size: 18),
               ),
-
-              const SizedBox(width: 11),
-
+              const SizedBox(width: 10),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(
-                      title,
-                      style: AppTheme.heading(
-                        size: 13,
-                      ),
-                    ),
-
-                    const SizedBox(height: 2),
-
+                    Text(title, style: AppTheme.heading(size: 11.5)),
+                    const SizedBox(height: 1),
                     Text(
                       subtitle,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: AppTheme.body(
-                        size: 10,
-                        color: AppColors.textGrey,
-                      ),
+                      style: AppTheme.body(size: 8, color: AppColors.textGrey),
                     ),
                   ],
                 ),
               ),
-
-              const Icon(
-                Icons.chevron_right_rounded,
-                color: AppColors.textGrey,
-                size: 20,
-              ),
+              const Icon(Icons.chevron_right_rounded, color: AppColors.textGrey, size: 19),
             ],
           ),
         ),
@@ -998,20 +999,19 @@ class _CustomerProfileScreenState extends State<CustomerProfileScreen> {
   // ===========================================================================
   // GOAT VIEW SWITCHER
   // ===========================================================================
+  // ===========================================================================
+  // GOAT VIEW SWITCHER
+  // ===========================================================================
 
   Widget _buildGoatViewSlider({
     required int currentCount,
     required int previousCount,
   }) {
     return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(4),
+      padding: const EdgeInsets.all(3),
       decoration: BoxDecoration(
-        color: AppColors.lightGreen,
-        borderRadius: BorderRadius.circular(13),
-        border: Border.all(
-          color: AppColors.primaryGreen.withOpacity(0.12),
-        ),
+        color: const Color(0xFFE9EEF3),
+        borderRadius: BorderRadius.circular(11),
       ),
       child: Row(
         children: [
@@ -1020,11 +1020,9 @@ class _CustomerProfileScreenState extends State<CustomerProfileScreen> {
               label: 'Current Goats',
               count: currentCount,
               selected: !_showPreviousGoats,
-              icon: Icons.login_rounded,
+              icon: Icons.circle,
               onTap: () {
-                if (_showPreviousGoats) {
-                  setState(() => _showPreviousGoats = false);
-                }
+                if (_showPreviousGoats) setState(() => _showPreviousGoats = false);
               },
             ),
           ),
@@ -1035,9 +1033,7 @@ class _CustomerProfileScreenState extends State<CustomerProfileScreen> {
               selected: _showPreviousGoats,
               icon: Icons.history_rounded,
               onTap: () {
-                if (!_showPreviousGoats) {
-                  setState(() => _showPreviousGoats = true);
-                }
+                if (!_showPreviousGoats) setState(() => _showPreviousGoats = true);
               },
             ),
           ),
@@ -1057,49 +1053,36 @@ class _CustomerProfileScreenState extends State<CustomerProfileScreen> {
       onTap: onTap,
       behavior: HitTestBehavior.opaque,
       child: AnimatedContainer(
-        duration: const Duration(milliseconds: 180),
-        padding: const EdgeInsets.symmetric(
-          horizontal: 10,
-          vertical: 10,
-        ),
+        duration: const Duration(milliseconds: 160),
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
         decoration: BoxDecoration(
           color: selected ? Colors.white : Colors.transparent,
-          borderRadius: BorderRadius.circular(10),
+          borderRadius: BorderRadius.circular(9),
           boxShadow: selected
               ? [
-            BoxShadow(
-              color: Colors.black.withOpacity(0.06),
-              blurRadius: 5,
-              offset: const Offset(0, 2),
-            ),
-          ]
+                  BoxShadow(
+                    color: Colors.black.withOpacity(0.045),
+                    blurRadius: 5,
+                    offset: const Offset(0, 2),
+                  ),
+                ]
               : null,
         ),
         child: Row(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(
-              icon,
-              size: 16,
-              color: selected
-                  ? AppColors.primaryGreen
-                  : AppColors.textGrey,
-            ),
-            const SizedBox(width: 6),
+            Icon(icon, size: selected ? 9 : 14, color: selected ? AppColors.primaryGreen : AppColors.textGrey),
+            const SizedBox(width: 5),
             Flexible(
               child: Text(
-                '$label ($count)',
+                label + ' (' + count.toString() + ')',
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 textAlign: TextAlign.center,
                 style: AppTheme.body(
-                  size: 10,
-                  color: selected
-                      ? AppColors.darkGreen
-                      : AppColors.textGrey,
-                  weight: selected
-                      ? FontWeight.w700
-                      : FontWeight.w600,
+                  size: 8.5,
+                  color: selected ? AppColors.darkGreen : AppColors.textGrey,
+                  weight: selected ? FontWeight.w700 : FontWeight.w600,
                 ),
               ),
             ),
@@ -1113,40 +1096,13 @@ class _CustomerProfileScreenState extends State<CustomerProfileScreen> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Row(
-          children: [
-            Expanded(
-              child: Text(
-                currentGoats.isEmpty
-                    ? 'No current goats'
-                    : '${currentGoats.length} Currently Boarded',
-                style: AppTheme.heading(size: 13),
-              ),
-            ),
-            TextButton.icon(
-              onPressed: _openRegisterGoat,
-              icon: const Icon(Icons.add, size: 17),
-              label: const Text('Add Goat'),
-              style: TextButton.styleFrom(
-                foregroundColor: AppColors.primaryGreen,
-                padding: const EdgeInsets.symmetric(horizontal: 5),
-                minimumSize: Size.zero,
-                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-              ),
-            ),
-          ],
-        ),
-        const SizedBox(height: 8),
         if (currentGoats.isEmpty)
           _emptyCurrentGoatsState()
         else
           for (final goat in currentGoats)
             Padding(
-              padding: const EdgeInsets.only(bottom: 9),
-              child: _goatHistoryCard(
-                goat,
-                showCheckout: true,
-              ),
+              padding: const EdgeInsets.only(bottom: 8),
+              child: _goatHistoryCard(goat, showCheckout: true),
             ),
       ],
     );
@@ -1156,485 +1112,21 @@ class _CustomerProfileScreenState extends State<CustomerProfileScreen> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Row(
-          children: [
-            Expanded(
-              child: Text(
-                previousGoats.isEmpty
-                    ? 'No previous goats'
-                    : '${previousGoats.length} Previous Goats',
-                style: AppTheme.heading(size: 13),
-              ),
-            ),
-          ],
-        ),
-        const SizedBox(height: 8),
         if (previousGoats.isEmpty)
           _emptyPreviousGoatsState()
         else
           for (final goat in previousGoats)
             Padding(
-              padding: const EdgeInsets.only(bottom: 9),
+              padding: const EdgeInsets.only(bottom: 8),
               child: _goatHistoryCard(goat),
             ),
       ],
     );
   }
 
-  Widget _emptyCurrentGoatsState() {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.symmetric(
-        vertical: 22,
-        horizontal: 18,
-      ),
-      decoration: AppTheme.card(radius: 16),
-      child: Column(
-        children: [
-          Container(
-            width: 54,
-            height: 54,
-            decoration: const BoxDecoration(
-              color: AppColors.lightGreen,
-              shape: BoxShape.circle,
-            ),
-            child: const Icon(
-              GoatIcons.paw,
-              size: 25,
-              color: AppColors.primaryGreen,
-            ),
-          ),
-          const SizedBox(height: 9),
-          Text(
-            'No current goats',
-            style: AppTheme.heading(size: 13),
-          ),
-          const SizedBox(height: 3),
-          Text(
-            'Check in a goat to see it here.',
-            textAlign: TextAlign.center,
-            style: AppTheme.body(
-              size: 9,
-              color: AppColors.textGrey,
-            ),
-          ),
-          const SizedBox(height: 11),
-          OutlinedButton.icon(
-            onPressed: _openRegisterGoat,
-            icon: const Icon(Icons.add, size: 16),
-            label: const Text('Check In Goat'),
-            style: OutlinedButton.styleFrom(
-              foregroundColor: AppColors.darkGreen,
-              side: const BorderSide(color: AppColors.primaryGreen),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(10),
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _emptyPreviousGoatsState() {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.symmetric(
-        vertical: 22,
-        horizontal: 18,
-      ),
-      decoration: AppTheme.card(radius: 16),
-      child: Column(
-        children: [
-          Container(
-            width: 54,
-            height: 54,
-            decoration: const BoxDecoration(
-              color: AppColors.lightGreen,
-              shape: BoxShape.circle,
-            ),
-            child: const Icon(
-              Icons.history_rounded,
-              size: 25,
-              color: AppColors.primaryGreen,
-            ),
-          ),
-          const SizedBox(height: 9),
-          Text(
-            'No previous goats',
-            style: AppTheme.heading(size: 13),
-          ),
-          const SizedBox(height: 3),
-          Text(
-            'Checked-out goats will appear here.',
-            textAlign: TextAlign.center,
-            style: AppTheme.body(
-              size: 9,
-              color: AppColors.textGrey,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
   // ===========================================================================
-  // GOAT STATS
+  // EMPTY GOATS
   // ===========================================================================
-
-  Widget _buildGoatStats(
-      int total,
-      int active,
-      ) {
-    return Row(
-      children: [
-        Expanded(
-          child: _statCard(
-            icon: GoatIcons.paw,
-            label: 'Total Goats',
-            value: '$total',
-            color: AppColors.primaryGreen,
-          ),
-        ),
-
-        const SizedBox(width: 10),
-
-        Expanded(
-          child: _statCard(
-            icon: Icons.login_rounded,
-            label: 'Currently Boarded',
-            value: '$active',
-            color: AppColors.info,
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _statCard({
-    required IconData icon,
-    required String label,
-    required String value,
-    required Color color,
-  }) {
-    return Container(
-      padding: const EdgeInsets.all(13),
-      decoration: AppTheme.card(
-        radius: 14,
-      ),
-      child: Row(
-        children: [
-          Container(
-            width: 34,
-            height: 34,
-            decoration: BoxDecoration(
-              color: color.withOpacity(0.12),
-              shape: BoxShape.circle,
-            ),
-            child: Icon(
-              icon,
-              size: 17,
-              color: color,
-            ),
-          ),
-
-          const SizedBox(width: 9),
-
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  value,
-                  style: AppTheme.heading(
-                    size: 17,
-                  ),
-                ),
-                Text(
-                  label,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: AppTheme.body(
-                    size: 9,
-                    color: AppColors.textGrey,
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  // ===========================================================================
-  // GOAT CARD
-  // ===========================================================================
-
-  Widget _goatHistoryCard(
-      PalaiGoat goat, {
-        bool showCheckout = false,
-      }) {
-    final healthColor = _healthColor(
-      goat.healthStatus,
-    );
-
-    return Material(
-      color: Colors.transparent,
-      child: InkWell(
-        borderRadius: BorderRadius.circular(16),
-        onTap: () async {
-          await Navigator.of(context).push(
-            fastRoute(
-              GoatProfileScreen(
-                farmId: widget.farmId,
-                goat: goat,
-              ),
-            ),
-          );
-
-          if (mounted) {
-            setState(() {});
-          }
-        },
-        child: Container(
-          padding: const EdgeInsets.all(12),
-          decoration: AppTheme.card(
-            radius: 16,
-          ),
-          child: Row(
-            children: [
-              _goatAvatar(goat, healthColor),
-
-              const SizedBox(width: 11),
-
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      goat.goatCode,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: AppTheme.heading(
-                        size: 13,
-                      ),
-                    ),
-
-                    const SizedBox(height: 2),
-
-                    Text(
-                      '${goat.breed} · ${goat.gender}',
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: AppTheme.body(
-                        size: 10,
-                        color: AppColors.textGrey,
-                      ),
-                    ),
-
-                    const SizedBox(height: 4),
-
-                    Text(
-                      goat.isCheckedOut
-                          ? 'Checked out · ${_boardedFor(
-                        goat.checkInDate,
-                        goat.checkOutDate,
-                      )}'
-                          : 'Boarded · ${_boardedFor(
-                        goat.checkInDate,
-                        null,
-                      )}',
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: AppTheme.body(
-                        size: 9,
-                        color: AppColors.textGrey,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-
-              const SizedBox(width: 8),
-
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.end,
-                children: [
-                  Container(
-                    constraints: const BoxConstraints(
-                      maxWidth: 88,
-                    ),
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 8,
-                      vertical: 5,
-                    ),
-                    decoration: BoxDecoration(
-                      color: goat.isCheckedOut
-                          ? AppColors.lightGreen
-                          : healthColor.withOpacity(0.11),
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    child: Text(
-                      goat.isCheckedOut
-                          ? 'Checked Out'
-                          : goat.healthStatus,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: AppTheme.body(
-                        size: 8.5,
-                        color: goat.isCheckedOut
-                            ? AppColors.darkGreen
-                            : healthColor,
-                        weight: FontWeight.w700,
-                      ),
-                    ),
-                  ),
-                  if (showCheckout && !goat.isCheckedOut) ...[
-                    const SizedBox(height: 4),
-                    SizedBox(
-                      height: 26,
-                      width: 26,
-                      child: PopupMenuButton<String>(
-                        tooltip: 'Goat actions',
-                        padding: EdgeInsets.zero,
-                        icon: const Icon(
-                          Icons.more_vert,
-                          size: 18,
-                          color: AppColors.textGrey,
-                        ),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                        onSelected: (value) {
-                          if (value == 'checkout') {
-                            _checkoutGoat(goat);
-                          } else if (value == 'death') {
-                            _recordGoatDeath(goat);
-                          }
-                        },
-                        itemBuilder: (context) => [
-                          const PopupMenuItem(
-                            value: 'checkout',
-                            child: Row(
-                              children: [
-                                Icon(
-                                  Icons.logout_rounded,
-                                  size: 17,
-                                  color: AppColors.primaryGreen,
-                                ),
-                                SizedBox(width: 10),
-                                Text(
-                                  'Checkout',
-                                  style: TextStyle(fontSize: 12.5),
-                                ),
-                              ],
-                            ),
-                          ),
-                          const PopupMenuItem(
-                            value: 'death',
-                            child: Row(
-                              children: [
-                                Icon(
-                                  Icons.dangerous_outlined,
-                                  size: 17,
-                                  color: AppColors.error,
-                                ),
-                                SizedBox(width: 10),
-                                Text(
-                                  'Record Death',
-                                  style: TextStyle(fontSize: 12.5),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
-                ],
-              ),
-
-              const SizedBox(width: 3),
-
-              const Icon(
-                Icons.chevron_right_rounded,
-                size: 19,
-                color: AppColors.textGrey,
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _goatAvatar(
-      PalaiGoat goat,
-      Color healthColor,
-      ) {
-    final hasPhoto =
-        goat.beforeImage != null && goat.beforeImage!.isNotEmpty;
-
-    final avatar = Container(
-      width: 48,
-      height: 48,
-      decoration: BoxDecoration(
-        shape: BoxShape.circle,
-        color: AppColors.lightGreen,
-        border: Border.all(
-          color: healthColor.withOpacity(0.55),
-          width: 2,
-        ),
-      ),
-      child: ClipOval(
-        child: goat.beforeImage != null &&
-            goat.beforeImage!.isNotEmpty
-            ? Image.memory(
-          goat.beforeImage!,
-          fit: BoxFit.cover,
-
-          // Decode the image close to its actual display size.
-          // This avoids decoding large camera images at full
-          // resolution just to show a 48px avatar.
-          cacheWidth: 96,
-          cacheHeight: 96,
-
-          errorBuilder: (_, __, ___) {
-            return const Icon(
-              GoatIcons.paw,
-              color: AppColors.primaryGreen,
-              size: 22,
-            );
-          },
-        )
-            : const Icon(
-          GoatIcons.paw,
-          color: AppColors.primaryGreen,
-          size: 22,
-        ),
-      ),
-    );
-
-    // Tap the photo to view it full-screen (pinch to zoom). With no photo
-    // the paw logo is shown and is not tappable, so the tap falls through
-    // to the card and opens the goat profile as before.
-    if (!hasPhoto) return avatar;
-
-    return GestureDetector(
-      behavior: HitTestBehavior.opaque,
-      onTap: () => Navigator.of(context).push(
-        fastRoute(
-          FullscreenImageViewer(
-            imageBytes: goat.beforeImage!,
-            title: goat.goatCode,
-          ),
-        ),
-      ),
-      child: avatar,
-    );
-  }
-
   // ===========================================================================
   // EMPTY GOATS
   // ===========================================================================
