@@ -1,4 +1,3 @@
-
 import 'package:cloud_firestore/cloud_firestore.dart';
 
 /// A single "Goat Death & Settlement" record, stored at
@@ -7,9 +6,9 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 /// One farm-wide collection covers all three cases (Customer Palai, Own
 /// Palai, Available Stock) so the Home Screen's "Goat Death & Settlement"
 /// history is a single query. [goatType] tells the UI which shape of
-/// record it is — Customer Palai records carry settlement/customer
-/// fields, Own Palai and Available Stock records carry [farmLossAmount]
-/// instead.
+/// record it is — Customer Palai records carry [goatPendingCharge] /
+/// [customerAmountToPay] / customer fields, Own Palai and Available
+/// Stock records carry only [farmLossAmount].
 ///
 /// The goat itself is never deleted — see [DeathSettlementService]. This
 /// record is the permanent audit trail of the death/settlement event.
@@ -36,23 +35,51 @@ class DeathRecord {
 
   // ---------------------------------------------------------------------
   // CUSTOMER PALAI SETTLEMENT
+  //
+  // The farm owner tells the system two numbers: what was pending for
+  // this specific goat, and what the customer will actually be asked
+  // to pay. Whatever gap is waived between the two becomes a farm
+  // loss — see [farmLossAmount] below, which this case shares with
+  // Own Palai / Available Stock.
+  //
+  //   goatPendingCharge = 5000, customerAmountToPay = 2000
+  //     → farmLossAmount = 3000 (waived, recorded as a loss)
+  //   goatPendingCharge = 5000, customerAmountToPay = 5000
+  //     → farmLossAmount = 0 (paid in full, no loss)
   // ---------------------------------------------------------------------
 
-  /// 0 for Own Palai / Available Stock (no customer settlement).
-  final double settlementAmount;
+  /// 0 for Own Palai / Available Stock. What was pending specifically
+  /// for this one goat at the time of death (the farm owner enters
+  /// this manually — the customer's combined `pendingAmount` covers
+  /// every goat they have, not just this one).
+  final double goatPendingCharge;
 
-  /// [directionCredit] or [directionDebit]. Null when [settlementAmount]
-  /// is 0.
-  final String? settlementDirection;
+  /// 0 for Own Palai / Available Stock. What the customer is actually
+  /// being asked to pay for this goat — may be less than
+  /// [goatPendingCharge] (partial waiver), equal to it (paid in full,
+  /// no loss), or more (an additional charge).
+  final double customerAmountToPay;
 
   final double? customerPendingBefore;
   final double? customerPendingAfter;
 
   // ---------------------------------------------------------------------
-  // FARM LOSS (OWN PALAI / AVAILABLE STOCK)
+  // FARM LOSS
+  //
+  // Shared by all three cases:
+  // * Customer Palai — the amount waived (goatPendingCharge minus
+  //   customerAmountToPay, floored at 0). 0 when the customer pays in
+  //   full.
+  // * Own Palai / Available Stock — the goat's recorded value (the
+  //   farm owner enters this manually when recording the death; see
+  //   RecordFarmGoatDeathScreen).
+  //
+  // Whenever this is > 0, DeathSettlementService also posts a "Goat
+  // Death Loss" expense in Finance for the same amount — see
+  // ExpenseModel.isUnpaidCredit for how it counts toward Net Income
+  // despite being a non-cash loss.
   // ---------------------------------------------------------------------
 
-  /// 0 for Customer Palai (settlement covers the financial side there).
   final double farmLossAmount;
 
   final DateTime createdAt;
@@ -71,8 +98,8 @@ class DeathRecord {
     required this.deathDate,
     required this.reason,
     this.notes = '',
-    this.settlementAmount = 0,
-    this.settlementDirection,
+    this.goatPendingCharge = 0,
+    this.customerAmountToPay = 0,
     this.customerPendingBefore,
     this.customerPendingAfter,
     this.farmLossAmount = 0,
@@ -90,16 +117,18 @@ class DeathRecord {
   static const String typeOwnPalai = 'ownPalai';
   static const String typeAvailableStock = 'availableStock';
 
-  static const String directionCredit = 'credit';
-  static const String directionDebit = 'debit';
-
   bool get isCustomerPalai => goatType == typeCustomerPalai;
   bool get isOwnPalai => goatType == typeOwnPalai;
   bool get isAvailableStock => goatType == typeAvailableStock;
 
-  bool get hasSettlement => settlementAmount > 0;
-  bool get isCreditSettlement => settlementDirection == directionCredit;
-  bool get isDebitSettlement => settlementDirection == directionDebit;
+  /// True when part (or all) of [goatPendingCharge] was waived —
+  /// i.e. this record carries a farm loss.
+  bool get hasFarmLoss => farmLossAmount > 0;
+
+  /// True when the customer paid [goatPendingCharge] in full — no
+  /// loss to the farm. Only meaningful when [isCustomerPalai].
+  bool get paidInFull =>
+      isCustomerPalai && goatPendingCharge > 0 && farmLossAmount <= 0;
 
   String get goatTypeLabel {
     switch (goatType) {
@@ -145,8 +174,10 @@ class DeathRecord {
       deathDate: dateFrom('deathDate'),
       reason: (data['reason'] ?? '').toString(),
       notes: (data['notes'] ?? '').toString(),
-      settlementAmount: (data['settlementAmount'] as num?)?.toDouble() ?? 0,
-      settlementDirection: data['settlementDirection'] as String?,
+      goatPendingCharge:
+      (data['goatPendingCharge'] as num?)?.toDouble() ?? 0,
+      customerAmountToPay:
+      (data['customerAmountToPay'] as num?)?.toDouble() ?? 0,
       customerPendingBefore: doubleOrNull('customerPendingBefore'),
       customerPendingAfter: doubleOrNull('customerPendingAfter'),
       farmLossAmount: (data['farmLossAmount'] as num?)?.toDouble() ?? 0,

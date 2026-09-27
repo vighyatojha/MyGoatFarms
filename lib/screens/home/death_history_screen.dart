@@ -192,14 +192,32 @@ class _DeathHistoryScreenState extends State<DeathHistoryScreen> {
               record.customerName ?? '',
               style: AppTheme.body(size: 11, color: AppColors.textGrey),
             ),
-            if (record.hasSettlement) ...[
-              const SizedBox(height: 4),
+            if (record.goatPendingCharge > 0 ||
+                record.customerAmountToPay > 0) ...[
+              const SizedBox(height: 6),
               Text(
-                '${record.isCreditSettlement ? '+' : '-'} ₹${record.settlementAmount.toStringAsFixed(0)} '
-                    '${record.isCreditSettlement ? 'Credit' : 'Debit'} · '
-                    'Pending ₹${(record.customerPendingBefore ?? 0).toStringAsFixed(0)} → '
+                'Goat Pending: ₹${record.goatPendingCharge.toStringAsFixed(0)} · '
+                    'Customer Pays: ₹${record.customerAmountToPay.toStringAsFixed(0)}',
+                style: AppTheme.body(size: 11, color: AppColors.textDark),
+              ),
+              const SizedBox(height: 2),
+              Text(
+                'Customer Pending: ₹${(record.customerPendingBefore ?? 0).toStringAsFixed(0)} → '
                     '₹${(record.customerPendingAfter ?? 0).toStringAsFixed(0)}',
                 style: AppTheme.body(size: 11, weight: FontWeight.w700, color: AppColors.textDark),
+              ),
+            ],
+            if (record.hasFarmLoss) ...[
+              const SizedBox(height: 4),
+              Text(
+                'Farm Loss: ₹${record.farmLossAmount.toStringAsFixed(0)}',
+                style: AppTheme.body(size: 11, weight: FontWeight.w700, color: AppColors.error),
+              ),
+            ] else if (record.paidInFull) ...[
+              const SizedBox(height: 4),
+              Text(
+                'Paid in full — no loss',
+                style: AppTheme.body(size: 11, weight: FontWeight.w700, color: AppColors.primaryGreen),
               ),
             ],
           ] else if (record.farmLossAmount > 0) ...[

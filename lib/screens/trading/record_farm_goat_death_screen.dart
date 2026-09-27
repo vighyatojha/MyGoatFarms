@@ -30,14 +30,45 @@ class _RecordFarmGoatDeathScreenState
   final _formKey = GlobalKey<FormState>();
   final _reasonController = TextEditingController();
   final _notesController = TextEditingController();
+  final _lossAmountController = TextEditingController();
 
   DateTime _deathDate = DateTime.now();
   bool _saving = false;
+  bool _loadingSuggestion = true;
+
+  double get _lossAmount =>
+      double.tryParse(_lossAmountController.text.trim()) ?? 0;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadSuggestedLoss();
+  }
+
+  Future<void> _loadSuggestedLoss() async {
+    try {
+      final suggested =
+      await DeathSettlementService.instance.suggestedFarmLossAmount(
+        farmId: widget.farmId,
+        goatId: widget.goat.id,
+      );
+      if (!mounted) return;
+      if (suggested > 0 && _lossAmountController.text.trim().isEmpty) {
+        _lossAmountController.text = suggested.toStringAsFixed(0);
+      }
+    } catch (_) {
+      // No purchase to trace — the field just starts blank and the
+      // farm owner enters the loss amount by hand.
+    } finally {
+      if (mounted) setState(() => _loadingSuggestion = false);
+    }
+  }
 
   @override
   void dispose() {
     _reasonController.dispose();
     _notesController.dispose();
+    _lossAmountController.dispose();
     super.dispose();
   }
 
@@ -73,6 +104,7 @@ class _RecordFarmGoatDeathScreenState
     if (!_formKey.currentState!.validate()) return;
 
     final goatLabel = widget.goat.isOwnPalai ? 'Own Palai' : 'Available Stock';
+    final lossAmount = _lossAmount;
 
     final confirmed = await showDialog<bool>(
       context: context,
@@ -85,6 +117,16 @@ class _RecordFarmGoatDeathScreenState
             Text('Location: $goatLabel'),
             Text('Death Date: ${DateFormat('dd MMM yyyy').format(_deathDate)}'),
             Text('Reason: ${_reasonController.text.trim()}'),
+            const SizedBox(height: 10),
+            Text(
+              lossAmount > 0
+                  ? 'Farm Loss: ₹${lossAmount.toStringAsFixed(0)}'
+                  : 'No loss amount entered.',
+              style: TextStyle(
+                fontWeight: FontWeight.w700,
+                color: lossAmount > 0 ? AppColors.error : null,
+              ),
+            ),
             const SizedBox(height: 10),
             const Text(
               'The goat will be marked Dead, its history will remain '
@@ -122,6 +164,7 @@ class _RecordFarmGoatDeathScreenState
         deathDate: _deathDate,
         reason: _reasonController.text.trim(),
         notes: _notesController.text.trim(),
+        farmLossAmount: lossAmount,
       );
 
       if (!mounted) return;
@@ -222,6 +265,39 @@ class _RecordFarmGoatDeathScreenState
                 fillColor: Colors.white,
                 border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
               ),
+            ),
+            const SizedBox(height: 16),
+
+            Text('Farm Loss Amount (₹)', style: AppTheme.heading(size: 13)),
+            const SizedBox(height: 4),
+            Text(
+              _loadingSuggestion
+                  ? 'Looking up a suggested value from its purchase cost...'
+                  : 'Pre-filled from the purchase cost when available — edit '
+                  'it freely, or leave it as 0 if there\'s no loss to record.',
+              style: AppTheme.body(size: 11, color: AppColors.textGrey),
+            ),
+            const SizedBox(height: 10),
+            TextFormField(
+              controller: _lossAmountController,
+              keyboardType: const TextInputType.numberWithOptions(decimal: true),
+              decoration: InputDecoration(
+                hintText: 'e.g. 10000',
+                filled: true,
+                fillColor: Colors.white,
+                border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+              ),
+              validator: (v) {
+                final amount = double.tryParse((v ?? '').trim());
+                if (v != null && v.trim().isNotEmpty && amount == null) {
+                  return 'Enter a valid amount';
+                }
+                if (amount != null && amount < 0) {
+                  return 'Amount cannot be negative';
+                }
+                return null;
+              },
+              onChanged: (_) => setState(() {}),
             ),
             const SizedBox(height: 28),
 

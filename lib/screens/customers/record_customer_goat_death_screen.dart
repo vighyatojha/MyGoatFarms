@@ -2,15 +2,15 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 
 import '../../app_theme.dart';
-import '../../models/death_record.dart';
 import '../../models/palai_models.dart';
 import '../../services/death_settlement_service.dart';
 
 /// Record Death & Settlement for a Customer Palai goat.
 ///
-/// Lets the user settle the goat's death against the customer's account
-/// either as a credit (customer owes less) or a debit (customer owes
-/// more) — see DeathSettlementService.recordCustomerPalaiDeath.
+/// The farm owner enters two numbers: what was pending for this
+/// specific goat, and what the customer will actually be asked to pay.
+/// Whatever gap is waived between the two is recorded as a Goat Death
+/// Loss — see DeathSettlementService.recordCustomerPalaiDeath.
 class RecordCustomerGoatDeathScreen extends StatefulWidget {
   final String farmId;
   final PalaiCustomer customer;
@@ -33,19 +33,38 @@ class _RecordCustomerGoatDeathScreenState
   final _formKey = GlobalKey<FormState>();
   final _reasonController = TextEditingController();
   final _notesController = TextEditingController();
-  final _amountController = TextEditingController();
+  final _pendingChargeController = TextEditingController();
+  final _amountToPayController = TextEditingController();
 
   DateTime _deathDate = DateTime.now();
-  String _direction = DeathRecord.directionCredit;
   bool _saving = false;
 
-  double get _amount => double.tryParse(_amountController.text.trim()) ?? 0;
+  double get _pendingCharge =>
+      double.tryParse(_pendingChargeController.text.trim()) ?? 0;
+
+  double get _amountToPay =>
+      double.tryParse(_amountToPayController.text.trim()) ?? 0;
+
+  /// Waived amount — this is what gets recorded as a farm loss.
+  double get _loss => (_pendingCharge - _amountToPay).clamp(0, double.infinity);
+
+  @override
+  void initState() {
+    super.initState();
+    // Default assumption: the customer pays in full (no loss) unless the
+    // farm owner deliberately lowers it. Pre-filling the pending charge
+    // with the customer's current combined balance is only a starting
+    // point when this is their only goat — it's always editable, since
+    // the app doesn't track a live per-goat balance.
+    _amountToPayController.addListener(() {});
+  }
 
   @override
   void dispose() {
     _reasonController.dispose();
     _notesController.dispose();
-    _amountController.dispose();
+    _pendingChargeController.dispose();
+    _amountToPayController.dispose();
     super.dispose();
   }
 
@@ -87,12 +106,11 @@ class _RecordCustomerGoatDeathScreenState
   Future<void> _confirmAndSave() async {
     if (!_formKey.currentState!.validate()) return;
 
-    final amount = _amount;
-    final isCredit = _direction == DeathRecord.directionCredit;
+    final pendingCharge = _pendingCharge;
+    final amountToPay = _amountToPay;
+    final loss = _loss;
     final currentPending = widget.customer.pendingAmount;
-    final pendingAfter = amount <= 0
-        ? currentPending
-        : (isCredit ? currentPending - amount : currentPending + amount);
+    final pendingAfter = currentPending - pendingCharge + amountToPay;
 
     final confirmed = await showDialog<bool>(
       context: context,
@@ -108,14 +126,22 @@ class _RecordCustomerGoatDeathScreenState
               Text('Death Date: ${DateFormat('dd MMM yyyy').format(_deathDate)}'),
               Text('Reason: ${_reasonController.text.trim()}'),
               const SizedBox(height: 10),
-              if (amount > 0)
+              Text('This Goat\'s Pending Charge: ₹${pendingCharge.toStringAsFixed(0)}'),
+              Text('Customer Will Pay: ₹${amountToPay.toStringAsFixed(0)}'),
+              const SizedBox(height: 6),
+              if (loss > 0)
                 Text(
-                  '${isCredit ? '+' : '-'} ₹${amount.toStringAsFixed(0)} '
-                      '${isCredit ? 'Customer Credit' : 'Customer Debit'}',
-                  style: const TextStyle(fontWeight: FontWeight.w700),
+                  'Farm Loss: ₹${loss.toStringAsFixed(0)}',
+                  style: const TextStyle(
+                    fontWeight: FontWeight.w700,
+                    color: AppColors.error,
+                  ),
                 )
               else
-                const Text('No settlement amount — death recorded only.'),
+                const Text(
+                  'No farm loss — the customer is paying the full pending charge.',
+                  style: TextStyle(fontWeight: FontWeight.w700),
+                ),
               const SizedBox(height: 6),
               Text(
                 'Customer Pending: ₹${currentPending.toStringAsFixed(0)} '
@@ -159,8 +185,8 @@ class _RecordCustomerGoatDeathScreenState
         deathDate: _deathDate,
         reason: _reasonController.text.trim(),
         notes: _notesController.text.trim(),
-        settlementAmount: amount,
-        direction: amount > 0 ? _direction : null,
+        goatPendingCharge: pendingCharge,
+        customerAmountToPay: amountToPay,
       );
 
       if (!mounted) return;
@@ -213,7 +239,7 @@ class _RecordCustomerGoatDeathScreenState
                     ),
                   ),
                   Text(
-                    'Pending: ₹${widget.customer.pendingAmount.toStringAsFixed(0)}',
+                    'Customer Pending: ₹${widget.customer.pendingAmount.toStringAsFixed(0)}',
                     style: AppTheme.body(size: 11, weight: FontWeight.w700),
                   ),
                 ],
@@ -272,73 +298,98 @@ class _RecordCustomerGoatDeathScreenState
             ),
             const SizedBox(height: 20),
 
-            Text('Settlement (optional)', style: AppTheme.heading(size: 13)),
+            Text('This Goat\'s Settlement', style: AppTheme.heading(size: 13)),
             const SizedBox(height: 4),
             Text(
-              'Leave the amount blank if no money should move either way.',
+              'Enter what was pending specifically for this goat, and what '
+                  'the customer will actually pay. Anything waived is '
+                  'recorded as a farm loss. Leave both blank if nothing was '
+                  'pending for this goat.',
               style: AppTheme.body(size: 11, color: AppColors.textGrey),
             ),
             const SizedBox(height: 10),
 
+            Text(
+              'This Goat\'s Pending Charge (₹)',
+              style: AppTheme.body(size: 11, weight: FontWeight.w600, color: AppColors.textDark),
+            ),
+            const SizedBox(height: 6),
             TextFormField(
-              controller: _amountController,
+              controller: _pendingChargeController,
               keyboardType: const TextInputType.numberWithOptions(decimal: true),
               decoration: InputDecoration(
-                hintText: 'Settlement Amount (₹)',
+                hintText: 'e.g. 5000',
                 filled: true,
                 fillColor: Colors.white,
                 border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
               ),
-              validator: (v) {
-                final amount = double.tryParse((v ?? '').trim());
-                if (v != null && v.trim().isNotEmpty && amount == null) {
-                  return 'Enter a valid amount';
-                }
-                if (amount != null && amount < 0) {
-                  return 'Amount cannot be negative';
-                }
-                return null;
+              validator: _validateAmount,
+              onChanged: (v) {
+                setState(() {
+                  // Default the "will pay" field to match, so the common
+                  // case (pay in full, no loss) needs no second entry —
+                  // the farm owner only edits it when waiving something.
+                  if (_amountToPayController.text.trim().isEmpty ||
+                      _amountToPayController.text.trim() ==
+                          _lastAutoFilledPendingCharge) {
+                    _amountToPayController.text = v;
+                  }
+                  _lastAutoFilledPendingCharge = v;
+                });
               },
+            ),
+            const SizedBox(height: 14),
+
+            Text(
+              'Amount Customer Will Pay (₹)',
+              style: AppTheme.body(size: 11, weight: FontWeight.w600, color: AppColors.textDark),
+            ),
+            const SizedBox(height: 6),
+            TextFormField(
+              controller: _amountToPayController,
+              keyboardType: const TextInputType.numberWithOptions(decimal: true),
+              decoration: InputDecoration(
+                hintText: 'e.g. 2000',
+                filled: true,
+                fillColor: Colors.white,
+                border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+              ),
+              validator: _validateAmount,
               onChanged: (_) => setState(() {}),
             ),
-            const SizedBox(height: 10),
+            const SizedBox(height: 14),
 
-            if (_amount > 0) ...[
-              RadioListTile<String>(
-                contentPadding: EdgeInsets.zero,
-                value: DeathRecord.directionCredit,
-                groupValue: _direction,
-                onChanged: (v) => setState(() => _direction = v!),
-                title: const Text(
-                  'Add to customer account',
-                  style: TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
-                ),
-                subtitle: const Text(
-                  'Customer owes less (credit)',
-                  style: TextStyle(fontSize: 11),
-                ),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: _loss > 0
+                    ? AppColors.error.withOpacity(0.08)
+                    : AppColors.primaryGreen.withOpacity(0.08),
+                borderRadius: BorderRadius.circular(12),
               ),
-              RadioListTile<String>(
-                contentPadding: EdgeInsets.zero,
-                value: DeathRecord.directionDebit,
-                groupValue: _direction,
-                onChanged: (v) => setState(() => _direction = v!),
-                title: const Text(
-                  'Deduct from customer account',
-                  style: TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
-                ),
-                subtitle: const Text(
-                  'Customer owes more (debit)',
-                  style: TextStyle(fontSize: 11),
-                ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    _loss > 0
+                        ? 'Farm Loss: ₹${_loss.toStringAsFixed(0)}'
+                        : 'No farm loss — full amount will be collected.',
+                    style: AppTheme.body(
+                      size: 12,
+                      weight: FontWeight.w700,
+                      color: _loss > 0 ? AppColors.error : AppColors.darkGreen,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    'Customer Pending: ₹${widget.customer.pendingAmount.toStringAsFixed(0)} → '
+                        '₹${(widget.customer.pendingAmount - _pendingCharge + _amountToPay).toStringAsFixed(0)}',
+                    style: AppTheme.body(size: 11, color: AppColors.textDark),
+                  ),
+                ],
               ),
-              const SizedBox(height: 6),
-              Text(
-                'Customer Pending: ₹${widget.customer.pendingAmount.toStringAsFixed(0)} → '
-                    '₹${(_direction == DeathRecord.directionCredit ? widget.customer.pendingAmount - _amount : widget.customer.pendingAmount + _amount).toStringAsFixed(0)}',
-                style: AppTheme.body(size: 12, weight: FontWeight.w700, color: AppColors.textDark),
-              ),
-            ],
+            ),
 
             const SizedBox(height: 28),
 
@@ -366,5 +417,22 @@ class _RecordCustomerGoatDeathScreenState
         ),
       ),
     );
+  }
+
+  // Tracks the last value we auto-filled into "amount to pay" from the
+  // pending-charge field, so we stop overwriting it the moment the farm
+  // owner types their own figure in — see the pending-charge onChanged
+  // above.
+  String _lastAutoFilledPendingCharge = '';
+
+  String? _validateAmount(String? v) {
+    final amount = double.tryParse((v ?? '').trim());
+    if (v != null && v.trim().isNotEmpty && amount == null) {
+      return 'Enter a valid amount';
+    }
+    if (amount != null && amount < 0) {
+      return 'Amount cannot be negative';
+    }
+    return null;
   }
 }

@@ -13,12 +13,14 @@ import 'firestore_service.dart';
 /// Covers all three cases from the spec:
 ///
 /// * Customer Palai — [recordCustomerPalaiDeath]. The goat's owner is a
-///   customer, so the death is settled against that customer's account
-///   (credit or debit) — no Finance loss entry.
+///   customer; the farm owner enters what was pending for this specific
+///   goat and what the customer will actually pay, and any waived gap
+///   is posted as a "Goat Death Loss" expense in Finance — same as the
+///   farm-goat case below.
 /// * Own Palai / Available Stock — [recordFarmGoatDeath]. The goat
-///   belongs to the farm, so there is no customer settlement; the goat's
-///   value is instead recorded as a "Goat Death Loss" expense in
-///   Finance.
+///   belongs to the farm, so there is no customer settlement; a
+///   manually-entered loss amount is instead recorded as a "Goat Death
+///   Loss" expense in Finance.
 ///
 /// The one rule that holds across all three: the goat is never deleted.
 /// It is marked dead (re-using the exact fields every other query in
@@ -70,12 +72,16 @@ class DeathSettlementService {
   // =========================================================================
 
   /// Records the death of a Customer Palai goat and settles the
-  /// customer's account.
+  /// customer's account against this one goat specifically.
   ///
-  /// [settlementAmount] may be 0 (no money moves either way — the death
-  /// is only recorded). When it is > 0, [direction] must be
-  /// [DeathRecord.directionCredit] (customer owes less) or
-  /// [DeathRecord.directionDebit] (customer owes more).
+  /// [goatPendingCharge] is what was owed for this particular goat (the
+  /// farm owner enters this — the customer's combined `pendingAmount`
+  /// may cover other goats too, so it isn't read automatically).
+  /// [customerAmountToPay] is what the customer is actually being asked
+  /// to pay for it. Whatever gap is waived between the two
+  /// (`goatPendingCharge - customerAmountToPay`, floored at 0) is
+  /// recorded as a "Goat Death Loss" expense in Finance — paying in
+  /// full means no loss; paying nothing means the whole charge is lost.
   Future<void> recordCustomerPalaiDeath({
     required String farmId,
     required String customerId,
@@ -83,27 +89,30 @@ class DeathSettlementService {
     required DateTime deathDate,
     required String reason,
     String notes = '',
-    double settlementAmount = 0,
-    String? direction,
+    double goatPendingCharge = 0,
+    double customerAmountToPay = 0,
   }) async {
-    if (settlementAmount < 0) {
-      throw ArgumentError('Settlement amount cannot be negative.');
+    if (goatPendingCharge < 0) {
+      throw ArgumentError('Pending charge cannot be negative.');
     }
-    if (settlementAmount > 0 &&
-        direction != DeathRecord.directionCredit &&
-        direction != DeathRecord.directionDebit) {
-      throw ArgumentError(
-        'Select whether the settlement is a credit or a debit.',
-      );
+    if (customerAmountToPay < 0) {
+      throw ArgumentError('Amount to pay cannot be negative.');
     }
 
     final goatRef = _goats(farmId, customerId).doc(goatId);
     final customerRef = _customers(farmId).doc(customerId);
     final deathRecordRef = _deathRecords(farmId).doc();
     final activityRef = _activities(farmId).doc();
-    final billRef = settlementAmount > 0 ? _bills(farmId).doc() : null;
+    final billRef = (goatPendingCharge > 0 || customerAmountToPay > 0)
+        ? _bills(farmId).doc()
+        : null;
 
     final actor = await FirestoreService.instance.getCurrentActor();
+
+    String goatLabel = '';
+    double currentPending = 0;
+    double newPending = 0;
+    double farmLossAmount = 0;
 
     await _db.runTransaction<void>((transaction) async {
       final goatSnapshot = await transaction.get(goatRef);
@@ -122,7 +131,7 @@ class DeathSettlementService {
         );
       }
 
-      final goatLabel = _customerGoatLabel(goatData);
+      goatLabel = _customerGoatLabel(goatData);
 
       final customerSnapshot = await transaction.get(customerRef);
       if (!customerSnapshot.exists) {
@@ -131,15 +140,19 @@ class DeathSettlementService {
 
       final customerData = customerSnapshot.data() ?? {};
       final customerName = (customerData['name'] ?? '').toString();
-      final currentPending =
-      (customerData['pendingAmount'] ?? 0).toDouble();
+      currentPending = (customerData['pendingAmount'] ?? 0).toDouble();
 
-      final isCredit = direction == DeathRecord.directionCredit;
-      final newPending = settlementAmount <= 0
-          ? currentPending
-          : (isCredit
-          ? currentPending - settlementAmount
-          : currentPending + settlementAmount);
+      // The goat's own charge comes out of the customer's combined
+      // balance in full, and whatever the customer is actually being
+      // asked to pay for it goes back in — the gap between the two is
+      // what gets waived (see farmLossAmount below). Every other goat
+      // the customer has, and every other charge already in their
+      // pendingAmount, is untouched.
+      newPending =
+          currentPending - goatPendingCharge + customerAmountToPay;
+
+      farmLossAmount =
+          (goatPendingCharge - customerAmountToPay).clamp(0, double.infinity);
 
       // ---------------------------------------------------------------
       // Mark the goat dead. Setting isCheckedOut: true re-uses the exact
@@ -159,33 +172,35 @@ class DeathSettlementService {
         'updatedAt': FieldValue.serverTimestamp(),
       });
 
-      if (settlementAmount > 0) {
+      if (goatPendingCharge > 0 || customerAmountToPay > 0) {
         transaction.update(customerRef, {
           'pendingAmount': newPending,
           'updatedAt': FieldValue.serverTimestamp(),
         });
 
         final now = DateTime.now();
-        final billNumber = '${isCredit ? 'DTC' : 'DTD'}-${now.year}'
+        final billNumber = 'DTH-${now.year}'
             '${now.month.toString().padLeft(2, '0')}'
             '${now.day.toString().padLeft(2, '0')}'
             '-${billRef!.id.substring(0, 6).toUpperCase()}';
 
         transaction.set(billRef, {
           'billNumber': billNumber,
-          'type': isCredit
-              ? 'deathSettlementCredit'
-              : 'deathSettlementDebit',
+          'type': 'deathSettlement',
           'customerId': customerId,
           'customerName': customerName,
           'goatId': goatId,
           'goatLabel': goatLabel,
-          // Credits reduce what the customer owes, so they are recorded
-          // as a negative charge — mirrors the pendingAmount arithmetic
-          // above and keeps this bill's `newCharges` consistent with
-          // every other bill type in this collection.
-          'newCharges': isCredit ? -settlementAmount : settlementAmount,
-          'amount': settlementAmount,
+          // Removing this goat's full charge and adding back only what
+          // the customer will actually pay nets out to the same delta
+          // as (customerAmountToPay - goatPendingCharge) — negative
+          // when part of the charge was waived, keeping this bill's
+          // `newCharges` consistent with every other bill type in this
+          // collection.
+          'newCharges': customerAmountToPay - goatPendingCharge,
+          'goatPendingCharge': goatPendingCharge,
+          'customerAmountToPay': customerAmountToPay,
+          'farmLossAmount': farmLossAmount,
           'previousPending': currentPending,
           'pendingAfter': newPending,
           'amountPaid': 0,
@@ -205,11 +220,11 @@ class DeathSettlementService {
         'deathDate': Timestamp.fromDate(deathDate),
         'reason': reason.trim(),
         'notes': notes.trim(),
-        'settlementAmount': settlementAmount,
-        if (settlementAmount > 0) 'settlementDirection': direction,
+        'goatPendingCharge': goatPendingCharge,
+        'customerAmountToPay': customerAmountToPay,
         'customerPendingBefore': currentPending,
         'customerPendingAfter': newPending,
-        'farmLossAmount': 0,
+        'farmLossAmount': farmLossAmount,
         'createdAt': FieldValue.serverTimestamp(),
         if (actor != null) 'actorUid': actor.uid,
         if (actor != null) 'actorName': actor.name,
@@ -227,6 +242,39 @@ class DeathSettlementService {
         if (actor != null) 'actorRole': actor.role,
       });
     }).timeout(_timeout);
+
+    // Recorded as a separate step, same pattern as recordFarmGoatDeath
+    // below (and TradingService._ensurePurchaseFinanceExpense):
+    // FinanceService.addExpense does its own batch (actor lookup +
+    // duplicate-check query don't fit inside the transaction above).
+    // referenceType/referenceId make this idempotent — safe even if
+    // this step is retried.
+    if (farmLossAmount > 0) {
+      final now = DateTime.now();
+      await FinanceService.instance.addExpense(
+        farmId,
+        ExpenseModel(
+          id: '',
+          title: 'Goat Death Loss — $goatLabel',
+          category: ExpenseCategories.goatDeathLoss,
+          amount: farmLossAmount,
+          // Not a real cash payment — the customer simply isn't being
+          // asked to pay this part. FinancePaymentMethods.credit is
+          // exactly the flag Net Cash Flow / Cash-Online calculations
+          // already exclude for this reason, while Total Expenses /
+          // Net Income still count it — see the EXCEPTION note on
+          // ExpenseModel.isUnpaidCredit.
+          paymentMethod: FinancePaymentMethods.credit,
+          note: reason.trim(),
+          date: deathDate,
+          createdAt: now,
+          updatedAt: now,
+          status: 'active',
+          referenceType: 'goatDeath',
+          referenceId: deathRecordRef.id,
+        ),
+      );
+    }
   }
 
   String _customerGoatLabel(Map<String, dynamic> goatData) {
@@ -247,16 +295,23 @@ class DeathSettlementService {
   // =========================================================================
 
   /// Records the death of a farm-owned goat (Own Palai or Available
-  /// Stock). There is no customer settlement; the goat's value (its
-  /// originating purchase's cost-per-surviving-goat) is instead recorded
-  /// as a "Goat Death Loss" expense in Finance.
+  /// Stock). There is no customer settlement; [farmLossAmount] — entered
+  /// manually by the farm owner when recording the death (see
+  /// RecordFarmGoatDeathScreen; [suggestedFarmLossAmount] below gives it
+  /// a starting figure to prefill and edit) — is instead recorded as a
+  /// "Goat Death Loss" expense in Finance.
   Future<void> recordFarmGoatDeath({
     required String farmId,
     required String goatId,
     required DateTime deathDate,
     required String reason,
     String notes = '',
+    double farmLossAmount = 0,
   }) async {
+    if (farmLossAmount < 0) {
+      throw ArgumentError('Loss amount cannot be negative.');
+    }
+
     final goatRef = _tradingGoats(farmId).doc(goatId);
     final deathRecordRef = _deathRecords(farmId).doc();
     final activityRef = _activities(farmId).doc();
@@ -265,7 +320,6 @@ class DeathSettlementService {
 
     String goatType = DeathRecord.typeAvailableStock;
     String goatLabel = '';
-    double farmLossAmount = 0;
 
     await _db.runTransaction<void>((transaction) async {
       final goatSnapshot = await transaction.get(goatRef);
@@ -292,16 +346,6 @@ class DeathSettlementService {
           ? '${goat.breed} · ${goatId.substring(0, goatId.length < 6 ? goatId.length : 6).toUpperCase()}'
           : goatId.substring(0, goatId.length < 6 ? goatId.length : 6).toUpperCase();
 
-      if (goat.purchaseId.trim().isNotEmpty) {
-        final purchaseSnapshot = await transaction.get(
-          _tradingPurchases(farmId).doc(goat.purchaseId),
-        );
-        if (purchaseSnapshot.exists) {
-          final purchase = TradingPurchase.fromDoc(purchaseSnapshot);
-          farmLossAmount = purchase.costPerSurvivingGoat;
-        }
-      }
-
       // ---------------------------------------------------------------
       // Mark the goat dead. Dead is deliberately NOT in Goat.statusValues
       // (see goat_model.dart), so this goat automatically stops matching
@@ -324,7 +368,6 @@ class DeathSettlementService {
         'deathDate': Timestamp.fromDate(deathDate),
         'reason': reason.trim(),
         'notes': notes.trim(),
-        'settlementAmount': 0,
         'farmLossAmount': farmLossAmount,
         'createdAt': FieldValue.serverTimestamp(),
         if (actor != null) 'actorUid': actor.uid,
@@ -375,6 +418,29 @@ class DeathSettlementService {
         ),
       );
     }
+  }
+
+  /// A starting figure for [recordFarmGoatDeath]'s manual loss-amount
+  /// field — the goat's originating purchase's cost-per-surviving-goat,
+  /// when one can be found. Purely a UI convenience; the farm owner can
+  /// (and per the spec, should be free to) edit it before saving. 0 when
+  /// no purchase can be traced, in which case the field simply starts
+  /// blank and must be entered by hand.
+  Future<double> suggestedFarmLossAmount({
+    required String farmId,
+    required String goatId,
+  }) async {
+    final goatSnapshot = await _tradingGoats(farmId).doc(goatId).get();
+    if (!goatSnapshot.exists) return 0;
+
+    final goat = Goat.fromDoc(goatSnapshot);
+    if (goat.purchaseId.trim().isEmpty) return 0;
+
+    final purchaseSnapshot =
+    await _tradingPurchases(farmId).doc(goat.purchaseId).get();
+    if (!purchaseSnapshot.exists) return 0;
+
+    return TradingPurchase.fromDoc(purchaseSnapshot).costPerSurvivingGoat;
   }
 
   // =========================================================================
