@@ -26,6 +26,7 @@ import '../../../widgets/reminder_date_selector.dart';
 import '../../palai/fullscreen_image_viewer.dart';
 import '../goat_stock/complete_wait_for_delivery_screen.dart';
 import '../goat_stock/goat_stock_detail_screen.dart';
+import '../record_farm_goat_death_screen.dart';
 import '../sale_receipt_screen.dart';
 
 /// Own Palai goat profile — same tabbed layout as the customer Palai
@@ -210,6 +211,21 @@ class _OwnPalaiGoatProfileScreenState extends State<OwnPalaiGoatProfileScreen>
     super.dispose();
   }
 
+  Future<void> _recordDeath() async {
+    final recorded = await Navigator.of(context).push<bool>(
+      fastRoute(
+        RecordFarmGoatDeathScreen(
+          farmId: widget.farmId,
+          goat: widget.goat,
+        ),
+      ),
+    );
+
+    if (recorded == true && mounted) {
+      Navigator.of(context).pop(true);
+    }
+  }
+
   // ---------------------------------------------------------------------------
   // BUILD
   // ---------------------------------------------------------------------------
@@ -248,6 +264,12 @@ class _OwnPalaiGoatProfileScreenState extends State<OwnPalaiGoatProfileScreen>
                   ),
                 ),
               ),
+            ),
+          if (goat.isOwnPalai || goat.isAvailable)
+            IconButton(
+              tooltip: 'Record Death',
+              icon: const Icon(Icons.dangerous_outlined),
+              onPressed: _recordDeath,
             ),
         ],
       ),

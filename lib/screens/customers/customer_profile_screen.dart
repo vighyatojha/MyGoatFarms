@@ -21,6 +21,7 @@ import '../palai/fullscreen_image_viewer.dart';
 import '../palai/multi_goat_checkout_screen.dart';
 import 'customer_goats_progress_report_pdf_screen.dart';
 import 'monthly_bills_screen.dart';
+import 'record_customer_goat_death_screen.dart';
 
 class CustomerProfileScreen extends StatefulWidget {
   final PalaiCustomer customer;
@@ -129,6 +130,22 @@ class _CustomerProfileScreenState extends State<CustomerProfileScreen> {
     if (!mounted) return;
 
     await _refreshCustomer();
+  }
+
+  Future<void> _recordGoatDeath(PalaiGoat goat) async {
+    final recorded = await Navigator.of(context).push<bool>(
+      fastRoute(
+        RecordCustomerGoatDeathScreen(
+          farmId: widget.farmId,
+          customer: _customer,
+          goat: goat,
+        ),
+      ),
+    );
+
+    if (recorded == true && mounted) {
+      await _refreshCustomer();
+    }
   }
 
   Future<void> _openMonthlyBills() async {
@@ -1476,30 +1493,62 @@ class _CustomerProfileScreenState extends State<CustomerProfileScreen> {
                   if (showCheckout && !goat.isCheckedOut) ...[
                     const SizedBox(height: 4),
                     SizedBox(
-                      height: 27,
-                      child: OutlinedButton(
-                        onPressed: () => _checkoutGoat(goat),
-                        style: OutlinedButton.styleFrom(
-                          foregroundColor: AppColors.primaryGreen,
-                          side: BorderSide(
-                            color: AppColors.primaryGreen.withOpacity(0.55),
-                          ),
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 8,
-                          ),
-                          minimumSize: Size.zero,
-                          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(8),
-                          ),
+                      height: 26,
+                      width: 26,
+                      child: PopupMenuButton<String>(
+                        tooltip: 'Goat actions',
+                        padding: EdgeInsets.zero,
+                        icon: const Icon(
+                          Icons.more_vert,
+                          size: 18,
+                          color: AppColors.textGrey,
                         ),
-                        child: const Text(
-                          'Checkout',
-                          style: TextStyle(
-                            fontSize: 9,
-                            fontWeight: FontWeight.w700,
-                          ),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
                         ),
+                        onSelected: (value) {
+                          if (value == 'checkout') {
+                            _checkoutGoat(goat);
+                          } else if (value == 'death') {
+                            _recordGoatDeath(goat);
+                          }
+                        },
+                        itemBuilder: (context) => [
+                          const PopupMenuItem(
+                            value: 'checkout',
+                            child: Row(
+                              children: [
+                                Icon(
+                                  Icons.logout_rounded,
+                                  size: 17,
+                                  color: AppColors.primaryGreen,
+                                ),
+                                SizedBox(width: 10),
+                                Text(
+                                  'Checkout',
+                                  style: TextStyle(fontSize: 12.5),
+                                ),
+                              ],
+                            ),
+                          ),
+                          const PopupMenuItem(
+                            value: 'death',
+                            child: Row(
+                              children: [
+                                Icon(
+                                  Icons.dangerous_outlined,
+                                  size: 17,
+                                  color: AppColors.error,
+                                ),
+                                SizedBox(width: 10),
+                                Text(
+                                  'Record Death',
+                                  style: TextStyle(fontSize: 12.5),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
                       ),
                     ),
                   ],

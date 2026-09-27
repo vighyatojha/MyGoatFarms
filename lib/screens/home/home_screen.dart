@@ -29,6 +29,7 @@ import 'home_search_screen.dart';
 import '../palai/goat_list_screen.dart';
 import '../palai/receive_payment_screen.dart';
 import '../trading/own_palai/own_palai_list_screen.dart';
+import 'death_history_screen.dart';
 import '../../widgets/goat_count_builder.dart';
 
 /// Home / dashboard screen. Quick, at-a-glance view of the whole farm —
@@ -572,6 +573,13 @@ class _HomeScreenState extends State<HomeScreen> {
               label: 'Health\nRecords',
               color: AppColors.warning,
               onTap: () => Navigator.of(context).push(fastRoute(const HealthRecordsScreen())),
+            ),
+            const SizedBox(width: 18),
+            QuickAction(
+              icon: Icons.dangerous_outlined,
+              label: 'Goat Death &\nSettlement',
+              color: AppColors.error,
+              onTap: () => Navigator.of(context).push(fastRoute(const DeathHistoryScreen())),
             ),
           ],
         ),

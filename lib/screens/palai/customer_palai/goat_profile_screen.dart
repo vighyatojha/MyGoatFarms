@@ -6,6 +6,7 @@ import '../../../goat_icons.dart';
 import '../../../models/palai_models.dart';
 import '../../../services/firestore_service.dart';
 import '../../../widgets/fast_route.dart';
+import '../../customers/record_customer_goat_death_screen.dart';
 import '../fullscreen_image_viewer.dart';
 import 'customer_goat_hair_screen.dart';
 import 'customer_goat_hoof_screen.dart';
@@ -77,6 +78,7 @@ class _GoatProfileScreenState extends State<GoatProfileScreen>
     with SingleTickerProviderStateMixin {
   late final TabController _tabController;
   String _customerName = '';
+  PalaiCustomer? _customer;
 
   /// Mutable local copy of the goat, seeded from [widget.goat]. Kept
   /// separate so editing details (via [GoatEditDetailsScreen]) can
@@ -114,7 +116,10 @@ class _GoatProfileScreenState extends State<GoatProfileScreen>
   Future<void> _loadCustomerName() async {
     final customer = await FirestoreService.instance.getCustomer(widget.farmId, _goat.customerId);
     if (!mounted || customer == null) return;
-    setState(() => _customerName = customer.name);
+    setState(() {
+      _customerName = customer.name;
+      _customer = customer;
+    });
   }
 
   Future<void> _openEditDetails() async {
@@ -129,6 +134,25 @@ class _GoatProfileScreenState extends State<GoatProfileScreen>
     );
     if (updated != null && mounted) {
       setState(() => _goat = updated);
+    }
+  }
+
+  Future<void> _recordDeath() async {
+    final customer = _customer;
+    if (customer == null) return;
+
+    final recorded = await Navigator.of(context).push<bool>(
+      fastRoute(
+        RecordCustomerGoatDeathScreen(
+          farmId: widget.farmId,
+          customer: customer,
+          goat: _goat,
+        ),
+      ),
+    );
+
+    if (recorded == true && mounted) {
+      Navigator.of(context).pop(true);
     }
   }
 
@@ -170,6 +194,12 @@ class _GoatProfileScreenState extends State<GoatProfileScreen>
           style: AppTheme.heading(size: 16),
         ),
         actions: [
+          if (!goat.isCheckedOut)
+            IconButton(
+              tooltip: 'Record Death',
+              icon: const Icon(Icons.dangerous_outlined),
+              onPressed: _customer == null ? null : _recordDeath,
+            ),
           IconButton(
             tooltip: 'Edit Goat Details',
             icon: const Icon(Icons.edit_outlined),

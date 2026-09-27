@@ -129,6 +129,16 @@ class Goat {
   /// (Selected Goat Details) only displays it.
   final String gender;
 
+  // ---------------------------------------------------------------------
+  // DEATH (Goat Death & Settlement)
+  // ---------------------------------------------------------------------
+
+  /// Set by DeathSettlementService.recordFarmGoatDeath. Null unless
+  /// [currentStatus] is [statusDead].
+  final DateTime? deathDate;
+  final String deathReason;
+  final String deathNotes;
+
   Goat({
     required this.id,
     required this.breed,
@@ -150,6 +160,9 @@ class Goat {
     this.gender = '',
     this.height = 0,
     this.length = 0,
+    this.deathDate,
+    this.deathReason = '',
+    this.deathNotes = '',
   }) : assert(
   gender == '' || genderValues.contains(gender),
   'gender must be one of Goat.genderValues, or empty.',
@@ -171,6 +184,16 @@ class Goat {
   static const String statusWaitOnDelivery = 'Wait on Delivery';
 
   static const String statusInCustomerPalai = 'In Customer Palai';
+
+  /// Set by DeathSettlementService.recordFarmGoatDeath. Deliberately NOT
+  /// included in [statusValues] (the list of statuses a goat moves
+  /// through in the normal Trading lifecycle) — Dead is a terminal state
+  /// reached only via the Goat Death & Settlement feature, and every
+  /// existing status check (isAvailable, isOwnPalai, isSellable,
+  /// followsFarmHealthSchedule) is written as an explicit equality check
+  /// against one specific status, so a Dead goat automatically falls out
+  /// of all of them without any of those checks needing to change.
+  static const String statusDead = 'Dead';
 
   static const List<String> statusValues = [
     statusAvailable,
@@ -376,6 +399,9 @@ class Goat {
       currentStatus.trim().toLowerCase() ==
           statusInCustomerPalai.toLowerCase();
 
+  bool get isDead =>
+      currentStatus.trim().toLowerCase() == statusDead.toLowerCase();
+
   /// Whether a height was recorded for this goat.
   bool get hasHeight => height > 0;
 
@@ -552,6 +578,15 @@ class Goat {
 
       gender:
       (data['gender'] ?? '').toString(),
+
+      deathDate:
+      dateFrom('deathDate'),
+
+      deathReason:
+      (data['deathReason'] ?? '').toString(),
+
+      deathNotes:
+      (data['deathNotes'] ?? '').toString(),
     );
   }
 

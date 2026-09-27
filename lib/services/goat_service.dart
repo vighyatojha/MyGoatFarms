@@ -668,9 +668,17 @@ class GoatService {
                 .pendingCount -
                 1;
 
-        final justCompleted =
-            newRegisteredCount >=
-                currentPurchase.totalGoats;
+        // Completion must be judged against the REGISTERABLE quantity
+        // (survivors = totalGoats - mortality), not the original
+        // totalGoats. pendingCount already tracks that (it's set from
+        // survivingGoats in completeReceiving()/savePurchase() and
+        // decremented once per registration here), so "no goats left to
+        // register" is exactly newPendingCount <= 0. Comparing against
+        // totalGoats directly meant a purchase with any mortality could
+        // never reach 'Completed' — e.g. 10 goats, 2 dead, 8 survivors:
+        // registering all 8 gives registeredCount == 8, and
+        // 8 >= 10 is false forever.
+        final justCompleted = newPendingCount <= 0;
 
         // Only advance the gender counters when this goat's gender came
         // from the purchase's own split (gender was null going in) — an

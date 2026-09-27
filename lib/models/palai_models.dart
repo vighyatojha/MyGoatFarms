@@ -376,7 +376,17 @@ class PalaiGoat {
   /// follow-up.
   final DateTime? nextHealthCheckDate;
 
+  // --------------------------------------------------------------------------
+  // DEATH (Goat Death & Settlement)
+  // --------------------------------------------------------------------------
 
+  /// Set by DeathSettlementService.recordCustomerPalaiDeath. Null unless
+  /// [status] is 'dead'.
+  final DateTime? deathDate;
+  final String deathReason;
+  final String deathNotes;
+
+  bool get isDead => status == 'dead';
 
   // ==========================================================================
   // CONSTRUCTOR
@@ -447,6 +457,11 @@ class PalaiGoat {
 
     // Health reminder
     this.nextHealthCheckDate,
+
+    // Death
+    this.deathDate,
+    this.deathReason = '',
+    this.deathNotes = '',
   }) : registrationDate =
       registrationDate ?? checkInDate;
 
@@ -671,6 +686,15 @@ class PalaiGoat {
 
       nextHealthCheckDate:
       _readDate(data['nextHealthCheckDate']),
+
+      deathDate:
+      _readDate(data['deathDate']),
+
+      deathReason:
+      _readString(data['deathReason']),
+
+      deathNotes:
+      _readString(data['deathNotes']),
     );
   }
 

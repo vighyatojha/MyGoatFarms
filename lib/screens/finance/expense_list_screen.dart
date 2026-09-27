@@ -289,7 +289,9 @@ class _ExpenseListScreenState extends State<ExpenseListScreen> {
                   ),
                   if (expense.isUnpaidCredit)
                     Text(
-                      'On Credit — not yet paid, excluded from totals',
+                      expense.category == ExpenseCategories.goatDeathLoss
+                          ? 'Loss — no cash spent, excluded from totals'
+                          : 'On Credit — not yet paid, excluded from totals',
                       style: AppTheme.body(
                         size: 10,
                         color: AppColors.textGrey,

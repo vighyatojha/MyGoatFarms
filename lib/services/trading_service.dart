@@ -7,6 +7,7 @@ import '../models/expense_categories.dart';
 import '../models/expense_model.dart';
 import '../models/goat_model.dart';
 import '../models/purchase_costing.dart';
+import '../models/sale_model.dart';
 import '../models/trading_purchase_model.dart';
 import '../models/trading_summary_model.dart';
 import 'firestore_service.dart';
@@ -89,6 +90,17 @@ class TradingService {
     return _farms()
         .doc(farmId)
         .collection('tradingGoats');
+  }
+
+  /// Owned by SalesService (farms/{farmId}/sales). Read-only here — used
+  /// only by [backfillDashboardSummary] to recompute `totalProfit` from
+  /// each finalized sale's stored goat-sale value.
+  CollectionReference<Map<String, dynamic>> _sales(
+      String farmId,
+      ) {
+    return _farms()
+        .doc(farmId)
+        .collection('sales');
   }
 
   // -----------------------------------------------------------------------
@@ -359,6 +371,22 @@ class TradingService {
     if (mortality > totalGoats) {
       throw ArgumentError(
         'Mortality cannot be greater than total goats.',
+      );
+    }
+
+    // Aligned with completeReceiving()'s guard: at least one goat must
+    // survive whenever receiving is being recorded as completed right
+    // here. (Previously this only rejected mortality > totalGoats,
+    // technically permitting 0 survivors at save time even though
+    // completeReceiving() rejects that later — two different rules for
+    // the same business concept.) When receiving is still "pending",
+    // mortality isn't meaningful yet (costing ignores it, see
+    // `isCompleted ? mortality : 0` below), so it isn't restricted here.
+    if (normalizedReceivingStatus == 'completed' &&
+        mortality >= totalGoats) {
+      throw ArgumentError(
+        'At least one goat must survive — mortality cannot equal or '
+            'exceed total goats.',
       );
     }
 
@@ -841,10 +869,6 @@ class TradingService {
   /// scratch (not incremental), so re-running it just gets the same
   /// correct numbers rather than double-counting.
   ///
-  /// Only sets wholesalePurchased/totalStock/pendingRegistrations —
-  /// totalSold, totalProfit, booking, and waitOnDelivery come from
-  /// other modules (sales/bookings) and are left untouched via merge.
-  ///
   /// --- totalStock vs. pendingRegistrations (Phase 2 note) ---
   ///
   /// `totalStock` means "goats physically on the farm, alive" —
@@ -870,14 +894,14 @@ class TradingService {
   /// date), or re-running backfill after registration has started would
   /// silently undo it.
   ///
-  /// `totalStock`, `totalSold`, `booking`, and `waitOnDelivery` are
-  /// additionally reconciled here (added when negative dashboard values
-  /// turned up in production — a purchase from before this dashboard
-  /// tracking existed had already thrown every increment/decrement
-  /// pair off balance). Unlike the purchase-only totalStock estimate
-  /// above, these four are derived straight from each goat's actual
-  /// `currentStatus` today, so they self-heal regardless of what drifted
-  /// the stored counters in the first place:
+  /// `totalStock`, `totalSold`, `booking`, `waitOnDelivery`, and
+  /// `totalProfit` are additionally reconciled here (added when negative
+  /// dashboard values turned up in production — a purchase from before
+  /// this dashboard tracking existed had already thrown every
+  /// increment/decrement pair off balance). Unlike the purchase-only
+  /// totalStock estimate above, the first four are derived straight from
+  /// each goat's actual `currentStatus` today, so they self-heal
+  /// regardless of what drifted the stored counters in the first place:
   ///
   ///   totalStock = pendingRegistrations (received, not yet
   ///                individually registered — no tradingGoats doc yet)
@@ -890,17 +914,31 @@ class TradingService {
   /// Goats currently Sold or In Customer Palai have left the farm and
   /// are excluded from totalStock, matching how every sale/transfer
   /// path already decrements it.
+  ///
+  /// `totalProfit` is rebuilt from the Sold / In Customer Palai goats
+  /// found above: each one's `saleId` is grouped back to its Sale doc
+  /// (farms/{farmId}/sales), and each one's `purchaseId` is priced via
+  /// that purchase's [TradingPurchase.costPerSurvivingGoat] — same cost
+  /// figure SalesService looks up live at sale time (see
+  /// SalesService._costOfGoatsInTransaction). Revenue per sale is
+  /// `sale.billGoatSale + sale.billHoldingCharges` — never
+  /// transportation, which is not farm revenue — computed once per
+  /// unique sale (not per goat) since that figure already covers every
+  /// goat on that sale.
   Future<void> backfillDashboardSummary(String farmId) async {
     final snapshot =
     await _tradingPurchases(farmId).get().timeout(_timeout);
 
     var wholesalePurchased = 0;
     var pendingRegistrations = 0;
+    final costPerSurvivingGoatByPurchaseId = <String, double>{};
 
     for (final doc in snapshot.docs) {
       final purchase = TradingPurchase.fromDoc(doc);
 
       wholesalePurchased += purchase.totalGoats;
+      costPerSurvivingGoatByPurchaseId[purchase.id] =
+          purchase.costPerSurvivingGoat;
 
       if (purchase.isReceivingCompleted) {
         // Reflects goats from this purchase still awaiting individual
@@ -922,6 +960,11 @@ class TradingService {
     var booking = 0;
     var waitOnDelivery = 0;
 
+    // Goats that have left the farm via a sale (Sold) or a Palai
+    // transfer (In Customer Palai), grouped by the sale that moved
+    // them — used below to compute totalProfit one sale at a time.
+    final soldGoatsBySaleId = <String, List<Goat>>{};
+
     for (final doc in goatsSnapshot.docs) {
       final goat = Goat.fromDoc(doc);
 
@@ -941,13 +984,46 @@ class TradingService {
           waitOnDelivery++;
           break;
 
-        case Goat.statusSold:
+        case Goat.statusSold: {
           totalSold++;
+          final soldSaleId = (goat.saleId ?? '').trim();
+          if (soldSaleId.isNotEmpty) {
+            (soldGoatsBySaleId[soldSaleId] ??= []).add(goat);
+          }
           break;
+        }
 
-      // Goat.statusInCustomerPalai: left the farm via Branch D —
-      // not counted anywhere here, same as Sold.
+        case Goat.statusInCustomerPalai: {
+          // Left the farm via Branch D — not counted in totalStock or
+          // totalSold, same as before, but its sale value still counts
+          // toward totalProfit below.
+          final palaiSaleId = (goat.saleId ?? '').trim();
+          if (palaiSaleId.isNotEmpty) {
+            (soldGoatsBySaleId[palaiSaleId] ??= []).add(goat);
+          }
+          break;
+        }
       }
+    }
+
+    var totalProfit = 0.0;
+
+    for (final entry in soldGoatsBySaleId.entries) {
+      final saleSnap =
+      await _sales(farmId).doc(entry.key).get().timeout(_timeout);
+
+      if (!saleSnap.exists) continue;
+
+      final sale = Sale.fromDoc(saleSnap);
+      final revenue = sale.billGoatSale + sale.billHoldingCharges;
+
+      final cost = entry.value.fold<double>(
+        0,
+            (sum, goat) =>
+        sum + (costPerSurvivingGoatByPurchaseId[goat.purchaseId] ?? 0),
+      );
+
+      totalProfit += revenue - cost;
     }
 
     final totalStock = pendingRegistrations + onFarmGoats;
@@ -960,6 +1036,7 @@ class TradingService {
         'totalSold': totalSold,
         'booking': booking,
         'waitOnDelivery': waitOnDelivery,
+        'totalProfit': PurchaseCosting.round2(totalProfit),
       },
       SetOptions(merge: true),
     ).timeout(_timeout);

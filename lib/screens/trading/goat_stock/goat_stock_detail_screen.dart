@@ -12,6 +12,7 @@ import '../../palai/fullscreen_image_viewer.dart';
 import '../sale_receipt_screen.dart';
 import 'complete_booking_delivery_screen.dart';
 import 'complete_wait_for_delivery_screen.dart';
+import '../record_farm_goat_death_screen.dart';
 
 class GoatStockDetailScreen extends StatefulWidget {
   final String farmId;
@@ -74,6 +75,21 @@ class _GoatStockDetailScreenState
         ),
       ),
     );
+  }
+
+  Future<void> _recordDeath() async {
+    final recorded = await Navigator.of(context).push<bool>(
+      fastRoute(
+        RecordFarmGoatDeathScreen(
+          farmId: widget.farmId,
+          goat: widget.goat,
+        ),
+      ),
+    );
+
+    if (recorded == true && mounted) {
+      Navigator.of(context).pop(true);
+    }
   }
 
   // ===========================================================================
@@ -400,6 +416,14 @@ class _GoatStockDetailScreenState
           'Goat Details',
           style: AppTheme.heading(size: 17),
         ),
+        actions: [
+          if (goat.isOwnPalai || goat.isAvailable)
+            IconButton(
+              tooltip: 'Record Death',
+              icon: const Icon(Icons.dangerous_outlined),
+              onPressed: _recordDeath,
+            ),
+        ],
       ),
       body: SafeArea(
         child: SingleChildScrollView(

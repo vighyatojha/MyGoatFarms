@@ -10,7 +10,7 @@ import '../models/goat_model.dart';
 import '../models/palai_models.dart';
 import '../models/sale_draft.dart';
 import '../models/sale_model.dart';
-import 'firestore_service.dart';
+import '../models/trading_purchase_model.dart';
 import 'health_reminder_scheduler.dart';
 
 /// Handles the Trading module's Sell Goat flow (Phase 4: Feature 7 + 8).
@@ -68,6 +68,22 @@ class SalesService {
     return _farms().doc(farmId).collection('palaiCustomers');
   }
 
+  /// Also owned by the Customer Palai module — one customer's boarded
+  /// goats (farms/{farmId}/palaiCustomers/{customerId}/goats). Written to
+  /// only by [saveTransferToPalai], as part of the same transaction that
+  /// creates the Palai customer and flips the Trading goat's status, so a
+  /// transfer can never leave a goat checked into Trading's "In Customer
+  /// Palai" state without an actual PalaiGoat record (or vice versa).
+  /// Mirrors FirestoreService's own `_goats(farmId, customerId)` write
+  /// shape exactly (see checkInGoat) — if that shape ever changes, this
+  /// needs to change with it.
+  CollectionReference<Map<String, dynamic>> _palaiGoats(
+      String farmId,
+      String customerId,
+      ) {
+    return _palaiCustomers(farmId).doc(customerId).collection('goats');
+  }
+
   DocumentReference<Map<String, dynamic>> _saleCounterDoc(
       String farmId,
       ) {
@@ -86,11 +102,23 @@ class SalesService {
     return _farms().doc(farmId).collection('tradingGoats');
   }
 
+  /// Owned by TradingService (farms/{farmId}/tradingPurchases). Read-only
+  /// here — used only to look up a sold goat's originating purchase for
+  /// its per-goat cost (see [_costOfGoatsInTransaction] /
+  /// [TradingPurchase.costPerSurvivingGoat]), so profit can be computed
+  /// at the moment a sale is finalized.
+  CollectionReference<Map<String, dynamic>> _tradingPurchases(
+      String farmId,
+      ) {
+    return _farms().doc(farmId).collection('tradingPurchases');
+  }
+
   /// Same aggregate doc TradingService writes `totalStock` /
   /// `pendingRegistrations` to (farms/{farmId}/tradingSummary/dashboard).
-  /// SalesService only ever touches `totalStock`, `totalSold`, `booking`
-  /// and `waitOnDelivery` here — never `pendingRegistrations` or
-  /// `wholesalePurchased`, which belong to the Purchase flow.
+  /// SalesService only ever touches `totalStock`, `totalSold`,
+  /// `totalProfit`, `booking` and `waitOnDelivery` here — never
+  /// `pendingRegistrations` or `wholesalePurchased`, which belong to the
+  /// Purchase flow.
   DocumentReference<Map<String, dynamic>> _summaryDoc(
       String farmId,
       ) {
@@ -98,6 +126,49 @@ class SalesService {
         .doc(farmId)
         .collection('tradingSummary')
         .doc('dashboard');
+  }
+
+  /// The Cost of Goods Sold for a set of goats — used alongside a sale's
+  /// goat-only revenue to compute the profit added to
+  /// [TradingSummary.totalProfit] the moment each sale/transfer is
+  /// finalized (a goat's cost is fixed once its purchase's receiving is
+  /// completed, so reading it at sale time is always safe/current).
+  ///
+  /// MUST be called during a transaction's read phase, before any write
+  /// — it issues its own `transaction.get()` calls, and Firestore
+  /// requires every read in a transaction to happen before any write.
+  ///
+  /// Reads each distinct originating purchase once (a multi-goat sale is
+  /// very often all drawn from the same purchase batch) and sums that
+  /// purchase's `costPerSurvivingGoat` once per goat drawn from it. A
+  /// goat with a blank/missing `purchaseId`, or whose purchase doc can't
+  /// be found (data from before Trading tracked this), contributes 0
+  /// cost rather than failing the sale — understating profit for that
+  /// one goat is far better than blocking a sale over it.
+  Future<double> _costOfGoatsInTransaction({
+    required Transaction transaction,
+    required String farmId,
+    required List<String> purchaseIds,
+  }) async {
+    final uniqueIds =
+    purchaseIds.where((id) => id.trim().isNotEmpty).toSet();
+    final costByPurchaseId = <String, double>{};
+
+    for (final id in uniqueIds) {
+      final snap = await transaction.get(_tradingPurchases(farmId).doc(id));
+
+      if (snap.exists) {
+        costByPurchaseId[id] =
+            TradingPurchase.fromDoc(snap).costPerSurvivingGoat;
+      }
+    }
+
+    return SaleDraft.round2(
+      purchaseIds.fold<double>(
+        0,
+            (sum, id) => sum + (costByPurchaseId[id] ?? 0),
+      ),
+    );
   }
 
   // -----------------------------------------------------------------------
@@ -201,37 +272,6 @@ class SalesService {
       'referenceType': 'tradingSale',
       'referenceId': saleId,
     };
-  }
-
-  /// Writes one Sold Goat Revenue entry for one receipt of money. Safe to
-  /// call twice for the same [receiptKey] (same doc, overwritten).
-  Future<void> _recordSaleReceiptRevenue({
-    required String farmId,
-    required String saleId,
-    required String receiptKey,
-    required double amount,
-    required DateTime date,
-    required String customerName,
-    String paymentMethod = FinancePaymentMethods.other,
-    String? note,
-  }) async {
-    final rounded = SaleDraft.round2(amount);
-
-    if (rounded <= 0) return;
-
-    await _transactions(farmId)
-        .doc(_saleRevenueDocId(saleId, receiptKey))
-        .set({
-      ..._saleRevenueData(
-        saleId: saleId,
-        amount: rounded,
-        date: date,
-        paymentMethod: paymentMethod,
-        customerName: customerName,
-        note: note ?? 'Sold Goat Revenue — Sale $saleId',
-      ),
-      'createdAt': FieldValue.serverTimestamp(),
-    }).timeout(_timeout);
   }
 
   /// The payment method saved on a sale, or Other when none was saved.
@@ -392,6 +432,57 @@ class SalesService {
     return trimmed.isEmpty ? FinancePaymentMethods.cash : trimmed;
   }
 
+  /// The initial Sold Goat Revenue entry for a sale — whatever was
+  /// already received toward the goat's price by the time the sale (or,
+  /// for Booking/Wait for Delivery, its completed delivery) is written.
+  /// Written inside the CALLER's transaction, alongside the sale doc
+  /// itself, using the same 'initial' doc-id slot each of these flows
+  /// has always used (see [_saleRevenueDocId]) — so a retried
+  /// transaction can't create a duplicate, exactly like
+  /// [_writeCompletionRevenue] already does for money received at
+  /// completion.
+  ///
+  /// Previously each flow (saveDeliverNow, completeBookingDelivery,
+  /// completeWaitForDeliveryPickup, saveTransferToPalai) wrote this via
+  /// a separate awaited call to [_recordSaleReceiptRevenue] AFTER its
+  /// own transaction had already committed. If that separate call
+  /// failed — a dropped connection, the app being killed — the sale
+  /// existed (goat already Sold / delivered / transferred) with no
+  /// matching Sold Goat Revenue entry, and nothing retried it. Folding
+  /// it into the same transaction makes the sale and its initial
+  /// revenue entry succeed or fail together.
+  void _writeInitialRevenueInTransaction({
+    required Transaction transaction,
+    required String farmId,
+    required String saleId,
+    required double paid,
+    required double revenueTotal,
+    required DateTime date,
+    required String customerName,
+    required String paymentMethod,
+  }) {
+    final rounded = SaleDraft.round2(
+      Sale.revenueFromPaid(paid: paid, revenueTotal: revenueTotal),
+    );
+
+    if (rounded <= 0) return;
+
+    transaction.set(
+      _transactions(farmId).doc(_saleRevenueDocId(saleId, 'initial')),
+      {
+        ..._saleRevenueData(
+          saleId: saleId,
+          amount: rounded,
+          date: date,
+          paymentMethod: paymentMethod,
+          customerName: customerName,
+          note: 'Sold Goat Revenue — Sale $saleId',
+        ),
+        'createdAt': FieldValue.serverTimestamp(),
+      },
+    );
+  }
+
   // -----------------------------------------------------------------------
   // BRANCH A — DELIVER NOW (Task 3.1)
   // -----------------------------------------------------------------------
@@ -442,6 +533,17 @@ class SalesService {
           );
         }
       }
+
+      // ---------------------------------------------------------------
+      // 1a. Cost of Goods Sold for this sale's goats — must happen here,
+      //     still in the read phase, before any of the writes below.
+      // ---------------------------------------------------------------
+
+      final costOfGoodsSold = await _costOfGoatsInTransaction(
+        transaction: transaction,
+        farmId: farmId,
+        purchaseIds: draft.selectedGoats.map((g) => g.purchaseId).toList(),
+      );
 
       // ---------------------------------------------------------------
       // 1b. Read the sale counter NOW, while we are still in the
@@ -540,7 +642,11 @@ class SalesService {
       }
 
       // ---------------------------------------------------------------
-      // 5. Dashboard aggregate.
+      // 5. Dashboard aggregate. Realized profit = the goat-only sale
+      //    value (never transport) minus what those goats cost to
+      //    acquire — recognized now, regardless of how much of the
+      //    sale price has actually been collected (a credit sale still
+      //    realizes its profit; the cash just hasn't arrived yet).
       // ---------------------------------------------------------------
 
       transaction.set(
@@ -550,30 +656,32 @@ class SalesService {
           FieldValue.increment(-draft.selectedGoats.length),
           'totalSold':
           FieldValue.increment(draft.selectedGoats.length),
+          'totalProfit': FieldValue.increment(
+            SaleDraft.round2(draft.totalSaleAmount - costOfGoodsSold),
+          ),
         },
         SetOptions(merge: true),
       );
-    }).timeout(_timeout * 2);
 
-    // -----------------------------------------------------------------
-    // FINANCE REVENUE — the goat is Sold immediately in this branch, so
-    // the money received now is recorded right away. Only the part that
-    // covers the goat sale counts; transport on the customer's bill is
-    // never revenue — see the FINANCE INTEGRATION note above.
-    // -----------------------------------------------------------------
+      // -----------------------------------------------------------------
+      // FINANCE REVENUE — the goat is Sold immediately in this branch, so
+      // the money received now is recorded right away, in this same
+      // transaction. Only the part that covers the goat sale counts;
+      // transport on the customer's bill is never revenue — see the
+      // FINANCE INTEGRATION note above.
+      // -----------------------------------------------------------------
 
-    await _recordSaleReceiptRevenue(
-      farmId: farmId,
-      saleId: saleId,
-      receiptKey: 'initial',
-      amount: Sale.revenueFromPaid(
+      _writeInitialRevenueInTransaction(
+        transaction: transaction,
+        farmId: farmId,
+        saleId: saleId,
         paid: draft.amountReceived,
         revenueTotal: draft.totalSaleAmount,
-      ),
-      date: DateTime.now(),
-      customerName: draft.customerName,
-      paymentMethod: _methodOrOther(draft.paymentMethod),
-    );
+        date: DateTime.now(),
+        customerName: draft.customerName,
+        paymentMethod: _methodOrOther(draft.paymentMethod),
+      );
+    }).timeout(_timeout * 2);
 
     _stopFarmHealthReminders(farmId, draft.selectedGoats);
 
@@ -933,31 +1041,26 @@ class SalesService {
   /// boarded here instead of taking it away, so ongoing billing/health
   /// tracking hands off to the Customer Palai module.
   ///
-  /// This is NOT fully atomic end-to-end, by necessity, and that
-  /// tradeoff is deliberate:
+  /// Fully atomic: creating (or reusing) the Palai customer, the sale
+  /// doc, the Trading goat status flips, the stock decrement, the
+  /// initial Sold Goat Revenue entry, and each goat's Palai check-in all
+  /// happen inside ONE Firestore transaction. Previously this was three
+  /// separate steps — addCustomer, then a Trading transaction, then a
+  /// per-goat checkInGoat loop after that — so a failure partway through
+  /// could leave an orphaned Palai customer (created but never used), or
+  /// goats Trading had already marked "In Customer Palai" with no actual
+  /// PalaiGoat record behind them (or a partial set of them, if the loop
+  /// died on goat 2 of 3). Folding every write into one transaction
+  /// makes the whole transfer succeed or fail as a unit — Firestore
+  /// itself guarantees that, the same way it already guarantees the sale
+  /// doc, goat status updates and stock decrement can't partially apply.
   ///
-  /// 1. Resolve/create the PalaiCustomer first, via the real
-  ///    FirestoreService.addCustomer — not hand-rolled here — because
-  ///    that method owns its own write shape (server timestamp, etc.)
-  ///    that shouldn't be duplicated and risk drifting out of sync.
-  ///    If this step fails, nothing else has happened yet.
-  /// 2. Run the Trading-side transaction (sale doc + goat status +
-  ///    stock decrement) — same re-check-then-write pattern as
-  ///    saveDeliverNow.
-  /// 3. Only after that commits, call the real
-  ///    FirestoreService.checkInGoat per goat, so transferred goats
-  ///    show up in the actual Palai goat lists.
-  ///
-  /// Steps 2 and 3 are sequenced this way — Trading-side status flip
-  /// before the Palai check-in — so a goat can never end up BOTH still
-  /// marked sellable in Trading AND checked into Palai at the same
-  /// time. The cost is the reverse case: if checkInGoat fails after
-  /// step 2 has already committed, the goat is marked
-  /// "In Customer Palai" in Trading without an actual PalaiGoat record
-  /// yet, and needs a manual retry/follow-up. Making this fully atomic
-  /// would mean re-implementing checkInGoat's writes inside this
-  /// transaction by hand, which risks silently diverging from whatever
-  /// the Palai module actually relies on.
+  /// The customer/goat writes below deliberately mirror
+  /// FirestoreService.addCustomer's and .checkInGoat's write shape
+  /// exactly (same toMap(), same `farmId` denormalization) rather than
+  /// calling those methods, since a Firestore transaction can only
+  /// contain its own reads/writes — if either of those methods' shape
+  /// changes, this needs to change with it.
   Future<String> saveTransferToPalai({
     required String farmId,
     required SaleDraft draft,
@@ -965,36 +1068,6 @@ class SalesService {
     if (draft.selectedGoats.isEmpty) {
       throw StateError('Select at least one goat before saving.');
     }
-
-    // -----------------------------------------------------------------
-    // 1. Resolve/create the Palai customer.
-    // -----------------------------------------------------------------
-
-    String palaiCustomerId;
-
-    if (draft.customerSource == CustomerMatchSource.palai) {
-      palaiCustomerId = draft.customerId;
-    } else {
-      final palaiCustomer = PalaiCustomer(
-        id: '',
-        name: draft.customerName.trim(),
-        mobileNumber: draft.mobile.trim(),
-        address: draft.address.trim(),
-        package: draft.palaiPackage.trim(),
-        joiningDate: draft.transferDate ?? DateTime.now(),
-        pendingAmount: 0,
-        price: draft.monthlyPalaiCharge,
-      );
-
-      palaiCustomerId = await FirestoreService.instance.addCustomer(
-        farmId,
-        palaiCustomer,
-      );
-    }
-
-    // -----------------------------------------------------------------
-    // 2. Trading-side transaction.
-    // -----------------------------------------------------------------
 
     // ONE DEBT, ONE RECORD.
     //
@@ -1008,6 +1081,17 @@ class SalesService {
     // are applied to the sale (see [settleSalesInTransaction]), so the two
     // views can never disagree and the monthly Palai bill never carries a
     // Trading debt inside it.
+
+    final createNewCustomer =
+        draft.customerSource != CustomerMatchSource.palai;
+
+    // Doc refs with a client-generated ID cost no network round trip and
+    // need no read, so these can be created before the transaction and
+    // written inside it.
+    final palaiCustomerRef = createNewCustomer
+        ? _palaiCustomers(farmId).doc()
+        : _palaiCustomers(farmId).doc(draft.customerId);
+    final palaiCustomerId = palaiCustomerRef.id;
 
     // Not `late final`: Firestore may re-run the transaction closure
     // on contention, which would assign this more than once.
@@ -1033,11 +1117,32 @@ class SalesService {
         }
       }
 
-      // Palai branch has no customer write, but keep the same
-      // read-then-write discipline.
+      // Cost of Goods Sold — must happen here, still in the read phase,
+      // before any of the writes below.
+      final costOfGoodsSold = await _costOfGoatsInTransaction(
+        transaction: transaction,
+        farmId: farmId,
+        purchaseIds: draft.selectedGoats.map((g) => g.purchaseId).toList(),
+      );
+
       final saleNumber = await _readNextSaleNumber(transaction, farmId);
       saleId = _formatSaleId(saleNumber);
       _writeSaleCounter(transaction, farmId, saleNumber);
+
+      if (createNewCustomer) {
+        final palaiCustomer = PalaiCustomer(
+          id: '',
+          name: draft.customerName.trim(),
+          mobileNumber: draft.mobile.trim(),
+          address: draft.address.trim(),
+          package: draft.palaiPackage.trim(),
+          joiningDate: draft.transferDate ?? DateTime.now(),
+          pendingAmount: 0,
+          price: draft.monthlyPalaiCharge,
+        );
+
+        transaction.set(palaiCustomerRef, palaiCustomer.toMap());
+      }
 
       final sale = Sale(
         id: saleId,
@@ -1082,49 +1187,53 @@ class SalesService {
       }
 
       // Not counted in totalSold — this isn't a cash sale, it's
-      // boarding revenue going forward.
+      // boarding revenue going forward. The goat's price is still
+      // realized profit though, same as any other sale: the goat-only
+      // price (never the monthly Palai charge, which the Palai module
+      // bills separately over time) minus what it cost to acquire.
       transaction.set(
         _summaryDoc(farmId),
         {
           'totalStock':
           FieldValue.increment(-draft.selectedGoats.length),
+          'totalProfit': FieldValue.increment(
+            SaleDraft.round2(draft.totalSaleAmount - costOfGoodsSold),
+          ),
         },
         SetOptions(merge: true),
       );
-    }).timeout(_timeout * 2);
 
-    // -----------------------------------------------------------------
-    // FINANCE REVENUE — the money received toward the goat's price is
-    // Sold Goat Revenue, recorded now that the sale is saved. Whatever
-    // is left unpaid is the customer's credit and is recorded as it is
-    // collected (SalesService.receiveBalancePayment). The monthly Palai
-    // charge is not part of this: the Palai module bills it later.
-    // -----------------------------------------------------------------
+      // -----------------------------------------------------------------
+      // FINANCE REVENUE — the money received toward the goat's price is
+      // Sold Goat Revenue, recorded in the same transaction as the sale.
+      // Whatever is left unpaid is the customer's credit and is recorded
+      // as it is collected (SalesService.receiveBalancePayment). The
+      // monthly Palai charge is not part of this: the Palai module bills
+      // it later.
+      // -----------------------------------------------------------------
 
-    await _recordSaleReceiptRevenue(
-      farmId: farmId,
-      saleId: saleId,
-      receiptKey: 'initial',
-      amount: Sale.revenueFromPaid(
+      _writeInitialRevenueInTransaction(
+        transaction: transaction,
+        farmId: farmId,
+        saleId: saleId,
         paid: draft.palaiAmountReceived,
         revenueTotal: draft.totalSaleAmount,
-      ),
-      date: DateTime.now(),
-      customerName: draft.customerName,
-      paymentMethod: _methodOrOther(draft.paymentMethod),
-    );
+        date: DateTime.now(),
+        customerName: draft.customerName,
+        paymentMethod: _methodOrOther(draft.paymentMethod),
+      );
 
-    // -----------------------------------------------------------------
-    // 3. Actually check each goat into the Customer Palai module.
-    // -----------------------------------------------------------------
+      // -----------------------------------------------------------------
+      // Check each goat into the Customer Palai module, in the same
+      // transaction as the Trading-side status flip above — a goat can
+      // never end up marked "In Customer Palai" in Trading without a
+      // matching PalaiGoat record, or vice versa.
+      // -----------------------------------------------------------------
 
-    for (final goat in draft.selectedGoats) {
-      final gender = draft.genderFor(goat);
+      for (final goat in draft.selectedGoats) {
+        final gender = draft.genderFor(goat);
 
-      await FirestoreService.instance.checkInGoat(
-        farmId,
-        palaiCustomerId,
-        PalaiGoat(
+        final palaiGoat = PalaiGoat(
           id: '',
           customerId: palaiCustomerId,
           breed: goat.breed,
@@ -1139,9 +1248,15 @@ class SalesService {
           monthlyPackage: draft.palaiPackage.trim(),
           pricing: draft.monthlyPalaiCharge,
           notes: 'Transferred from Trading sale $saleId.',
-        ),
-      );
-    }
+        );
+
+        // Denormalize farmId, exactly as checkInGoat does — required by
+        // the collectionGroup('goats') security rule / query.
+        final data = palaiGoat.toMap()..['farmId'] = farmId;
+
+        transaction.set(_palaiGoats(farmId, palaiCustomerId).doc(), data);
+      }
+    }).timeout(_timeout * 2);
 
     _stopFarmHealthReminders(farmId, draft.selectedGoats);
 
@@ -1328,6 +1443,35 @@ class SalesService {
       }
 
       // ---------------------------------------------------------------
+      // 1a. Cost of Goods Sold — determine which of these goats will
+      //     actually move to Sold below (same eligibility check step 4
+      //     uses) and look up their cost now, still in the read phase.
+      //     Firestore requires every read in a transaction to happen
+      //     before any write, so this can't be deferred to step 4.
+      // ---------------------------------------------------------------
+
+      final eligiblePurchaseIds = <String>[];
+
+      for (final snap in goatSnaps) {
+        if (!snap.exists) continue;
+
+        final goat = Goat.fromDoc(snap);
+
+        if (goat.currentStatus != Goat.statusBooked ||
+            goat.saleId != saleId) {
+          continue;
+        }
+
+        eligiblePurchaseIds.add(goat.purchaseId);
+      }
+
+      final costOfGoodsSold = await _costOfGoatsInTransaction(
+        transaction: transaction,
+        farmId: farmId,
+        purchaseIds: eligiblePurchaseIds,
+      );
+
+      // ---------------------------------------------------------------
       // 2. Compute the final settlement.
       // ---------------------------------------------------------------
 
@@ -1362,11 +1506,12 @@ class SalesService {
       );
       final finalAmount = rawFinalAmount < 0 ? 0.0 : rawFinalAmount;
 
-      // Captured for the Finance revenue write after this transaction
-      // commits: the gross sale value (not [finalAmount], which is the
-      // remaining balance) and the booking amount already received,
-      // which is the money that becomes revenue now that the goat has
-      // left. The balance is recorded as it is collected.
+      // Captured for the Finance revenue write later in this same
+      // transaction (see _writeInitialRevenueInTransaction below): the
+      // gross sale value (not [finalAmount], which is the remaining
+      // balance) and the booking amount already received, which is the
+      // money that becomes revenue now that the goat has left. The
+      // balance is recorded as it is collected.
       totalSaleAmount = sale.totalSaleAmount;
       actualHoldingCharges = actualHoldingChargesValue;
       bookingAmountPaid = bookingAmount;
@@ -1452,7 +1597,10 @@ class SalesService {
       //    increases. totalStock also decreases here — Phase 4
       //    deliberately left it untouched when the booking was first
       //    created (the goat hadn't left the farm yet), so this
-      //    deferred decrement lands now that it actually has.
+      //    deferred decrement lands now that it actually has. Realized
+      //    profit = the goat-only sale value plus holding charges
+      //    (never transport) minus what these goats cost to acquire —
+      //    computed in step 1a, above the read/write boundary.
       // ---------------------------------------------------------------
 
       transaction.set(
@@ -1461,31 +1609,35 @@ class SalesService {
           'booking': FieldValue.increment(-movedGoats),
           'totalSold': FieldValue.increment(movedGoats),
           'totalStock': FieldValue.increment(-movedGoats),
+          'totalProfit': FieldValue.increment(
+            SaleDraft.round2(
+              totalSaleAmount + actualHoldingCharges - costOfGoodsSold,
+            ),
+          ),
         },
         SetOptions(merge: true),
       );
-    }).timeout(_timeout * 2);
 
-    // -----------------------------------------------------------------
-    // FINANCE REVENUE — the goat has now actually left the farm, so
-    // this is where the booking amount already received becomes Sold
-    // Goat Revenue (not at saveBooking, when it was only a
-    // reservation). The remaining balance is recorded as it is
-    // collected — see the FINANCE INTEGRATION note above.
-    // -----------------------------------------------------------------
+      // -----------------------------------------------------------------
+      // FINANCE REVENUE — the goat has now actually left the farm, so
+      // this is where the booking amount already received becomes Sold
+      // Goat Revenue (not at saveBooking, when it was only a
+      // reservation), written in this same transaction. The remaining
+      // balance is recorded as it is collected — see the FINANCE
+      // INTEGRATION note above.
+      // -----------------------------------------------------------------
 
-    await _recordSaleReceiptRevenue(
-      farmId: farmId,
-      saleId: saleId,
-      receiptKey: 'initial',
-      amount: Sale.revenueFromPaid(
+      _writeInitialRevenueInTransaction(
+        transaction: transaction,
+        farmId: farmId,
+        saleId: saleId,
         paid: bookingAmountPaid,
         revenueTotal: totalSaleAmount + actualHoldingCharges,
-      ),
-      date: DateTime.now(),
-      customerName: customerName,
-      paymentMethod: initialMethod,
-    );
+        date: now,
+        customerName: customerName,
+        paymentMethod: initialMethod,
+      );
+    }).timeout(_timeout * 2);
   }
 
   // -----------------------------------------------------------------------
@@ -1590,6 +1742,35 @@ class SalesService {
       }
 
       // ---------------------------------------------------------------
+      // 1a. Cost of Goods Sold — determine which of these goats will
+      //     actually move to Sold below (same eligibility check step 4
+      //     uses) and look up their cost now, still in the read phase.
+      //     Firestore requires every read in a transaction to happen
+      //     before any write, so this can't be deferred to step 4.
+      // ---------------------------------------------------------------
+
+      final eligiblePurchaseIds = <String>[];
+
+      for (final snap in goatSnaps) {
+        if (!snap.exists) continue;
+
+        final goat = Goat.fromDoc(snap);
+
+        if (goat.currentStatus != Goat.statusWaitOnDelivery ||
+            goat.saleId != saleId) {
+          continue;
+        }
+
+        eligiblePurchaseIds.add(goat.purchaseId);
+      }
+
+      final costOfGoodsSold = await _costOfGoatsInTransaction(
+        transaction: transaction,
+        farmId: farmId,
+        purchaseIds: eligiblePurchaseIds,
+      );
+
+      // ---------------------------------------------------------------
       // 2. Compute the final settlement — booking-time rate, pickup
       //    weight, never today's rate.
       // ---------------------------------------------------------------
@@ -1616,8 +1797,9 @@ class SalesService {
       final existingPayments =
           (saleSnap.data()?['payments'] as List?) ?? const [];
 
-      // Captured for the Finance revenue write after this transaction
-      // commits: the gross sale value (pickup weight × booking rate, not
+      // Captured for the Finance revenue write later in this same
+      // transaction (see _writeInitialRevenueInTransaction below): the
+      // gross sale value (pickup weight × booking rate, not
       // [finalPrice], which is the remaining balance; and not including
       // transportation, which is never revenue) and the advance
       // already received, which is the money that becomes revenue now
@@ -1696,7 +1878,10 @@ class SalesService {
       //    Total Sold increases. totalStock also decreases here —
       //    same deferred-decrement reasoning as the Booking branch,
       //    since Branch C never touched totalStock when the sale was
-      //    first created (the goat hadn't left the farm yet).
+      //    first created (the goat hadn't left the farm yet). Realized
+      //    profit = the goat-only sale value (never transport) minus
+      //    what these goats cost to acquire — computed in step 1a,
+      //    above the read/write boundary.
       // ---------------------------------------------------------------
 
       transaction.set(
@@ -1705,8 +1890,30 @@ class SalesService {
           'waitOnDelivery': FieldValue.increment(-movedGoats),
           'totalSold': FieldValue.increment(movedGoats),
           'totalStock': FieldValue.increment(-movedGoats),
+          'totalProfit': FieldValue.increment(
+            SaleDraft.round2(grossSaleValue - costOfGoodsSold),
+          ),
         },
         SetOptions(merge: true),
+      );
+
+      // -----------------------------------------------------------------
+      // FINANCE REVENUE — the goat has now actually left the farm, so
+      // this is where the advance already received becomes Sold Goat
+      // Revenue, capped at pickup weight × booking rate, written in this
+      // same transaction. The remaining balance is recorded as it is
+      // collected — see the FINANCE INTEGRATION note above.
+      // -----------------------------------------------------------------
+
+      _writeInitialRevenueInTransaction(
+        transaction: transaction,
+        farmId: farmId,
+        saleId: saleId,
+        paid: advancePaid,
+        revenueTotal: grossSaleValue,
+        date: now,
+        customerName: customerName,
+        paymentMethod: initialMethod,
       );
     }).timeout(_timeout * 2);
 
@@ -1725,27 +1932,6 @@ class SalesService {
         ),
       );
     }
-
-    // -----------------------------------------------------------------
-    // FINANCE REVENUE — the goat has now actually left the farm, so
-    // this is where the advance already received becomes Sold Goat
-    // Revenue, capped at pickup weight × booking rate. The remaining
-    // balance is recorded as it is collected — see the FINANCE
-    // INTEGRATION note above.
-    // -----------------------------------------------------------------
-
-    await _recordSaleReceiptRevenue(
-      farmId: farmId,
-      saleId: saleId,
-      receiptKey: 'initial',
-      amount: Sale.revenueFromPaid(
-        paid: advancePaid,
-        revenueTotal: grossSaleValue,
-      ),
-      date: DateTime.now(),
-      customerName: customerName,
-      paymentMethod: initialMethod,
-    );
   }
 
   // -----------------------------------------------------------------------

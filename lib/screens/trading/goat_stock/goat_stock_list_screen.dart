@@ -38,6 +38,7 @@ const List<String> _stockTabs = [
   Goat.statusWaitOnDelivery,
   Goat.statusOwnPalai,
   Goat.statusSold,
+  Goat.statusDead,
 ];
 
 /// Available Stock = every goat currently on the farm that can still be
@@ -84,6 +85,9 @@ Color _statusColor(String status) {
 
     case Goat.statusOwnPalai:
       return AppColors.tradingBlue;
+
+    case Goat.statusDead:
+      return AppColors.error;
 
     case _kUnregistered:
       return AppColors.warning;

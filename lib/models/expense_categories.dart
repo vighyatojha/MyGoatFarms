@@ -29,6 +29,14 @@ class ExpenseCategories {
   /// same reasoning as [FinancePaymentMethods.credit]).
   static const String supplierPayment = 'Supplier Payment';
 
+  /// Expenses created automatically when an Own Palai or Available
+  /// Stock goat dies — see DeathSettlementService.recordFarmGoatDeath.
+  /// Always posted with [FinancePaymentMethods.credit] since no real
+  /// cash moves (the goat's value is simply lost, not spent). Not a
+  /// manual-entry category (deliberately excluded from [all], same
+  /// reasoning as [supplierPayment]).
+  static const String goatDeathLoss = 'Goat Death Loss';
+
   static const List<String> all = [
     feed,
     medicine,
