@@ -419,7 +419,6 @@ class _CustomerProfileScreenState extends State<CustomerProfileScreen> {
                   customerId: _customer.id,
                   mobile: _customer.mobileNumber,
                   name: _customer.name,
-                  palaiOutstanding: _customer.pendingAmount,
                 ),
 
                 const SizedBox(height: 14),
@@ -1375,196 +1374,385 @@ class _CustomerProfileScreenState extends State<CustomerProfileScreen> {
       PalaiGoat goat, {
         bool showCheckout = false,
       }) {
-    final healthColor = _healthColor(
-      goat.healthStatus,
-    );
+    final healthColor = _healthColor(goat.healthStatus);
+    final showActions = showCheckout && !goat.isCheckedOut;
 
-    return Material(
-      color: Colors.transparent,
-      child: InkWell(
-        borderRadius: BorderRadius.circular(16),
-        onTap: () async {
-          await Navigator.of(context).push(
-            fastRoute(
-              GoatProfileScreen(
-                farmId: widget.farmId,
-                goat: goat,
-              ),
-            ),
-          );
-
-          if (mounted) {
-            setState(() {});
-          }
-        },
-        child: Container(
-          padding: const EdgeInsets.all(12),
-          decoration: AppTheme.card(
-            radius: 16,
+    Future<void> openProfile() async {
+      await Navigator.of(context).push(
+        fastRoute(
+          GoatProfileScreen(
+            farmId: widget.farmId,
+            goat: goat,
           ),
-          child: Row(
-            children: [
-              _goatAvatar(goat, healthColor),
+        ),
+      );
 
-              const SizedBox(width: 11),
+      if (mounted) {
+        setState(() {});
+      }
+    }
 
-              Expanded(
-                child: Column(
+    final goatName = goat.name.trim().isNotEmpty
+        ? goat.name.trim()
+        : (goat.goatCode.trim().isNotEmpty ? goat.goatCode : 'Goat');
+
+    final gender = goat.gender.trim();
+    final package = goat.monthlyPackage.trim().isNotEmpty
+        ? goat.monthlyPackage.trim()
+        : (goat.pricing > 0
+        ? '₹${goat.pricing.toStringAsFixed(0)} / month'
+        : 'Standard Palai');
+
+    return Container(
+      width: double.infinity,
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(
+          color: AppColors.divider,
+          width: 1,
+        ),
+        boxShadow: const [
+          BoxShadow(
+            color: Color(0x0A000000),
+            blurRadius: 14,
+            offset: Offset(0, 5),
+          ),
+        ],
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: Column(
+        children: [
+          Material(
+            color: Colors.transparent,
+            child: InkWell(
+              onTap: openProfile,
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(14, 13, 14, 12),
+                child: Row(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(
-                      goat.goatCode,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: AppTheme.heading(
-                        size: 13,
-                      ),
-                    ),
-
-                    const SizedBox(height: 2),
-
-                    Text(
-                      '${goat.breed} · ${goat.gender}',
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: AppTheme.body(
-                        size: 10,
-                        color: AppColors.textGrey,
-                      ),
-                    ),
-
-                    const SizedBox(height: 4),
-
-                    Text(
-                      goat.isCheckedOut
-                          ? 'Checked out · ${_boardedFor(
-                        goat.checkInDate,
-                        goat.checkOutDate,
-                      )}'
-                          : 'Boarded · ${_boardedFor(
-                        goat.checkInDate,
-                        null,
-                      )}',
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: AppTheme.body(
-                        size: 9,
-                        color: AppColors.textGrey,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-
-              const SizedBox(width: 8),
-
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.end,
-                children: [
-                  Container(
-                    constraints: const BoxConstraints(
-                      maxWidth: 88,
-                    ),
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 8,
-                      vertical: 5,
-                    ),
-                    decoration: BoxDecoration(
-                      color: goat.isCheckedOut
-                          ? AppColors.lightGreen
-                          : healthColor.withOpacity(0.11),
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    child: Text(
-                      goat.isCheckedOut
-                          ? 'Checked Out'
-                          : goat.healthStatus,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: AppTheme.body(
-                        size: 8.5,
-                        color: goat.isCheckedOut
-                            ? AppColors.darkGreen
-                            : healthColor,
-                        weight: FontWeight.w700,
-                      ),
-                    ),
-                  ),
-                  if (showCheckout && !goat.isCheckedOut) ...[
-                    const SizedBox(height: 4),
-                    SizedBox(
-                      height: 26,
-                      width: 26,
-                      child: PopupMenuButton<String>(
-                        tooltip: 'Goat actions',
-                        padding: EdgeInsets.zero,
-                        icon: const Icon(
-                          Icons.more_vert,
-                          size: 18,
-                          color: AppColors.textGrey,
-                        ),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                        onSelected: (value) {
-                          if (value == 'checkout') {
-                            _checkoutGoat(goat);
-                          } else if (value == 'death') {
-                            _recordGoatDeath(goat);
-                          }
-                        },
-                        itemBuilder: (context) => [
-                          const PopupMenuItem(
-                            value: 'checkout',
-                            child: Row(
-                              children: [
-                                Icon(
-                                  Icons.logout_rounded,
-                                  size: 17,
-                                  color: AppColors.primaryGreen,
+                    Stack(
+                      clipBehavior: Clip.none,
+                      children: [
+                        _goatAvatar(goat, healthColor),
+                        if (goat.goatCode.trim().isNotEmpty)
+                          Positioned(
+                            top: -5,
+                            left: -4,
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 7,
+                                vertical: 3,
+                              ),
+                              decoration: BoxDecoration(
+                                color: AppColors.textDark,
+                                borderRadius: BorderRadius.circular(10),
+                              ),
+                              child: Text(
+                                goat.goatCode,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                  fontSize: 8.5,
+                                  color: Colors.white,
+                                  fontWeight: FontWeight.w800,
                                 ),
-                                SizedBox(width: 10),
-                                Text(
-                                  'Checkout',
-                                  style: TextStyle(fontSize: 12.5),
-                                ),
-                              ],
+                              ),
                             ),
                           ),
-                          const PopupMenuItem(
-                            value: 'death',
-                            child: Row(
-                              children: [
-                                Icon(
-                                  Icons.dangerous_outlined,
-                                  size: 17,
-                                  color: AppColors.error,
+                      ],
+                    ),
+
+                    const SizedBox(width: 12),
+
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            children: [
+                              Flexible(
+                                child: Text(
+                                  goatName,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: AppTheme.heading(size: 16),
                                 ),
-                                SizedBox(width: 10),
-                                Text(
-                                  'Record Death',
-                                  style: TextStyle(fontSize: 12.5),
+                              ),
+                              if (gender.isNotEmpty) ...[
+                                const SizedBox(width: 7),
+                                Container(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 8,
+                                    vertical: 4,
+                                  ),
+                                  decoration: BoxDecoration(
+                                    color: const Color(0xFFF1F5F9),
+                                    borderRadius: BorderRadius.circular(8),
+                                  ),
+                                  child: Text(
+                                    gender,
+                                    style: AppTheme.body(
+                                      size: 9,
+                                      color: AppColors.textDark,
+                                      weight: FontWeight.w600,
+                                    ),
+                                  ),
                                 ),
                               ],
+                            ],
+                          ),
+
+                          const SizedBox(height: 7),
+
+                          Row(
+                            children: [
+                              Icon(
+                                Icons.access_time_rounded,
+                                size: 17,
+                                color: AppColors.primaryGreen,
+                              ),
+                              const SizedBox(width: 6),
+                              Expanded(
+                                child: Text(
+                                  goat.isCheckedOut
+                                      ? 'Checked out · ${_boardedFor(goat.checkInDate, goat.checkOutDate)}'
+                                      : 'Boarded ${_boardedFor(goat.checkInDate, null)}',
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: AppTheme.body(
+                                    size: 10,
+                                    color: AppColors.darkGreen,
+                                    weight: FontWeight.w600,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ],
+                      ),
+                    ),
+
+                    const SizedBox(width: 8),
+
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 10,
+                        vertical: 7,
+                      ),
+                      decoration: BoxDecoration(
+                        color: goat.isCheckedOut
+                            ? AppColors.lightGreen
+                            : healthColor.withOpacity(0.09),
+                        borderRadius: BorderRadius.circular(18),
+                        border: Border.all(
+                          color: goat.isCheckedOut
+                              ? AppColors.primaryGreen.withOpacity(0.22)
+                              : healthColor.withOpacity(0.45),
+                        ),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Container(
+                            width: 8,
+                            height: 8,
+                            decoration: BoxDecoration(
+                              color: goat.isCheckedOut
+                                  ? AppColors.primaryGreen
+                                  : healthColor,
+                              shape: BoxShape.circle,
+                            ),
+                          ),
+                          const SizedBox(width: 6),
+                          Text(
+                            goat.isCheckedOut ? 'Checked Out' : goat.healthStatus,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: AppTheme.body(
+                              size: 9,
+                              color: goat.isCheckedOut
+                                  ? AppColors.darkGreen
+                                  : healthColor,
+                              weight: FontWeight.w700,
                             ),
                           ),
                         ],
                       ),
                     ),
                   ],
+                ),
+              ),
+            ),
+          ),
+
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 14),
+            child: const Divider(
+              height: 1,
+              color: AppColors.divider,
+            ),
+          ),
+
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 12, 12, 12),
+            child: Row(
+              children: [
+                Expanded(
+                  child: _goatStatBox(
+                    'APPROX AGE',
+                    _ageLabel(goat.dateOfBirth),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: _goatStatBox(
+                    'CURRENT WT.',
+                    _weightLabel(goat.currentWeight, goat.weightAtCheckIn),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: _goatStatBox(
+                    'FEED DIET',
+                    package,
+                    valueColor: AppColors.darkGreen,
+                  ),
+                ),
+              ],
+            ),
+          ),
+
+          if (showActions)
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+              decoration: const BoxDecoration(
+                color: Color(0xFFF8FAFC),
+                border: Border(
+                  top: BorderSide(color: AppColors.divider),
+                ),
+              ),
+              child: Row(
+                children: [
+                  TextButton.icon(
+                    onPressed: () => _recordGoatDeath(goat),
+                    icon: const Icon(
+                      Icons.warning_amber_rounded,
+                      size: 17,
+                      color: AppColors.error,
+                    ),
+                    label: const Text(
+                      'Record Death',
+                      style: TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w700,
+                        color: AppColors.error,
+                      ),
+                    ),
+                    style: TextButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(horizontal: 4),
+                      minimumSize: Size.zero,
+                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    ),
+                  ),
+                  const SizedBox(width: 5),
+                  OutlinedButton(
+                    onPressed: openProfile,
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: AppColors.textDark,
+                      side: const BorderSide(color: AppColors.divider),
+                      backgroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(horizontal: 13),
+                      minimumSize: const Size(0, 40),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                    ),
+                    child: const Text(
+                      'Daily Log',
+                      style: TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 9),
+                  Expanded(
+                    child: SizedBox(
+                      height: 40,
+                      child: ElevatedButton.icon(
+                        onPressed: () => _checkoutGoat(goat),
+                        icon: const Icon(Icons.logout_rounded, size: 16),
+                        label: const Text(
+                          'Checkout',
+                          style: TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: AppColors.textDark,
+                          foregroundColor: Colors.white,
+                          elevation: 0,
+                          padding: const EdgeInsets.symmetric(horizontal: 12),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
                 ],
               ),
+            ),
+        ],
+      ),
+    );
+  }
 
-              const SizedBox(width: 3),
-
-              const Icon(
-                Icons.chevron_right_rounded,
-                size: 19,
-                color: AppColors.textGrey,
-              ),
-            ],
-          ),
+  Widget _goatStatBox(
+      String label,
+      String value, {
+        Color? valueColor,
+      }) {
+    return Container(
+      constraints: const BoxConstraints(minHeight: 70),
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 10),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF8FAFC),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(
+          color: AppColors.divider,
         ),
+      ),
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Text(
+            label,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            textAlign: TextAlign.center,
+            style: AppTheme.body(
+              size: 8.5,
+              color: AppColors.textGrey,
+              weight: FontWeight.w700,
+            ),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            value,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            textAlign: TextAlign.center,
+            style: AppTheme.heading(
+              size: 12,
+              color: valueColor ?? AppColors.textDark,
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -2572,6 +2760,81 @@ class _CustomerProfileScreenState extends State<CustomerProfileScreen> {
     }
 
     return '₹${amount.toStringAsFixed(0)}';
+  }
+
+  // ===========================================================================
+  // AGE / WEIGHT LABEL HELPERS
+  //
+  // These are used by `_goatHistoryCard` above, so they must live on
+  // _CustomerProfileScreenState (not on _AddPaymentSheetState).
+  // ===========================================================================
+
+  String _ageLabel(dynamic dateOfBirth) {
+    DateTime? birthDate;
+
+    if (dateOfBirth is DateTime) {
+      birthDate = dateOfBirth;
+    } else if (dateOfBirth is Timestamp) {
+      birthDate = dateOfBirth.toDate();
+    } else if (dateOfBirth is String) {
+      birthDate = DateTime.tryParse(dateOfBirth);
+    }
+
+    if (birthDate == null) {
+      return 'Age N/A';
+    }
+
+    final now = DateTime.now();
+    if (birthDate.isAfter(now)) {
+      return 'Age N/A';
+    }
+
+    var years = now.year - birthDate.year;
+    var months = now.month - birthDate.month;
+
+    if (now.day < birthDate.day) {
+      months--;
+    }
+    if (months < 0) {
+      years--;
+      months += 12;
+    }
+
+    if (years > 0) {
+      return years == 1 ? '1 year' : '$years years';
+    }
+    if (months > 0) {
+      return months == 1 ? '1 month' : '$months months';
+    }
+
+    return 'Under 1 month';
+  }
+
+  String _weightLabel(dynamic currentWeight, dynamic weightAtCheckIn) {
+    double? current;
+    double? checkIn;
+
+    if (currentWeight is num) {
+      current = currentWeight.toDouble();
+    } else if (currentWeight is String) {
+      current = double.tryParse(currentWeight);
+    }
+
+    if (weightAtCheckIn is num) {
+      checkIn = weightAtCheckIn.toDouble();
+    } else if (weightAtCheckIn is String) {
+      checkIn = double.tryParse(weightAtCheckIn);
+    }
+
+    final weight = current ?? checkIn;
+    if (weight == null) {
+      return 'N/A';
+    }
+
+    final formatted = weight % 1 == 0
+        ? weight.toStringAsFixed(0)
+        : weight.toStringAsFixed(1);
+    return '$formatted kg';
   }
 
   // ===========================================================================
