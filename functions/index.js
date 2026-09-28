@@ -286,6 +286,75 @@ exports.scheduledHealthReminderSweep = onSchedule('every 30 minutes', async () =
 });
 
 // ---------------------------------------------------------------------
+// 3. Admin-only farm deletion
+//
+// Farm deletion is deliberately handled by a callable Cloud Function,
+// not by a browser-side Firestore delete. This lets us verify the caller
+// against /admins/{uid} and recursively remove the farm's subcollections
+// without leaving the farm's operational data orphaned.
+//
+// The owner's Firebase Auth account is NOT deleted here. This removes the
+// farm and its farm data; if the same email is registered again later, the
+// normal registration flow can create a new farm.
+// ---------------------------------------------------------------------
+
+exports.deleteFarm = onCall(async (request) => {
+  const uid = request.auth && request.auth.uid;
+  if (!uid) {
+    throw new HttpsError('unauthenticated', 'Admin sign-in required.');
+  }
+
+  const adminSnap = await db.collection('admins').doc(uid).get();
+  if (!adminSnap.exists) {
+    throw new HttpsError('permission-denied', 'Only an admin can delete a farm.');
+  }
+
+  const farmId = String(request.data?.farmId || '').trim();
+  if (!farmId) {
+    throw new HttpsError('invalid-argument', 'farmId is required.');
+  }
+
+  const farmRef = db.collection('farms').doc(farmId);
+  const farmSnap = await farmRef.get();
+  if (!farmSnap.exists) {
+    throw new HttpsError('not-found', 'Farm not found.');
+  }
+
+  const farmData = farmSnap.data() || {};
+  const mobileNumber = String(farmData.mobileNumber || '').trim();
+
+  // Delete every nested farm document/collection recursively.
+  await db.recursiveDelete(farmRef);
+
+  // Remove the signup mobile index marker as well.
+  if (mobileNumber) {
+    const mobileRef = db.collection('mobileIndex').doc(mobileNumber);
+    const mobileSnap = await mobileRef.get();
+    if (mobileSnap.exists && mobileSnap.data()?.farmId === farmId) {
+      await mobileRef.delete();
+    }
+  }
+
+  // Subscription payment history is a separate top-level collection, so
+  // it is not included in recursiveDelete(farmRef). Remove only records
+  // belonging to this farm.
+  const paymentsSnap = await db.collection('subscriptionPayments')
+      .where('farmId', '==', farmId)
+      .get();
+
+  if (!paymentsSnap.empty) {
+    const batch = db.batch();
+    for (const payment of paymentsSnap.docs) {
+      batch.delete(payment.ref);
+    }
+    await batch.commit();
+  }
+
+  logger.info('Farm ' + farmId + ' deleted by admin ' + uid + '.');
+  return {success: true, farmId};
+});
+
+// ---------------------------------------------------------------------
 // 3. Owner-only notification delete
 //
 // Server-enforced — not just a hidden button in the UI. A partner
