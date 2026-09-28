@@ -1,7 +1,4 @@
-import 'dart:io';
-
 import 'package:flutter/material.dart';
-import 'package:image_picker/image_picker.dart';
 import 'package:intl/intl.dart';
 
 import '../../app_theme.dart';
@@ -9,6 +6,7 @@ import '../../models/death_record.dart';
 import '../../services/death_settlement_service.dart';
 import '../../services/firestore_service.dart';
 import '../../widgets/farm_not_linked_state.dart';
+import '../../widgets/Loss_proof.dart';
 import 'record_farm_loss_screen.dart';
 
 /// "Farm Losses" — Home Screen / Finance entry point.
@@ -71,25 +69,19 @@ class _DeathHistoryScreenState extends State<DeathHistoryScreen> {
 
   Future<void> _addProof(DeathRecord record) async {
     if (_farmId == null) return;
-    final picker = ImagePicker();
-    final picked = await picker.pickImage(source: ImageSource.gallery, imageQuality: 80);
+    final picked = await pickLossProofImage(context);
     if (picked == null) return;
 
     try {
-      final url = await DeathSettlementService.instance.uploadLossProof(
+      await DeathSettlementService.instance.addLossProof(
         farmId: _farmId!,
         lossId: record.id,
-        imageFile: File(picked.path),
-      );
-      await DeathSettlementService.instance.addProofToLoss(
-        farmId: _farmId!,
-        lossId: record.id,
-        proofUrl: url,
+        image: picked,
       );
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Could not upload photo: $e')),
+        SnackBar(content: Text('Could not save photo: $e')),
       );
     }
   }
@@ -249,14 +241,10 @@ class _DeathHistoryScreenState extends State<DeathHistoryScreen> {
             ),
             const SizedBox(height: 8),
             if (record.hasProof)
-              ClipRRect(
-                borderRadius: BorderRadius.circular(8),
-                child: Image.network(
-                  record.proofUrls.first,
-                  height: 90,
-                  width: 120,
-                  fit: BoxFit.cover,
-                ),
+              LossProofThumb(
+                farmId: _farmId!,
+                lossId: record.id,
+                proofCount: record.proofCount,
               )
             else
               InkWell(

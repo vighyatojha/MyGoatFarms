@@ -2,6 +2,22 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 
 import 'purchase_costing.dart';
 
+/// Where a lot's goats physically are right now.
+enum LotLocation { atSupplier, partiallyAtFarm, atFarm }
+
+extension LotLocationLabel on LotLocation {
+  String get label {
+    switch (this) {
+      case LotLocation.atSupplier:
+        return 'At Supplier';
+      case LotLocation.partiallyAtFarm:
+        return 'Partially at Farm';
+      case LotLocation.atFarm:
+        return 'At Farm';
+    }
+  }
+}
+
 /// A wholesale goat purchase in the Trading module.
 ///
 /// Stored at:
@@ -20,6 +36,38 @@ import 'purchase_costing.dart';
 /// Payment methods for Trading purchases are intentionally limited to:
 /// Cash
 /// Online
+///
+/// ---------------------------------------------------------------------
+/// LOT MODEL (lotSchema >= 1)
+/// ---------------------------------------------------------------------
+/// A purchase is now a **Purchase Lot** — the parent of everything that
+/// happens to that batch of goats. The Firestore document id is
+/// unchanged (PUR-0007); the lot's display id is the same number
+/// (LOT-0007, see [lotId]) so nothing that already references a purchase
+/// id (goats, finance entries) needs to change.
+///
+/// Goats stay anonymous in the lot until they need an individual
+/// identity. The lot tracks quantities, not goat documents:
+///
+///   supplierQty = totalGoats - soldFromSupplierQty - (receivedAliveQty + mortality)
+///   farmQty     = receivedAliveQty - soldFromFarmQty - registeredCount
+///
+/// * Receiving moves goats supplier -> farm. Goats sold while still at
+///   the supplier are never received later, so they can't be counted
+///   twice.
+/// * [registeredCount] (existing field) now means "moved out of the lot
+///   into individual goat records" — i.e. transferred to Own Palai /
+///   Customer Palai (or registered under the legacy flow).
+/// * Booking / Wait-for-Delivery sales only ever draw on farm stock;
+///   [reservedFarmQty] holds goats promised to a customer but not yet
+///   handed over.
+///
+/// Supplier payments live in `tradingPurchases/{id}/payments`; receiving
+/// events in `tradingPurchases/{id}/receivings`. [paidAmount] is the sum
+/// of the payments, maintained transactionally by TradingService.
+///
+/// Older (goat-first) purchases have lotSchema == 0 until
+/// TradingService.convertLegacyPurchasesToLots() upgrades them in place.
 class TradingPurchase {
   final String id;
 
@@ -100,8 +148,41 @@ class TradingPurchase {
   // GOAT REGISTRATION STATUS
   // -----------------------------------------------------------------------
 
+  /// Goats moved out of the lot into individual goat records (Own Palai /
+  /// Customer Palai transfers, or legacy registration).
   final int registeredCount;
+
+  /// Legacy "waiting to be registered" counter. For lots this equals
+  /// [farmQty]; kept only so the old registration screens keep working
+  /// until they are retired.
   final int pendingCount;
+
+  // -----------------------------------------------------------------------
+  // LOT FIELDS
+  // -----------------------------------------------------------------------
+
+  /// 0 = legacy goat-first purchase (not yet converted), 1 = lot.
+  final int lotSchema;
+
+  final DateTime? expectedDeliveryDate;
+
+  /// Goats that have physically arrived at the farm alive, summed across
+  /// every receiving event. (Goats that died on arrival are [mortality].)
+  final int receivedAliveQty;
+
+  /// Goats sold directly from the lot while still at the supplier.
+  final int soldFromSupplierQty;
+
+  /// Goats sold directly from the lot after arriving at the farm.
+  final int soldFromFarmQty;
+
+  /// Farm goats promised to a customer (Booking / Wait-for-Delivery) but
+  /// not yet handed over. Still physically at the farm, but not
+  /// available for a new sale.
+  final int reservedFarmQty;
+
+  /// Sum of all supplier payments recorded for this lot.
+  final double paidAmount;
 
   final DateTime? createdAt;
 
@@ -143,6 +224,14 @@ class TradingPurchase {
     required this.registeredCount,
     required this.pendingCount,
 
+    this.lotSchema = 0,
+    this.expectedDeliveryDate,
+    this.receivedAliveQty = 0,
+    this.soldFromSupplierQty = 0,
+    this.soldFromFarmQty = 0,
+    this.reservedFarmQty = 0,
+    this.paidAmount = 0,
+
     this.createdAt,
   });
 
@@ -155,6 +244,82 @@ class TradingPurchase {
 
   bool get isReceivingCompleted =>
       receivingStatus.trim().toLowerCase() == 'completed';
+
+  // ---- Lot helpers (meaningful when [isLot]) ----------------------------
+
+  bool get isLot => lotSchema >= 1;
+
+  /// Display id: PUR-0007 -> LOT-0007.
+  String get lotId {
+    final dash = id.indexOf('-');
+    return dash < 0 ? id : 'LOT-${id.substring(dash + 1)}';
+  }
+
+  /// Goats already accounted for at receiving (arrived alive + died).
+  int get receivedTotalQty => receivedAliveQty + mortality;
+
+  /// Goats still at the supplier and available to sell from there.
+  int get supplierQty {
+    final v = totalGoats - soldFromSupplierQty - receivedTotalQty;
+    return v < 0 ? 0 : v;
+  }
+
+  /// Goats at the farm still owned by the lot (includes reserved ones).
+  int get farmQty {
+    final v = receivedAliveQty - soldFromFarmQty - registeredCount;
+    return v < 0 ? 0 : v;
+  }
+
+  /// Farm goats free for a new sale or transfer.
+  int get farmAvailableQty {
+    final v = farmQty - reservedFarmQty;
+    return v < 0 ? 0 : v;
+  }
+
+  int get soldQty => soldFromSupplierQty + soldFromFarmQty;
+
+  /// Goats the lot still owns (supplier + farm), reserved included.
+  int get remainingQty => supplierQty + farmQty;
+
+  /// Goats that can be sold right now, from either location.
+  int get availableForSaleQty => supplierQty + farmAvailableQty;
+
+  bool get isActive => remainingQty > 0;
+
+  LotLocation get location {
+    if (receivedTotalQty == 0) return LotLocation.atSupplier;
+    if (supplierQty > 0) return LotLocation.partiallyAtFarm;
+    return LotLocation.atFarm;
+  }
+
+  // Supplier payment ------------------------------------------------------
+
+  double get dueAmount {
+    final v = purchaseAmount - paidAmount;
+    return v < 0 ? 0 : v;
+  }
+
+  /// 'Unpaid' / 'Partial' / 'Paid' — always derived from [paidAmount],
+  /// never typed in.
+  String get paymentStatus {
+    if (paidAmount <= 0) return 'Unpaid';
+    if (dueAmount < 0.01) return 'Paid';
+    return 'Partial';
+  }
+
+  // Weights ---------------------------------------------------------------
+
+  /// What the goats received so far would have weighed at purchase
+  /// (purchase weight pro-rated by quantity).
+  double get expectedWeightOfReceived => totalGoats <= 0
+      ? 0
+      : totalWeightAtPurchase * receivedTotalQty / totalGoats;
+
+  /// Received weight minus the pro-rated purchase weight. Negative =
+  /// weight lost in transit. 0 until something has been received.
+  double get receivingWeightDifference => receivedTotalQty == 0
+      ? 0
+      : (totalWeightAfterArrival ?? 0) - expectedWeightOfReceived;
 
   /// Costing rebuilt from the stored figures, using the same engine as the
   /// wizard so cost numbers shown anywhere in the app match what was
@@ -294,6 +459,14 @@ class TradingPurchase {
       registeredCount: intFrom('registeredCount'),
       pendingCount: intFrom('pendingCount'),
 
+      lotSchema: intFrom('lotSchema'),
+      expectedDeliveryDate: nullableDateFrom('expectedDeliveryDate'),
+      receivedAliveQty: intFrom('receivedAliveQty'),
+      soldFromSupplierQty: intFrom('soldFromSupplierQty'),
+      soldFromFarmQty: intFrom('soldFromFarmQty'),
+      reservedFarmQty: intFrom('reservedFarmQty'),
+      paidAmount: numFrom('paidAmount'),
+
       createdAt: nullableDateFrom('createdAt'),
     );
   }
@@ -340,7 +513,19 @@ class TradingPurchase {
 
       'registeredCount': registeredCount,
       'pendingCount': pendingCount,
+
+      'lotSchema': lotSchema,
+      'receivedAliveQty': receivedAliveQty,
+      'soldFromSupplierQty': soldFromSupplierQty,
+      'soldFromFarmQty': soldFromFarmQty,
+      'reservedFarmQty': reservedFarmQty,
+      'paidAmount': paidAmount,
     };
+
+    if (expectedDeliveryDate != null) {
+      map['expectedDeliveryDate'] =
+          Timestamp.fromDate(expectedDeliveryDate!);
+    }
 
     if (dateReceivedAtFarm != null) {
       map['dateReceivedAtFarm'] =

@@ -1,7 +1,6 @@
-import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:firebase_storage/firebase_storage.dart';
 
 import '../models/death_record.dart';
 import '../models/expense_categories.dart';
@@ -10,6 +9,7 @@ import '../models/goat_model.dart';
 import '../models/trading_purchase_model.dart';
 import 'finance_service.dart';
 import 'firestore_service.dart';
+import 'image_service.dart';
 
 /// Implements the "Goat Death & Settlement" feature.
 ///
@@ -482,8 +482,8 @@ class DeathSettlementService {
   // Not tied to any one goat's death. The farm owner logs it directly:
   // a category, a title/description in their own words, an amount, and
   // whether real cash left the farm or the loss was purely value lost.
-  // Proof photos are supported but never required — see [uploadLossProof]
-  // and [addProofToLoss] below; a record can be saved with zero photos
+  // Proof photos are supported but never required — see [addLossProof]
+  // below; a record can be saved with zero photos
   // and have them attached later.
   //
   // Written into the same `deathRecords` collection as every goat death
@@ -493,8 +493,7 @@ class DeathSettlementService {
 
   /// Records a manual, non-goat farm loss and posts the matching Finance
   /// expense. Returns the new record's id (useful if the caller wants to
-  /// upload proof photos immediately after via [uploadLossProof] +
-  /// [addProofToLoss]).
+  /// attach proof photos immediately after via [addLossProof]).
   ///
   /// [isCashLoss] decides which FinancePaymentMethods gets posted:
   /// `true` when money genuinely left the farm (e.g. repairing fire
@@ -510,7 +509,6 @@ class DeathSettlementService {
     String description = '',
     required double amount,
     bool isCashLoss = false,
-    List<String> proofUrls = const [],
   }) async {
     if (amount < 0) {
       throw ArgumentError('Loss amount cannot be negative.');
@@ -543,7 +541,7 @@ class DeathSettlementService {
         'notes': '',
         'farmLossAmount': amount,
         'isCashLoss': isCashLoss,
-        'proofUrls': proofUrls,
+        'proofCount': 0,
         'createdAt': FieldValue.serverTimestamp(),
         if (actor != null) 'actorUid': actor.uid,
         if (actor != null) 'actorName': actor.name,
@@ -601,41 +599,73 @@ class DeathSettlementService {
     return deathRecordRef.id;
   }
 
-  /// Uploads a single proof photo for a loss record to Firebase Storage
-  /// and returns its download URL. Purely additive — call this zero,
-  /// one, or several times for the same [lossId]; nothing else in this
-  /// feature requires a photo to exist.
-  ///
-  /// Standalone for now since this app's existing image-upload service
-  /// wasn't available to match against — if there's already a shared
-  /// upload helper (e.g. behind the profile-photo screen) with its own
-  /// compression/path conventions, swap the body of this method to call
-  /// that instead and everything else here keeps working unchanged.
-  Future<String> uploadLossProof({
+  // -------------------------------------------------------------------------
+  // LOSS PROOF PHOTOS
+  // -------------------------------------------------------------------------
+  //
+  // Proof is always optional. Photos are compressed by ImageService and
+  // stored as Firestore `Blob`s in `deathRecords/{id}/proofs` — the same
+  // no-Storage-bucket approach used for profile, goat and stock photos.
+  // One document per photo keeps every write far below Firestore's
+  // 1 MiB limit no matter how many photos a record collects.
+
+  CollectionReference<Map<String, dynamic>> _lossProofs(
+      String farmId,
+      String lossId,
+      ) =>
+      _deathRecords(farmId).doc(lossId).collection('proofs');
+
+  /// Attaches one proof photo to a loss record and bumps its
+  /// `proofCount` in the same batch. Safe to call any number of times,
+  /// including long after the record was created.
+  Future<void> addLossProof({
     required String farmId,
     required String lossId,
-    required File imageFile,
+    required PickedImage image,
   }) async {
-    final fileName =
-        '${DateTime.now().millisecondsSinceEpoch}_${imageFile.uri.pathSegments.last}';
-    final ref = FirebaseStorage.instance
-        .ref()
-        .child('farms/$farmId/lossProofs/$lossId/$fileName');
+    final proofRef = _lossProofs(farmId, lossId).doc();
+    final batch = _db.batch();
 
-    final task = await ref.putFile(imageFile);
-    return task.ref.getDownloadURL();
+    batch.set(proofRef, {
+      'bytes': Blob(image.bytes),
+      'contentType': image.contentType,
+      'createdAt': FieldValue.serverTimestamp(),
+    });
+    batch.update(_deathRecords(farmId).doc(lossId), {
+      'proofCount': FieldValue.increment(1),
+    });
+
+    await batch.commit().timeout(_timeout);
   }
 
-  /// Appends an already-uploaded proof photo URL to an existing loss
-  /// record — used both right after creating a record and for adding
-  /// proof to an older record that was saved without one.
-  Future<void> addProofToLoss({
-    required String farmId,
-    required String lossId,
-    required String proofUrl,
-  }) async {
-    await _deathRecords(farmId).doc(lossId).update({
-      'proofUrls': FieldValue.arrayUnion([proofUrl]),
-    }).timeout(_timeout);
+  /// All proof photos for a loss record, oldest first.
+  Stream<List<LossProof>> lossProofsStream(String farmId, String lossId) {
+    return _lossProofs(farmId, lossId)
+        .orderBy('createdAt')
+        .snapshots()
+        .map((s) => s.docs.map(LossProof.fromDoc).toList());
+  }
+}
+
+/// One stored proof photo for a loss record.
+class LossProof {
+  final String id;
+  final Uint8List bytes;
+  final String contentType;
+
+  const LossProof({
+    required this.id,
+    required this.bytes,
+    required this.contentType,
+  });
+
+  factory LossProof.fromDoc(DocumentSnapshot<Map<String, dynamic>> doc) {
+    final data = doc.data() ?? {};
+    final field = data['bytes'];
+    return LossProof(
+      id: doc.id,
+      bytes: field is Blob ? field.bytes : Uint8List(0),
+      contentType: (data['contentType'] ?? 'image/jpeg').toString(),
+    );
   }
 }

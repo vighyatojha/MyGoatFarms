@@ -1,12 +1,13 @@
-import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
-import 'package:image_picker/image_picker.dart';
 import 'package:intl/intl.dart';
 
 import '../../app_theme.dart';
 import '../../models/death_record.dart';
 import '../../services/death_settlement_service.dart';
+import '../../services/image_service.dart';
+import '../../widgets/Loss_proof.dart';
 
 /// Record a manual farm loss — fire, theft, disease, spoiled feed,
 /// storm damage, or anything else that isn't a goat's death.
@@ -32,7 +33,7 @@ class _RecordFarmLossScreenState extends State<RecordFarmLossScreen> {
   String _category = DeathRecord.categoryOther;
   DateTime _lossDate = DateTime.now();
   bool _isCashLoss = false;
-  File? _proofImage;
+  PickedImage? _proofImage;
   bool _saving = false;
 
   double get _amount => double.tryParse(_amountController.text.trim()) ?? 0;
@@ -72,13 +73,9 @@ class _RecordFarmLossScreenState extends State<RecordFarmLossScreen> {
   }
 
   Future<void> _pickProofImage() async {
-    final picker = ImagePicker();
-    final picked = await picker.pickImage(
-      source: ImageSource.gallery,
-      imageQuality: 80,
-    );
-    if (picked != null) {
-      setState(() => _proofImage = File(picked.path));
+    final picked = await pickLossProofImage(context);
+    if (picked != null && mounted) {
+      setState(() => _proofImage = picked);
     }
   }
 
@@ -102,15 +99,10 @@ class _RecordFarmLossScreenState extends State<RecordFarmLossScreen> {
       // picked a photo — the record above is already saved either way.
       if (_proofImage != null) {
         try {
-          final url = await DeathSettlementService.instance.uploadLossProof(
+          await DeathSettlementService.instance.addLossProof(
             farmId: widget.farmId,
             lossId: lossId,
-            imageFile: _proofImage!,
-          );
-          await DeathSettlementService.instance.addProofToLoss(
-            farmId: widget.farmId,
-            lossId: lossId,
-            proofUrl: url,
+            image: _proofImage!,
           );
         } catch (_) {
           // The loss itself is already recorded — a failed photo
@@ -286,8 +278,8 @@ class _RecordFarmLossScreenState extends State<RecordFarmLossScreen> {
                 children: [
                   ClipRRect(
                     borderRadius: BorderRadius.circular(12),
-                    child: Image.file(
-                      _proofImage!,
+                    child: Image.memory(
+                      _proofImage!.bytes,
                       height: 160,
                       width: double.infinity,
                       fit: BoxFit.cover,

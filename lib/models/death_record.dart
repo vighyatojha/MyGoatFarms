@@ -79,7 +79,7 @@ class DeathRecord {
   //
   // A free-form loss the farm owner logs directly — not tied to a
   // specific goat's death. [category] says what kind; [title] and
-  // [description] are the owner's own words; [proofUrls] are optional
+  // [description] are the owner's own words; [proofCount] counts optional
   // photos (receipt, damage photo, police complaint, vet report, etc.)
   // uploaded as supporting evidence — never required to save the
   // record. [isCashLoss] says whether real money left the farm (e.g.
@@ -102,9 +102,13 @@ class DeathRecord {
   /// keeps working unchanged.
   final String description;
 
-  /// Optional photo(s) of proof — receipts, damage photos, reports.
-  /// Always safe to be empty; nothing in this app requires it.
-  final List<String> proofUrls;
+  /// How many optional proof photos (receipts, damage photos, reports)
+  /// are attached. The photos themselves live in the
+  /// `deathRecords/{id}/proofs` subcollection as Firestore `Blob`s —
+  /// same no-Storage-bucket approach as the rest of the app (see
+  /// ImageService) — so this record stays far below the 1 MiB
+  /// document limit. 0 is normal; nothing requires a photo.
+  final int proofCount;
 
   /// True when this loss involved real cash leaving the farm (repair,
   /// replacement purchase, etc.) rather than just lost value. Only
@@ -154,7 +158,7 @@ class DeathRecord {
     this.category,
     this.title = '',
     this.description = '',
-    this.proofUrls = const [],
+    this.proofCount = 0,
     this.isCashLoss = false,
     this.farmLossAmount = 0,
     required this.createdAt,
@@ -203,7 +207,7 @@ class DeathRecord {
       isCustomerPalai && goatPendingCharge > 0 && farmLossAmount <= 0;
 
   /// True when at least one proof photo has been attached.
-  bool get hasProof => proofUrls.isNotEmpty;
+  bool get hasProof => proofCount > 0;
 
   /// Display label for whatever this record represents — the goat-type
   /// label for goat deaths, the loss category label for manual losses.
@@ -270,12 +274,6 @@ class DeathRecord {
       return null;
     }
 
-    List<String> stringListFrom(String key) {
-      final value = data[key];
-      if (value is List) return value.map((e) => e.toString()).toList();
-      return const [];
-    }
-
     return DeathRecord(
       id: doc.id,
       goatType: (data['goatType'] ?? typeCustomerPalai).toString(),
@@ -295,7 +293,7 @@ class DeathRecord {
       category: data['category'] as String?,
       title: (data['title'] ?? '').toString(),
       description: (data['description'] ?? '').toString(),
-      proofUrls: stringListFrom('proofUrls'),
+      proofCount: (data['proofCount'] as num?)?.toInt() ?? 0,
       isCashLoss: data['isCashLoss'] == true,
       farmLossAmount: (data['farmLossAmount'] as num?)?.toDouble() ?? 0,
       createdAt: dateFrom('createdAt'),
