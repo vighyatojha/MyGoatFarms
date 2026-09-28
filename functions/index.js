@@ -300,6 +300,7 @@ exports.scheduledHealthReminderSweep = onSchedule('every 30 minutes', async () =
 
 exports.deleteFarm = onCall(
     {
+      region: 'us-central1',
       timeoutSeconds: 540,
       memory: '1GiB',
     },
