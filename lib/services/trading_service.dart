@@ -8,6 +8,8 @@ import '../models/expense_model.dart';
 import '../models/goat_model.dart';
 import '../models/purchase_costing.dart';
 import '../models/sale_model.dart';
+import '../models/trading_lot_payment_model.dart';
+import '../models/trading_lot_receiving_model.dart';
 import '../models/trading_purchase_model.dart';
 import '../models/trading_summary_model.dart';
 import 'firestore_service.dart';
@@ -288,6 +290,17 @@ class TradingService {
     // Payment
     required String paymentMethod,
 
+    // Supplier payment made at purchase time. null = paid in full (the
+    // single-goat quick purchase); 0 = nothing paid yet. Later payments
+    // go through addSupplierPayment().
+    double? advanceAmount,
+    String? advanceMethod,
+    DateTime? advanceDate,
+    String advanceNote = '',
+
+    /// When the supplier is due to deliver the lot. Optional.
+    DateTime? expectedDeliveryDate,
+
     // Receiving
     String receivingStatus = 'pending',
     DateTime? dateReceivedAtFarm,
@@ -339,6 +352,10 @@ class TradingService {
       throw ArgumentError(
         'Price per kg must be greater than zero.',
       );
+    }
+
+    if (advanceAmount != null && advanceAmount < 0) {
+      throw ArgumentError('Amount paid now cannot be negative.');
     }
 
     if (normalizedReceivingStatus == 'completed') {
@@ -415,6 +432,20 @@ class TradingService {
 
     final purchaseAmount = costing.purchaseAmount;
 
+    final paidNow = PurchaseCosting.round2(advanceAmount ?? purchaseAmount);
+
+    if (paidNow > purchaseAmount + 0.005) {
+      throw ArgumentError(
+        'Amount paid now cannot be more than the purchase amount.',
+      );
+    }
+
+    final normalizedAdvanceMethod = _normalizePaymentMethod(
+      advanceMethod ?? paymentMethod,
+    );
+
+    final actor = await FirestoreService.instance.getCurrentActor();
+
     final weightLoss = isCompleted ? costing.weightLoss : null;
 
     final totalTransportExpenses = costing.totalExpenses;
@@ -428,6 +459,10 @@ class TradingService {
     // ---------------------------------------------------------------------
 
     final counterRef = _purchaseCounterDoc(farmId);
+
+    // Set inside the transaction so the Finance cash entry below can be
+    // linked to the exact payment document.
+    String? paymentDocId;
 
     final purchaseId =
     await _db.runTransaction<String>(
@@ -488,7 +523,9 @@ class TradingService {
 
           weightLoss: weightLoss,
 
-          mortality: mortality,
+          // While receiving is pending nothing has arrived, so mortality
+          // must stay 0 — the lot's supplierQty counts it as received.
+          mortality: isCompleted ? mortality : 0,
           remarks: remarks.trim(),
 
           transportCost: transportCost,
@@ -511,18 +548,66 @@ class TradingService {
           // the person to "register" goats that had died.) While receiving
           // is still pending the survivors are unknown, so it starts at
           // totalGoats and completeReceiving() corrects it.
-          pendingCount:
-          isCompleted ? costing.survivingGoats : totalGoats,
+          // For a lot, pendingCount mirrors farmQty: goats at the farm.
+          pendingCount: isCompleted ? costing.survivingGoats : 0,
+
+          // Lot fields. Receiving at creation means every goat is
+          // accounted for (arrived alive + died); otherwise all goats
+          // are still at the supplier.
+          lotSchema: 1,
+          expectedDeliveryDate: expectedDeliveryDate,
+          receivedAliveQty: isCompleted ? costing.survivingGoats : 0,
+          paidAmount: paidNow,
         );
 
+        final lotRef = _tradingPurchases(farmId).doc(id);
+
         transaction.set(
-          _tradingPurchases(farmId).doc(id),
+          lotRef,
           {
             ...purchase.toMap(),
             'createdAt':
             FieldValue.serverTimestamp(),
           },
         );
+
+        // First supplier payment (append-only history).
+        if (paidNow > 0) {
+          final paymentRef = lotRef.collection('payments').doc();
+          paymentDocId = paymentRef.id;
+
+          transaction.set(paymentRef, {
+            ...LotPayment(
+              id: paymentRef.id,
+              amount: paidNow,
+              date: advanceDate ?? purchaseDate,
+              method: normalizedAdvanceMethod,
+              note: advanceNote,
+              actorUid: actor?.uid,
+              actorName: actor?.name,
+            ).toMap(),
+            'createdAt': FieldValue.serverTimestamp(),
+          });
+        }
+
+        // First receiving event, when the goats arrived with the purchase.
+        if (isCompleted) {
+          final receivingRef = lotRef.collection('receivings').doc();
+
+          transaction.set(receivingRef, {
+            ...LotReceiving(
+              id: receivingRef.id,
+              date: dateReceivedAtFarm!,
+              arrivedQty: costing.survivingGoats,
+              diedQty: mortality,
+              arrivalWeight: safeArrivalWeight,
+              note: remarks,
+              actorUid: actor?.uid,
+              actorName: actor?.name,
+            ).toMap(),
+            'createdAt': FieldValue.serverTimestamp(),
+          });
+        }
 
         // -------------------------------------------------------------
         // DASHBOARD SUMMARY
@@ -600,6 +685,18 @@ class TradingService {
       purchase: saved,
     );
 
+    if (paymentDocId != null) {
+      await _ensureLotPaymentExpense(
+        farmId: farmId,
+        lot: saved,
+        paymentId: paymentDocId!,
+        amount: paidNow,
+        method: normalizedAdvanceMethod,
+        date: advanceDate ?? purchaseDate,
+        note: advanceNote,
+      );
+    }
+
     return saved;
   }
 
@@ -648,12 +745,14 @@ class TradingService {
       category: ExpenseCategories.goatPurchase,
       amount: purchase.purchaseAmount,
       supplierName: purchase.sellerName,
-      paymentMethod:
-      _normalizePaymentMethod(
-        purchase.paymentMethod,
-      ),
+      // Lots: the purchase itself is an audit-only Credit row (no cash
+      // moved yet). Real cash is posted per supplier payment, see
+      // _ensureLotPaymentExpense. Old purchases keep their cash row.
+      paymentMethod: purchase.isLot
+          ? 'Credit'
+          : _normalizePaymentMethod(purchase.paymentMethod),
       note:
-      'Trading purchase ${purchase.id}',
+      'Trading purchase ${purchase.lotId}',
       date: purchase.purchaseDate,
       createdAt: now,
       updatedAt: now,
@@ -666,6 +765,378 @@ class TradingService {
       farmId,
       expense,
     );
+  }
+
+  /// Posts one cash / online Finance expense for a supplier payment.
+  ///
+  /// Idempotent through referenceType 'lotPayment' + referenceId
+  /// (the payment doc id).
+  Future<void> _ensureLotPaymentExpense({
+    required String farmId,
+    required TradingPurchase lot,
+    required String paymentId,
+    required double amount,
+    required String method,
+    required DateTime date,
+    String note = '',
+  }) async {
+    final existing = await _db
+        .collection('farms')
+        .doc(farmId)
+        .collection('expenses')
+        .where('referenceType', isEqualTo: 'lotPayment')
+        .where('referenceId', isEqualTo: paymentId)
+        .limit(1)
+        .get()
+        .timeout(_timeout);
+
+    if (existing.docs.isNotEmpty) return;
+
+    final now = DateTime.now();
+    final trimmed = note.trim();
+
+    await FinanceService.instance.addExpense(
+      farmId,
+      ExpenseModel(
+        id: '',
+        title: 'Supplier Payment',
+        category: ExpenseCategories.supplierPayment,
+        amount: amount,
+        supplierName: lot.sellerName,
+        paymentMethod: _normalizePaymentMethod(method),
+        note: trimmed.isEmpty
+            ? 'Payment for ${lot.lotId}'
+            : 'Payment for ${lot.lotId} — $trimmed',
+        date: date,
+        createdAt: now,
+        updatedAt: now,
+        status: 'active',
+        referenceType: 'lotPayment',
+        referenceId: paymentId,
+      ),
+    );
+  }
+
+  // -----------------------------------------------------------------------
+  // LOT STREAMS
+  // -----------------------------------------------------------------------
+
+  /// Every lot (lotSchema >= 1), newest first. Filter by
+  /// [TradingPurchase.isActive] / [TradingPurchase.location] client-side.
+  Stream<List<TradingPurchase>> lotsStream(String farmId) {
+    return _tradingPurchases(farmId).snapshots().map((snapshot) {
+      final lots = snapshot.docs
+          .map((doc) => TradingPurchase.fromDoc(doc))
+          .where((p) => p.isLot)
+          .toList();
+
+      lots.sort(
+            (a, b) => (b.createdAt ?? DateTime(2000))
+            .compareTo(a.createdAt ?? DateTime(2000)),
+      );
+
+      return lots;
+    });
+  }
+
+  /// Lots that still own goats.
+  Stream<List<TradingPurchase>> activeLotsStream(String farmId) {
+    return lotsStream(farmId).map(
+          (lots) => lots.where((l) => l.isActive).toList(),
+    );
+  }
+
+  Stream<TradingPurchase?> lotStream(String farmId, String lotDocId) {
+    return _tradingPurchases(farmId).doc(lotDocId).snapshots().map(
+          (doc) => doc.exists ? TradingPurchase.fromDoc(doc) : null,
+    );
+  }
+
+  Stream<List<LotPayment>> lotPaymentsStream(
+      String farmId,
+      String lotDocId,
+      ) {
+    return _tradingPurchases(farmId)
+        .doc(lotDocId)
+        .collection('payments')
+        .snapshots()
+        .map((snapshot) {
+      final list = snapshot.docs.map(LotPayment.fromDoc).toList();
+      list.sort((a, b) => b.date.compareTo(a.date));
+      return list;
+    });
+  }
+
+  Stream<List<LotReceiving>> lotReceivingsStream(
+      String farmId,
+      String lotDocId,
+      ) {
+    return _tradingPurchases(farmId)
+        .doc(lotDocId)
+        .collection('receivings')
+        .snapshots()
+        .map((snapshot) {
+      final list = snapshot.docs.map(LotReceiving.fromDoc).toList();
+      list.sort((a, b) => b.date.compareTo(a.date));
+      return list;
+    });
+  }
+
+  // -----------------------------------------------------------------------
+  // ADD SUPPLIER PAYMENT
+  // -----------------------------------------------------------------------
+
+  /// Records one more payment to the supplier of a lot.
+  ///
+  /// Validates 0 < amount <= due inside the transaction, appends a
+  /// payment doc and increments `paidAmount`, then posts the cash /
+  /// online Finance expense (idempotent).
+  Future<LotPayment> addSupplierPayment({
+    required String farmId,
+    required String lotDocId,
+    required double amount,
+    required String method,
+    required DateTime date,
+    String note = '',
+  }) async {
+    final rounded = PurchaseCosting.round2(amount);
+
+    if (rounded <= 0) {
+      throw ArgumentError('Payment must be greater than zero.');
+    }
+
+    final normalizedMethod = _normalizePaymentMethod(method);
+    final actor = await FirestoreService.instance.getCurrentActor();
+
+    final lotRef = _tradingPurchases(farmId).doc(lotDocId);
+    final paymentRef = lotRef.collection('payments').doc();
+
+    late TradingPurchase lot;
+
+    await _db.runTransaction((transaction) async {
+      final snap = await transaction.get(lotRef);
+
+      if (!snap.exists) {
+        throw StateError('Lot $lotDocId was not found.');
+      }
+
+      lot = TradingPurchase.fromDoc(snap);
+
+      if (!lot.isLot) {
+        throw StateError(
+          'Lot $lotDocId has not been converted to the lot format yet.',
+        );
+      }
+
+      if (rounded > lot.dueAmount + 0.005) {
+        throw ArgumentError(
+          'Payment cannot be more than the balance due '
+              '(${lot.dueAmount.toStringAsFixed(2)}).',
+        );
+      }
+
+      transaction.set(paymentRef, {
+        ...LotPayment(
+          id: paymentRef.id,
+          amount: rounded,
+          date: date,
+          method: normalizedMethod,
+          note: note,
+          actorUid: actor?.uid,
+          actorName: actor?.name,
+        ).toMap(),
+        'createdAt': FieldValue.serverTimestamp(),
+      });
+
+      transaction.update(lotRef, {
+        'paidAmount': FieldValue.increment(rounded),
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
+    }).timeout(_timeout);
+
+    await _ensureLotPaymentExpense(
+      farmId: farmId,
+      lot: lot,
+      paymentId: paymentRef.id,
+      amount: rounded,
+      method: normalizedMethod,
+      date: date,
+      note: note,
+    );
+
+    final saved = await paymentRef.get().timeout(_timeout);
+
+    return LotPayment.fromDoc(saved);
+  }
+
+  // -----------------------------------------------------------------------
+  // RECEIVE LOT BATCH
+  // -----------------------------------------------------------------------
+
+  /// Records a batch of the lot's goats arriving at the farm.
+  ///
+  /// arrivedQty + diedQty must not exceed the goats still at the
+  /// supplier. Goats already sold from the supplier are never received.
+  /// When nothing is left at the supplier the lot's receiving is marked
+  /// completed and its totals are recomputed.
+  ///
+  /// Optional transport-type costs are ADDED to what the lot already has.
+  Future<TradingPurchase> receiveLotBatch({
+    required String farmId,
+    required String lotDocId,
+    required int arrivedQty,
+    required int diedQty,
+    required double arrivalWeight,
+    required DateTime date,
+    String note = '',
+    double transportCost = 0,
+    double loadingCharges = 0,
+    double unloadingCharges = 0,
+    double otherExpenses = 0,
+  }) async {
+    if (arrivedQty < 0 || diedQty < 0) {
+      throw ArgumentError('Quantities cannot be negative.');
+    }
+
+    if (arrivedQty + diedQty <= 0) {
+      throw ArgumentError('Enter at least one goat.');
+    }
+
+    if (arrivedQty > 0 && arrivalWeight <= 0) {
+      throw ArgumentError('Arrival weight must be greater than zero.');
+    }
+
+    if (arrivedQty == 0 && arrivalWeight != 0) {
+      throw ArgumentError('Arrival weight must be 0 when no goat arrived.');
+    }
+
+    if (transportCost < 0 ||
+        loadingCharges < 0 ||
+        unloadingCharges < 0 ||
+        otherExpenses < 0) {
+      throw ArgumentError('Costs cannot be negative.');
+    }
+
+    final actor = await FirestoreService.instance.getCurrentActor();
+
+    final lotRef = _tradingPurchases(farmId).doc(lotDocId);
+    final receivingRef = lotRef.collection('receivings').doc();
+
+    await _db.runTransaction((transaction) async {
+      final snap = await transaction.get(lotRef);
+
+      if (!snap.exists) {
+        throw StateError('Lot $lotDocId was not found.');
+      }
+
+      final lot = TradingPurchase.fromDoc(snap);
+
+      if (!lot.isLot) {
+        throw StateError(
+          'Lot $lotDocId has not been converted to the lot format yet.',
+        );
+      }
+
+      if (arrivedQty + diedQty > lot.supplierQty) {
+        throw ArgumentError(
+          'Only ${lot.supplierQty} goats are still at the supplier.',
+        );
+      }
+
+      final newReceivedAlive = lot.receivedAliveQty + arrivedQty;
+      final newMortality = lot.mortality + diedQty;
+      final newReceivedTotal = newReceivedAlive + newMortality;
+
+      final newSupplierQty = lot.totalGoats -
+          lot.soldFromSupplierQty -
+          newReceivedTotal;
+
+      final newArrivalWeight = PurchaseCosting.round2(
+        (lot.totalWeightAfterArrival ?? 0) + arrivalWeight,
+      );
+
+      // Pro-rated: goats sold at the supplier never travelled, so their
+      // share of the purchase weight is not "lost".
+      final expectedWeight =
+          lot.totalWeightAtPurchase * newReceivedTotal / lot.totalGoats;
+
+      final newFarmQty =
+      (newReceivedAlive - lot.soldFromFarmQty - lot.registeredCount)
+          .clamp(0, 1 << 30)
+          .toInt();
+
+      final newTransport = lot.transportCost + transportCost;
+      final newLoading = lot.loadingCharges + loadingCharges;
+      final newUnloading = lot.unloadingCharges + unloadingCharges;
+      final newOther = lot.otherExpenses + otherExpenses;
+
+      final costing = PurchaseCosting(
+        totalGoats: lot.totalGoats,
+        weightAtPurchase: lot.totalWeightAtPurchase,
+        pricePerKg: lot.pricePerKg,
+        weightAfterArrival: newArrivalWeight,
+        mortality: newMortality,
+        transportCost: newTransport,
+        loadingCharges: newLoading,
+        unloadingCharges: newUnloading,
+        otherExpenses: newOther,
+      );
+
+      final completed = newSupplierQty <= 0;
+
+      transaction.set(receivingRef, {
+        ...LotReceiving(
+          id: receivingRef.id,
+          date: date,
+          arrivedQty: arrivedQty,
+          diedQty: diedQty,
+          arrivalWeight: arrivalWeight,
+          note: note,
+          actorUid: actor?.uid,
+          actorName: actor?.name,
+        ).toMap(),
+        'createdAt': FieldValue.serverTimestamp(),
+      });
+
+      transaction.update(lotRef, {
+        'receivedAliveQty': FieldValue.increment(arrivedQty),
+        'mortality': FieldValue.increment(diedQty),
+        'totalWeightAfterArrival': newArrivalWeight,
+        'dateReceivedAtFarm': Timestamp.fromDate(date),
+        'weightLoss': PurchaseCosting.round2(expectedWeight - newArrivalWeight),
+        'pendingCount': newFarmQty,
+        'transportCost': newTransport,
+        'loadingCharges': newLoading,
+        'unloadingCharges': newUnloading,
+        'otherExpenses': newOther,
+        'totalTransportExpenses': costing.totalExpenses,
+        'grandTotal': costing.grandTotal,
+        'effectiveCostPerKg': costing.effectiveCostPerKg,
+        if (completed) 'receivingStatus': 'completed',
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
+
+      if (arrivedQty > 0) {
+        transaction.set(
+          _summaryDoc(farmId),
+          {
+            'totalStock': FieldValue.increment(arrivedQty),
+            'pendingRegistrations': FieldValue.increment(arrivedQty),
+          },
+          SetOptions(merge: true),
+        );
+      }
+    }).timeout(_timeout);
+
+    final updated = await getPurchase(farmId, lotDocId);
+
+    if (updated == null) {
+      throw StateError(
+        'Receiving was saved but the lot could not be read back.',
+      );
+    }
+
+    return updated;
   }
 
   // -----------------------------------------------------------------------
@@ -701,6 +1172,35 @@ class TradingService {
     if (mortality < 0) {
       throw ArgumentError(
         'Mortality cannot be negative.',
+      );
+    }
+
+    // Lots (lotSchema >= 1) track quantities, so the legacy "receive
+    // everything at once" call is routed through the same logic as
+    // Receive Lot: everything still at the supplier arrives now, with
+    // [mortality] of it dying in transit.
+    final existing = await getPurchase(farmId, purchaseId);
+
+    if (existing != null && existing.isLot) {
+      if (mortality >= existing.supplierQty) {
+        throw ArgumentError(
+          'At least one goat must survive — mortality cannot equal or '
+              'exceed the goats still at the supplier.',
+        );
+      }
+
+      return receiveLotBatch(
+        farmId: farmId,
+        lotDocId: purchaseId,
+        arrivedQty: existing.supplierQty - mortality,
+        diedQty: mortality,
+        arrivalWeight: totalWeightAfterArrival,
+        date: dateReceivedAtFarm,
+        note: remarks,
+        transportCost: transportCost,
+        loadingCharges: loadingCharges,
+        unloadingCharges: unloadingCharges,
+        otherExpenses: otherExpenses,
       );
     }
 

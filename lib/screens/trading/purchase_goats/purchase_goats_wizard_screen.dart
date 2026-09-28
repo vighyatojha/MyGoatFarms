@@ -9,7 +9,8 @@ import '../steps/step2_purchase_details.dart';
 import '../steps/step3_receiving_transport.dart';
 import '../steps/step_lot_payment.dart';
 import '../steps/step4_summary.dart';
-import '../purchase_goats/purchase_wizard_widgets.dart';
+import 'purchase_success_screen.dart';
+import 'purchase_wizard_widgets.dart';
 
 /// Purchase Lot wizard.
 ///
