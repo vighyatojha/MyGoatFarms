@@ -1,4 +1,7 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:intl/intl.dart';
 
 import '../../app_theme.dart';
@@ -6,14 +9,18 @@ import '../../models/death_record.dart';
 import '../../services/death_settlement_service.dart';
 import '../../services/firestore_service.dart';
 import '../../widgets/farm_not_linked_state.dart';
+import 'record_farm_loss_screen.dart';
 
-/// "Goat Death & Settlement" — Home Screen entry point.
+/// "Farm Losses" — Home Screen / Finance entry point.
 ///
-/// Centralized, farm-wide history across all three cases (Customer
-/// Palai, Own Palai, Available Stock). Recording a new death happens
-/// from the relevant goat/customer screen itself (Customer Profile,
-/// Own Palai goat profile, or Goat Stock detail) — this screen is for
-/// quick access and history, per the feature spec.
+/// Centralized, farm-wide history across every kind of loss: Customer
+/// Palai, Own Palai, Available Stock goat deaths, and manually-logged
+/// losses (fire, theft, disease, spoiled feed, storm damage, etc.).
+///
+/// Recording a goat death still happens from the relevant goat/customer
+/// screen (Customer Profile, Own Palai goat profile, Goat Stock detail),
+/// per the original feature spec. A manual loss can be recorded directly
+/// from here via the "+" button.
 class DeathHistoryScreen extends StatefulWidget {
   const DeathHistoryScreen({super.key});
 
@@ -49,8 +56,9 @@ class _DeathHistoryScreenState extends State<DeathHistoryScreen> {
     }
   }
 
-  Color _typeColor(String goatType) {
-    switch (goatType) {
+  Color _typeColor(DeathRecord record) {
+    if (record.isManualLoss) return AppColors.error;
+    switch (record.goatType) {
       case DeathRecord.typeOwnPalai:
         return AppColors.tradingBlue;
       case DeathRecord.typeAvailableStock:
@@ -61,15 +69,57 @@ class _DeathHistoryScreenState extends State<DeathHistoryScreen> {
     }
   }
 
+  Future<void> _addProof(DeathRecord record) async {
+    if (_farmId == null) return;
+    final picker = ImagePicker();
+    final picked = await picker.pickImage(source: ImageSource.gallery, imageQuality: 80);
+    if (picked == null) return;
+
+    try {
+      final url = await DeathSettlementService.instance.uploadLossProof(
+        farmId: _farmId!,
+        lossId: record.id,
+        imageFile: File(picked.path),
+      );
+      await DeathSettlementService.instance.addProofToLoss(
+        farmId: _farmId!,
+        lossId: record.id,
+        proofUrl: url,
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not upload photo: $e')),
+      );
+    }
+  }
+
+  Future<void> _openRecordLoss() async {
+    if (_farmId == null) return;
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => RecordFarmLossScreen(farmId: _farmId!),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: AppColors.paleGreen,
       appBar: AppBar(
-        title: const Text('Goat Death & Settlement'),
+        title: const Text('Farm Losses'),
         backgroundColor: Colors.transparent,
         elevation: 0,
         foregroundColor: AppColors.textDark,
+      ),
+      floatingActionButton: (_farmId == null)
+          ? null
+          : FloatingActionButton.extended(
+        onPressed: _openRecordLoss,
+        backgroundColor: AppColors.error,
+        icon: const Icon(Icons.add),
+        label: const Text('Record Loss'),
       ),
       body: _loadingFarm
           ? const Center(child: CircularProgressIndicator())
@@ -90,6 +140,8 @@ class _DeathHistoryScreenState extends State<DeathHistoryScreen> {
                   _filterChip('Own Palai', DeathRecord.typeOwnPalai),
                   const SizedBox(width: 8),
                   _filterChip('Available Stock', DeathRecord.typeAvailableStock),
+                  const SizedBox(width: 8),
+                  _filterChip('Other Losses', DeathRecord.typeManualLoss),
                 ],
               ),
             ),
@@ -109,14 +161,14 @@ class _DeathHistoryScreenState extends State<DeathHistoryScreen> {
                 if (records.isEmpty) {
                   return Center(
                     child: Text(
-                      'No goat deaths recorded yet.',
+                      'No losses recorded yet.',
                       style: AppTheme.body(size: 13, color: AppColors.textGrey),
                     ),
                   );
                 }
 
                 return ListView.separated(
-                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 20),
+                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 90),
                   itemCount: records.length,
                   separatorBuilder: (_, __) => const SizedBox(height: 10),
                   itemBuilder: (context, index) => _recordCard(records[index]),
@@ -142,7 +194,7 @@ class _DeathHistoryScreenState extends State<DeathHistoryScreen> {
   }
 
   Widget _recordCard(DeathRecord record) {
-    final color = _typeColor(record.goatType);
+    final color = _typeColor(record);
 
     return Container(
       padding: const EdgeInsets.all(14),
@@ -170,7 +222,7 @@ class _DeathHistoryScreenState extends State<DeathHistoryScreen> {
               const SizedBox(width: 8),
               Expanded(
                 child: Text(
-                  record.goatLabel,
+                  record.isManualLoss ? record.displayTitle : record.goatLabel,
                   style: AppTheme.heading(size: 13),
                   overflow: TextOverflow.ellipsis,
                 ),
@@ -182,50 +234,90 @@ class _DeathHistoryScreenState extends State<DeathHistoryScreen> {
             ],
           ),
           const SizedBox(height: 6),
-          Text(
-            'Reason: ${record.reason.isEmpty ? '—' : record.reason}',
-            style: AppTheme.body(size: 11, color: AppColors.textDark),
-          ),
-          if (record.isCustomerPalai) ...[
-            const SizedBox(height: 4),
-            Text(
-              record.customerName ?? '',
-              style: AppTheme.body(size: 11, color: AppColors.textGrey),
-            ),
-            if (record.goatPendingCharge > 0 ||
-                record.customerAmountToPay > 0) ...[
-              const SizedBox(height: 6),
+
+          if (record.isManualLoss) ...[
+            if (record.description.trim().isNotEmpty)
               Text(
-                'Goat Pending: ₹${record.goatPendingCharge.toStringAsFixed(0)} · '
-                    'Customer Pays: ₹${record.customerAmountToPay.toStringAsFixed(0)}',
+                record.description,
                 style: AppTheme.body(size: 11, color: AppColors.textDark),
               ),
-              const SizedBox(height: 2),
-              Text(
-                'Customer Pending: ₹${(record.customerPendingBefore ?? 0).toStringAsFixed(0)} → '
-                    '₹${(record.customerPendingAfter ?? 0).toStringAsFixed(0)}',
-                style: AppTheme.body(size: 11, weight: FontWeight.w700, color: AppColors.textDark),
-              ),
-            ],
-            if (record.hasFarmLoss) ...[
-              const SizedBox(height: 4),
-              Text(
-                'Farm Loss: ₹${record.farmLossAmount.toStringAsFixed(0)}',
-                style: AppTheme.body(size: 11, weight: FontWeight.w700, color: AppColors.error),
-              ),
-            ] else if (record.paidInFull) ...[
-              const SizedBox(height: 4),
-              Text(
-                'Paid in full — no loss',
-                style: AppTheme.body(size: 11, weight: FontWeight.w700, color: AppColors.primaryGreen),
-              ),
-            ],
-          ] else if (record.farmLossAmount > 0) ...[
-            const SizedBox(height: 4),
+            const SizedBox(height: 6),
             Text(
-              'Goat Death Loss: ₹${record.farmLossAmount.toStringAsFixed(0)}',
+              '${record.isCashLoss ? 'Cash Loss' : 'Value Loss'}: '
+                  '₹${record.farmLossAmount.toStringAsFixed(0)}',
               style: AppTheme.body(size: 11, weight: FontWeight.w700, color: AppColors.error),
             ),
+            const SizedBox(height: 8),
+            if (record.hasProof)
+              ClipRRect(
+                borderRadius: BorderRadius.circular(8),
+                child: Image.network(
+                  record.proofUrls.first,
+                  height: 90,
+                  width: 120,
+                  fit: BoxFit.cover,
+                ),
+              )
+            else
+              InkWell(
+                onTap: () => _addProof(record),
+                child: Row(
+                  children: [
+                    const Icon(Icons.add_a_photo_outlined, size: 14, color: AppColors.textGrey),
+                    const SizedBox(width: 4),
+                    Text(
+                      'Add proof',
+                      style: AppTheme.body(size: 11, color: AppColors.textGrey),
+                    ),
+                  ],
+                ),
+              ),
+          ] else ...[
+            Text(
+              'Reason: ${record.reason.isEmpty ? '—' : record.reason}',
+              style: AppTheme.body(size: 11, color: AppColors.textDark),
+            ),
+            if (record.isCustomerPalai) ...[
+              const SizedBox(height: 4),
+              Text(
+                record.customerName ?? '',
+                style: AppTheme.body(size: 11, color: AppColors.textGrey),
+              ),
+              if (record.goatPendingCharge > 0 ||
+                  record.customerAmountToPay > 0) ...[
+                const SizedBox(height: 6),
+                Text(
+                  'Goat Pending: ₹${record.goatPendingCharge.toStringAsFixed(0)} · '
+                      'Customer Pays: ₹${record.customerAmountToPay.toStringAsFixed(0)}',
+                  style: AppTheme.body(size: 11, color: AppColors.textDark),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  'Customer Pending: ₹${(record.customerPendingBefore ?? 0).toStringAsFixed(0)} → '
+                      '₹${(record.customerPendingAfter ?? 0).toStringAsFixed(0)}',
+                  style: AppTheme.body(size: 11, weight: FontWeight.w700, color: AppColors.textDark),
+                ),
+              ],
+              if (record.hasFarmLoss) ...[
+                const SizedBox(height: 4),
+                Text(
+                  'Farm Loss: ₹${record.farmLossAmount.toStringAsFixed(0)}',
+                  style: AppTheme.body(size: 11, weight: FontWeight.w700, color: AppColors.error),
+                ),
+              ] else if (record.paidInFull) ...[
+                const SizedBox(height: 4),
+                Text(
+                  'Paid in full — no loss',
+                  style: AppTheme.body(size: 11, weight: FontWeight.w700, color: AppColors.primaryGreen),
+                ),
+              ],
+            ] else if (record.farmLossAmount > 0) ...[
+              const SizedBox(height: 4),
+              Text(
+                'Goat Death Loss: ₹${record.farmLossAmount.toStringAsFixed(0)}',
+                style: AppTheme.body(size: 11, weight: FontWeight.w700, color: AppColors.error),
+              ),
+            ],
           ],
         ],
       ),

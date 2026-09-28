@@ -1,4 +1,7 @@
+import 'dart:io';
+
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_storage/firebase_storage.dart';
 
 import '../models/death_record.dart';
 import '../models/expense_categories.dart';
@@ -470,5 +473,169 @@ class DeathSettlementService {
       records.sort((a, b) => b.deathDate.compareTo(a.deathDate));
       return records;
     });
+  }
+
+  // =========================================================================
+  // MANUAL FARM LOSS (fire, theft, disease, spoiled feed, storm damage...)
+  // =========================================================================
+  //
+  // Not tied to any one goat's death. The farm owner logs it directly:
+  // a category, a title/description in their own words, an amount, and
+  // whether real cash left the farm or the loss was purely value lost.
+  // Proof photos are supported but never required — see [uploadLossProof]
+  // and [addProofToLoss] below; a record can be saved with zero photos
+  // and have them attached later.
+  //
+  // Written into the same `deathRecords` collection as every goat death
+  // (goatType: DeathRecord.typeManualLoss) so DeathHistoryScreen's single
+  // stream already shows everything together — no second query, no
+  // migration needed.
+
+  /// Records a manual, non-goat farm loss and posts the matching Finance
+  /// expense. Returns the new record's id (useful if the caller wants to
+  /// upload proof photos immediately after via [uploadLossProof] +
+  /// [addProofToLoss]).
+  ///
+  /// [isCashLoss] decides which FinancePaymentMethods gets posted:
+  /// `true` when money genuinely left the farm (e.g. repairing fire
+  /// damage, replacing stolen equipment), `false` when it's a pure
+  /// value loss with no cash outflow (e.g. spoiled feed thrown away) —
+  /// mirroring exactly how goat-death losses are already posted as
+  /// FinancePaymentMethods.credit.
+  Future<String> recordManualLoss({
+    required String farmId,
+    required String category,
+    required DateTime lossDate,
+    required String title,
+    String description = '',
+    required double amount,
+    bool isCashLoss = false,
+    List<String> proofUrls = const [],
+  }) async {
+    if (amount < 0) {
+      throw ArgumentError('Loss amount cannot be negative.');
+    }
+    if (title.trim().isEmpty) {
+      throw ArgumentError('Title is required.');
+    }
+    if (!DeathRecord.manualLossCategories.contains(category)) {
+      throw ArgumentError('Unknown loss category: $category');
+    }
+
+    final deathRecordRef = _deathRecords(farmId).doc();
+    final activityRef = _activities(farmId).doc();
+    final actor = await FirestoreService.instance.getCurrentActor();
+    final categoryLabel = DeathRecord.categoryLabelFor(category);
+
+    await _db.runTransaction<void>((transaction) async {
+      transaction.set(deathRecordRef, {
+        'goatType': DeathRecord.typeManualLoss,
+        'goatId': '',
+        'goatLabel': title.trim(),
+        'category': category,
+        'title': title.trim(),
+        'description': description.trim(),
+        // Mirrored into `reason` too so any older UI reading `reason`
+        // directly (rather than the new `description` field) still
+        // shows something sensible.
+        'deathDate': Timestamp.fromDate(lossDate),
+        'reason': description.trim(),
+        'notes': '',
+        'farmLossAmount': amount,
+        'isCashLoss': isCashLoss,
+        'proofUrls': proofUrls,
+        'createdAt': FieldValue.serverTimestamp(),
+        if (actor != null) 'actorUid': actor.uid,
+        if (actor != null) 'actorName': actor.name,
+        if (actor != null) 'actorRole': actor.role,
+      });
+
+      transaction.set(activityRef, {
+        'type': 'farmLossRecorded',
+        'title': 'Farm Loss Recorded',
+        'subtitle': '$categoryLabel · ${title.trim()}',
+        'module': 'finance',
+        'timestamp': FieldValue.serverTimestamp(),
+        if (actor != null) 'actorUid': actor.uid,
+        if (actor != null) 'actorName': actor.name,
+        if (actor != null) 'actorRole': actor.role,
+      });
+    }).timeout(_timeout);
+
+    // Same pattern as recordCustomerPalaiDeath / recordFarmGoatDeath
+    // above: posted as a separate step since FinanceService.addExpense
+    // does its own batch, made idempotent via referenceType/referenceId.
+    if (amount > 0) {
+      final now = DateTime.now();
+      await FinanceService.instance.addExpense(
+        farmId,
+        ExpenseModel(
+          id: '',
+          title: '$categoryLabel — ${title.trim()}',
+          // NOTE: reusing the existing "Goat Death Loss" expense
+          // category for every manual loss too, since it already flows
+          // correctly through Net Income / Total Expenses either way.
+          // If a distinct line item in Finance reports is wanted,
+          // add a dedicated ExpenseCategories.farmLoss constant and
+          // swap it in here.
+          category: ExpenseCategories.goatDeathLoss,
+          amount: amount,
+          // Cash losses hit the same tracker a normal cash expense
+          // would; non-cash losses use `credit` exactly like goat
+          // deaths, so Cash Flow / Cash-Online correctly excludes them
+          // while Net Income still counts them.
+          paymentMethod: isCashLoss
+              ? FinancePaymentMethods.cash
+              : FinancePaymentMethods.credit,
+          note: description.trim(),
+          date: lossDate,
+          createdAt: now,
+          updatedAt: now,
+          status: 'active',
+          referenceType: 'farmLoss',
+          referenceId: deathRecordRef.id,
+        ),
+      );
+    }
+
+    return deathRecordRef.id;
+  }
+
+  /// Uploads a single proof photo for a loss record to Firebase Storage
+  /// and returns its download URL. Purely additive — call this zero,
+  /// one, or several times for the same [lossId]; nothing else in this
+  /// feature requires a photo to exist.
+  ///
+  /// Standalone for now since this app's existing image-upload service
+  /// wasn't available to match against — if there's already a shared
+  /// upload helper (e.g. behind the profile-photo screen) with its own
+  /// compression/path conventions, swap the body of this method to call
+  /// that instead and everything else here keeps working unchanged.
+  Future<String> uploadLossProof({
+    required String farmId,
+    required String lossId,
+    required File imageFile,
+  }) async {
+    final fileName =
+        '${DateTime.now().millisecondsSinceEpoch}_${imageFile.uri.pathSegments.last}';
+    final ref = FirebaseStorage.instance
+        .ref()
+        .child('farms/$farmId/lossProofs/$lossId/$fileName');
+
+    final task = await ref.putFile(imageFile);
+    return task.ref.getDownloadURL();
+  }
+
+  /// Appends an already-uploaded proof photo URL to an existing loss
+  /// record — used both right after creating a record and for adding
+  /// proof to an older record that was saved without one.
+  Future<void> addProofToLoss({
+    required String farmId,
+    required String lossId,
+    required String proofUrl,
+  }) async {
+    await _deathRecords(farmId).doc(lossId).update({
+      'proofUrls': FieldValue.arrayUnion([proofUrl]),
+    }).timeout(_timeout);
   }
 }
