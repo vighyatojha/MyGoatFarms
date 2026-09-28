@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../app_theme.dart';
+import '../models/farm_model.dart';
 import '../widgets/app_bottom_nav.dart';
 import '../services/firestore_service.dart';
 import '../services/notification_service.dart';
@@ -60,6 +61,8 @@ class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
   /// else in this shell resolves farmId locally where it's needed, so
   /// this field exists purely for that one stream.
   String? _farmId;
+  StreamSubscription<FarmModel?>? _farmAccessSub;
+  bool _farmAccessRedirected = false;
 
   @override
   void initState() {
@@ -70,6 +73,7 @@ class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
 
   @override
   void dispose() {
+    _farmAccessSub?.cancel();
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();
   }
@@ -101,10 +105,33 @@ class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
   /// login) rather than only once at registration — this is what keeps
   /// a rotated/expired token fresh and re-enables a device that was
   /// disabled on a previous logout.
+  void _watchFarmAccess(String farmId) {
+    _farmAccessSub?.cancel();
+    _farmAccessRedirected = false;
+
+    _farmAccessSub = FirestoreService.instance.farmDocStream(farmId).listen(
+      (farm) {
+        if (!mounted || farm == null || _farmAccessRedirected) return;
+
+        if (farm.status == 'Blocked') {
+          _farmAccessRedirected = true;
+          Navigator.of(context).pushNamedAndRemoveUntil(
+            '/pending-approval',
+            (route) => false,
+          );
+        }
+      },
+      onError: (error) {
+        debugPrint('Farm access status stream failed: $error');
+      },
+    );
+  }
+
   Future<void> _initPushNotifications() async {
     final farmId = await FirestoreService.instance.currentFarmId();
     if (farmId == null || !mounted) return;
     setState(() => _farmId = farmId);
+    _watchFarmAccess(farmId);
     await NotificationService.instance.initForFarm(farmId);
 
     // Re-arm any health due-date reminders lost to a device reboot, and
