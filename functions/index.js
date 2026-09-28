@@ -298,62 +298,111 @@ exports.scheduledHealthReminderSweep = onSchedule('every 30 minutes', async () =
 // normal registration flow can create a new farm.
 // ---------------------------------------------------------------------
 
-exports.deleteFarm = onCall(async (request) => {
-  const uid = request.auth && request.auth.uid;
-  if (!uid) {
-    throw new HttpsError('unauthenticated', 'Admin sign-in required.');
-  }
+exports.deleteFarm = onCall(
+    {
+      timeoutSeconds: 540,
+      memory: '1GiB',
+    },
+    async (request) => {
+      const uid = request.auth?.uid;
+      if (!uid) {
+        throw new HttpsError(
+            'unauthenticated',
+            'Admin sign-in is required.',
+        );
+      }
 
-  const adminSnap = await db.collection('admins').doc(uid).get();
-  if (!adminSnap.exists) {
-    throw new HttpsError('permission-denied', 'Only an admin can delete a farm.');
-  }
+      try {
+        // The admin website already uses the same admins/{uid} document
+        // as its login guard, so use that same source of truth here.
+        const adminSnap = await db.collection('admins').doc(uid).get();
+        if (!adminSnap.exists) {
+          throw new HttpsError(
+              'permission-denied',
+              'This account is not authorized as an admin.',
+          );
+        }
 
-  const farmId = String(request.data?.farmId || '').trim();
-  if (!farmId) {
-    throw new HttpsError('invalid-argument', 'farmId is required.');
-  }
+        const farmId = String(request.data?.farmId || '').trim();
+        if (!farmId) {
+          throw new HttpsError(
+              'invalid-argument',
+              'Farm ID is required.',
+          );
+        }
 
-  const farmRef = db.collection('farms').doc(farmId);
-  const farmSnap = await farmRef.get();
-  if (!farmSnap.exists) {
-    throw new HttpsError('not-found', 'Farm not found.');
-  }
+        const farmRef = db.collection('farms').doc(farmId);
+        const farmSnap = await farmRef.get();
 
-  const farmData = farmSnap.data() || {};
-  const mobileNumber = String(farmData.mobileNumber || '').trim();
+        if (!farmSnap.exists) {
+          throw new HttpsError(
+              'not-found',
+              'Farm ' + farmId + ' was not found.',
+          );
+        }
 
-  // Delete every nested farm document/collection recursively.
-  await db.recursiveDelete(farmRef);
+        const farmData = farmSnap.data() || {};
+        const mobileNumber = String(farmData.mobileNumber || '').trim();
 
-  // Remove the signup mobile index marker as well.
-  if (mobileNumber) {
-    const mobileRef = db.collection('mobileIndex').doc(mobileNumber);
-    const mobileSnap = await mobileRef.get();
-    if (mobileSnap.exists && mobileSnap.data()?.farmId === farmId) {
-      await mobileRef.delete();
-    }
-  }
+        // Delete top-level records first. This way an error here cannot
+        // happen after the farm itself has already disappeared.
+        const paymentsSnap = await db.collection('subscriptionPayments')
+            .where('farmId', '==', farmId)
+            .get();
 
-  // Subscription payment history is a separate top-level collection, so
-  // it is not included in recursiveDelete(farmRef). Remove only records
-  // belonging to this farm.
-  const paymentsSnap = await db.collection('subscriptionPayments')
-      .where('farmId', '==', farmId)
-      .get();
+        if (!paymentsSnap.empty) {
+          const batch = db.batch();
+          for (const payment of paymentsSnap.docs) {
+            batch.delete(payment.ref);
+          }
+          await batch.commit();
+        }
 
-  if (!paymentsSnap.empty) {
-    const batch = db.batch();
-    for (const payment of paymentsSnap.docs) {
-      batch.delete(payment.ref);
-    }
-    await batch.commit();
-  }
+        // Remove the mobile lookup only when it points to this farm.
+        if (mobileNumber) {
+          const mobileRef = db.collection('mobileIndex').doc(mobileNumber);
+          const mobileSnap = await mobileRef.get();
+          if (mobileSnap.exists && mobileSnap.data()?.farmId === farmId) {
+            await mobileRef.delete();
+          }
+        }
 
-  logger.info('Farm ' + farmId + ' deleted by admin ' + uid + '.');
-  return {success: true, farmId};
-});
+        // Firestore Admin SDK recursiveDelete removes the farm document
+        // and all documents in its nested subcollections.
+        await db.recursiveDelete(farmRef);
 
+        logger.info('Farm deleted successfully', {
+          farmId,
+          adminUid: uid,
+        });
+
+        return {
+          success: true,
+          farmId,
+        };
+      } catch (error) {
+        // Preserve intentional Firebase callable errors.
+        if (error instanceof HttpsError) {
+          throw error;
+        }
+
+        logger.error('deleteFarm failed', {
+          adminUid: uid,
+          farmId: request.data?.farmId || null,
+          error: error?.message || String(error),
+          stack: error?.stack || null,
+        });
+
+        // Never let an unexpected exception become the unhelpful generic
+        // "internal" message in the admin website.
+        throw new HttpsError(
+            'internal',
+            'Farm deletion failed: ' +
+              (error?.message || 'Unknown server error.'),
+        );
+      }
+    },
+);
 // ---------------------------------------------------------------------
 // 3. Owner-only notification delete
 //
