@@ -305,6 +305,8 @@ exports.deleteFarm = onCall(
     },
     async (request) => {
       const uid = request.auth?.uid;
+      const farmId = String(request.data?.farmId || '').trim();
+
       if (!uid) {
         throw new HttpsError(
             'unauthenticated',
@@ -312,9 +314,17 @@ exports.deleteFarm = onCall(
         );
       }
 
+      if (!farmId) {
+        throw new HttpsError(
+            'invalid-argument',
+            'Farm ID is required.',
+        );
+      }
+
+      let stage = 'ADMIN_CHECK';
+
       try {
-        // The admin website already uses the same admins/{uid} document
-        // as its login guard, so use that same source of truth here.
+        // Keep the same authorization source used by the admin website.
         const adminSnap = await db.collection('admins').doc(uid).get();
         if (!adminSnap.exists) {
           throw new HttpsError(
@@ -323,13 +333,7 @@ exports.deleteFarm = onCall(
           );
         }
 
-        const farmId = String(request.data?.farmId || '').trim();
-        if (!farmId) {
-          throw new HttpsError(
-              'invalid-argument',
-              'Farm ID is required.',
-          );
-        }
+        stage = 'FARM_LOOKUP';
 
         const farmRef = db.collection('farms').doc(farmId);
         const farmSnap = await farmRef.get();
@@ -342,33 +346,48 @@ exports.deleteFarm = onCall(
         }
 
         const farmData = farmSnap.data() || {};
-        const mobileNumber = String(farmData.mobileNumber || '').trim();
+        const mobileNumber = String(
+            farmData.mobileNumber ??
+            farmData.ownerMobile ??
+            farmData.phone ??
+            '',
+        ).trim();
 
-        // Delete top-level records first. This way an error here cannot
-        // happen after the farm itself has already disappeared.
+        stage = 'PAYMENT_CLEANUP';
+
         const paymentsSnap = await db.collection('subscriptionPayments')
             .where('farmId', '==', farmId)
             .get();
 
         if (!paymentsSnap.empty) {
-          const batch = db.batch();
-          for (const payment of paymentsSnap.docs) {
-            batch.delete(payment.ref);
+          // Use small batches so a large payment history cannot exceed
+          // Firestore's 500-write batch limit.
+          for (let i = 0; i < paymentsSnap.docs.length; i += 450) {
+            const batch = db.batch();
+            const chunk = paymentsSnap.docs.slice(i, i + 450);
+            for (const payment of chunk) {
+              batch.delete(payment.ref);
+            }
+            await batch.commit();
           }
-          await batch.commit();
         }
 
-        // Remove the mobile lookup only when it points to this farm.
+        stage = 'MOBILE_INDEX_CLEANUP';
+
         if (mobileNumber) {
           const mobileRef = db.collection('mobileIndex').doc(mobileNumber);
           const mobileSnap = await mobileRef.get();
-          if (mobileSnap.exists && mobileSnap.data()?.farmId === farmId) {
+
+          if (mobileSnap.exists &&
+              mobileSnap.data()?.farmId === farmId) {
             await mobileRef.delete();
           }
         }
 
-        // Firestore Admin SDK recursiveDelete removes the farm document
-        // and all documents in its nested subcollections.
+        stage = 'FARM_RECURSIVE_DELETE';
+
+        // Admin SDK bypasses Firestore client rules here.
+        // This removes the farm document and nested subcollections.
         await db.recursiveDelete(farmRef);
 
         logger.info('Farm deleted successfully', {
@@ -381,23 +400,21 @@ exports.deleteFarm = onCall(
           farmId,
         };
       } catch (error) {
-        // Preserve intentional Firebase callable errors.
         if (error instanceof HttpsError) {
           throw error;
         }
 
         logger.error('deleteFarm failed', {
+          stage,
+          farmId,
           adminUid: uid,
-          farmId: request.data?.farmId || null,
           error: error?.message || String(error),
           stack: error?.stack || null,
         });
 
-        // Never let an unexpected exception become the unhelpful generic
-        // "internal" message in the admin website.
         throw new HttpsError(
             'internal',
-            'Farm deletion failed: ' +
+            `Farm deletion failed at ${stage}: ` +
               (error?.message || 'Unknown server error.'),
         );
       }
