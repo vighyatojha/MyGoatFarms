@@ -147,7 +147,9 @@ class _AppBootstrapState extends State<_AppBootstrap> {
 
       if (farm == null) return '/home'; // let MainShell's own "not linked" state handle it
 
-      if (farm.status == 'Pending' || farm.status == 'Rejected') {
+      if (farm.status == 'Pending' ||
+          farm.status == 'Rejected' ||
+          farm.status == 'Blocked') {
         return '/pending-approval';
       }
 
