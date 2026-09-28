@@ -547,8 +547,8 @@ class _TradingDashboardScreenState extends State<TradingDashboardScreen> {
         _pair(
           _ActionTile(
             icon: Icons.shopping_cart_outlined,
-            title: 'Purchase Goats',
-            subtitle: 'Wholesale & direct stock',
+            title: 'Purchase Lot',
+            subtitle: 'Buy a lot from a supplier',
             color: AppColors.primaryGreen,
             onTap: () => _push(const PurchaseGoatsWizardScreen()),
           ),

@@ -7,25 +7,30 @@ import '../../../widgets/fast_route.dart';
 import '../steps/step1_seller_details.dart';
 import '../steps/step2_purchase_details.dart';
 import '../steps/step3_receiving_transport.dart';
+import '../steps/step_lot_payment.dart';
 import '../steps/step4_summary.dart';
-import 'purchase_success_screen.dart';
-import 'purchase_wizard_widgets.dart';
+import '../purchase_goats/purchase_wizard_widgets.dart';
 
-/// Purchase Goats wizard.
+/// Purchase Lot wizard.
+///
+/// A purchase is a LOT: goats stay anonymous inside it (no goat IDs are
+/// created here).
 ///
 /// Flow:
-/// Step 1  -> Seller Details
-/// Step 2  -> Purchase Details
-///          -> popup: Fill Receiving Details Now / Save now, receive later
+/// Step 1  -> Supplier Details (+ optional Expected Delivery Date)
+/// Step 2  -> Lot Details
+/// Step 3  -> Supplier Payment (paid now: 0 .. full)
+///          -> popup: Goats received now / Still at supplier
 ///
-/// Receiving now:
-/// Step 3  -> Receiving + Transport (live cost after mortality/arrival)
-/// Step 4  -> Summary -> Save
+/// Received now:
+/// Step 4  -> Receiving + Transport (live cost after mortality/arrival)
+/// Step 5  -> Summary -> Save
 ///
-/// Receiving later:
-/// Step 3 is skipped (the progress bar drops to 3 steps so it never says
-/// "Step 4 of 4" after only three screens) -> Summary -> Save
-///          -> Pending Receiving appears on the Trading Dashboard.
+/// Still at supplier:
+/// Step 4 is skipped (the progress bar drops to 4 steps so it never says
+/// "Step 5 of 5" after only four screens) -> Summary -> Save
+///          -> the lot starts At Supplier; it can be sold from, and
+///             received later (in one go or in batches).
 class PurchaseGoatsWizardScreen extends StatefulWidget {
   const PurchaseGoatsWizardScreen({super.key});
 
@@ -38,13 +43,15 @@ class _PurchaseGoatsWizardScreenState
     extends State<PurchaseGoatsWizardScreen> {
   static const int _sellerPage = 0;
   static const int _purchasePage = 1;
-  static const int _receivingPage = 2;
-  static const int _summaryPage = 3;
+  static const int _paymentPage = 2;
+  static const int _receivingPage = 3;
+  static const int _summaryPage = 4;
 
   final PageController _pageController = PageController();
 
   final GlobalKey<FormState> _sellerFormKey = GlobalKey<FormState>();
   final GlobalKey<FormState> _purchaseFormKey = GlobalKey<FormState>();
+  final GlobalKey<FormState> _paymentFormKey = GlobalKey<FormState>();
   final GlobalKey<FormState> _receivingFormKey = GlobalKey<FormState>();
   final GlobalKey<Step4SummaryState> _summaryKey =
   GlobalKey<Step4SummaryState>();
@@ -62,8 +69,9 @@ class _PurchaseGoatsWizardScreenState
   bool _receivingSkipped = false;
 
   static const Map<int, String> _stepLabels = {
-    _sellerPage: 'Seller',
-    _purchasePage: 'Purchase',
+    _sellerPage: 'Supplier',
+    _purchasePage: 'Lot',
+    _paymentPage: 'Payment',
     _receivingPage: 'Receiving',
     _summaryPage: 'Summary',
   };
@@ -81,8 +89,14 @@ class _PurchaseGoatsWizardScreenState
 
   /// The pages the person will actually visit.
   List<int> get _flow => _receivingSkipped
-      ? const [_sellerPage, _purchasePage, _summaryPage]
-      : const [_sellerPage, _purchasePage, _receivingPage, _summaryPage];
+      ? const [_sellerPage, _purchasePage, _paymentPage, _summaryPage]
+      : const [
+    _sellerPage,
+    _purchasePage,
+    _paymentPage,
+    _receivingPage,
+    _summaryPage,
+  ];
 
   int get _flowPosition {
     final index = _flow.indexOf(_currentStep);
@@ -93,15 +107,17 @@ class _PurchaseGoatsWizardScreenState
   String get _stepTitle {
     switch (_currentStep) {
       case _sellerPage:
-        return 'Seller Details';
+        return 'Supplier Details';
       case _purchasePage:
-        return 'Purchase Details';
+        return 'Lot Details';
+      case _paymentPage:
+        return 'Supplier Payment';
       case _receivingPage:
         return 'Receiving & Transport';
       case _summaryPage:
-        return 'Purchase Summary';
+        return 'Lot Summary';
       default:
-        return 'Purchase Goats';
+        return 'Purchase Lot';
     }
   }
 
@@ -123,6 +139,12 @@ class _PurchaseGoatsWizardScreenState
 
       case _purchasePage:
         if (!(_purchaseFormKey.currentState?.validate() ?? false)) return;
+
+        await _goToStep(_paymentPage);
+        return;
+
+      case _paymentPage:
+        if (!(_paymentFormKey.currentState?.validate() ?? false)) return;
 
         await _showReceivingChoice();
         return;
@@ -182,28 +204,29 @@ class _PurchaseGoatsWizardScreenState
               ),
               const SizedBox(height: 6),
               Text(
-                'Receiving details give you the true cost per KG after '
-                    'transport, mortality and weight loss.',
+                'If they are still with the supplier, the lot starts '
+                    'At Supplier and you can sell from it or receive it '
+                    'later.',
                 textAlign: TextAlign.center,
                 style: AppTheme.body(size: 12),
               ),
               const SizedBox(height: 20),
               _ChoiceTile(
                 icon: Icons.edit_note_rounded,
-                title: 'Fill receiving details now',
+                title: 'Goats have arrived — enter details',
                 subtitle:
                 'Arrival weight, mortality and transport costs. '
-                    'Cost per KG is calculated straight away.',
+                    'The whole lot is marked At Farm.',
                 highlighted: true,
                 onTap: () => Navigator.of(sheetContext).pop(true),
               ),
               const SizedBox(height: 10),
               _ChoiceTile(
                 icon: Icons.schedule_outlined,
-                title: 'Save now, receive later',
+                title: 'Still at supplier',
                 subtitle:
-                'Saves the purchase immediately. It waits under '
-                    'Pending Receiving until the goats arrive.',
+                'Saves the lot as At Supplier. Receive it later from '
+                    'Lot Detail, all at once or in batches.',
                 onTap: () => Navigator.of(sheetContext).pop(false),
               ),
               const SizedBox(height: 6),
@@ -224,7 +247,7 @@ class _PurchaseGoatsWizardScreenState
       },
     );
 
-    // Dismissed without choosing: stay on Step 2 and change nothing.
+    // Dismissed without choosing: stay on the Payment step, change nothing.
     if (!mounted || result == null) return;
 
     if (result) {
@@ -300,7 +323,7 @@ class _PurchaseGoatsWizardScreenState
     }
 
     if (_currentStep == _summaryPage) {
-      await _goToStep(_receivingSkipped ? _purchasePage : _receivingPage);
+      await _goToStep(_receivingSkipped ? _paymentPage : _receivingPage);
       return;
     }
 
@@ -317,7 +340,7 @@ class _PurchaseGoatsWizardScreenState
     if (_draft.hasAnyData) {
       final discard = await showWizardConfirm(
         context: context,
-        title: 'Discard this purchase?',
+        title: 'Discard this lot?',
         message:
         'Nothing has been saved yet. If you leave now, everything '
             'you entered will be lost.',
@@ -337,15 +360,12 @@ class _PurchaseGoatsWizardScreenState
   // SAVED
   // ===========================================================================
 
-  void _onSaved(TradingPurchase purchase) {
+  void _onSaved(TradingPurchase lot) {
     if (!mounted) return;
 
     Navigator.of(context).pushReplacement(
       fastRoute(
-        PurchaseSuccessScreen(
-          purchaseId: purchase.id,
-          receivingPending: purchase.receivingStatus != 'completed',
-        ),
+        PurchaseSuccessScreen(lot: lot),
       ),
     );
   }
@@ -365,6 +385,12 @@ class _PurchaseGoatsWizardScreenState
       case _purchasePage:
         return Step2PurchaseDetails(
           formKey: _purchaseFormKey,
+          draft: _draft,
+        );
+
+      case _paymentPage:
+        return StepLotPayment(
+          formKey: _paymentFormKey,
           draft: _draft,
         );
 
@@ -423,7 +449,7 @@ class _PurchaseGoatsWizardScreenState
             },
           ),
           title: Text(
-            'Purchase Goats',
+            'Purchase Lot',
             style: AppTheme.heading(size: 19),
           ),
         ),
@@ -459,7 +485,7 @@ class _PurchaseGoatsWizardScreenState
                 child: PageView.builder(
                   controller: _pageController,
                   physics: const NeverScrollableScrollPhysics(),
-                  itemCount: 4,
+                  itemCount: 5,
                   itemBuilder: (context, index) => _buildPage(index),
                 ),
               ),
@@ -578,7 +604,7 @@ class _PurchaseGoatsWizardScreenState
           const Icon(Icons.save_rounded, size: 20),
         const SizedBox(width: 8),
         Text(
-          saving ? 'Saving…' : 'Save Purchase',
+          saving ? 'Saving…' : 'Save Lot',
           style: const TextStyle(
             fontWeight: FontWeight.w700,
             fontSize: 14,

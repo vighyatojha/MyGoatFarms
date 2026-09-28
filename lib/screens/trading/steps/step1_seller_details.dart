@@ -1,192 +1,258 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 
-import '../../../models/trading_purchase_draft.dart';
+import '../../../app_theme.dart';
+import '../../../models/trading_purchase_model.dart';
 import '../purchase_goats/purchase_wizard_widgets.dart';
 
-/// Step 1 — Seller Details.
+/// Shown after a Purchase Lot is saved.
 ///
-/// Captures the wholesale seller information before the goat purchase
-/// details are entered.
-///
-/// Required:
-/// - Seller Name
-/// - Mobile Number
-/// - Purchase Date
-///
-/// Optional:
-/// - Market / Location
-/// - Vehicle Number
-class Step1SellerDetails extends StatefulWidget {
-  final GlobalKey<FormState> formKey;
-  final PurchaseDraft draft;
+/// Shows the LOT-#### id, where the goats are (At Supplier / At Farm) and
+/// the supplier payment status. There is deliberately no "register goats"
+/// action: goats stay anonymous inside the lot and are only registered
+/// when transferred to a Palai.
+class PurchaseSuccessScreen extends StatelessWidget {
+  final TradingPurchase lot;
 
-  const Step1SellerDetails({
+  const PurchaseSuccessScreen({
     super.key,
-    required this.formKey,
-    required this.draft,
+    required this.lot,
   });
 
   @override
-  State<Step1SellerDetails> createState() => _Step1SellerDetailsState();
-}
-
-class _Step1SellerDetailsState extends State<Step1SellerDetails> {
-  late final TextEditingController _sellerNameController;
-  late final TextEditingController _mobileController;
-  late final TextEditingController _marketController;
-  late final TextEditingController _vehicleController;
-
-  DateTime get _today {
-    final now = DateTime.now();
-    return DateTime(now.year, now.month, now.day);
-  }
-
-  @override
-  void initState() {
-    super.initState();
-
-    final draft = widget.draft;
-
-    _sellerNameController = TextEditingController(text: draft.sellerName);
-    _mobileController = TextEditingController(text: draft.mobile);
-    _marketController = TextEditingController(text: draft.market);
-    _vehicleController = TextEditingController(text: draft.vehicleNumber);
-  }
-
-  @override
-  void dispose() {
-    _sellerNameController.dispose();
-    _mobileController.dispose();
-    _marketController.dispose();
-    _vehicleController.dispose();
-    super.dispose();
-  }
-
-  Future<void> _pickPurchaseDate() async {
-    // A purchase is something that already happened, so today is the latest
-    // date allowed (this used to allow tomorrow).
-    final picked = await showWizardDatePicker(
-      context: context,
-      initialDate: widget.draft.purchaseDate,
-      firstDate: DateTime(2020),
-      lastDate: _today,
-      helpText: 'Purchase date',
-    );
-
-    if (picked == null || !mounted) return;
-
-    setState(() {
-      widget.draft.purchaseDate = picked;
-    });
-  }
-
-  @override
   Widget build(BuildContext context) {
-    final draft = widget.draft;
+    final theme = Theme.of(context);
 
-    return Form(
-      key: widget.formKey,
-      child: ListView(
-        keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
-        padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
-        children: [
-          WizardSectionCard(
-            title: 'Seller Details',
-            icon: Icons.person_outline_rounded,
+    final atSupplier = lot.location == LotLocation.atSupplier;
+
+    final Color statusColor;
+    switch (lot.paymentStatus) {
+      case 'Paid':
+        statusColor = AppColors.success;
+        break;
+      case 'Partial':
+        statusColor = const Color(0xFFB26A00);
+        break;
+      default:
+        statusColor = AppColors.error;
+    }
+
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Lot Saved'),
+        automaticallyImplyLeading: false,
+      ),
+      body: SafeArea(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.fromLTRB(20, 32, 20, 32),
+          child: Column(
             children: [
-              wizardField(
-                controller: _sellerNameController,
-                label: 'Seller Name',
-                hint: 'e.g. Ramesh Traders',
-                icon: Icons.badge_outlined,
-                textCapitalization: TextCapitalization.words,
-                onChanged: (value) {
-                  draft.sellerName = value;
-                },
-                validator: (value) {
-                  final v = value?.trim() ?? '';
+              const SizedBox(height: 20),
 
-                  if (v.isEmpty) return 'Enter seller name';
-                  if (v.length < 2) return 'Name is too short';
-
-                  return null;
-                },
+              Container(
+                width: 92,
+                height: 92,
+                decoration: BoxDecoration(
+                  color: AppColors.primaryGreen.withOpacity(0.12),
+                  shape: BoxShape.circle,
+                ),
+                child: const Icon(
+                  Icons.check_circle_rounded,
+                  size: 64,
+                  color: AppColors.primaryGreen,
+                ),
               ),
 
-              const SizedBox(height: 14),
+              const SizedBox(height: 24),
 
-              wizardField(
-                controller: _mobileController,
-                label: 'Mobile Number',
-                hint: '10-digit mobile number',
-                icon: Icons.phone_outlined,
-                keyboardType: TextInputType.phone,
-                inputFormatters: [
-                  FilteringTextInputFormatter.digitsOnly,
-                  LengthLimitingTextInputFormatter(10),
-                ],
-                onChanged: (value) {
-                  draft.mobile = value;
-                },
-                validator: (value) {
-                  final v = value?.trim() ?? '';
-
-                  if (v.isEmpty) return 'Enter mobile number';
-
-                  if (!RegExp(r'^[0-9]{10}$').hasMatch(v)) {
-                    return 'Enter a valid 10-digit number';
-                  }
-
-                  return null;
-                },
+              Text(
+                'Purchase Lot Created',
+                textAlign: TextAlign.center,
+                style: theme.textTheme.headlineSmall?.copyWith(
+                  fontWeight: FontWeight.w800,
+                ),
               ),
 
-              const SizedBox(height: 14),
+              const SizedBox(height: 10),
 
-              wizardField(
-                controller: _marketController,
-                label: 'Market / Location',
-                hint: 'e.g. Bakrid Mandi, Pune',
-                icon: Icons.location_on_outlined,
-                optional: true,
-                textCapitalization: TextCapitalization.words,
-                onChanged: (value) {
-                  draft.market = value;
-                },
+              Text(
+                atSupplier
+                    ? '${lot.totalGoats} goats are with the supplier. You '
+                    'can sell from the lot now, or receive the goats when '
+                    'they arrive.'
+                    : '${lot.receivedAliveQty} goats are at the farm and '
+                    'ready to sell or transfer.',
+                textAlign: TextAlign.center,
+                style: theme.textTheme.bodyMedium?.copyWith(
+                  color: Colors.black54,
+                  height: 1.45,
+                ),
               ),
 
-              const SizedBox(height: 14),
+              const SizedBox(height: 28),
 
-              wizardField(
-                controller: _vehicleController,
-                label: 'Vehicle Number',
-                hint: 'e.g. MH12AB1234',
-                icon: Icons.local_shipping_outlined,
-                optional: true,
-                textCapitalization: TextCapitalization.characters,
-                textInputAction: TextInputAction.done,
-                inputFormatters: [
-                  // Vehicle numbers have no spaces or symbols worth keeping.
-                  FilteringTextInputFormatter.allow(
-                    RegExp(r'[A-Za-z0-9 -]'),
+              // Lot ID card
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(18),
+                decoration: BoxDecoration(
+                  color: AppColors.primaryGreen.withOpacity(0.06),
+                  borderRadius: BorderRadius.circular(18),
+                  border: Border.all(
+                    color: AppColors.primaryGreen.withOpacity(0.18),
                   ),
-                ],
-                onChanged: (value) {
-                  draft.vehicleNumber = value.toUpperCase();
-                },
+                ),
+                child: Column(
+                  children: [
+                    const Text(
+                      'Lot ID',
+                      style: TextStyle(fontSize: 12, color: Colors.black54),
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      lot.lotId,
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(
+                        fontSize: 22,
+                        fontWeight: FontWeight.w800,
+                        color: AppColors.primaryGreen,
+                        letterSpacing: 0.5,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      lot.sellerName,
+                      style: const TextStyle(
+                        fontSize: 12,
+                        color: Colors.black54,
+                      ),
+                    ),
+                  ],
+                ),
               ),
 
               const SizedBox(height: 14),
 
-              WizardDateField(
-                label: 'Purchase Date *',
-                date: draft.purchaseDate,
-                onTap: _pickPurchaseDate,
+              // Where the goats are + payment
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(16),
+                decoration: AppTheme.card(radius: 16),
+                child: Column(
+                  children: [
+                    WizardComputedRow(
+                      label: 'Goats in Lot',
+                      value: '${lot.totalGoats}',
+                    ),
+                    WizardComputedRow(
+                      label: 'Location',
+                      value: lot.location.label,
+                    ),
+                    if (lot.expectedDeliveryDate != null && atSupplier)
+                      WizardComputedRow(
+                        label: 'Expected Delivery',
+                        value: wizardDate(lot.expectedDeliveryDate!),
+                      ),
+                    const Divider(height: 18, color: AppColors.divider),
+                    WizardComputedRow(
+                      label: 'Purchase Amount',
+                      value: wizardCurrency(lot.purchaseAmount),
+                    ),
+                    WizardComputedRow(
+                      label: 'Paid to Supplier',
+                      value: wizardCurrency(lot.paidAmount),
+                    ),
+                    WizardComputedRow(
+                      label: 'Balance Due',
+                      value: wizardCurrency(lot.dueAmount),
+                      emphasize: true,
+                    ),
+                    Padding(
+                      padding: const EdgeInsets.only(top: 8),
+                      child: Row(
+                        children: [
+                          const Text(
+                            'Payment Status',
+                            style: TextStyle(
+                              fontSize: 13,
+                              color: Colors.black54,
+                            ),
+                          ),
+                          const Spacer(),
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 12,
+                              vertical: 5,
+                            ),
+                            decoration: BoxDecoration(
+                              color: statusColor.withOpacity(0.12),
+                              borderRadius: BorderRadius.circular(20),
+                            ),
+                            child: Text(
+                              lot.paymentStatus,
+                              style: TextStyle(
+                                fontSize: 12,
+                                fontWeight: FontWeight.w800,
+                                color: statusColor,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+
+              const SizedBox(height: 32),
+
+              SizedBox(
+                width: double.infinity,
+                height: 52,
+                child: ElevatedButton.icon(
+                  onPressed: () {
+                    Navigator.of(context).popUntil(
+                          (route) => route.isFirst,
+                    );
+                  },
+                  icon: const Icon(Icons.swap_horiz_rounded),
+                  label: const Text(
+                    'Go to Trading',
+                    style: TextStyle(fontWeight: FontWeight.w700),
+                  ),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: AppColors.primaryGreen,
+                    foregroundColor: Colors.white,
+                    elevation: 0,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(15),
+                    ),
+                  ),
+                ),
+              ),
+
+              const SizedBox(height: 12),
+
+              SizedBox(
+                width: double.infinity,
+                height: 50,
+                child: OutlinedButton(
+                  onPressed: () => Navigator.of(context).pop(),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: AppColors.primaryGreen,
+                    side: const BorderSide(color: AppColors.primaryGreen),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(15),
+                    ),
+                  ),
+                  child: const Text(
+                    'Close',
+                    style: TextStyle(fontWeight: FontWeight.w700),
+                  ),
+                ),
               ),
             ],
           ),
-        ],
+        ),
       ),
     );
   }

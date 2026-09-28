@@ -10,7 +10,7 @@ import '../../../services/firestore_service.dart';
 import '../../../services/trading_service.dart';
 import '../purchase_goats/purchase_wizard_widgets.dart';
 
-/// Step 4 — Purchase Summary.
+/// Step 5 — Lot Summary.
 ///
 /// Final review before saving, laid out the way the Trading flow PDF asks:
 ///
@@ -18,6 +18,8 @@ import '../purchase_goats/purchase_wizard_widgets.dart';
 ///                      weight loss, mortality
 ///   Cost Summary    -> purchase amount, each expense, total expenses,
 ///                      grand total, effective cost per KG after arrival
+///
+/// The supplier payment made now (and what is still owed) is shown too.
 ///
 /// Receiving can be completed now or left pending. When it is pending the
 /// summary is built from [PurchaseDraft.finalCosting], which ignores anything
@@ -91,6 +93,14 @@ class Step4SummaryState extends State<Step4Summary> {
         return;
       }
 
+      if (!draft.paymentIsValid) {
+        _message(
+          'Please go back and check the payment amount.',
+          error: true,
+        );
+        return;
+      }
+
       // Make sure the payment method is strictly Cash or Online.
       draft.setPaymentMethod(draft.paymentMethod);
 
@@ -117,8 +127,14 @@ class Step4SummaryState extends State<Step4Summary> {
         maleGoats: draft.maleGoats,
         femaleGoats: draft.femaleGoats,
 
-        // Payment
+        // Supplier payment made now (0 = nothing paid yet). Further
+        // payments are added from Lot Detail.
         paymentMethod: draft.paymentMethod,
+        advanceAmount: draft.paidNow,
+        advanceMethod: draft.paymentMethod,
+        advanceDate: draft.purchaseDate,
+        advanceNote: draft.paymentNote,
+        expectedDeliveryDate: draft.expectedDeliveryDate,
 
         // Receiving
         receivingStatus: receivingStatus,
@@ -184,7 +200,7 @@ class Step4SummaryState extends State<Step4Summary> {
         // =====================================================================
 
         WizardSectionCard(
-          title: 'Seller & Purchase',
+          title: 'Supplier & Lot',
           icon: Icons.receipt_long_outlined,
           children: [
             WizardComputedRow(
@@ -209,10 +225,11 @@ class Step4SummaryState extends State<Step4Summary> {
               label: 'Purchase Date',
               value: wizardDate(draft.purchaseDate),
             ),
-            WizardComputedRow(
-              label: 'Payment Method',
-              value: draft.paymentMethod,
-            ),
+            if (draft.expectedDeliveryDate != null)
+              WizardComputedRow(
+                label: 'Expected Delivery',
+                value: wizardDate(draft.expectedDeliveryDate!),
+              ),
           ],
         ),
 
@@ -264,7 +281,7 @@ class Step4SummaryState extends State<Step4Summary> {
               ),
               const Divider(height: 18, color: AppColors.divider),
               WizardComputedRow(
-                label: 'Goats to Register',
+                label: 'Goats at Farm',
                 value: '${c.survivingGoats}',
                 emphasize: true,
               ),
@@ -361,6 +378,51 @@ class Step4SummaryState extends State<Step4Summary> {
           ],
         ),
 
+        const SizedBox(height: 14),
+
+        // =====================================================================
+        // SUPPLIER PAYMENT
+        // =====================================================================
+
+        WizardSectionCard(
+          title: 'Supplier Payment',
+          icon: Icons.payments_outlined,
+          children: [
+            WizardComputedRow(
+              label: 'Amount Payable\n(goat cost only)',
+              value: wizardCurrency(draft.purchaseAmount),
+            ),
+            WizardComputedRow(
+              label: draft.paidNow > 0
+                  ? 'Paid Now (${draft.paymentMethod})'
+                  : 'Paid Now',
+              value: wizardCurrency(draft.paidNow),
+            ),
+            const Divider(height: 18, color: AppColors.divider),
+            WizardComputedRow(
+              label: 'Remaining Balance',
+              value: wizardCurrency(draft.dueAfterPayment),
+              emphasize: true,
+            ),
+            WizardComputedRow(
+              label: 'Payment Status',
+              value: draft.paymentStatus,
+            ),
+            if (draft.paymentNote.trim().isNotEmpty)
+              WizardComputedRow(
+                label: 'Note',
+                value: draft.paymentNote.trim(),
+              ),
+            if (draft.paymentStatus != 'Paid') ...[
+              const SizedBox(height: 6),
+              const WizardNote(
+                'The balance stays with the lot. Add more payments any '
+                    'time from Lot Detail.',
+              ),
+            ],
+          ],
+        ),
+
         if (!completed) ...[
           const SizedBox(height: 14),
           _pendingInformationCard(),
@@ -409,17 +471,17 @@ class Step4SummaryState extends State<Step4Summary> {
               children: [
                 Text(
                   completed
-                      ? 'Receiving Details Filled'
-                      : 'Receiving Details Pending',
+                      ? 'Goats Received at Farm'
+                      : 'Lot Stays At Supplier',
                   style: AppTheme.heading(size: 14, color: foreground),
                 ),
                 const SizedBox(height: 4),
                 Text(
                   completed
                       ? 'Arrival weight, mortality and transport costs are '
-                      'saved with this purchase.'
-                      : 'The purchase will be saved now. Complete the '
-                      'receiving details later from the Trading Dashboard.',
+                      'saved with this lot.'
+                      : 'The lot will be saved as At Supplier. Receive it '
+                      'later from Lot Detail — in one go or in batches.',
                   style: AppTheme.body(size: 11),
                 ),
               ],
@@ -449,10 +511,12 @@ class Step4SummaryState extends State<Step4Summary> {
           const SizedBox(width: 10),
           Expanded(
             child: Text(
-              'This purchase will appear under Pending Receiving on the '
-                  'Trading Dashboard. Transport costs, mortality and the '
-                  'effective cost per KG are worked out when you complete '
-                  'receiving. Goats can be registered after that.',
+              'This lot starts At Supplier. You can sell goats from it '
+                  'straight away, and receive the rest when they arrive. '
+                  'Transport costs, mortality and the effective cost per KG '
+                  'are worked out as goats are received. Individual goats '
+                  'are only registered when they are transferred to a '
+                  'Palai.',
               style: AppTheme.body(size: 11),
             ),
           ),

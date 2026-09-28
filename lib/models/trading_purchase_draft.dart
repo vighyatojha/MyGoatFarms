@@ -1,6 +1,6 @@
 import 'purchase_costing.dart';
 
-/// Shared in-memory state for the Purchase Goats wizard.
+/// Shared in-memory state for the Purchase Lot wizard.
 ///
 /// One PurchaseDraft instance is created when the wizard opens and is
 /// passed through all wizard steps.
@@ -20,8 +20,11 @@ class PurchaseDraft {
   String vehicleNumber = '';
   DateTime purchaseDate = DateTime.now();
 
+  /// When the supplier is expected to deliver the lot. Optional.
+  DateTime? expectedDeliveryDate;
+
   // ---------------------------------------------------------------------------
-  // STEP 2 — PURCHASE DETAILS
+  // STEP 2 — LOT DETAILS
   // ---------------------------------------------------------------------------
 
   /// Breed has intentionally been removed from the Trading purchase flow.
@@ -38,9 +41,44 @@ class PurchaseDraft {
   int maleGoats = 0;
   int femaleGoats = 0;
 
+  // ---------------------------------------------------------------------------
+  // STEP 3 — PAYMENT (supplier)
+  // ---------------------------------------------------------------------------
+
   /// Trading purchase payment methods are intentionally limited to:
-  /// Cash / Online.
+  /// Cash / Online. This is the method of the payment made NOW; later
+  /// payments choose their own method from Lot Detail.
   String paymentMethod = 'Cash';
+
+  /// Paid to the supplier right now. 0 is allowed (nothing paid yet).
+  double paidNow = 0;
+
+  /// False until the person has actually typed an amount on the Payment
+  /// step, so "0" is always a deliberate choice and never a forgotten
+  /// field. The wizard will not move on until this is true.
+  bool paidNowEntered = false;
+
+  String paymentNote = '';
+
+  /// Amount still owed to the supplier after [paidNow].
+  double get dueAfterPayment {
+    final due = PurchaseCosting.round2(purchaseAmount - paidNow);
+    return due < 0 ? 0 : due;
+  }
+
+  /// Unpaid / Partial / Paid — derived from [paidNow], never typed in.
+  /// Same rule as TradingPurchase.paymentStatus.
+  String get paymentStatus {
+    if (paidNow <= 0) return 'Unpaid';
+    if (dueAfterPayment < 0.01) return 'Paid';
+    return 'Partial';
+  }
+
+  /// True when the amount typed can legally be saved.
+  bool get paymentIsValid =>
+      paidNowEntered &&
+          paidNow >= 0 &&
+          paidNow <= purchaseAmount + 0.005;
 
   // ---------------------------------------------------------------------------
   // RECEIVING FLOW
@@ -59,7 +97,7 @@ class PurchaseDraft {
   String receivingStatus = 'pending';
 
   // ---------------------------------------------------------------------------
-  // STEP 3 — RECEIVING & TRANSPORT
+  // STEP 4 — RECEIVING & TRANSPORT (optional)
   // ---------------------------------------------------------------------------
 
   DateTime dateReceivedAtFarm = DateTime.now();
@@ -157,6 +195,8 @@ class PurchaseDraft {
           pricePerKg > 0 ||
           maleGoats > 0 ||
           femaleGoats > 0 ||
+          paidNow > 0 ||
+          expectedDeliveryDate != null ||
           totalWeightAfterArrival > 0 ||
           mortality > 0 ||
           transportCost > 0 ||

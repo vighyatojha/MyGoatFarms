@@ -1,25 +1,44 @@
 import 'package:flutter/material.dart';
 
 import '../../../app_theme.dart';
+import '../../../models/trading_purchase_model.dart';
+import 'purchase_wizard_widgets.dart';
 
-
+/// Shown after a Purchase Lot is saved.
+///
+/// Shows the LOT-#### id, where the goats are (At Supplier / At Farm) and
+/// the supplier payment status. There is deliberately no "register goats"
+/// action: goats stay anonymous inside the lot and are only registered
+/// when transferred to a Palai.
 class PurchaseSuccessScreen extends StatelessWidget {
-  final String purchaseId;
-  final bool receivingPending;
+  final TradingPurchase lot;
 
   const PurchaseSuccessScreen({
     super.key,
-    required this.purchaseId,
-    this.receivingPending = false,
+    required this.lot,
   });
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
 
+    final atSupplier = lot.location == LotLocation.atSupplier;
+
+    final Color statusColor;
+    switch (lot.paymentStatus) {
+      case 'Paid':
+        statusColor = AppColors.success;
+        break;
+      case 'Partial':
+        statusColor = const Color(0xFFB26A00);
+        break;
+      default:
+        statusColor = AppColors.error;
+    }
+
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Purchase Saved'),
+        title: const Text('Lot Saved'),
         automaticallyImplyLeading: false,
       ),
       body: SafeArea(
@@ -29,7 +48,6 @@ class PurchaseSuccessScreen extends StatelessWidget {
             children: [
               const SizedBox(height: 20),
 
-              // Success icon
               Container(
                 width: 92,
                 height: 92,
@@ -47,9 +65,7 @@ class PurchaseSuccessScreen extends StatelessWidget {
               const SizedBox(height: 24),
 
               Text(
-                receivingPending
-                    ? 'Purchase Saved'
-                    : 'Purchase Completed',
+                'Purchase Lot Created',
                 textAlign: TextAlign.center,
                 style: theme.textTheme.headlineSmall?.copyWith(
                   fontWeight: FontWeight.w800,
@@ -59,9 +75,12 @@ class PurchaseSuccessScreen extends StatelessWidget {
               const SizedBox(height: 10),
 
               Text(
-                receivingPending
-                    ? 'The purchase has been saved successfully. Receiving details are still pending.'
-                    : 'The goat purchase and receiving details have been saved successfully.',
+                atSupplier
+                    ? '${lot.totalGoats} goats are with the supplier. You '
+                    'can sell from the lot now, or receive the goats when '
+                    'they arrive.'
+                    : '${lot.receivedAliveQty} goats are at the farm and '
+                    'ready to sell or transfer.',
                 textAlign: TextAlign.center,
                 style: theme.textTheme.bodyMedium?.copyWith(
                   color: Colors.black54,
@@ -71,7 +90,7 @@ class PurchaseSuccessScreen extends StatelessWidget {
 
               const SizedBox(height: 28),
 
-              // Purchase ID card
+              // Lot ID card
               Container(
                 width: double.infinity,
                 padding: const EdgeInsets.all(18),
@@ -85,67 +104,107 @@ class PurchaseSuccessScreen extends StatelessWidget {
                 child: Column(
                   children: [
                     const Text(
-                      'Purchase ID',
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: Colors.black54,
-                      ),
+                      'Lot ID',
+                      style: TextStyle(fontSize: 12, color: Colors.black54),
                     ),
                     const SizedBox(height: 6),
                     Text(
-                      purchaseId,
+                      lot.lotId,
                       textAlign: TextAlign.center,
                       style: const TextStyle(
-                        fontSize: 20,
+                        fontSize: 22,
                         fontWeight: FontWeight.w800,
                         color: AppColors.primaryGreen,
                         letterSpacing: 0.5,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      lot.sellerName,
+                      style: const TextStyle(
+                        fontSize: 12,
+                        color: Colors.black54,
                       ),
                     ),
                   ],
                 ),
               ),
 
-              if (receivingPending) ...[
-                const SizedBox(height: 16),
+              const SizedBox(height: 14),
 
-                Container(
-                  width: double.infinity,
-                  padding: const EdgeInsets.all(16),
-                  decoration: BoxDecoration(
-                    color: Colors.orange.withOpacity(0.08),
-                    borderRadius: BorderRadius.circular(16),
-                    border: Border.all(
-                      color: Colors.orange.withOpacity(0.20),
+              // Where the goats are + payment
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(16),
+                decoration: AppTheme.card(radius: 16),
+                child: Column(
+                  children: [
+                    WizardComputedRow(
+                      label: 'Goats in Lot',
+                      value: '${lot.totalGoats}',
                     ),
-                  ),
-                  child: const Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Icon(
-                        Icons.schedule_outlined,
-                        color: Colors.orange,
-                        size: 23,
+                    WizardComputedRow(
+                      label: 'Location',
+                      value: lot.location.label,
+                    ),
+                    if (lot.expectedDeliveryDate != null && atSupplier)
+                      WizardComputedRow(
+                        label: 'Expected Delivery',
+                        value: wizardDate(lot.expectedDeliveryDate!),
                       ),
-                      SizedBox(width: 12),
-                      Expanded(
-                        child: Text(
-                          'Receiving is pending. You can complete the receiving details later from the Trading dashboard.',
-                          style: TextStyle(
-                            fontSize: 13,
-                            height: 1.4,
-                            color: Colors.black87,
+                    const Divider(height: 18, color: AppColors.divider),
+                    WizardComputedRow(
+                      label: 'Purchase Amount',
+                      value: wizardCurrency(lot.purchaseAmount),
+                    ),
+                    WizardComputedRow(
+                      label: 'Paid to Supplier',
+                      value: wizardCurrency(lot.paidAmount),
+                    ),
+                    WizardComputedRow(
+                      label: 'Balance Due',
+                      value: wizardCurrency(lot.dueAmount),
+                      emphasize: true,
+                    ),
+                    Padding(
+                      padding: const EdgeInsets.only(top: 8),
+                      child: Row(
+                        children: [
+                          const Text(
+                            'Payment Status',
+                            style: TextStyle(
+                              fontSize: 13,
+                              color: Colors.black54,
+                            ),
                           ),
-                        ),
+                          const Spacer(),
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 12,
+                              vertical: 5,
+                            ),
+                            decoration: BoxDecoration(
+                              color: statusColor.withOpacity(0.12),
+                              borderRadius: BorderRadius.circular(20),
+                            ),
+                            child: Text(
+                              lot.paymentStatus,
+                              style: TextStyle(
+                                fontSize: 12,
+                                fontWeight: FontWeight.w800,
+                                color: statusColor,
+                              ),
+                            ),
+                          ),
+                        ],
                       ),
-                    ],
-                  ),
+                    ),
+                  ],
                 ),
-              ],
+              ),
 
               const SizedBox(height: 32),
 
-              // Go to Trading
               SizedBox(
                 width: double.infinity,
                 height: 52,
@@ -158,9 +217,7 @@ class PurchaseSuccessScreen extends StatelessWidget {
                   icon: const Icon(Icons.swap_horiz_rounded),
                   label: const Text(
                     'Go to Trading',
-                    style: TextStyle(
-                      fontWeight: FontWeight.w700,
-                    ),
+                    style: TextStyle(fontWeight: FontWeight.w700),
                   ),
                   style: ElevatedButton.styleFrom(
                     backgroundColor: AppColors.primaryGreen,
@@ -175,7 +232,6 @@ class PurchaseSuccessScreen extends StatelessWidget {
 
               const SizedBox(height: 12),
 
-              // Close
               SizedBox(
                 width: double.infinity,
                 height: 50,
@@ -183,18 +239,14 @@ class PurchaseSuccessScreen extends StatelessWidget {
                   onPressed: () => Navigator.of(context).pop(),
                   style: OutlinedButton.styleFrom(
                     foregroundColor: AppColors.primaryGreen,
-                    side: const BorderSide(
-                      color: AppColors.primaryGreen,
-                    ),
+                    side: const BorderSide(color: AppColors.primaryGreen),
                     shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(15),
                     ),
                   ),
                   child: const Text(
                     'Close',
-                    style: TextStyle(
-                      fontWeight: FontWeight.w700,
-                    ),
+                    style: TextStyle(fontWeight: FontWeight.w700),
                   ),
                 ),
               ),

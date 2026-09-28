@@ -1,20 +1,19 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
-import '../../../app_theme.dart';
 import '../../../goat_icons.dart';
 import '../../../models/purchase_costing.dart';
 import '../../../models/trading_purchase_draft.dart';
 import '../purchase_goats/purchase_wizard_widgets.dart';
 
-/// Step 2 — Purchase Details.
+/// Step 2 — Lot Details.
 ///
 /// Fields:
 /// - Total Goats
 /// - Male Goats / Female Goats (must add up to Total Goats)
 /// - Total Weight at Purchase
 /// - Price per KG
-/// - Payment Method: Cash / Online
+/// (Payment moved to its own step — see step_lot_payment.dart.)
 ///
 /// Breed has intentionally been removed from the Trading purchase flow.
 ///
@@ -137,12 +136,6 @@ class _Step2PurchaseDetailsState extends State<Step2PurchaseDetails> {
     return null;
   }
 
-  void _setPaymentMethod(String method) {
-    setState(() {
-      widget.draft.setPaymentMethod(method);
-    });
-  }
-
   @override
   Widget build(BuildContext context) {
     final draft = widget.draft;
@@ -155,7 +148,7 @@ class _Step2PurchaseDetailsState extends State<Step2PurchaseDetails> {
         padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
         children: [
           WizardSectionCard(
-            title: 'Purchase Details',
+            title: 'Lot Details',
             icon: Icons.shopping_cart_outlined,
             children: [
               wizardField(
@@ -344,44 +337,6 @@ class _Step2PurchaseDetailsState extends State<Step2PurchaseDetails> {
             ),
           ],
 
-          const SizedBox(height: 14),
-
-          // -------------------------------------------------------------
-          // PAYMENT METHOD
-          // -------------------------------------------------------------
-
-          WizardSectionCard(
-            title: 'Payment Method',
-            icon: Icons.payments_outlined,
-            children: [
-              Text(
-                'How is the seller being paid?',
-                style: AppTheme.body(size: 11),
-              ),
-              const SizedBox(height: 12),
-              Row(
-                children: [
-                  Expanded(
-                    child: _PaymentOption(
-                      title: 'Cash',
-                      icon: Icons.money_rounded,
-                      selected: draft.paymentMethod == 'Cash',
-                      onTap: () => _setPaymentMethod('Cash'),
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: _PaymentOption(
-                      title: 'Online',
-                      icon: Icons.account_balance_wallet_outlined,
-                      selected: draft.paymentMethod == 'Online',
-                      onTap: () => _setPaymentMethod('Online'),
-                    ),
-                  ),
-                ],
-              ),
-            ],
-          ),
         ],
       ),
     );
@@ -395,80 +350,5 @@ class _Step2PurchaseDetailsState extends State<Step2PurchaseDetails> {
     final avg = costing.avgWeightPerGoatAtPurchase;
 
     return avg < _minPlausibleKgPerGoat || avg > _maxPlausibleKgPerGoat;
-  }
-}
-
-// ============================================================================
-// PAYMENT OPTION
-// ============================================================================
-
-class _PaymentOption extends StatelessWidget {
-  final String title;
-  final IconData icon;
-  final bool selected;
-  final VoidCallback onTap;
-
-  const _PaymentOption({
-    required this.title,
-    required this.icon,
-    required this.selected,
-    required this.onTap,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Material(
-      color: Colors.transparent,
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(15),
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 160),
-          constraints: const BoxConstraints(minHeight: 58),
-          padding: const EdgeInsets.symmetric(
-            horizontal: 13,
-            vertical: 12,
-          ),
-          decoration: BoxDecoration(
-            color: selected ? AppColors.lightGreen : Colors.white,
-            borderRadius: BorderRadius.circular(15),
-            border: Border.all(
-              color: selected ? AppColors.primaryGreen : AppColors.divider,
-              width: selected ? 1.4 : 1,
-            ),
-          ),
-          child: Row(
-            children: [
-              Icon(
-                icon,
-                size: 21,
-                color:
-                selected ? AppColors.darkGreen : AppColors.textGrey,
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Text(
-                  title,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: AppTheme.heading(
-                    size: 13,
-                    color: selected
-                        ? AppColors.darkGreen
-                        : AppColors.textDark,
-                  ),
-                ),
-              ),
-              if (selected)
-                const Icon(
-                  Icons.check_circle_rounded,
-                  size: 19,
-                  color: AppColors.primaryGreen,
-                ),
-            ],
-          ),
-        ),
-      ),
-    );
   }
 }
