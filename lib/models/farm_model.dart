@@ -72,7 +72,20 @@ class FarmModel {
     final farmName = data['farmName'] ?? '';
     final address = data['address'] ?? '';
     final mobileNumber = data['mobileNumber'] ?? '';
-    final rejection = data['rejection'] as Map<String, dynamic>?;
+    final subscriptionInfo =
+        data['subscriptionInfo'] as Map<String, dynamic>? ?? {};
+    final rejection =
+        subscriptionInfo['rejection'] as Map<String, dynamic>? ??
+        data['rejection'] as Map<String, dynamic>?;
+    final blocked =
+        subscriptionInfo['blocked'] as Map<String, dynamic>? ?? {};
+    final rawStatus =
+        subscriptionInfo['status'] as String? ??
+        data['status'] as String? ??
+        'Pending';
+    final resolvedStatus =
+        blocked['blocked'] == true ? 'Blocked' : rawStatus;
+
     return FarmModel(
       id: doc.id,
       farmName: farmName,
@@ -82,7 +95,7 @@ class FarmModel {
       address: address,
       logoUrl: data['logoUrl'] ?? '',
       authUid: data['authUid'] ?? '',
-      status: (data['status'] as String?) ?? 'Pending',
+      status: resolvedStatus,
       rejectionReason: (rejection?['reason'] as String?) ?? '',
       profileImage: imageField is Blob ? imageField.bytes : null,
       profileImageContentType: data['profileImageContentType'] as String?,
