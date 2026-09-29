@@ -3,6 +3,7 @@ import 'dart:typed_data';
 import 'package:cloud_firestore/cloud_firestore.dart';
 
 import '../models/goat_model.dart';
+import '../models/lot_transfer_models.dart';
 import '../models/trading_goat_health_record.dart';
 import '../models/trading_goat_weight_entry.dart';
 import '../models/trading_purchase_model.dart';
@@ -566,6 +567,17 @@ class GoatService {
           );
         }
 
+        // A lot's farm goats can be promised to a customer (Booking /
+        // Wait for Delivery). Those are still counted in pendingCount
+        // (= farmQty) but must not be turned into individual goats.
+        if (currentPurchase.isLot &&
+            currentPurchase.farmAvailableQty <= 0) {
+          throw StateError(
+            'The goats left in ${currentPurchase.lotId} are reserved for '
+                'a customer, so they cannot be registered.',
+          );
+        }
+
         // ---------------------------------------------------------------
         // RESOLVE GENDER
         // ---------------------------------------------------------------
@@ -746,6 +758,235 @@ class GoatService {
     ).timeout(_timeout);
 
     return goat;
+  }
+
+  // -----------------------------------------------------------------------
+  // LOT TRANSFERS (Step 6)
+  // -----------------------------------------------------------------------
+  //
+  // Goats stay anonymous inside a Purchase Lot. They get an individual
+  // record (G-0041 ...) only when they are transferred to Own Palai or to
+  // a Customer Palai. A transfer only ever draws on goats physically at
+  // the farm and not reserved for a customer (farmAvailableQty) — never
+  // on supplier stock.
+  //
+  // The work is split in two so a bigger transaction can include it:
+  //
+  //   prepareLotTransferInTransaction  — READS only (lot + goat counter)
+  //   writeLotTransferInTransaction    — WRITES only
+  //
+  // Firestore requires every read in a transaction to come before any
+  // write, so a caller that also has its own reads (SalesService's
+  // Customer Palai transfer) does: its reads -> prepare -> its writes ->
+  // write. transferLotToOwnPalai below is the simple case with nothing
+  // else in the transaction.
+
+  /// READ phase of a lot transfer. Re-validates against the lot as it is
+  /// right now, so a stale screen cannot over-transfer.
+  Future<LotTransferPrep> prepareLotTransferInTransaction(
+      Transaction transaction, {
+        required String farmId,
+        required String lotDocId,
+        required List<LotTransferGoat> goats,
+      }) async {
+    if (goats.isEmpty) {
+      throw ArgumentError('Enter how many goats to transfer.');
+    }
+
+    if (goats.length > LotTransferPlanner.maxGoatsPerTransfer) {
+      throw ArgumentError(
+        'Transfer at most ${LotTransferPlanner.maxGoatsPerTransfer} goats '
+            'at a time.',
+      );
+    }
+
+    for (var i = 0; i < goats.length; i++) {
+      final problem = goats[i].validate();
+
+      if (problem != null) {
+        throw ArgumentError('Goat ${i + 1}: $problem');
+      }
+    }
+
+    final lotSnap = await transaction.get(
+      _tradingPurchases(farmId).doc(lotDocId),
+    );
+
+    if (!lotSnap.exists) {
+      throw StateError('Lot $lotDocId was not found.');
+    }
+
+    final lot = TradingPurchase.fromDoc(lotSnap);
+
+    final blocked = LotTransferPlanner.blockReason(lot, goats.length);
+
+    if (blocked != null) {
+      throw StateError(blocked);
+    }
+
+    final counterSnap = await transaction.get(_goatCounterDoc(farmId));
+
+    final lastValue =
+        (counterSnap.data()?['lastValue'] as num?)?.toInt() ?? 0;
+
+    final ids = <String>[
+      for (var i = 1; i <= goats.length; i++)
+        'G-${(lastValue + i).toString().padLeft(4, '0')}',
+    ];
+
+    return LotTransferPrep(
+      lot: lot,
+      goatIds: ids,
+      counterLastValue: lastValue,
+      genderPlan: LotTransferPlanner.assignGenders(
+        lot,
+        goats.map((g) => g.gender).toList(),
+      ),
+    );
+  }
+
+  /// WRITE phase of a lot transfer. Creates one goat document per entry
+  /// in [goats] with [status], moves them out of the lot
+  /// (registeredCount +N; pendingCount, which mirrors farmQty, -N),
+  /// advances the goat counter and lowers the dashboard's
+  /// pendingRegistrations by N.
+  ///
+  /// It does NOT touch totalStock: goats going to Own Palai stay in
+  /// stock, and the Customer Palai sale lowers it itself.
+  ///
+  /// [status] must be Own Palai or In Customer Palai. Pass [saleId] for a
+  /// Customer Palai transfer so each goat links back to its sale.
+  ///
+  /// Returns the new goats in input order.
+  List<Goat> writeLotTransferInTransaction(
+      Transaction transaction, {
+        required String farmId,
+        required LotTransferPrep prep,
+        required List<LotTransferGoat> goats,
+        required String status,
+        String? saleId,
+      }) {
+    if (status != Goat.statusOwnPalai &&
+        status != Goat.statusInCustomerPalai) {
+      throw ArgumentError(
+        'A lot transfer must go to Own Palai or a Customer Palai.',
+      );
+    }
+
+    if (goats.length != prep.goatIds.length) {
+      throw StateError('Transfer details changed after they were checked.');
+    }
+
+    final lot = prep.lot;
+    final count = goats.length;
+    final now = DateTime.now();
+    final created = <Goat>[];
+
+    for (var i = 0; i < count; i++) {
+      final spec = goats[i];
+
+      final goat = Goat(
+        id: prep.goatIds[i],
+        breed: spec.breed.trim(),
+        ageMonthsAtRecord: spec.ageMonths,
+        ageRecordedAt: now,
+        weight: spec.weight,
+        height: spec.height,
+        length: spec.length,
+        color: spec.color.trim(),
+        healthStatus: spec.healthStatus,
+        gender: prep.genderPlan.genders[i],
+        notes: spec.notes.trim(),
+        purchaseId: lot.id,
+        purchaseDate: lot.purchaseDate,
+        currentStatus: status,
+        saleId: saleId,
+      );
+
+      transaction.set(
+        _goats(farmId).doc(goat.id),
+        {
+          ...goat.toMap(),
+          'createdAt': FieldValue.serverTimestamp(),
+
+          // The Own Palai list is ordered by this field, and Firestore
+          // leaves documents without it out of an ordered query — so a
+          // goat created straight into Own Palai must carry it, exactly
+          // as moveToOwnPalai() stamps it.
+          if (status == Goat.statusOwnPalai)
+            'movedToOwnPalaiAt': FieldValue.serverTimestamp(),
+
+          if (saleId != null) 'saleId': saleId,
+        },
+      );
+
+      created.add(goat);
+    }
+
+    transaction.set(
+      _goatCounterDoc(farmId),
+      {'lastValue': prep.counterLastValue + count},
+      SetOptions(merge: true),
+    );
+
+    final newRegistered = lot.registeredCount + count;
+
+    // farmQty = receivedAliveQty - soldFromFarmQty - registeredCount, and
+    // pendingCount mirrors it for lots (see TradingService.receiveLotBatch).
+    final newPending =
+        lot.receivedAliveQty - lot.soldFromFarmQty - newRegistered;
+
+    final hasSplit = lot.maleGoats > 0 || lot.femaleGoats > 0;
+
+    transaction.update(
+      _tradingPurchases(farmId).doc(lot.id),
+      {
+        'registeredCount': newRegistered,
+        'pendingCount': newPending < 0 ? 0 : newPending,
+        if (hasSplit) ...{
+          'maleRegistered': prep.genderPlan.maleRegisteredAfter,
+          'femaleRegistered': prep.genderPlan.femaleRegisteredAfter,
+        },
+        'updatedAt': FieldValue.serverTimestamp(),
+      },
+    );
+
+    transaction.set(
+      _summaryDoc(farmId),
+      {'pendingRegistrations': FieldValue.increment(-count)},
+      SetOptions(merge: true),
+    );
+
+    return created;
+  }
+
+  /// Transfers [goats] out of the lot into Own Palai: one individual goat
+  /// record each, created directly with status Own Palai, in a single
+  /// transaction. Either every goat is created and the lot updated, or
+  /// nothing changes.
+  Future<List<Goat>> transferLotToOwnPalai({
+    required String farmId,
+    required String lotDocId,
+    required List<LotTransferGoat> goats,
+  }) async {
+    return _db.runTransaction<List<Goat>>(
+          (transaction) async {
+        final prep = await prepareLotTransferInTransaction(
+          transaction,
+          farmId: farmId,
+          lotDocId: lotDocId,
+          goats: goats,
+        );
+
+        return writeLotTransferInTransaction(
+          transaction,
+          farmId: farmId,
+          prep: prep,
+          goats: goats,
+          status: Goat.statusOwnPalai,
+        );
+      },
+    ).timeout(_timeout * 2);
   }
 
   // -----------------------------------------------------------------------

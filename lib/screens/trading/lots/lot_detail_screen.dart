@@ -16,6 +16,8 @@ import 'add_lot_payment_sheet.dart';
 import '../sell_from_lot/sell_from_lot_wizard_screen.dart';
 import 'lot_widgets.dart';
 import 'receive_lot_screen.dart';
+import 'transfer_to_customer_palai_wizard_screen.dart';
+import 'transfer_to_own_palai_screen.dart';
 
 /// Lot Detail — everything about one purchase lot in one place:
 /// stock, purchase, receiving, supplier payments and the actions that
@@ -98,11 +100,28 @@ class _LotDetailScreenState extends State<LotDetailScreen> {
     );
   }
 
-  /// The Palai transfers are built in a later step. The button already
-  /// follows the real quantity rules so the screen does not need to
-  /// change when that screen arrives.
-  void _comingSoon(String what) {
-    _snack('$what is coming in an upcoming update.');
+  Future<void> _transferToOwnPalai(TradingPurchase lot) async {
+    final ids = await Navigator.of(context).push<List<String>>(
+      fastRoute(TransferToOwnPalaiScreen(farmId: widget.farmId, lot: lot)),
+    );
+
+    if (ids == null || ids.isEmpty) return;
+
+    _snack(
+      '${ids.length} goat${ids.length == 1 ? '' : 's'} transferred to '
+          'Own Palai.',
+    );
+  }
+
+  Future<void> _transferToCustomerPalai(TradingPurchase lot) async {
+    // The wizard replaces itself with the sale receipt on success, so
+    // there is no return value — the lot's live stream already reflects
+    // the transfer by the time the person comes back.
+    await Navigator.of(context).push(
+      fastRoute(
+        TransferToCustomerPalaiWizardScreen(farmId: widget.farmId, lot: lot),
+      ),
+    );
   }
 
   @override
@@ -570,7 +589,7 @@ class _LotDetailScreenState extends State<LotDetailScreen> {
               ? '${lot.farmAvailableQty} at farm'
               : 'Needs goats at the farm',
           enabled: lotOk && lot.farmAvailableQty > 0,
-          onTap: () => _comingSoon('Transfer to Own Palai'),
+          onTap: () => _transferToOwnPalai(lot),
         ),
         _ActionButton(
           icon: Icons.groups_outlined,
@@ -579,7 +598,7 @@ class _LotDetailScreenState extends State<LotDetailScreen> {
               ? '${lot.farmAvailableQty} at farm'
               : 'Needs goats at the farm',
           enabled: lotOk && lot.farmAvailableQty > 0,
-          onTap: () => _comingSoon('Transfer to Customer Palai'),
+          onTap: () => _transferToCustomerPalai(lot),
         ),
       ],
     );

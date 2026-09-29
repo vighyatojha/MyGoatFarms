@@ -40,9 +40,16 @@ import '../purchase_goats/purchase_wizard_widgets.dart';
 class Step5DeliveryOptions extends StatefulWidget {
   final SaleDraft draft;
 
+  /// Shows only the Transfer to Palai form, with no other delivery
+  /// branch to pick. Used by the lot -> Customer Palai transfer, where
+  /// the goats are being registered and boarded, so the sale can be
+  /// nothing else. The draft's delivery type is set to Palai on entry.
+  final bool palaiOnly;
+
   const Step5DeliveryOptions({
     super.key,
     required this.draft,
+    this.palaiOnly = false,
   });
 
   @override
@@ -116,6 +123,10 @@ class Step5DeliveryOptionsState extends State<Step5DeliveryOptions> {
 
     draft.transferDate ??= DateTime.now();
 
+    if (widget.palaiOnly) {
+      draft.deliveryType = Sale.deliveryTypePalai;
+    }
+
     _settleLotDeliveryType();
 
     // The package is picked from a fixed list, so it always holds one of
@@ -143,10 +154,13 @@ class Step5DeliveryOptionsState extends State<Step5DeliveryOptions> {
 
   bool get _offersHolding => !_fromSupplier;
 
-  bool get _offersPalai => !_isLot;
+  bool get _offersPalai => !_isLot || widget.palaiOnly;
 
   /// Whether [type] may be used for this sale.
   bool _isAllowed(String type) {
+    // Palai-only (lot -> Customer Palai transfer): nothing else is valid.
+    if (widget.palaiOnly) return type == Sale.deliveryTypePalai;
+
     if (type == Sale.deliveryTypeDeliverNow) return true;
 
     if (type == Sale.deliveryTypeBooking ||
@@ -330,49 +344,63 @@ class Step5DeliveryOptionsState extends State<Step5DeliveryOptions> {
       keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
       padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
       children: [
-        Text(
-          _isLot
-              ? 'How are these goats leaving?'
-              : 'How is this goat leaving the farm?',
-          style: AppTheme.heading(size: 14, color: AppColors.textDark),
-        ),
-        const SizedBox(height: 12),
+        if (widget.palaiOnly) ...[
+          Text(
+            draft.saleGoatCount > 1
+                ? 'Palai transfer for ${draft.saleGoatCount} goats'
+                : 'Palai transfer',
+            style: AppTheme.heading(size: 14, color: AppColors.textDark),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            'The customer keeps boarding ${_theGoats(draft)} here.',
+            style: AppTheme.body(size: 12),
+          ),
+        ] else ...[
+          Text(
+            _isLot
+                ? 'How are these goats leaving?'
+                : 'How is this goat leaving the farm?',
+            style: AppTheme.heading(size: 14, color: AppColors.textDark),
+          ),
+          const SizedBox(height: 12),
 
-        _BranchCard(
-          title: 'Deliver Now',
-          subtitle: 'Handed over today, paid on the spot',
-          icon: Icons.local_shipping_outlined,
-          selected: draft.deliveryType == Sale.deliveryTypeDeliverNow,
-          onTap: () => _selectBranch(Sale.deliveryTypeDeliverNow),
-        ),
-        if (_offersHolding) ...[
-          const SizedBox(height: 10),
           _BranchCard(
-            title: 'Booking / Holding',
-            subtitle: 'Held here after payment, picked up later',
-            icon: Icons.bookmark_outline_rounded,
-            selected: draft.deliveryType == Sale.deliveryTypeBooking,
-            onTap: () => _selectBranch(Sale.deliveryTypeBooking),
+            title: 'Deliver Now',
+            subtitle: 'Handed over today, paid on the spot',
+            icon: Icons.local_shipping_outlined,
+            selected: draft.deliveryType == Sale.deliveryTypeDeliverNow,
+            onTap: () => _selectBranch(Sale.deliveryTypeDeliverNow),
           ),
-          const SizedBox(height: 10),
-          _BranchCard(
-            title: 'Wait for Delivery',
-            subtitle: 'Booked now at today\'s rate, weighed at pickup',
-            icon: Icons.schedule_outlined,
-            selected: draft.deliveryType == Sale.deliveryTypeWaitForDelivery,
-            onTap: () => _selectBranch(Sale.deliveryTypeWaitForDelivery),
-          ),
-        ],
-        if (_offersPalai) ...[
-          const SizedBox(height: 10),
-          _BranchCard(
-            title: 'Transfer to Palai',
-            subtitle: 'Customer keeps boarding this goat here',
-            icon: Icons.holiday_village_outlined,
-            selected: draft.deliveryType == Sale.deliveryTypePalai,
-            onTap: () => _selectBranch(Sale.deliveryTypePalai),
-          ),
-        ],
+          if (_offersHolding) ...[
+            const SizedBox(height: 10),
+            _BranchCard(
+              title: 'Booking / Holding',
+              subtitle: 'Held here after payment, picked up later',
+              icon: Icons.bookmark_outline_rounded,
+              selected: draft.deliveryType == Sale.deliveryTypeBooking,
+              onTap: () => _selectBranch(Sale.deliveryTypeBooking),
+            ),
+            const SizedBox(height: 10),
+            _BranchCard(
+              title: 'Wait for Delivery',
+              subtitle: 'Booked now at today\'s rate, weighed at pickup',
+              icon: Icons.schedule_outlined,
+              selected: draft.deliveryType == Sale.deliveryTypeWaitForDelivery,
+              onTap: () => _selectBranch(Sale.deliveryTypeWaitForDelivery),
+            ),
+          ],
+          if (_offersPalai) ...[
+            const SizedBox(height: 10),
+            _BranchCard(
+              title: 'Transfer to Palai',
+              subtitle: 'Customer keeps boarding this goat here',
+              icon: Icons.holiday_village_outlined,
+              selected: draft.deliveryType == Sale.deliveryTypePalai,
+              onTap: () => _selectBranch(Sale.deliveryTypePalai),
+            ),
+          ],
+        ], // end of the non-palaiOnly branch picker
         if (_fromSupplier) ...[
           const SizedBox(height: 12),
           const WizardNote(

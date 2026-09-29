@@ -7,10 +7,12 @@ import '../models/customer_credit.dart';
 import '../models/customer_model.dart';
 import '../models/expense_categories.dart';
 import '../models/goat_model.dart';
+import '../models/lot_transfer_models.dart';
 import '../models/palai_models.dart';
 import '../models/sale_draft.dart';
 import '../models/sale_model.dart';
 import '../models/trading_purchase_model.dart';
+import 'goat_service.dart';
 import 'health_reminder_scheduler.dart';
 
 /// Handles the Trading module's Sell Goat flow (Phase 4: Feature 7 + 8).
@@ -1693,6 +1695,217 @@ class SalesService {
     }).timeout(_timeout * 2);
 
     _stopFarmHealthReminders(farmId, draft.selectedGoats);
+
+    return saleId;
+  }
+
+  // -----------------------------------------------------------------------
+  // LOT -> CUSTOMER PALAI TRANSFER (Step 6)
+  // -----------------------------------------------------------------------
+
+  /// Transfers goats from a Purchase Lot straight into a customer's Palai
+  /// as a sale.
+  ///
+  /// The lot's goats are anonymous, so this is where they get individual
+  /// records: each one in [goats] is created directly with status "In
+  /// Customer Palai" (GoatService.writeLotTransferInTransaction) and
+  /// checked into the Palai customer, all in ONE transaction together with
+  /// the sale, the Palai customer (new or existing), the lot's quantity
+  /// update, the dashboard counters and the first Sold Goat Revenue
+  /// entry. Either all of it happens or none of it does.
+  ///
+  /// The resulting sale is an ordinary goat sale (goatIds = the new goat
+  /// ids), so receipts, the Palai module and customer lists treat it
+  /// exactly like a goat that was sold with "Transfer to Palai" from Goat
+  /// Stock. It is NOT a lot sale ([Sale.isLotSale] is false): the goats
+  /// exist individually from this moment.
+  ///
+  /// Only goats at the farm and not reserved can be transferred — the lot
+  /// is re-read inside the transaction, so a stale screen cannot
+  /// over-transfer. Cost of goods is the lot's cost per goat at this
+  /// moment, snapshotted on the sale and never re-read.
+  ///
+  /// [draft] must carry the customer, pricing and Palai fields; its
+  /// goat count must equal [goats].length.
+  Future<String> saveLotTransferToCustomerPalai({
+    required String farmId,
+    required String lotDocId,
+    required List<LotTransferGoat> goats,
+    required SaleDraft draft,
+  }) async {
+    if (goats.isEmpty) {
+      throw StateError('Enter how many goats to transfer.');
+    }
+
+    if (draft.isLotSale) {
+      throw StateError(
+        'A Palai transfer creates individual goats, so it cannot be saved '
+            'as a lot sale.',
+      );
+    }
+
+    if (draft.saleGoatCount != goats.length) {
+      throw StateError(
+        'The sale was priced for ${draft.saleGoatCount} goats but '
+            '${goats.length} are being transferred. Go back and check the '
+            'goat details.',
+      );
+    }
+
+    if (draft.totalSaleAmount <= 0) {
+      throw ArgumentError('Enter the selling price.');
+    }
+
+    // Same "one debt, one record" rule as saveTransferToPalai: whatever
+    // is unpaid stays on the SALE and is not copied into the Palai
+    // customer's pendingAmount.
+
+    final createNewCustomer =
+        draft.customerSource != CustomerMatchSource.palai;
+
+    final palaiCustomerRef = createNewCustomer
+        ? _palaiCustomers(farmId).doc()
+        : _palaiCustomers(farmId).doc(draft.customerId);
+    final palaiCustomerId = palaiCustomerRef.id;
+
+    // Not `late final`: Firestore may re-run the closure on contention.
+    String saleId = '';
+
+    await _db.runTransaction((transaction) async {
+      // -----------------------------------------------------------------
+      // 1. READS — lot + goat counter (inside prepare), then the sale
+      //    counter. No write may happen before this block ends.
+      // -----------------------------------------------------------------
+
+      final prep = await GoatService.instance.prepareLotTransferInTransaction(
+        transaction,
+        farmId: farmId,
+        lotDocId: lotDocId,
+        goats: goats,
+      );
+
+      final saleNumber = await _readNextSaleNumber(transaction, farmId);
+
+      final costPerGoat = prep.lot.lotCostPerGoat;
+      final costOfGoodsSold = SaleDraft.round2(costPerGoat * goats.length);
+
+      // -----------------------------------------------------------------
+      // 2. WRITES
+      // -----------------------------------------------------------------
+
+      saleId = _formatSaleId(saleNumber);
+      _writeSaleCounter(transaction, farmId, saleNumber);
+
+      // The new goats, moved out of the lot: status In Customer Palai,
+      // linked to this sale. Also lowers pendingRegistrations.
+      final created = GoatService.instance.writeLotTransferInTransaction(
+        transaction,
+        farmId: farmId,
+        prep: prep,
+        goats: goats,
+        status: Goat.statusInCustomerPalai,
+        saleId: saleId,
+      );
+
+      if (createNewCustomer) {
+        final palaiCustomer = PalaiCustomer(
+          id: '',
+          name: draft.customerName.trim(),
+          mobileNumber: draft.mobile.trim(),
+          address: draft.address.trim(),
+          package: draft.palaiPackage.trim(),
+          joiningDate: draft.transferDate ?? DateTime.now(),
+          pendingAmount: 0,
+          price: draft.monthlyPalaiCharge,
+        );
+
+        transaction.set(palaiCustomerRef, palaiCustomer.toMap());
+      }
+
+      final sale = Sale(
+        id: saleId,
+        goatIds: created.map((g) => g.id).toList(),
+        costPerGoatSnapshot: costPerGoat,
+        customerId: palaiCustomerId,
+        customerName: draft.customerName.trim(),
+        mobile: draft.mobile.trim(),
+        address: draft.address.trim(),
+        sellingPricePerKg: draft.effectivePricePerKg,
+        pricingMode: draft.pricingMode,
+        fixedSalePrice: draft.isFixedPrice ? draft.fixedSalePrice : null,
+        sellingWeight: draft.totalSellingWeight,
+        totalSaleAmount: draft.totalSaleAmount,
+        deliveryType: Sale.deliveryTypePalai,
+        status: Sale.statusTransferredToPalai,
+        transferDate: draft.transferDate,
+        palaiPackage: draft.palaiPackage.trim(),
+        monthlyPalaiCharge: draft.monthlyPalaiCharge,
+        palaiCustomerId: palaiCustomerId,
+        amountReceived: draft.palaiAmountReceived,
+        paymentMethod: draft.paymentMethod,
+        paymentStatus: draft.paymentStatusPalai,
+        onCredit: draft.onCredit && draft.remainingBalancePalai > 0,
+      );
+
+      transaction.set(_sales(farmId).doc(saleId), {
+        ...sale.toMap(),
+        'createdAt': FieldValue.serverTimestamp(),
+      });
+
+      // The goats leave the farm's stock (they board here for the
+      // customer now) and the goat price is realized profit, exactly as
+      // in saveTransferToPalai. Not counted in totalSold.
+      // pendingRegistrations was already lowered by the transfer write.
+      transaction.set(
+        _summaryDoc(farmId),
+        {
+          'totalStock': FieldValue.increment(-goats.length),
+          'totalProfit': FieldValue.increment(
+            SaleDraft.round2(draft.totalSaleAmount - costOfGoodsSold),
+          ),
+        },
+        SetOptions(merge: true),
+      );
+
+      _writeInitialRevenueInTransaction(
+        transaction: transaction,
+        farmId: farmId,
+        saleId: saleId,
+        paid: draft.palaiAmountReceived,
+        revenueTotal: draft.totalSaleAmount,
+        date: DateTime.now(),
+        customerName: draft.customerName,
+        paymentMethod: _methodOrOther(draft.paymentMethod),
+      );
+
+      // Check every goat into the Customer Palai module in the same
+      // transaction, so a goat can never be "In Customer Palai" here
+      // without its PalaiGoat record, or the other way round.
+      for (final goat in created) {
+        final palaiGoat = PalaiGoat(
+          id: '',
+          customerId: palaiCustomerId,
+          breed: goat.breed,
+          gender: goat.gender.isEmpty ? 'Male' : goat.gender,
+          weightAtCheckIn: goat.weight,
+          heightAtCheckIn: goat.height,
+          lengthAtCheckIn: goat.length,
+          healthStatus:
+          goat.healthStatus.isEmpty ? 'Healthy' : goat.healthStatus,
+          checkInDate: draft.transferDate ?? DateTime.now(),
+          farmArrivalDate: draft.transferDate,
+          monthlyPackage: draft.palaiPackage.trim(),
+          pricing: draft.monthlyPalaiCharge,
+          notes: 'Transferred from ${prep.lot.lotId} (sale $saleId).',
+        );
+
+        // farmId is denormalized, exactly as checkInGoat does — required
+        // by the collectionGroup('goats') security rule / query.
+        final data = palaiGoat.toMap()..['farmId'] = farmId;
+
+        transaction.set(_palaiGoats(farmId, palaiCustomerId).doc(), data);
+      }
+    }).timeout(_timeout * 2);
 
     return saleId;
   }
