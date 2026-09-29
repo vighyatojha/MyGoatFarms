@@ -284,7 +284,7 @@ class _BookingDeliveryCustomerScreenState
   }
 
   int _goatCountOf(List<BookingDeliverySale> picked) {
-    return picked.fold<int>(0, (sum, entry) => sum + entry.goats.length);
+    return picked.fold<int>(0, (sum, entry) => sum + entry.goatCount);
   }
 
   String _goats(int count) => count == 1 ? '1 goat' : '$count goats';
@@ -457,7 +457,7 @@ class _BookingDeliveryCustomerScreenState
       ) async {
     final deliveredGoats = picked
         .where((entry) => result.delivered.any((o) => o.saleId == entry.id))
-        .fold<int>(0, (sum, entry) => sum + entry.goats.length);
+        .fold<int>(0, (sum, entry) => sum + entry.goatCount);
 
     final leftOnDelivered = result.totalRemainingDelivered;
 
@@ -691,7 +691,7 @@ class _BookingDeliveryCustomerScreenState
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
-                'Booking ${entry.id} · ${_goats(entry.goats.length)}',
+                'Booking ${entry.id} · ${_goats(entry.goatCount)}',
                 style: AppTheme.heading(size: 12.5),
               ),
               const SizedBox(height: 1),
@@ -1177,7 +1177,7 @@ class _BookingDeliveryCustomerScreenState
                         style: AppTheme.heading(size: 14),
                       ),
                       Text(
-                        '${_goats(entry.goats.length)} · Booked '
+                        '${_goats(entry.goatCount)} · Booked '
                             '${_dateFormat.format(entry.bookedAt)}',
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
@@ -1224,7 +1224,10 @@ class _BookingDeliveryCustomerScreenState
                   ],
                 ),
                 const Divider(height: 18, color: AppColors.divider),
-                for (final goat in entry.goats) _goatRow(goat),
+                if (entry.isLotSale)
+                  _lotRow(entry)
+                else
+                  for (final goat in entry.goats) _goatRow(goat),
                 const SizedBox(height: 3),
                 _transportField(customer, entry, selected),
                 const SizedBox(height: 12),
@@ -1271,6 +1274,54 @@ class _BookingDeliveryCustomerScreenState
                   ),
                 ],
               ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// A booking made straight from a lot has no goat records, so it shows
+  /// the lot and the quantity held instead of a list of goats.
+  Widget _lotRow(BookingDeliverySale entry) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 9),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          Container(
+            width: 44,
+            height: 44,
+            decoration: BoxDecoration(
+              color: AppColors.stockTeal.withOpacity(0.12),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: const Center(
+              child: Icon(
+                Icons.inventory_2_outlined,
+                size: 19,
+                color: AppColors.stockTeal,
+              ),
+            ),
+          ),
+          const SizedBox(width: 9),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  entry.sale.lotDisplayId,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: AppTheme.heading(size: 13.5),
+                ),
+                Text(
+                  '${_goats(entry.goatCount)} held from this lot',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: AppTheme.body(size: 10.5),
+                ),
+              ],
             ),
           ),
         ],

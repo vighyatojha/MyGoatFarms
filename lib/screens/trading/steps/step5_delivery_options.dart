@@ -116,12 +116,73 @@ class Step5DeliveryOptionsState extends State<Step5DeliveryOptions> {
 
     draft.transferDate ??= DateTime.now();
 
+    _settleLotDeliveryType();
+
     // The package is picked from a fixed list, so it always holds one of
     // them — the first until the person chooses another.
     if (!SaleDraft.palaiPackages.contains(draft.palaiPackage)) {
       draft.palaiPackage = SaleDraft.palaiPackages.first;
     }
   }
+
+  // ===========================================================================
+  // LOT SALES — which options are offered
+  // ===========================================================================
+  //
+  // A sale made from a Purchase Lot uses this same step, but:
+  //  - stock still AT THE SUPPLIER can only be Deliver Now (there is
+  //    nothing at the farm to hold or to wait for);
+  //  - stock at the farm can be Deliver Now, Booking or Wait for Delivery;
+  //  - Transfer to Palai is not a sale option for a lot — goats reach Palai
+  //    through the lot's own transfer actions, which register them.
+
+  bool get _isLot => widget.draft.isLotSale;
+
+  bool get _fromSupplier =>
+      _isLot && widget.draft.sourceLocation == Sale.sourceSupplier;
+
+  bool get _offersHolding => !_fromSupplier;
+
+  bool get _offersPalai => !_isLot;
+
+  /// Whether [type] may be used for this sale.
+  bool _isAllowed(String type) {
+    if (type == Sale.deliveryTypeDeliverNow) return true;
+
+    if (type == Sale.deliveryTypeBooking ||
+        type == Sale.deliveryTypeWaitForDelivery) {
+      return _offersHolding;
+    }
+
+    if (type == Sale.deliveryTypePalai) return _offersPalai;
+
+    return false;
+  }
+
+  /// Drops a choice the current lot source no longer allows (the person
+  /// went back and switched the source from farm to supplier), and
+  /// pre-selects Deliver Now when it is the only option.
+  void _settleLotDeliveryType() {
+    if (!_isLot) return;
+
+    final draft = widget.draft;
+
+    if (_fromSupplier) {
+      if (draft.deliveryType != Sale.deliveryTypeDeliverNow) {
+        draft.onCredit = false;
+        draft.deliveryType = Sale.deliveryTypeDeliverNow;
+      }
+      return;
+    }
+
+    if (draft.deliveryType.isNotEmpty && !_isAllowed(draft.deliveryType)) {
+      draft.onCredit = false;
+      draft.deliveryType = '';
+    }
+  }
+
+  String _theGoats(SaleDraft draft) =>
+      draft.saleGoatCount > 1 ? 'the goats' : 'the goat';
 
   @override
   void dispose() {
@@ -184,6 +245,19 @@ class Step5DeliveryOptionsState extends State<Step5DeliveryOptions> {
       wizardSnack(
         context,
         'Choose a delivery option to continue.',
+        error: true,
+      );
+      return false;
+    }
+
+    // Backstop for the UI: SalesService also rejects these.
+    if (!_isAllowed(draft.deliveryType)) {
+      wizardSnack(
+        context,
+        _fromSupplier
+            ? 'Goats still at the supplier can only be sold with '
+            'Deliver Now.'
+            : 'This delivery option is not available for a lot sale.',
         error: true,
       );
       return false;
@@ -257,7 +331,9 @@ class Step5DeliveryOptionsState extends State<Step5DeliveryOptions> {
       padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
       children: [
         Text(
-          'How is this goat leaving the farm?',
+          _isLot
+              ? 'How are these goats leaving?'
+              : 'How is this goat leaving the farm?',
           style: AppTheme.heading(size: 14, color: AppColors.textDark),
         ),
         const SizedBox(height: 12),
@@ -269,30 +345,42 @@ class Step5DeliveryOptionsState extends State<Step5DeliveryOptions> {
           selected: draft.deliveryType == Sale.deliveryTypeDeliverNow,
           onTap: () => _selectBranch(Sale.deliveryTypeDeliverNow),
         ),
-        const SizedBox(height: 10),
-        _BranchCard(
-          title: 'Booking / Holding',
-          subtitle: 'Held here after payment, picked up later',
-          icon: Icons.bookmark_outline_rounded,
-          selected: draft.deliveryType == Sale.deliveryTypeBooking,
-          onTap: () => _selectBranch(Sale.deliveryTypeBooking),
-        ),
-        const SizedBox(height: 10),
-        _BranchCard(
-          title: 'Wait for Delivery',
-          subtitle: 'Booked now at today\'s rate, weighed at pickup',
-          icon: Icons.schedule_outlined,
-          selected: draft.deliveryType == Sale.deliveryTypeWaitForDelivery,
-          onTap: () => _selectBranch(Sale.deliveryTypeWaitForDelivery),
-        ),
-        const SizedBox(height: 10),
-        _BranchCard(
-          title: 'Transfer to Palai',
-          subtitle: 'Customer keeps boarding this goat here',
-          icon: Icons.holiday_village_outlined,
-          selected: draft.deliveryType == Sale.deliveryTypePalai,
-          onTap: () => _selectBranch(Sale.deliveryTypePalai),
-        ),
+        if (_offersHolding) ...[
+          const SizedBox(height: 10),
+          _BranchCard(
+            title: 'Booking / Holding',
+            subtitle: 'Held here after payment, picked up later',
+            icon: Icons.bookmark_outline_rounded,
+            selected: draft.deliveryType == Sale.deliveryTypeBooking,
+            onTap: () => _selectBranch(Sale.deliveryTypeBooking),
+          ),
+          const SizedBox(height: 10),
+          _BranchCard(
+            title: 'Wait for Delivery',
+            subtitle: 'Booked now at today\'s rate, weighed at pickup',
+            icon: Icons.schedule_outlined,
+            selected: draft.deliveryType == Sale.deliveryTypeWaitForDelivery,
+            onTap: () => _selectBranch(Sale.deliveryTypeWaitForDelivery),
+          ),
+        ],
+        if (_offersPalai) ...[
+          const SizedBox(height: 10),
+          _BranchCard(
+            title: 'Transfer to Palai',
+            subtitle: 'Customer keeps boarding this goat here',
+            icon: Icons.holiday_village_outlined,
+            selected: draft.deliveryType == Sale.deliveryTypePalai,
+            onTap: () => _selectBranch(Sale.deliveryTypePalai),
+          ),
+        ],
+        if (_fromSupplier) ...[
+          const SizedBox(height: 12),
+          const WizardNote(
+            'These goats are still at the supplier, so they can only be '
+                'sold with Deliver Now. Booking and Wait for Delivery are '
+                'for goats already at the farm.',
+          ),
+        ],
 
         const SizedBox(height: 18),
 
@@ -648,7 +736,7 @@ class Step5DeliveryOptionsState extends State<Step5DeliveryOptions> {
               const SizedBox(height: 14),
               _creditSwitch(
                 draft,
-                onText: '${_buyer(draft)} takes the goat and pays the '
+                onText: '${_buyer(draft)} takes ${_theGoats(draft)} and pays the '
                     'remaining balance later. What is unpaid after the '
                     'delivery is added to their outstanding balance.',
                 offText: 'Off — the remaining balance is paid at pickup.',
@@ -958,7 +1046,7 @@ class Step5DeliveryOptionsState extends State<Step5DeliveryOptions> {
               const SizedBox(height: 14),
               _creditSwitch(
                 draft,
-                onText: '${_buyer(draft)} takes the goat and pays the '
+                onText: '${_buyer(draft)} takes ${_theGoats(draft)} and pays the '
                     'remaining balance later. What is unpaid after the '
                     'pickup is added to their outstanding balance.',
                 offText: 'Off — the remaining balance is paid at pickup.',

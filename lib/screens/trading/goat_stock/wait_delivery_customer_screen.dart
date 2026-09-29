@@ -168,6 +168,19 @@ class _WaitDeliveryCustomerScreenState
     );
   }
 
+  /// Pickup-weight field for a booking made from a lot. Goats in a lot are
+  /// not weighed one by one, so the whole booking has ONE total weight,
+  /// starting from the weight recorded when it was booked. Kept in
+  /// [_weights] (under a `lot:` key) so it is disposed with the rest.
+  TextEditingController _lotWeightControllerFor(WaitDeliverySale entry) {
+    return _weights.putIfAbsent(
+      'lot:${entry.id}',
+          () => TextEditingController(
+        text: entry.bookedWeight <= 0 ? '' : _trim(entry.bookedWeight),
+      ),
+    );
+  }
+
   double _weightOf(Goat goat) {
     return double.tryParse(_weightControllerFor(goat).text.trim()) ?? 0;
   }
@@ -175,6 +188,15 @@ class _WaitDeliveryCustomerScreenState
   /// Total pickup weight of a booking, from its goats' fields. Rounded so
   /// adding decimals (34.5 + 12.3) never leaves float noise in the total.
   double _pickupWeightOf(WaitDeliverySale entry) {
+    if (entry.isLotSale) {
+      final typed = double.tryParse(
+        _lotWeightControllerFor(entry).text.trim(),
+      ) ??
+          0;
+
+      return (typed * 1000).round() / 1000;
+    }
+
     final sum = entry.goats.fold<double>(
       0,
           (total, goat) => total + _weightOf(goat),
@@ -306,7 +328,7 @@ class _WaitDeliveryCustomerScreenState
   }
 
   int _goatCountOf(List<WaitDeliverySale> picked) {
-    return picked.fold<int>(0, (sum, entry) => sum + entry.goats.length);
+    return picked.fold<int>(0, (sum, entry) => sum + entry.goatCount);
   }
 
   String _goats(int count) => count == 1 ? '1 goat' : '$count goats';
@@ -359,7 +381,9 @@ class _WaitDeliveryCustomerScreenState
     if (picked.isEmpty) return;
 
     final missingWeight = picked.any(
-          (entry) => entry.goats.any((goat) => _weightOf(goat) <= 0),
+          (entry) => entry.isLotSale
+          ? _pickupWeightOf(entry) <= 0
+          : entry.goats.any((goat) => _weightOf(goat) <= 0),
     );
 
     final invalidAmount = picked.any((entry) => !_amountValid(entry));
@@ -462,7 +486,7 @@ class _WaitDeliveryCustomerScreenState
         .where(
           (entry) => result.delivered.any((o) => o.saleId == entry.id),
     )
-        .fold<int>(0, (sum, entry) => sum + entry.goats.length);
+        .fold<int>(0, (sum, entry) => sum + entry.goatCount);
 
     final leftOnDelivered = result.totalRemainingDelivered;
 
@@ -720,7 +744,7 @@ class _WaitDeliveryCustomerScreenState
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
-                'Booking ${entry.id} · ${_goats(entry.goats.length)}',
+                'Booking ${entry.id} · ${_goats(entry.goatCount)}',
                 style: AppTheme.heading(size: 12.5),
               ),
               const SizedBox(height: 1),
@@ -1242,7 +1266,7 @@ class _WaitDeliveryCustomerScreenState
                         ],
                       ),
                       Text(
-                        '${_goats(entry.goats.length)} · Booked '
+                        '${_goats(entry.goatCount)} · Booked '
                             '${_dateFormat.format(entry.bookedAt)}',
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
@@ -1304,7 +1328,10 @@ class _WaitDeliveryCustomerScreenState
 
                 const Divider(height: 18, color: AppColors.divider),
 
-                for (final goat in entry.goats) _goatRow(goat, selected),
+                if (entry.isLotSale)
+                  _lotRow(entry, selected)
+                else
+                  for (final goat in entry.goats) _goatRow(goat, selected),
 
                 const SizedBox(height: 3),
 
@@ -1354,6 +1381,114 @@ class _WaitDeliveryCustomerScreenState
           farmId: widget.farmId,
           goat: goat,
         ),
+      ),
+    );
+  }
+
+  /// A booking made straight from a lot: the lot and quantity, plus ONE
+  /// total pickup-weight field for all of its goats.
+  Widget _lotRow(WaitDeliverySale entry, bool selected) {
+    final controller = _lotWeightControllerFor(entry);
+
+    final invalid = _submitted &&
+        selected &&
+        (double.tryParse(controller.text.trim()) ?? 0) <= 0;
+
+    OutlineInputBorder border(Color color, [double width = 1]) =>
+        OutlineInputBorder(
+          borderRadius: BorderRadius.circular(10),
+          borderSide: BorderSide(color: color, width: width),
+        );
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 9),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            width: 44,
+            height: 44,
+            decoration: BoxDecoration(
+              color: AppColors.stockTeal.withOpacity(0.12),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: const Center(
+              child: Icon(
+                Icons.inventory_2_outlined,
+                size: 19,
+                color: AppColors.stockTeal,
+              ),
+            ),
+          ),
+          const SizedBox(width: 9),
+          Expanded(
+            child: Padding(
+              padding: const EdgeInsets.only(top: 4),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    entry.sale.lotDisplayId,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: AppTheme.heading(size: 13.5),
+                  ),
+                  Text(
+                    '${_goats(entry.goatCount)} held from this lot',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: AppTheme.body(size: 10.5),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(width: 8),
+          SizedBox(
+            width: 118,
+            child: TextField(
+              controller: controller,
+              enabled: selected && !_delivering,
+              keyboardType: const TextInputType.numberWithOptions(
+                decimal: true,
+              ),
+              inputFormatters: [
+                FilteringTextInputFormatter.allow(
+                  RegExp(r'^\d*\.?\d{0,2}'),
+                ),
+              ],
+              textAlign: TextAlign.right,
+              onChanged: (_) => setState(() {}),
+              style: AppTheme.body(
+                size: 12.5,
+                color: AppColors.textDark,
+                weight: FontWeight.w600,
+              ),
+              decoration: InputDecoration(
+                isDense: true,
+                labelText: 'Total pickup wt',
+                labelStyle: AppTheme.body(size: 10.5),
+                suffixText: 'kg',
+                suffixStyle: AppTheme.body(size: 11),
+                errorText: invalid ? 'Required' : null,
+                errorStyle: const TextStyle(fontSize: 9.5),
+                filled: true,
+                fillColor: selected ? Colors.white : AppColors.paleGreen,
+                contentPadding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 9,
+                ),
+                border: border(AppColors.divider),
+                enabledBorder: border(AppColors.divider),
+                disabledBorder:
+                border(AppColors.divider.withOpacity(0.6)),
+                focusedBorder: border(AppColors.darkGreen, 1.4),
+                errorBorder: border(AppColors.error),
+                focusedErrorBorder: border(AppColors.error, 1.4),
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }

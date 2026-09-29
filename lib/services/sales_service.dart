@@ -910,6 +910,203 @@ class SalesService {
   }
 
   // -----------------------------------------------------------------------
+  // LOT BOOKING / WAIT FOR DELIVERY  (shared by Branch B and Branch C)
+  // -----------------------------------------------------------------------
+
+  /// Saves a Booking or Wait for Delivery sale made straight from a lot.
+  ///
+  /// Only for goats already AT THE FARM: a lot still at the supplier can
+  /// never be held (the goats are not here to hold), so a supplier source
+  /// is rejected outright even though the UI never offers it.
+  ///
+  /// The goats are held, not sold: the quantity goes into the lot's
+  /// `reservedFarmQty` (which lowers `farmAvailableQty` so nobody else can
+  /// sell it) and NOT into `soldFromFarmQty`. `farmQty`, `pendingCount`,
+  /// `totalStock` and `totalSold` are untouched until the delivery is
+  /// completed. No revenue is written now either, exactly like the
+  /// individual-goat flow.
+  ///
+  /// The quantity is validated inside the transaction against the lot as
+  /// it is right now, so a stale screen cannot over-reserve. The cost per
+  /// goat is snapshotted now and reused at completion.
+  Future<String> _saveLotHold({
+    required String farmId,
+    required SaleDraft draft,
+    required bool waitForDelivery,
+  }) async {
+    final quantity = draft.lotQuantity;
+
+    if (quantity <= 0) {
+      throw ArgumentError('Enter how many goats are being held.');
+    }
+
+    if (draft.sourceLocation != Sale.sourceFarm) {
+      throw ArgumentError(
+        'Booking and Wait for Delivery are only available for goats '
+            'already at the farm (source was "${draft.sourceLocation}"). '
+            'Goats still at the supplier can only be sold with Deliver Now.',
+      );
+    }
+
+    if (draft.totalSellingWeight <= 0) {
+      throw ArgumentError('Enter the total selling weight.');
+    }
+
+    if (draft.totalSaleAmount <= 0) {
+      throw ArgumentError('Enter the selling price.');
+    }
+
+    // Not `late final`: Firestore may re-run the closure on contention.
+    String saleId = '';
+
+    await _db.runTransaction((transaction) async {
+      // ---------------------------------------------------------------
+      // 1. READS — lot first, then the sale counter.
+      // ---------------------------------------------------------------
+
+      final lotRef = _tradingPurchases(farmId).doc(draft.lotDocId);
+      final lotSnap = await transaction.get(lotRef);
+
+      if (!lotSnap.exists) {
+        throw StateError('Lot ${draft.lotDocId} no longer exists.');
+      }
+
+      final lot = TradingPurchase.fromDoc(lotSnap);
+
+      if (!lot.isLot) {
+        throw StateError(
+          'Lot ${draft.lotDocId} has not been converted to the lot format.',
+        );
+      }
+
+      final available = lot.farmAvailableQty;
+
+      if (quantity > available) {
+        throw StateError(
+          'Only $available goats are available at the farm '
+              '(goats already booked are not counted).',
+        );
+      }
+
+      final costPerGoat = lot.lotCostPerGoat;
+
+      final saleNumber = await _readNextSaleNumber(transaction, farmId);
+
+      // ---------------------------------------------------------------
+      // 2. WRITES — customer (same three-way rule as saveDeliverNow).
+      // ---------------------------------------------------------------
+
+      String customerId = draft.customerId;
+
+      if (draft.customerSource == null) {
+        final customerRef = _customers(farmId).doc();
+
+        final newCustomer = Customer(
+          id: customerRef.id,
+          name: draft.customerName.trim(),
+          mobile: draft.mobile.trim(),
+          address: draft.address.trim(),
+          totalPurchases: 1,
+        );
+
+        transaction.set(customerRef, {
+          ...newCustomer.toMap(),
+          'createdAt': FieldValue.serverTimestamp(),
+          'updatedAt': FieldValue.serverTimestamp(),
+        });
+
+        customerId = customerRef.id;
+      } else if (draft.customerSource == CustomerMatchSource.sale) {
+        transaction.update(_customers(farmId).doc(draft.customerId), {
+          'name': draft.customerName.trim(),
+          'address': draft.address.trim(),
+          'totalPurchases': FieldValue.increment(1),
+          'updatedAt': FieldValue.serverTimestamp(),
+        });
+      }
+
+      // ---------------------------------------------------------------
+      // 3. Sale doc — no goat ids, a lot reference and quantity instead.
+      // ---------------------------------------------------------------
+
+      saleId = _formatSaleId(saleNumber);
+      _writeSaleCounter(transaction, farmId, saleNumber);
+
+      final today = DateTime.now();
+
+      final sale = Sale(
+        id: saleId,
+        goatIds: const [],
+        lotDocId: draft.lotDocId,
+        lotQuantity: quantity,
+        sourceLocation: Sale.sourceFarm,
+        costPerGoatSnapshot: costPerGoat,
+        customerId: customerId,
+        customerName: draft.customerName.trim(),
+        mobile: draft.mobile.trim(),
+        address: draft.address.trim(),
+        sellingPricePerKg: draft.effectivePricePerKg,
+        pricingMode: draft.pricingMode,
+        fixedSalePrice: draft.isFixedPrice ? draft.fixedSalePrice : null,
+        sellingWeight: draft.totalSellingWeight,
+        totalSaleAmount: draft.totalSaleAmount,
+        paymentMethod: draft.paymentMethod,
+        onCredit: draft.onCredit,
+        deliveryType: waitForDelivery
+            ? Sale.deliveryTypeWaitForDelivery
+            : Sale.deliveryTypeBooking,
+        status: waitForDelivery
+            ? Sale.statusWaitForDelivery
+            : Sale.statusBooked,
+        // Booking (Branch B)
+        bookingAmount: waitForDelivery ? null : draft.bookingAmount,
+        holdingChargePerDay:
+        waitForDelivery ? null : draft.holdingChargePerDay,
+        holdingStartDate: waitForDelivery
+            ? null
+            : DateTime(today.year, today.month, today.day),
+        // Wait for Delivery (Branch C)
+        bookingPricePerKg:
+        waitForDelivery ? draft.bookingPricePerKg : null,
+        bookingAdvanceAmount:
+        waitForDelivery ? draft.bookingAdvanceAmount : null,
+        bookingWeight: waitForDelivery ? draft.bookingWeightTotal : null,
+      );
+
+      transaction.set(_sales(farmId).doc(saleId), {
+        ...sale.toMap(),
+        'createdAt': FieldValue.serverTimestamp(),
+      });
+
+      // ---------------------------------------------------------------
+      // 4. Reserve the goats in the lot. NOT soldFromFarmQty.
+      // ---------------------------------------------------------------
+
+      transaction.update(lotRef, {
+        'reservedFarmQty': FieldValue.increment(quantity),
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
+
+      // ---------------------------------------------------------------
+      // 5. Dashboard aggregate: only the Booking / Wait on Delivery
+      //    counter moves. The goats are still on the farm, so totalStock
+      //    and totalSold wait for the completed delivery.
+      // ---------------------------------------------------------------
+
+      transaction.set(
+        _summaryDoc(farmId),
+        {
+          (waitForDelivery ? 'waitOnDelivery' : 'booking'):
+          FieldValue.increment(quantity),
+        },
+        SetOptions(merge: true),
+      );
+    }).timeout(_timeout * 2);
+
+    return saleId;
+  }
+
+  // -----------------------------------------------------------------------
   // BRANCH B — BOOKING / HOLDING (Task 3.2)
   // -----------------------------------------------------------------------
 
@@ -929,6 +1126,14 @@ class SalesService {
     required String farmId,
     required SaleDraft draft,
   }) async {
+    if (draft.isLotSale) {
+      return _saveLotHold(
+        farmId: farmId,
+        draft: draft,
+        waitForDelivery: false,
+      );
+    }
+
     if (draft.selectedGoats.isEmpty) {
       throw StateError('Select at least one goat before saving.');
     }
@@ -1096,6 +1301,14 @@ class SalesService {
     required String farmId,
     required SaleDraft draft,
   }) async {
+    if (draft.isLotSale) {
+      return _saveLotHold(
+        farmId: farmId,
+        draft: draft,
+        waitForDelivery: true,
+      );
+    }
+
     if (draft.selectedGoats.isEmpty) {
       throw StateError('Select at least one goat before saving.');
     }
@@ -1655,6 +1868,36 @@ class SalesService {
         );
       }
 
+      // Lot sale: the lot doc is read here, in the read phase, and the
+      // reservation is checked before anything is written.
+      DocumentReference<Map<String, dynamic>>? lotRef;
+
+      if (sale.isLotSale) {
+        lotRef = _tradingPurchases(farmId).doc(sale.lotDocId);
+        final lotSnap = await transaction.get(lotRef);
+
+        if (!lotSnap.exists) {
+          throw StateError('Lot ${sale.lotDocId} no longer exists.');
+        }
+
+        final lot = TradingPurchase.fromDoc(lotSnap);
+
+        if (lot.reservedFarmQty < sale.lotQuantity) {
+          throw StateError(
+            'Lot ${sale.lotDocId} has only ${lot.reservedFarmQty} goats '
+                'reserved but this sale holds ${sale.lotQuantity}. '
+                'Please check the lot before completing.',
+          );
+        }
+
+        if (sale.costPerGoatSnapshot == null) {
+          throw StateError(
+            'Sale $saleId has no stored cost per goat, so its profit '
+                'cannot be worked out.',
+          );
+        }
+      }
+
       final goatSnaps = <DocumentSnapshot<Map<String, dynamic>>>[];
 
       for (final goatId in sale.goatIds) {
@@ -1686,7 +1929,13 @@ class SalesService {
         eligiblePurchaseIds.add(goat.purchaseId);
       }
 
-      final costOfGoodsSold = await _costOfGoatsInTransaction(
+      // A lot sale uses the cost per goat snapshotted when the sale was
+      // made — never the lot's current figure, which may have moved on.
+      final costOfGoodsSold = sale.isLotSale
+          ? SaleDraft.round2(
+        (sale.costPerGoatSnapshot ?? 0) * sale.lotQuantity,
+      )
+          : await _costOfGoatsInTransaction(
         transaction: transaction,
         farmId: farmId,
         purchaseIds: eligiblePurchaseIds,
@@ -1794,7 +2043,18 @@ class SalesService {
       //    clobbering it.
       // ---------------------------------------------------------------
 
-      var movedGoats = 0;
+      var movedGoats = sale.isLotSale ? sale.lotQuantity : 0;
+
+      if (sale.isLotSale) {
+        // The reserved goats are now sold: reserved -> sold, and the farm
+        // stock (mirrored by pendingCount) falls now, not at booking.
+        transaction.update(lotRef!, {
+          'reservedFarmQty': FieldValue.increment(-sale.lotQuantity),
+          'soldFromFarmQty': FieldValue.increment(sale.lotQuantity),
+          'pendingCount': FieldValue.increment(-sale.lotQuantity),
+          'updatedAt': FieldValue.serverTimestamp(),
+        });
+      }
 
       for (final snap in goatSnaps) {
         if (!snap.exists) continue;
@@ -1830,6 +2090,8 @@ class SalesService {
           'booking': FieldValue.increment(-movedGoats),
           'totalSold': FieldValue.increment(movedGoats),
           'totalStock': FieldValue.increment(-movedGoats),
+          if (sale.isLotSale)
+            'pendingRegistrations': FieldValue.increment(-movedGoats),
           'totalProfit': FieldValue.increment(
             SaleDraft.round2(
               totalSaleAmount + actualHoldingCharges - costOfGoodsSold,
@@ -1954,6 +2216,36 @@ class SalesService {
         );
       }
 
+      // Lot sale: the lot doc is read here, in the read phase, and the
+      // reservation is checked before anything is written.
+      DocumentReference<Map<String, dynamic>>? lotRef;
+
+      if (sale.isLotSale) {
+        lotRef = _tradingPurchases(farmId).doc(sale.lotDocId);
+        final lotSnap = await transaction.get(lotRef);
+
+        if (!lotSnap.exists) {
+          throw StateError('Lot ${sale.lotDocId} no longer exists.');
+        }
+
+        final lot = TradingPurchase.fromDoc(lotSnap);
+
+        if (lot.reservedFarmQty < sale.lotQuantity) {
+          throw StateError(
+            'Lot ${sale.lotDocId} has only ${lot.reservedFarmQty} goats '
+                'reserved but this sale holds ${sale.lotQuantity}. '
+                'Please check the lot before completing.',
+          );
+        }
+
+        if (sale.costPerGoatSnapshot == null) {
+          throw StateError(
+            'Sale $saleId has no stored cost per goat, so its profit '
+                'cannot be worked out.',
+          );
+        }
+      }
+
       final goatSnaps = <DocumentSnapshot<Map<String, dynamic>>>[];
 
       for (final goatId in sale.goatIds) {
@@ -1985,7 +2277,13 @@ class SalesService {
         eligiblePurchaseIds.add(goat.purchaseId);
       }
 
-      final costOfGoodsSold = await _costOfGoatsInTransaction(
+      // A lot sale uses the cost per goat snapshotted when the sale was
+      // made — never the lot's current figure, which may have moved on.
+      final costOfGoodsSold = sale.isLotSale
+          ? SaleDraft.round2(
+        (sale.costPerGoatSnapshot ?? 0) * sale.lotQuantity,
+      )
+          : await _costOfGoatsInTransaction(
         transaction: transaction,
         farmId: farmId,
         purchaseIds: eligiblePurchaseIds,
@@ -2075,7 +2373,18 @@ class SalesService {
       //    happen) rather than clobbering it.
       // ---------------------------------------------------------------
 
-      var movedGoats = 0;
+      var movedGoats = sale.isLotSale ? sale.lotQuantity : 0;
+
+      if (sale.isLotSale) {
+        // The reserved goats are now sold: reserved -> sold, and the farm
+        // stock (mirrored by pendingCount) falls now, not at booking.
+        transaction.update(lotRef!, {
+          'reservedFarmQty': FieldValue.increment(-sale.lotQuantity),
+          'soldFromFarmQty': FieldValue.increment(sale.lotQuantity),
+          'pendingCount': FieldValue.increment(-sale.lotQuantity),
+          'updatedAt': FieldValue.serverTimestamp(),
+        });
+      }
 
       for (final snap in goatSnaps) {
         if (!snap.exists) continue;
@@ -2111,6 +2420,8 @@ class SalesService {
           'waitOnDelivery': FieldValue.increment(-movedGoats),
           'totalSold': FieldValue.increment(movedGoats),
           'totalStock': FieldValue.increment(-movedGoats),
+          if (sale.isLotSale)
+            'pendingRegistrations': FieldValue.increment(-movedGoats),
           'totalProfit': FieldValue.increment(
             SaleDraft.round2(grossSaleValue - costOfGoodsSold),
           ),

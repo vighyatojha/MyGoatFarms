@@ -381,8 +381,8 @@ class _SaleReceiptScreenState extends State<SaleReceiptScreen> {
           GoatIcons.paw,
           [
             _row(
-              'Goat(s)',
-              sale.goatIds.isEmpty ? '-' : sale.goatIds.join(', '),
+              sale.isLotSale ? 'Lot' : 'Goat(s)',
+              sale.goatsReceiptLabel,
             ),
             _row(
               'Selling Weight',

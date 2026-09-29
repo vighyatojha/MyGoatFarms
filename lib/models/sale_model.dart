@@ -98,6 +98,24 @@ class Sale {
 
   bool get isLotSale => lotDocId.isNotEmpty;
 
+  /// Display id of the lot sold from: PUR-0007 -> LOT-0007. Derived (same
+  /// rule as `TradingPurchase.lotId`) rather than stored, so it is right for
+  /// every lot sale already saved. Empty for an individual-goat sale.
+  String get lotDisplayId {
+    if (!isLotSale) return '';
+    final dash = lotDocId.indexOf('-');
+    return dash < 0 ? lotDocId : 'LOT-${lotDocId.substring(dash + 1)}';
+  }
+
+  /// What goes under "Goat(s)" on a receipt: the goat ids for an
+  /// individual-goat sale, "LOT-0007 - 5 goats" for a lot sale.
+  String get goatsReceiptLabel {
+    if (isLotSale) {
+      return '$lotDisplayId - $lotQuantity goat${lotQuantity == 1 ? '' : 's'}';
+    }
+    return goatIds.isEmpty ? '-' : goatIds.join(', ');
+  }
+
   /// How many goats this sale covers, for lot and individual-goat sales
   /// alike. Use this instead of `goatIds.length`.
   int get goatCount => isLotSale ? lotQuantity : goatIds.length;

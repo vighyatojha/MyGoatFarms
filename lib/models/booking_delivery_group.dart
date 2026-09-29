@@ -31,6 +31,13 @@ class BookingDeliverySale {
 
   String get id => sale.id;
 
+  /// Goats in this sale. A lot sale has no goat records (the goats are
+  /// anonymous inside the lot), so its quantity is used instead of
+  /// `goats.length`.
+  int get goatCount => sale.isLotSale ? sale.lotQuantity : goats.length;
+
+  bool get isLotSale => sale.isLotSale;
+
   /// True when the goats were sold for one agreed price instead of a
   /// price per KG. Kept for parity with the Wait for Delivery batch
   /// screen's fixed-price tag — Booking's total is not repriced either
@@ -116,7 +123,7 @@ class BookingDeliveryCustomer {
   }
 
   int get goatCount {
-    return sales.fold<int>(0, (sum, entry) => sum + entry.goats.length);
+    return sales.fold<int>(0, (sum, entry) => sum + entry.goatCount);
   }
 
   double get bookingAmountTotal {
@@ -152,7 +159,7 @@ class BookingDeliveryCustomer {
     return earliest;
   }
 
-  /// Search across name, mobile, goat IDs and booking IDs.
+  /// Search across name, mobile, goat IDs, lot IDs and booking IDs.
   bool matches(String query) {
     final q = query.trim().toLowerCase();
 
@@ -163,6 +170,12 @@ class BookingDeliveryCustomer {
 
     for (final entry in sales) {
       if (entry.id.toLowerCase().contains(q)) return true;
+
+      if (entry.isLotSale &&
+          (entry.sale.lotDocId.toLowerCase().contains(q) ||
+              entry.sale.lotDisplayId.toLowerCase().contains(q))) {
+        return true;
+      }
 
       for (final goat in entry.goats) {
         if (goat.id.toLowerCase().contains(q)) return true;
@@ -184,7 +197,7 @@ class BookingDeliveryCustomer {
   /// If a sale has no mobile it falls back to the customer ID, then to
   /// the name.
   ///
-  /// A sale only appears while it still has at least one goat that is
+  /// An individual-goat sale only appears while it still has at least one goat that is
   /// "Booked" — anything else is stale data and is skipped rather than
   /// shown as an empty booking.
   static List<BookingDeliveryCustomer> group({
@@ -205,6 +218,18 @@ class BookingDeliveryCustomer {
 
     for (final sale in sales) {
       if (!sale.isBooking || sale.status != Sale.statusBooked) {
+        continue;
+      }
+
+      // A lot sale has no goat records — it is held as a quantity in the
+      // lot — so it is listed on its own merit instead of being skipped
+      // as stale.
+      if (sale.isLotSale) {
+        if (sale.lotQuantity <= 0) continue;
+
+        byCustomer
+            .putIfAbsent(_keyFor(sale), () => <BookingDeliverySale>[])
+            .add(BookingDeliverySale(sale: sale, goats: const <Goat>[]));
         continue;
       }
 

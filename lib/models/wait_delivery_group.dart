@@ -21,6 +21,13 @@ class WaitDeliverySale {
 
   String get id => sale.id;
 
+  /// Goats in this sale. A lot sale has no goat records (the goats are
+  /// anonymous inside the lot), so its quantity is used instead of
+  /// `goats.length`.
+  int get goatCount => sale.isLotSale ? sale.lotQuantity : goats.length;
+
+  bool get isLotSale => sale.isLotSale;
+
   /// True when the goats were sold for one agreed price instead of a
   /// price per KG — the pickup weight is then only recorded, never used
   /// to reprice.
@@ -98,7 +105,7 @@ class WaitDeliveryCustomer {
   }
 
   int get goatCount {
-    return sales.fold<int>(0, (sum, entry) => sum + entry.goats.length);
+    return sales.fold<int>(0, (sum, entry) => sum + entry.goatCount);
   }
 
   double get advanceTotal {
@@ -127,7 +134,7 @@ class WaitDeliveryCustomer {
     return latest;
   }
 
-  /// Search across name, mobile, goat IDs and booking IDs.
+  /// Search across name, mobile, goat IDs, lot IDs and booking IDs.
   bool matches(String query) {
     final q = query.trim().toLowerCase();
 
@@ -138,6 +145,12 @@ class WaitDeliveryCustomer {
 
     for (final entry in sales) {
       if (entry.id.toLowerCase().contains(q)) return true;
+
+      if (entry.isLotSale &&
+          (entry.sale.lotDocId.toLowerCase().contains(q) ||
+              entry.sale.lotDisplayId.toLowerCase().contains(q))) {
+        return true;
+      }
 
       for (final goat in entry.goats) {
         if (goat.id.toLowerCase().contains(q)) return true;
@@ -168,7 +181,7 @@ class WaitDeliveryCustomer {
   /// bookings were saved against a Sale customer record on one occasion
   /// and a Palai customer record on another.
   ///
-  /// A sale only appears while it still has at least one goat that is
+  /// An individual-goat sale only appears while it still has at least one goat that is
   /// "Wait on Delivery" — anything else is stale data and is skipped
   /// rather than shown as an empty booking.
   static List<WaitDeliveryCustomer> group({
@@ -190,6 +203,18 @@ class WaitDeliveryCustomer {
     for (final sale in sales) {
       if (!sale.isWaitForDelivery ||
           sale.status != Sale.statusWaitForDelivery) {
+        continue;
+      }
+
+      // A lot sale has no goat records — it is held as a quantity in the
+      // lot — so it is listed on its own merit instead of being skipped
+      // as stale.
+      if (sale.isLotSale) {
+        if (sale.lotQuantity <= 0) continue;
+
+        byCustomer
+            .putIfAbsent(_keyFor(sale), () => <WaitDeliverySale>[])
+            .add(WaitDeliverySale(sale: sale, goats: const <Goat>[]));
         continue;
       }
 

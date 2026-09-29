@@ -83,7 +83,7 @@ class SaleReceiptPdfService {
                 number: '2',
                 title: 'Goat Sale Details',
                 subtitle:
-                '${sale.goatIds.length} goat${sale.goatIds.length == 1 ? '' : 's'} included in this receipt',
+                '${sale.goatCount} goat${sale.goatCount == 1 ? '' : 's'} included in this receipt',
               ),
 
               pw.SizedBox(height: 3),
@@ -457,7 +457,7 @@ class SaleReceiptPdfService {
           ),
           _infoItem(
             'No. of Goats',
-            '${sale.goatIds.length}',
+            '${sale.goatCount}',
           ),
         ],
       ),
@@ -610,10 +610,8 @@ class SaleReceiptPdfService {
       child: pw.Column(
         children: [
           _detailRow(
-            'Goat ID(s)',
-            sale.goatIds.isEmpty
-                ? '-'
-                : sale.goatIds.join(', '),
+            sale.isLotSale ? 'Lot' : 'Goat ID(s)',
+            sale.goatsReceiptLabel,
           ),
           _detailRow(
             'Selling Weight',

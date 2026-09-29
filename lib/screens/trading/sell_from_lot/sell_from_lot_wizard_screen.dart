@@ -14,7 +14,7 @@ import '../purchase_goats/purchase_wizard_widgets.dart';
 import '../sale_receipt_screen.dart';
 import '../steps/step2_customer_lookup.dart';
 import '../steps/step4_sale_details.dart';
-import 'step_lot_delivery.dart';
+import '../steps/step5_delivery_options.dart';
 import 'step_select_lot.dart';
 import 'step_source_and_quantity.dart';
 
@@ -22,9 +22,15 @@ import 'step_source_and_quantity.dart';
 /// goats are picked, a quantity is taken straight out of a Purchase Lot.
 ///
 /// Flow: Select Lot -> Source & Quantity -> Customer -> Sale Details ->
-/// Payment -> Save. Stock still at the supplier is always Deliver Now
-/// (see StepLotDelivery's doc comment) — Booking and Wait for Delivery
-/// stay on the individual-goat Sell Goat flow for now, per the handover.
+/// Delivery -> Save. The last step is the same [Step5DeliveryOptions] the
+/// Sell Goat wizard uses, told (through the draft) that this is a lot
+/// sale:
+///  - goats still at the supplier: Deliver Now only;
+///  - goats at the farm: Deliver Now, Booking / Holding or Wait for
+///    Delivery (held goats are reserved in the lot, not sold, until the
+///    delivery is completed from the Booking / Wait for Delivery lists);
+///  - Transfer to Palai is not offered — that is the lot's own transfer
+///    action.
 class SellFromLotWizardScreen extends StatefulWidget {
   const SellFromLotWizardScreen({super.key});
 
@@ -46,7 +52,8 @@ class _SellFromLotWizardScreenState extends State<SellFromLotWizardScreen> {
   GlobalKey<Step2CustomerLookupState>();
   final GlobalKey<FormState> _sourceFormKey = GlobalKey<FormState>();
   final GlobalKey<FormState> _detailsFormKey = GlobalKey<FormState>();
-  final GlobalKey<FormState> _paymentFormKey = GlobalKey<FormState>();
+  final GlobalKey<Step5DeliveryOptionsState> _deliveryKey =
+  GlobalKey<Step5DeliveryOptionsState>();
 
   final SaleDraft _draft = SaleDraft();
 
@@ -66,7 +73,7 @@ class _SellFromLotWizardScreenState extends State<SellFromLotWizardScreen> {
     _sourcePage: 'Quantity',
     _customerPage: 'Customer',
     _detailsPage: 'Sale',
-    _paymentPage: 'Payment',
+    _paymentPage: 'Delivery',
   };
 
   @override
@@ -103,7 +110,7 @@ class _SellFromLotWizardScreenState extends State<SellFromLotWizardScreen> {
       case _detailsPage:
         return 'Sale Details';
       case _paymentPage:
-        return 'Payment';
+        return 'Delivery Options';
       default:
         return 'Sell From Lot';
     }
@@ -147,17 +154,76 @@ class _SellFromLotWizardScreenState extends State<SellFromLotWizardScreen> {
   }
 
   Future<void> _save() async {
-    if (!(_paymentFormKey.currentState?.validate() ?? false)) return;
+    if (!(_deliveryKey.currentState?.validate() ?? false)) return;
 
     setState(() => _saving = true);
 
     try {
-      final saleId = await SalesService.instance.saveLotDeliverNow(
-        farmId: _farmId!,
-        draft: _draft,
-      );
+      final String saleId;
+
+      if (_draft.isDeliverNow) {
+        saleId = await SalesService.instance.saveLotDeliverNow(
+          farmId: _farmId!,
+          draft: _draft,
+        );
+      } else if (_draft.isBooking) {
+        saleId = await SalesService.instance.saveBooking(
+          farmId: _farmId!,
+          draft: _draft,
+        );
+      } else if (_draft.isWaitForDelivery) {
+        saleId = await SalesService.instance.saveWaitForDelivery(
+          farmId: _farmId!,
+          draft: _draft,
+        );
+      } else {
+        // Palai is not offered for a lot sale, and Step 5 refuses to
+        // validate without a choice — this is only a backstop.
+        setState(() => _saving = false);
+        wizardSnack(
+          context,
+          'Choose a delivery option to continue.',
+          error: true,
+        );
+        return;
+      }
 
       if (!mounted) return;
+
+      // Booking / Wait for Delivery: the goats are only reserved, so there
+      // is no receipt yet — it is generated when the delivery is
+      // completed (same as the individual-goat flow).
+      if (_draft.isBooking || _draft.isWaitForDelivery) {
+        final messenger = ScaffoldMessenger.of(context);
+
+        Navigator.of(context).pop();
+
+        messenger
+          ..hideCurrentSnackBar()
+          ..showSnackBar(
+            SnackBar(
+              behavior: SnackBarBehavior.floating,
+              backgroundColor: AppColors.darkGreen,
+              margin: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(14),
+              ),
+              duration: const Duration(seconds: 5),
+              content: Text(
+                'Sale $saleId saved. ${_draft.lotQuantity} goats are '
+                    'reserved in ${_draft.lotDisplayId}. The receipt will '
+                    'be generated when the delivery is completed.',
+                style: AppTheme.body(
+                  size: 12,
+                  color: Colors.white,
+                  weight: FontWeight.w500,
+                ),
+              ),
+            ),
+          );
+
+        return;
+      }
 
       Navigator.of(context).pushReplacement(
         fastRoute(SaleReceiptScreen(farmId: _farmId!, saleId: saleId)),
@@ -264,8 +330,8 @@ class _SellFromLotWizardScreenState extends State<SellFromLotWizardScreen> {
         );
 
       case _paymentPage:
-        return StepLotDelivery(
-          formKey: _paymentFormKey,
+        return Step5DeliveryOptions(
+          key: _deliveryKey,
           draft: _draft,
         );
 
