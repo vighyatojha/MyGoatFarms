@@ -10,6 +10,7 @@ import '../models/purchase_costing.dart';
 import '../models/sale_model.dart';
 import '../models/trading_lot_payment_model.dart';
 import '../models/trading_lot_receiving_model.dart';
+import '../models/trading_lot_overview.dart';
 import '../models/trading_purchase_model.dart';
 import '../models/trading_summary_model.dart';
 import 'firestore_service.dart';
@@ -226,6 +227,14 @@ class TradingService {
             .map(
               (doc) => TradingPurchase.fromDoc(doc),
         )
+        // Lots register goats only through a Palai transfer
+        // (GoatService.transferLotToOwnPalai /
+        // saveLotTransferToCustomerPalai), never through this
+        // one-by-one flow — a lot reaching here would offer a
+        // "Register Goats" button that bypasses Palai tracking.
+            .where(
+              (purchase) => !purchase.isLot,
+        )
             .where(
               (purchase) => purchase.pendingCount > 0,
         )
@@ -241,6 +250,21 @@ class TradingService {
         return purchases;
       },
     );
+  }
+
+  // -----------------------------------------------------------------------
+  // LOT OVERVIEW (dashboard)
+  // -----------------------------------------------------------------------
+
+  /// One listener on the whole `tradingPurchases` collection, reduced to
+  /// [TradingLotOverview] — every lot number the dashboard needs, derived
+  /// live rather than read from a stored counter. See that class's doc
+  /// comment for why.
+  Stream<TradingLotOverview> lotOverviewStream(String farmId) {
+    return _tradingPurchases(farmId).snapshots().map((snapshot) {
+      final purchases = snapshot.docs.map(TradingPurchase.fromDoc).toList();
+      return TradingLotOverview.fromPurchases(purchases);
+    });
   }
 
   // -----------------------------------------------------------------------
@@ -1588,6 +1612,7 @@ class TradingService {
 
     var wholesalePurchased = 0;
     var pendingRegistrations = 0;
+    var lotTotalSold = 0;
     final costPerSurvivingGoatByPurchaseId = <String, double>{};
 
     for (final doc in snapshot.docs) {
@@ -1597,7 +1622,19 @@ class TradingService {
       costPerSurvivingGoatByPurchaseId[purchase.id] =
           purchase.costPerSurvivingGoat;
 
-      if (purchase.isReceivingCompleted) {
+      if (purchase.isLot) {
+        // A lot's goats are at the farm — reserved or not — from the
+        // moment they arrive, whether or not the lot has finished
+        // receiving (a partially-received lot still has real goats
+        // sitting at the farm waiting to be registered/transferred).
+        pendingRegistrations += purchase.farmQty;
+
+        // Sold straight out of the lot (Deliver Now, or a completed
+        // Booking / Wait for Delivery) never creates a tradingGoats
+        // doc, so it must be counted here — the goat-doc loop below
+        // only sees goats that were individually registered.
+        lotTotalSold += purchase.soldFromSupplierQty + purchase.soldFromFarmQty;
+      } else if (purchase.isReceivingCompleted) {
         // Reflects goats from this purchase still awaiting individual
         // registration — kept in sync by GoatService.registerGoat() as
         // each goat is saved. Not the same as `surviving`: a partially
@@ -1674,7 +1711,14 @@ class TradingService {
       final sale = Sale.fromDoc(saleSnap);
       final revenue = sale.billGoatSale + sale.billHoldingCharges;
 
-      final cost = entry.value.fold<double>(
+      // A goat carrying a cost snapshot came out of a lot (a Step 6
+      // Customer Palai transfer) — its cost was fixed at the moment of
+      // that transfer and must not drift with the lot's live cost
+      // afterwards. A goat with no snapshot is an ordinary purchase-based
+      // goat and still uses the live per-purchase figure.
+      final cost = sale.costPerGoatSnapshot != null
+          ? sale.costPerGoatSnapshot! * entry.value.length
+          : entry.value.fold<double>(
         0,
             (sum, goat) =>
         sum + (costPerSurvivingGoatByPurchaseId[goat.purchaseId] ?? 0),
@@ -1682,6 +1726,43 @@ class TradingService {
 
       totalProfit += revenue - cost;
     }
+
+    // ------------------------------------------------------------------
+    // LOT SALES — Deliver Now / Booking / Wait for Delivery straight out
+    // of a lot never create a tradingGoats doc, so none of the counting
+    // above sees them. One extra query picks them all up: every sale
+    // with a lotId is a lot sale (Sale.toMap writes `lotId`, not
+    // `lotDocId` — see Sale.fromDoc/toMap).
+    // ------------------------------------------------------------------
+
+    final lotSalesSnapshot = await _sales(farmId)
+        .where('lotId', isGreaterThan: '')
+        .get()
+        .timeout(_timeout);
+
+    for (final doc in lotSalesSnapshot.docs) {
+      final sale = Sale.fromDoc(doc);
+
+      switch (sale.status) {
+        case Sale.statusBooked:
+          booking += sale.lotQuantity;
+          break;
+
+        case Sale.statusWaitForDelivery:
+          waitOnDelivery += sale.lotQuantity;
+          break;
+
+        case Sale.statusSold:
+        case Sale.statusDeliveryCompleted:
+        case Sale.statusPickupCompleted:
+          final revenue = sale.billGoatSale + sale.billHoldingCharges;
+          final cost = (sale.costPerGoatSnapshot ?? 0) * sale.lotQuantity;
+          totalProfit += revenue - cost;
+          break;
+      }
+    }
+
+    totalSold += lotTotalSold;
 
     final totalStock = pendingRegistrations + onFarmGoats;
 

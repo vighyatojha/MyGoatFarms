@@ -6,6 +6,7 @@ import 'package:intl/intl.dart';
 import '../../app_theme.dart';
 import '../../goat_icons.dart';
 import '../../models/goat_model.dart';
+import '../../models/trading_lot_overview.dart';
 import '../../models/trading_purchase_model.dart';
 import '../../models/trading_summary_model.dart';
 import '../../services/firestore_service.dart';
@@ -17,10 +18,12 @@ import 'goat_stock/booking_delivery_customer_list_screen.dart';
 import 'goat_stock/goat_stock_list_screen.dart';
 import 'goat_stock/wait_delivery_customer_list_screen.dart';
 import 'lots/lot_management_screen.dart';
+import 'lots/receive_lot_screen.dart';
 import 'own_palai/own_palai_list_screen.dart';
 import 'purchase_goats/complete_receiving_screen.dart';
 import 'purchase_goats/purchase_goats_wizard_screen.dart';
 import 'register_goats/select_purchase_screen.dart';
+import 'sell_from_lot/sell_from_lot_wizard_screen.dart';
 import 'sell_goat/sell_goat_wizard_screen.dart';
 
 /// Trading Dashboard.
@@ -52,7 +55,7 @@ class _TradingDashboardScreenState extends State<TradingDashboardScreen> {
 
   // Created once per farm (not in build) so rebuilds never resubscribe.
   Stream<TradingSummary>? _summaryStream;
-  Stream<List<TradingPurchase>>? _pendingStream;
+  Stream<TradingLotOverview>? _lotOverviewStream;
 
   // "Available Stock" = registered goats whose status is Available.
   //
@@ -92,9 +95,15 @@ class _TradingDashboardScreenState extends State<TradingDashboardScreen> {
     _summaryStream = next == null
         ? null
         : TradingService.instance.dashboardSummaryStream(next);
-    _pendingStream = next == null
+    // TradingService.pendingReceivingStream is no longer read here —
+    // Pending Receiving is driven entirely by _lotOverviewStream now
+    // (TradingLotOverview.pendingReceiving), which is lot-aware in a way
+    // that stream isn't (see that class's doc comment). The service
+    // method itself is left in place; nothing else in the dashboard
+    // calls it.
+    _lotOverviewStream = next == null
         ? null
-        : TradingService.instance.pendingReceivingStream(next);
+        : TradingService.instance.lotOverviewStream(next);
 
     // New farm: forget the old count and use the summary doc purely as a
     // "something changed" signal. Its first emission also triggers the
@@ -267,6 +276,19 @@ class _TradingDashboardScreenState extends State<TradingDashboardScreen> {
     }
   }
 
+  Future<void> _openReceiveLot(TradingPurchase lot) async {
+    final farmId = _farmId;
+    if (farmId == null) return;
+
+    final saved = await Navigator.of(context).push<bool>(
+      fastRoute(ReceiveLotScreen(farmId: farmId, lot: lot)),
+    );
+
+    if (saved == true) {
+      _snack('Receiving saved.', AppColors.darkGreen);
+    }
+  }
+
   // ===========================================================================
   // BUILD
   // ===========================================================================
@@ -311,24 +333,37 @@ class _TradingDashboardScreenState extends State<TradingDashboardScreen> {
           _header(),
           const SizedBox(height: 16),
 
-          // One subscription feeds both the overview and the
-          // "Register Goats" hero (pending registrations count).
-          StreamBuilder<TradingSummary>(
-            stream: _summaryStream,
-            builder: (context, snap) {
-              final summary = snap.data ?? TradingSummary.empty;
+          // One subscription feeds the lot numbers everywhere below —
+          // the overview strip, the "Purchase Lots" hero, and Pending
+          // Receiving. See TradingLotOverview's doc comment for why the
+          // dashboard no longer reads lot stock from the stored
+          // tradingSummary counters.
+          StreamBuilder<TradingLotOverview>(
+            stream: _lotOverviewStream,
+            builder: (context, lotSnap) {
+              final lotOverview = lotSnap.data ?? TradingLotOverview.empty();
+
               return Column(
                 children: [
-                  _overview(snap, summary),
+                  StreamBuilder<TradingSummary>(
+                    stream: _summaryStream,
+                    builder: (context, snap) {
+                      final summary = snap.data ?? TradingSummary.empty;
+                      return Column(
+                        children: [
+                          _overview(snap, summary, lotOverview),
+                          const SizedBox(height: 18),
+                          _quickActions(summary, lotOverview),
+                        ],
+                      );
+                    },
+                  ),
                   const SizedBox(height: 18),
-                  _quickActions(summary),
+                  _pendingSection(lotSnap, lotOverview),
                 ],
               );
             },
           ),
-
-          const SizedBox(height: 18),
-          _pendingSection(),
         ],
       ),
     );
@@ -373,7 +408,11 @@ class _TradingDashboardScreenState extends State<TradingDashboardScreen> {
   // OVERVIEW (stat cards + secondary stats)
   // ===========================================================================
 
-  Widget _overview(AsyncSnapshot<TradingSummary> snap, TradingSummary s) {
+  Widget _overview(
+      AsyncSnapshot<TradingSummary> snap,
+      TradingSummary s,
+      TradingLotOverview lotOverview,
+      ) {
     if (snap.hasError) {
       return _errorCard('Unable to load trading summary. Pull down to refresh.');
     }
@@ -382,15 +421,23 @@ class _TradingDashboardScreenState extends State<TradingDashboardScreen> {
       return const _Pulse(child: _OverviewSkeleton());
     }
 
+    final availableInLots = lotOverview.farmAvailableQty;
+
     return Column(
       children: [
         _pair(
           _StatCard(
             icon: GoatIcons.paw,
             label: 'Available Stock',
-            // Registered goats marked Available only. Unregistered goats
-            // are tracked under "Pending Registrations" below.
-            value: _availableCount?.toString() ?? '—',
+            // Individually-registered goats marked Available, plus goats
+            // sitting free inside a lot at the farm (not yet transferred,
+            // not reserved) — the badge breaks out the lot half so the
+            // number doesn't look unexplained next to Goat Stock, which
+            // only ever shows the individually-registered half.
+            value: _availableCount == null
+                ? '—'
+                : '${_availableCount! + availableInLots}',
+            badge: availableInLots > 0 ? '$availableInLots in lots' : null,
             color: AppColors.primaryGreen,
             onTap: () => _openGoatStock(statusFilter: Goat.statusAvailable),
           ),
@@ -425,12 +472,12 @@ class _TradingDashboardScreenState extends State<TradingDashboardScreen> {
           height: 116,
         ),
         const SizedBox(height: 10),
-        _secondaryStats(s),
+        _secondaryStats(s, lotOverview),
       ],
     );
   }
 
-  Widget _secondaryStats(TradingSummary s) {
+  Widget _secondaryStats(TradingSummary s, TradingLotOverview lotOverview) {
     final profit = s.totalProfit;
     final profitColor = profit > 0
         ? AppColors.success
@@ -475,19 +522,23 @@ class _TradingDashboardScreenState extends State<TradingDashboardScreen> {
             ),
             divider,
             _StripRow(
-              icon: Icons.description_outlined,
-              color: AppColors.warning,
-              title: 'Pending Registrations',
-              subtitle: 'Needs ear-tags & weight',
-              subtitleColor: AppColors.warning,
-              onTap: () => _push(const SelectPurchaseScreen()),
+              icon: Icons.currency_rupee_rounded,
+              color: AppColors.error,
+              title: 'Supplier Payments Due',
+              subtitle: 'Owed across every active lot',
+              subtitleColor: AppColors.error,
+              onTap: () {
+                final farmId = _farmId;
+                if (farmId == null) return;
+                _push(LotManagementScreen(farmId: farmId));
+              },
               trailing: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  s.pendingRegistrations > 0
-                      ? _Pill('${s.pendingRegistrations} Pending',
-                      AppColors.warning)
-                      : const _Pill('All done', AppColors.success),
+                  lotOverview.supplierDue >= 0.01
+                      ? _Pill(_inr.format(lotOverview.supplierDue),
+                      AppColors.error)
+                      : const _Pill('Fully paid', AppColors.success),
                   const SizedBox(width: 4),
                   Icon(
                     Icons.chevron_right_rounded,
@@ -497,6 +548,38 @@ class _TradingDashboardScreenState extends State<TradingDashboardScreen> {
                 ],
               ),
             ),
+            // Only the lot-first purchases show above. A purchase made
+            // before lots existed still needs one-by-one registration
+            // until it's converted (TradingService.
+            // convertLegacyPurchasesToLots) — this strip is the only way
+            // to reach that old flow now, and disappears on its own once
+            // nothing is left to convert.
+            if (lotOverview.legacyPendingRegistrations > 0) ...[
+              divider,
+              _StripRow(
+                icon: Icons.description_outlined,
+                color: AppColors.warning,
+                title: 'Older Purchases to Register',
+                subtitle: 'From before Purchase Lots — register one by one',
+                subtitleColor: AppColors.warning,
+                onTap: () => _push(const SelectPurchaseScreen()),
+                trailing: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    _Pill(
+                      '${lotOverview.legacyPendingRegistrations} Pending',
+                      AppColors.warning,
+                    ),
+                    const SizedBox(width: 4),
+                    Icon(
+                      Icons.chevron_right_rounded,
+                      size: 18,
+                      color: AppColors.textGrey,
+                    ),
+                  ],
+                ),
+              ),
+            ],
             divider,
             _StripRow(
               icon: Icons.trending_up_rounded,
@@ -525,7 +608,7 @@ class _TradingDashboardScreenState extends State<TradingDashboardScreen> {
   // QUICK ACTIONS
   // ===========================================================================
 
-  Widget _quickActions(TradingSummary s) {
+  Widget _quickActions(TradingSummary s, TradingLotOverview lotOverview) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -543,7 +626,7 @@ class _TradingDashboardScreenState extends State<TradingDashboardScreen> {
           ],
         ),
         const SizedBox(height: 10),
-        _registerHero(s.pendingRegistrations),
+        _purchaseLotsHero(lotOverview),
         const SizedBox(height: 10),
         _pair(
           _ActionTile(
@@ -554,16 +637,23 @@ class _TradingDashboardScreenState extends State<TradingDashboardScreen> {
             onTap: () => _push(const PurchaseGoatsWizardScreen()),
           ),
           _ActionTile(
+            icon: Icons.sell_outlined,
+            title: 'Sell From Lot',
+            subtitle: 'Supplier or farm stock',
+            color: AppColors.tradingBlue,
+            onTap: () => _push(const SellFromLotWizardScreen()),
+          ),
+          height: 100,
+        ),
+        const SizedBox(height: 10),
+        _pair(
+          _ActionTile(
             icon: Icons.currency_rupee_rounded,
             title: 'Sell Goat',
             subtitle: 'Invoice & gate pass',
             color: AppColors.error,
             onTap: () => _push(const SellGoatWizardScreen()),
           ),
-          height: 100,
-        ),
-        const SizedBox(height: 10),
-        _pair(
           _ActionTile(
             icon: Icons.inventory_2_outlined,
             title: 'Goat Stock',
@@ -571,36 +661,25 @@ class _TradingDashboardScreenState extends State<TradingDashboardScreen> {
             color: Colors.deepPurple,
             onTap: () => _openGoatStock(),
           ),
-          _ActionTile(
-            icon: Icons.holiday_village_outlined,
-            title: 'Own Palai',
-            subtitle: 'Boarded pen records',
-            color: AppColors.warning,
-            onTap: () => _push(const OwnPalaiListScreen()),
-          ),
           height: 100,
         ),
         const SizedBox(height: 10),
         SizedBox(
           height: 100,
           child: _ActionTile(
-            icon: Icons.layers_outlined,
-            title: 'Lot Management',
-            subtitle: 'Receive, pay & track lots',
-            color: AppColors.tradingBlue,
-            onTap: () {
-              final farmId = _farmId;
-              if (farmId == null) return;
-              _push(LotManagementScreen(farmId: farmId));
-            },
+            icon: Icons.holiday_village_outlined,
+            title: 'Own Palai',
+            subtitle: 'Boarded pen records',
+            color: AppColors.warning,
+            onTap: () => _push(const OwnPalaiListScreen()),
           ),
         ),
       ],
     );
   }
 
-  Widget _registerHero(int pending) {
-    final now = DateTime.now();
+  Widget _purchaseLotsHero(TradingLotOverview lotOverview) {
+    final due = lotOverview.supplierDue;
 
     return _CardTap(
       radius: 18,
@@ -608,7 +687,11 @@ class _TradingDashboardScreenState extends State<TradingDashboardScreen> {
         color: AppColors.darkGreen,
         borderRadius: BorderRadius.circular(18),
       ),
-      onTap: () => _push(const SelectPurchaseScreen()),
+      onTap: () {
+        final farmId = _farmId;
+        if (farmId == null) return;
+        _push(LotManagementScreen(farmId: farmId));
+      },
       child: Padding(
         padding: const EdgeInsets.all(12),
         child: Column(
@@ -623,7 +706,7 @@ class _TradingDashboardScreenState extends State<TradingDashboardScreen> {
                     borderRadius: BorderRadius.circular(12),
                   ),
                   child: const Icon(
-                    Icons.how_to_reg_outlined,
+                    Icons.layers_outlined,
                     color: Colors.white,
                     size: 21,
                   ),
@@ -637,7 +720,7 @@ class _TradingDashboardScreenState extends State<TradingDashboardScreen> {
                         children: [
                           Flexible(
                             child: Text(
-                              'Register Goats',
+                              'Purchase Lots',
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
                               style: AppTheme.heading(
@@ -646,16 +729,17 @@ class _TradingDashboardScreenState extends State<TradingDashboardScreen> {
                               ),
                             ),
                           ),
-                          if (pending > 0) ...[
-                            const SizedBox(width: 8),
-                            _Pill('$pending Pending', AppColors.warning,
-                                solid: true),
-                          ],
+                          const SizedBox(width: 8),
+                          _Pill(
+                            '${lotOverview.activeLotCount} active',
+                            AppColors.warning,
+                            solid: true,
+                          ),
                         ],
                       ),
                       const SizedBox(height: 2),
                       Text(
-                        'Tag & weigh incoming batch',
+                        'Receive, pay & track every lot',
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: AppTheme.body(
@@ -673,18 +757,28 @@ class _TradingDashboardScreenState extends State<TradingDashboardScreen> {
             const SizedBox(height: 10),
             Row(
               children: [
+                _heroStat('At Supplier', '${lotOverview.supplierQty}'),
+                _heroStat('At Farm', '${lotOverview.farmQty}'),
+                _heroStat('Reserved', '${lotOverview.reservedQty}'),
+              ],
+            ),
+            const SizedBox(height: 10),
+            Row(
+              children: [
                 Container(
                   width: 6,
                   height: 6,
-                  decoration: const BoxDecoration(
-                    color: AppColors.warning,
+                  decoration: BoxDecoration(
+                    color: due >= 0.01 ? AppColors.warning : AppColors.success,
                     shape: BoxShape.circle,
                   ),
                 ),
                 const SizedBox(width: 7),
                 Expanded(
                   child: Text(
-                    'Batch ${now.year}-Q${_quarter(now)} · Queue',
+                    due >= 0.01
+                        ? '${_inr.format(due)} due to suppliers'
+                        : 'No supplier balance due',
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: AppTheme.body(size: 10.5, color: Colors.white70),
@@ -703,9 +797,9 @@ class _TradingDashboardScreenState extends State<TradingDashboardScreen> {
                   child: Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      Text(
-                        pending > 0 ? 'Process Now' : 'Open',
-                        style: const TextStyle(
+                      const Text(
+                        'Open',
+                        style: TextStyle(
                           color: AppColors.darkGreen,
                           fontSize: 11,
                           fontWeight: FontWeight.w700,
@@ -728,28 +822,47 @@ class _TradingDashboardScreenState extends State<TradingDashboardScreen> {
     );
   }
 
+  Widget _heroStat(String label, String value) {
+    return Expanded(
+      child: Column(
+        children: [
+          Text(
+            value,
+            style: AppTheme.heading(size: 15, color: Colors.white),
+          ),
+          const SizedBox(height: 1),
+          Text(
+            label,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: AppTheme.body(size: 9.5, color: Colors.white70),
+          ),
+        ],
+      ),
+    );
+  }
+
   // ===========================================================================
   // PENDING RECEIVING
   // ===========================================================================
 
-  Widget _pendingSection() {
-    return StreamBuilder<List<TradingPurchase>>(
-      stream: _pendingStream,
-      builder: (context, snap) {
-        if (snap.hasError) {
-          return _errorCard(
-            'Unable to load pending receiving records. Pull down to refresh.',
-          );
-        }
+  Widget _pendingSection(
+      AsyncSnapshot<TradingLotOverview> lotSnap,
+      TradingLotOverview lotOverview,
+      ) {
+    if (lotSnap.hasError) {
+      return _errorCard(
+        'Unable to load pending receiving records. Pull down to refresh.',
+      );
+    }
 
-        if (snap.connectionState == ConnectionState.waiting && !snap.hasData) {
-          return const _Pulse(child: _PendingSkeleton());
-        }
+    if (lotSnap.connectionState == ConnectionState.waiting &&
+        !lotSnap.hasData) {
+      return const _Pulse(child: _PendingSkeleton());
+    }
 
-        final purchases = snap.data ?? const <TradingPurchase>[];
-        return purchases.isEmpty ? _pendingEmpty() : _pendingList(purchases);
-      },
-    );
+    final purchases = lotOverview.pendingReceiving;
+    return purchases.isEmpty ? _pendingEmpty() : _pendingList(purchases);
   }
 
   Widget _pendingHeader(Widget trailing) {
@@ -835,6 +948,8 @@ class _TradingDashboardScreenState extends State<TradingDashboardScreen> {
   }
 
   Widget _pendingCard(TradingPurchase p) {
+    if (p.isLot) return _pendingLotCard(p);
+
     final rows = <Widget>[
       _InfoRow(Icons.person_outline, 'Seller', p.sellerName),
       _InfoRow(GoatIcons.paw, 'Goats', '${p.totalGoats}'),
@@ -936,6 +1051,136 @@ class _TradingDashboardScreenState extends State<TradingDashboardScreen> {
               icon: const Icon(Icons.check_circle_outline, size: 18),
               label: const Text(
                 'Complete Receiving',
+                style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700),
+              ),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: AppColors.primaryGreen,
+                foregroundColor: Colors.white,
+                elevation: 0,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// A lot can be "pending" here even with `receivingStatus == completed`
+  /// (that field only reflects whether receiving finished, not whether
+  /// anything is still at the supplier — see TradingLotOverview). So the
+  /// headline number is always "X of Y at supplier", never a status word.
+  Widget _pendingLotCard(TradingPurchase lot) {
+    final status = lot.paymentStatus;
+    final statusColor = status == 'Paid'
+        ? AppColors.success
+        : status == 'Partial'
+        ? AppColors.warning
+        : AppColors.error;
+
+    final rows = <Widget>[
+      _InfoRow(Icons.person_outline, 'Seller', lot.sellerName),
+      _InfoRow(
+        GoatIcons.paw,
+        'At Supplier',
+        '${lot.supplierQty} of ${lot.totalGoats}',
+      ),
+      _InfoRow(
+        Icons.calendar_today_outlined,
+        'Purchase Date',
+        _dateFmt.format(lot.purchaseDate),
+      ),
+    ];
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(12),
+      decoration: AppTheme.card(radius: 18),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const _IconBox(
+                icon: Icons.layers_outlined,
+                color: AppColors.tradingBlue,
+                size: 36,
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('Lot', style: AppTheme.body(size: 10)),
+                    Text(
+                      lot.lotId,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: AppTheme.heading(size: 13),
+                    ),
+                  ],
+                ),
+              ),
+              _Pill(status, statusColor),
+            ],
+          ),
+          const SizedBox(height: 10),
+          Container(
+            padding: const EdgeInsets.all(10),
+            decoration: BoxDecoration(
+              color: AppColors.paleGreen.withOpacity(0.55),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Column(
+              children: [
+                for (var i = 0; i < rows.length; i++) ...[
+                  if (i > 0) const SizedBox(height: 6),
+                  rows[i],
+                ],
+              ],
+            ),
+          ),
+          if (lot.dueAmount >= 0.01) ...[
+            const SizedBox(height: 8),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+              decoration: BoxDecoration(
+                color: AppColors.error.withOpacity(0.07),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Row(
+                children: [
+                  const Icon(
+                    Icons.currency_rupee,
+                    color: AppColors.error,
+                    size: 17,
+                  ),
+                  const SizedBox(width: 6),
+                  Expanded(
+                    child: Text(
+                      'Balance Due',
+                      style: AppTheme.body(size: 10.5),
+                    ),
+                  ),
+                  Text(
+                    _inr.format(lot.dueAmount),
+                    style: AppTheme.heading(size: 14, color: AppColors.error),
+                  ),
+                ],
+              ),
+            ),
+          ],
+          const SizedBox(height: 10),
+          SizedBox(
+            width: double.infinity,
+            height: 42,
+            child: ElevatedButton.icon(
+              onPressed: () => _openReceiveLot(lot),
+              icon: const Icon(Icons.inventory_2_outlined, size: 18),
+              label: const Text(
+                'Receive Lot',
                 style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700),
               ),
               style: ElevatedButton.styleFrom(
