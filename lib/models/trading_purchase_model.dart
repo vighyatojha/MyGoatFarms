@@ -343,6 +343,28 @@ class TradingPurchase {
   /// Grand Total / surviving goats. 0 until receiving is completed.
   double get costPerSurvivingGoat => costing.costPerSurvivingGoat;
 
+  /// Cost of ONE goat of this lot, used as the cost basis of a sale.
+  ///
+  /// Before every goat is accounted for, arrivals and losses are not final,
+  /// so the cost is spread over all purchased goats:
+  ///   (purchase amount + expenses so far) / total goats.
+  /// Once receiving is completed it switches to the survivor-based figure
+  /// (grand total / goats that did not die), which carries the cost of any
+  /// goats lost in transit onto the survivors.
+  ///
+  /// A sale snapshots this at sale time, so it never changes afterwards.
+  double get lotCostPerGoat {
+    if (totalGoats <= 0) return 0;
+
+    if (isReceivingCompleted && costPerSurvivingGoat > 0) {
+      return PurchaseCosting.round2(costPerSurvivingGoat);
+    }
+
+    return PurchaseCosting.round2(
+      (costing.purchaseAmount + costing.totalExpenses) / totalGoats,
+    );
+  }
+
   /// Purchase value of goats lost in transit (already inside grandTotal).
   double get mortalityLoss => costing.mortalityLoss;
 

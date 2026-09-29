@@ -37,6 +37,20 @@ class PartnerAccessService {
     return _partner;
   }
 
+  /// True when [permission] should be allowed for whoever is signed in
+  /// right now.
+  ///
+  /// The farm OWNER (not a partner at all — [isPartner] false) always has
+  /// full access; permissions only ever restrict an invited PARTNER. No
+  /// screen in the app called [can] directly before this — this is the
+  /// first place that distinction is made explicit, so double-check it
+  /// against how partner accounts actually sign in before relying on it
+  /// elsewhere.
+  bool allows(String permission) {
+    if (!isPartner) return true;
+    return can(permission);
+  }
+
   bool can(String permission) {
     if (!isActive) return false;
 

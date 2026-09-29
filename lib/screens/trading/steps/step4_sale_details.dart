@@ -118,7 +118,7 @@ class _Step4SaleDetailsState extends State<Step4SaleDetails> {
               _ReadOnlyRow(
                 icon: GoatIcons.paw,
                 label: 'Goats in this Sale',
-                value: '${draft.selectedGoats.length}',
+                value: '${draft.saleGoatCount}',
               ),
               const SizedBox(height: 12),
               _ReadOnlyRow(
@@ -189,7 +189,7 @@ class _Step4SaleDetailsState extends State<Step4SaleDetails> {
         icon: Icons.currency_rupee_rounded,
         suffix: 'total',
         helper: draft.isMultiGoat
-            ? 'One agreed price for all ${draft.selectedGoats.length} goats'
+            ? 'One agreed price for all ${draft.saleGoatCount} goats'
             : 'One agreed price for this goat',
         keyboardType: const TextInputType.numberWithOptions(
           decimal: true,

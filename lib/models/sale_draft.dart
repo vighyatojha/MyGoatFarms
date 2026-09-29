@@ -69,7 +69,39 @@ class SaleDraft {
   List<String> get goatIds =>
       selectedGoats.map((g) => g.id).toList();
 
-  bool get isMultiGoat => selectedGoats.length > 1;
+  bool get isMultiGoat => saleGoatCount > 1;
+
+  // ---------------------------------------------------------------------------
+  // LOT SALE (Sell From Lot)
+  // ---------------------------------------------------------------------------
+  //
+  // When [lotDocId] is set the sale is made straight from a Purchase Lot:
+  // [selectedGoats] stays empty and [lotQuantity] / [lotSellingWeight]
+  // stand in for it. Everything downstream (pricing, customer, payment)
+  // reads [saleGoatCount] and [totalSellingWeight], so it works the same
+  // for both kinds of sale.
+
+  /// Firestore doc id of the lot (PUR-0007). Empty for an individual-goat
+  /// sale.
+  String lotDocId = '';
+
+  /// Display id, LOT-0007.
+  String lotDisplayId = '';
+
+  /// Goats being sold from the lot.
+  int lotQuantity = 0;
+
+  /// [Sale.sourceSupplier] or [Sale.sourceFarm].
+  String sourceLocation = '';
+
+  /// Total selling weight for the lot goats, entered once (goats in a lot
+  /// are not weighed one by one).
+  double lotSellingWeight = 0;
+
+  bool get isLotSale => lotDocId.isNotEmpty;
+
+  /// Goats in this sale, whichever kind it is.
+  int get saleGoatCount => isLotSale ? lotQuantity : selectedGoats.length;
 
   // ---------------------------------------------------------------------------
   // STEP 2 — CUSTOMER MOBILE LOOKUP  (Task 2.2)
@@ -136,7 +168,9 @@ class SaleDraft {
   /// derived from Step 3's per-goat entries rather than re-entered as
   /// an independent value in Step 4, so the two steps can never
   /// disagree about how much is being sold.
-  double get totalSellingWeight => round2(
+  double get totalSellingWeight => isLotSale
+      ? round2(lotSellingWeight)
+      : round2(
     selectedGoats.fold(
       0.0,
           (sum, g) => sum + weightFor(g),

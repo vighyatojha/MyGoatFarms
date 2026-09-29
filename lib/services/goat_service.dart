@@ -453,6 +453,14 @@ class GoatService {
     String notes = '',
     Uint8List? photo,
     String? photoContentType,
+
+    /// Registers the goat directly into a non-default status (e.g. Own
+    /// Palai) instead of Available. Used when a goat is being pulled out
+    /// of a Purchase Lot straight into a Palai transfer (Step 6), so it
+    /// never has to pass through Available first. Must be one of
+    /// [Goat.statusValues]; null keeps the existing behaviour
+    /// (Available).
+    String? initialStatus,
   }) async {
     // -------------------------------------------------------------------
     // VALIDATION
@@ -504,6 +512,12 @@ class GoatService {
     if (gender != null && !Goat.genderValues.contains(gender)) {
       throw ArgumentError(
         'Gender must be one of ${Goat.genderValues}.',
+      );
+    }
+
+    if (initialStatus != null && !Goat.statusValues.contains(initialStatus)) {
+      throw ArgumentError(
+        'Initial status must be one of ${Goat.statusValues}.',
       );
     }
 
@@ -630,7 +644,7 @@ class GoatService {
           currentPurchase.purchaseDate,
 
           currentStatus:
-          Goat.statusAvailable,
+          initialStatus ?? Goat.statusAvailable,
 
           photo:
           photo,

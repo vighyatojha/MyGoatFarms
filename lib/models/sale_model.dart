@@ -70,6 +70,39 @@ class Sale {
   final List<String> goatIds;
 
   // ---------------------------------------------------------------------
+  // LOT SALE
+  // ---------------------------------------------------------------------
+  //
+  // A sale made straight from a Purchase Lot has NO goat ids: the goats are
+  // anonymous inside the lot, so the sale carries a quantity instead.
+
+  /// Firestore doc id of the lot sold from (PUR-0007). Empty for a sale of
+  /// individual goats.
+  final String lotDocId;
+
+  /// Goats sold from the lot. 0 for a sale of individual goats.
+  final int lotQuantity;
+
+  /// Where the sold goats were: [sourceSupplier] or [sourceFarm]. Empty for
+  /// a sale of individual goats.
+  final String sourceLocation;
+
+  /// The lot's cost per goat at the moment of sale. Profit is worked out
+  /// from this snapshot (x [lotQuantity]) so a later receiving or cost edit
+  /// can never change the profit already recognised. Null for a sale of
+  /// individual goats.
+  final double? costPerGoatSnapshot;
+
+  static const String sourceSupplier = 'supplier';
+  static const String sourceFarm = 'farm';
+
+  bool get isLotSale => lotDocId.isNotEmpty;
+
+  /// How many goats this sale covers, for lot and individual-goat sales
+  /// alike. Use this instead of `goatIds.length`.
+  int get goatCount => isLotSale ? lotQuantity : goatIds.length;
+
+  // ---------------------------------------------------------------------
   // CUSTOMER (Task 2.2)
   // ---------------------------------------------------------------------
 
@@ -279,6 +312,10 @@ class Sale {
     this.payments = const [],
     this.paymentMethod,
     this.onCredit = false,
+    this.lotDocId = '',
+    this.lotQuantity = 0,
+    this.sourceLocation = '',
+    this.costPerGoatSnapshot,
   });
 
   // ---------------------------------------------------------------------
@@ -340,7 +377,7 @@ class Sale {
   bool get isPalaiTransfer =>
       deliveryType == deliveryTypePalai;
 
-  bool get isMultiGoat => goatIds.length > 1;
+  bool get isMultiGoat => goatCount > 1;
 
   /// The day the sale was made (the order / booking was taken).
   ///
@@ -727,6 +764,11 @@ class Sale {
 
       onCredit: data['onCredit'] == true,
 
+      lotDocId: (data['lotId'] ?? '').toString(),
+      lotQuantity: nullableIntFrom('lotQuantity') ?? 0,
+      sourceLocation: (data['sourceLocation'] ?? '').toString(),
+      costPerGoatSnapshot: nullableNumFrom('costPerGoatSnapshot'),
+
       payments: (data['payments'] as List?)
           ?.whereType<Map>()
           .map(
@@ -807,6 +849,13 @@ class Sale {
 
     if (onCredit) {
       map['onCredit'] = true;
+    }
+
+    if (isLotSale) {
+      map['lotId'] = lotDocId;
+      map['lotQuantity'] = lotQuantity;
+      map['sourceLocation'] = sourceLocation;
+      putIfNotNull('costPerGoatSnapshot', costPerGoatSnapshot);
     }
 
     if (payments.isNotEmpty) {

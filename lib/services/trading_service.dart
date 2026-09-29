@@ -43,6 +43,27 @@ import 'finance_service.dart';
 ///
 /// Cash
 /// Online
+/// Result of one convertLegacyPurchasesToLots() run.
+class LegacyConversionReport {
+  /// Ids of every purchase that was converted this run (empty if there
+  /// was nothing left to convert).
+  final List<String> convertedIds;
+
+  /// One entry per purchase where farmQty did not come out equal to the
+  /// original pendingCount after conversion. Always empty in the normal
+  /// case; a non-empty report should be looked at by hand, not re-run.
+  final List<String> mismatches;
+
+  const LegacyConversionReport({
+    required this.convertedIds,
+    required this.mismatches,
+  });
+
+  bool get isClean => mismatches.isEmpty;
+
+  int get convertedCount => convertedIds.length;
+}
+
 class TradingService {
   TradingService._();
 
@@ -1137,6 +1158,142 @@ class TradingService {
     }
 
     return updated;
+  }
+
+  // -----------------------------------------------------------------------
+  // LEGACY CONVERSION
+  // -----------------------------------------------------------------------
+
+  /// Converts every purchase with `lotSchema == 0` into the lot format, in
+  /// place, doc id unchanged. Idempotent — only ever touches purchases
+  /// that still have `lotSchema == 0`, so running it twice (or on a farm
+  /// with nothing to convert) is a no-op.
+  ///
+  /// Per-purchase rules (see TRADING_LOT_REFACTOR_HANDOVER.md §8):
+  /// - `receivingStatus == completed`: `receivedAliveQty = survivingGoats`
+  ///   and one legacy `receivings` doc is written.
+  /// - `receivingStatus == pending`: `receivedAliveQty = 0` and
+  ///   `mortality` is reset to 0 — costing ignored it while pending, so a
+  ///   stray non-zero value must not survive into the lot's supplierQty
+  ///   math. The lot starts At Supplier.
+  /// - Every purchase was paid in full at purchase time (Cash/Online
+  ///   only), so one legacy `payments` doc is written for the full
+  ///   `purchaseAmount` and `paidAmount` is set to match. No Finance
+  ///   entry is created — the original purchase expense already exists.
+  /// - `soldFromSupplierQty`, `soldFromFarmQty` and `reservedFarmQty`
+  ///   start at 0: nothing was ever sold or booked as a lot before this
+  ///   ran. Goats already registered individually keep living as goat
+  ///   docs and are still counted by `registeredCount`, so `farmQty`
+  ///   ends up equal to the purchase's existing `pendingCount`.
+  ///
+  /// Batched at 400 purchases per commit (Firestore's limit is 500 writes
+  /// per batch; each purchase here is 1 update + up to 2 subcollection
+  /// writes, so 400 keeps every batch safely under that).
+  ///
+  /// Returns a per-purchase report: converted ids, and any id where
+  /// `farmQty` did not come out equal to the original `pendingCount`
+  /// after conversion — those are reported, never silently "fixed".
+  Future<LegacyConversionReport> convertLegacyPurchasesToLots(
+      String farmId,
+      ) async {
+    final actor = await FirestoreService.instance.getCurrentActor();
+
+    final snapshot = await _tradingPurchases(farmId)
+        .get()
+        .timeout(_timeout);
+
+    final legacy = snapshot.docs
+        .map(TradingPurchase.fromDoc)
+        .where((p) => !p.isLot)
+        .toList();
+
+    final converted = <String>[];
+    final mismatches = <String>[];
+
+    const batchSize = 400;
+
+    for (var start = 0; start < legacy.length; start += batchSize) {
+      final chunk = legacy.skip(start).take(batchSize);
+      final batch = _db.batch();
+
+      for (final purchase in chunk) {
+        final purchaseRef = _tradingPurchases(farmId).doc(purchase.id);
+
+        final completed = purchase.isReceivingCompleted;
+        final survivingGoats = purchase.survivingGoats;
+
+        final update = <String, dynamic>{
+          'lotSchema': 1,
+          'receivedAliveQty': completed ? survivingGoats : 0,
+          'mortality': completed ? purchase.mortality : 0,
+          'soldFromSupplierQty': 0,
+          'soldFromFarmQty': 0,
+          'reservedFarmQty': 0,
+          'paidAmount': purchase.purchaseAmount,
+          'updatedAt': FieldValue.serverTimestamp(),
+        };
+
+        batch.update(purchaseRef, update);
+
+        // One legacy payment — the purchase was always paid in full.
+        final paymentRef = purchaseRef.collection('payments').doc();
+
+        batch.set(paymentRef, {
+          ...LotPayment(
+            id: paymentRef.id,
+            amount: purchase.purchaseAmount,
+            date: purchase.purchaseDate,
+            method: purchase.paymentMethod,
+            isLegacy: true,
+            actorUid: actor?.uid,
+            actorName: actor?.name,
+          ).toMap(),
+          'createdAt': FieldValue.serverTimestamp(),
+        });
+
+        // One legacy receiving, only when something was actually received.
+        if (completed) {
+          final receivingRef = purchaseRef.collection('receivings').doc();
+
+          batch.set(receivingRef, {
+            ...LotReceiving(
+              id: receivingRef.id,
+              date: purchase.dateReceivedAtFarm ?? purchase.purchaseDate,
+              arrivedQty: survivingGoats,
+              diedQty: purchase.mortality,
+              arrivalWeight: purchase.totalWeightAfterArrival ?? 0,
+              isLegacy: true,
+              actorUid: actor?.uid,
+              actorName: actor?.name,
+            ).toMap(),
+            'createdAt': FieldValue.serverTimestamp(),
+          });
+        }
+
+        converted.add(purchase.id);
+
+        // Verify farmQty == the purchase's original pendingCount. Built
+        // from the same fields just written, without re-reading —
+        // farmQty = receivedAliveQty - soldFromFarmQty - registeredCount,
+        // and soldFromFarmQty is 0 immediately after conversion.
+        final newReceivedAliveQty = completed ? survivingGoats : 0;
+        final newFarmQty = newReceivedAliveQty - purchase.registeredCount;
+
+        if (newFarmQty != purchase.pendingCount) {
+          mismatches.add(
+            '${purchase.id}: farmQty=$newFarmQty vs '
+                'pendingCount=${purchase.pendingCount}',
+          );
+        }
+      }
+
+      await batch.commit().timeout(_timeout);
+    }
+
+    return LegacyConversionReport(
+      convertedIds: converted,
+      mismatches: mismatches,
+    );
   }
 
   // -----------------------------------------------------------------------

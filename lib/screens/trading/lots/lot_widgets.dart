@@ -1,0 +1,65 @@
+import 'package:flutter/material.dart';
+
+import '../../../app_theme.dart';
+import '../../../models/trading_purchase_model.dart';
+
+/// Small coloured pill used by Lot Management and Lot Detail.
+class LotBadge extends StatelessWidget {
+  final String label;
+  final Color color;
+
+  const LotBadge({super.key, required this.label, required this.color});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+      decoration: BoxDecoration(
+        color: color.withOpacity(0.12),
+        borderRadius: BorderRadius.circular(20),
+      ),
+      child: Text(
+        label,
+        style: TextStyle(
+          fontSize: 11,
+          fontWeight: FontWeight.w800,
+          color: color,
+        ),
+      ),
+    );
+  }
+}
+
+Color lotLocationColor(LotLocation location) {
+  switch (location) {
+    case LotLocation.atSupplier:
+      return AppColors.info;
+    case LotLocation.partiallyAtFarm:
+      return const Color(0xFFB26A00);
+    case LotLocation.atFarm:
+      return AppColors.success;
+  }
+}
+
+Color lotPaymentColor(String status) {
+  switch (status) {
+    case 'Paid':
+      return AppColors.success;
+    case 'Partial':
+      return const Color(0xFFB26A00);
+    default:
+      return AppColors.error;
+  }
+}
+
+/// Location label with the wording Lot Management uses on its tabs.
+String lotLocationLabel(LotLocation location) {
+  switch (location) {
+    case LotLocation.atSupplier:
+      return 'At Supplier';
+    case LotLocation.partiallyAtFarm:
+      return 'Partially Received';
+    case LotLocation.atFarm:
+      return 'At Farm';
+  }
+}

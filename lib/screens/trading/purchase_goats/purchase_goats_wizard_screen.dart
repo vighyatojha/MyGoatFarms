@@ -3,7 +3,9 @@ import 'package:flutter/material.dart';
 import '../../../app_theme.dart';
 import '../../../models/trading_purchase_draft.dart';
 import '../../../models/trading_purchase_model.dart';
+import '../../../models/partner_permission_keys.dart';
 import '../../../widgets/fast_route.dart';
+import '../../../widgets/permission_gate.dart';
 import '../steps/step1_seller_details.dart';
 import '../steps/step2_purchase_details.dart';
 import '../steps/step3_receiving_transport.dart';
@@ -420,6 +422,13 @@ class _PurchaseGoatsWizardScreenState
 
   @override
   Widget build(BuildContext context) {
+    return PermissionGate(
+      permission: PartnerPermissionKeys.tradingPurchaseCreate,
+      child: _scaffold(),
+    );
+  }
+
+  Widget _scaffold() {
     return PopScope(
       canPop: false,
       onPopInvokedWithResult: (didPop, result) async {

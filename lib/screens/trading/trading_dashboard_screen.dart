@@ -16,6 +16,7 @@ import '../../widgets/fast_route.dart';
 import 'goat_stock/booking_delivery_customer_list_screen.dart';
 import 'goat_stock/goat_stock_list_screen.dart';
 import 'goat_stock/wait_delivery_customer_list_screen.dart';
+import 'lots/lot_management_screen.dart';
 import 'own_palai/own_palai_list_screen.dart';
 import 'purchase_goats/complete_receiving_screen.dart';
 import 'purchase_goats/purchase_goats_wizard_screen.dart';
@@ -578,6 +579,21 @@ class _TradingDashboardScreenState extends State<TradingDashboardScreen> {
             onTap: () => _push(const OwnPalaiListScreen()),
           ),
           height: 100,
+        ),
+        const SizedBox(height: 10),
+        SizedBox(
+          height: 100,
+          child: _ActionTile(
+            icon: Icons.layers_outlined,
+            title: 'Lot Management',
+            subtitle: 'Receive, pay & track lots',
+            color: AppColors.tradingBlue,
+            onTap: () {
+              final farmId = _farmId;
+              if (farmId == null) return;
+              _push(LotManagementScreen(farmId: farmId));
+            },
+          ),
         ),
       ],
     );

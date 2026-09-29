@@ -689,6 +689,227 @@ class SalesService {
   }
 
   // -----------------------------------------------------------------------
+  // SELL FROM LOT — DELIVER NOW
+  // -----------------------------------------------------------------------
+
+  /// Saves a Deliver Now sale made straight from a Purchase Lot.
+  ///
+  /// The goats are anonymous, so instead of flipping goat records this
+  /// consumes lot quantity:
+  ///   - source `supplier` -> `soldFromSupplierQty` (checked against
+  ///     `supplierQty`); the goats never reach the farm.
+  ///   - source `farm`     -> `soldFromFarmQty` (checked against
+  ///     `farmAvailableQty`, i.e. not reserved by a booking).
+  ///
+  /// The quantity is validated INSIDE the transaction against the lot as it
+  /// is right now, so two people selling at once can never oversell.
+  /// Every read happens before the first write (Firestore requirement).
+  ///
+  /// Profit uses a cost-per-goat snapshot taken from the lot at sale time
+  /// ([TradingPurchase.lotCostPerGoat]) and stored on the sale.
+  Future<String> saveLotDeliverNow({
+    required String farmId,
+    required SaleDraft draft,
+  }) async {
+    if (!draft.isLotSale) {
+      throw StateError('This sale is not linked to a lot.');
+    }
+
+    final quantity = draft.lotQuantity;
+
+    if (quantity <= 0) {
+      throw ArgumentError('Enter how many goats are being sold.');
+    }
+
+    final fromSupplier = draft.sourceLocation == Sale.sourceSupplier;
+
+    if (!fromSupplier && draft.sourceLocation != Sale.sourceFarm) {
+      throw ArgumentError('Choose where the goats are being sold from.');
+    }
+
+    if (draft.totalSellingWeight <= 0) {
+      throw ArgumentError('Enter the total selling weight.');
+    }
+
+    if (draft.totalSaleAmount <= 0) {
+      throw ArgumentError('Enter the selling price.');
+    }
+
+    // Not `late final`: Firestore may re-run the closure on contention.
+    String saleId = '';
+
+    await _db.runTransaction((transaction) async {
+      // ---------------------------------------------------------------
+      // 1. READS — lot first, then the sale counter.
+      // ---------------------------------------------------------------
+
+      final lotRef = _tradingPurchases(farmId).doc(draft.lotDocId);
+      final lotSnap = await transaction.get(lotRef);
+
+      if (!lotSnap.exists) {
+        throw StateError('Lot ${draft.lotDocId} no longer exists.');
+      }
+
+      final lot = TradingPurchase.fromDoc(lotSnap);
+
+      if (!lot.isLot) {
+        throw StateError(
+          'Lot ${draft.lotDocId} has not been converted to the lot format.',
+        );
+      }
+
+      final available =
+      fromSupplier ? lot.supplierQty : lot.farmAvailableQty;
+
+      if (quantity > available) {
+        throw StateError(
+          fromSupplier
+              ? 'Only $available goats are still at the supplier.'
+              : 'Only $available goats are available at the farm '
+              '(booked goats are not counted).',
+        );
+      }
+
+      final costPerGoat = lot.lotCostPerGoat;
+      final costOfGoodsSold = SaleDraft.round2(costPerGoat * quantity);
+
+      final saleNumber = await _readNextSaleNumber(transaction, farmId);
+
+      // ---------------------------------------------------------------
+      // 2. WRITES — customer.
+      // ---------------------------------------------------------------
+
+      String customerId = draft.customerId;
+
+      if (draft.customerSource == null) {
+        final customerRef = _customers(farmId).doc();
+
+        final newCustomer = Customer(
+          id: customerRef.id,
+          name: draft.customerName.trim(),
+          mobile: draft.mobile.trim(),
+          address: draft.address.trim(),
+          totalPurchases: 1,
+        );
+
+        transaction.set(customerRef, {
+          ...newCustomer.toMap(),
+          'createdAt': FieldValue.serverTimestamp(),
+          'updatedAt': FieldValue.serverTimestamp(),
+        });
+
+        customerId = customerRef.id;
+      } else if (draft.customerSource == CustomerMatchSource.sale) {
+        transaction.update(_customers(farmId).doc(draft.customerId), {
+          'name': draft.customerName.trim(),
+          'address': draft.address.trim(),
+          'totalPurchases': FieldValue.increment(1),
+          'updatedAt': FieldValue.serverTimestamp(),
+        });
+      }
+
+      // ---------------------------------------------------------------
+      // 3. Sale doc — no goat ids, a lot reference and quantity instead.
+      // ---------------------------------------------------------------
+
+      saleId = _formatSaleId(saleNumber);
+      _writeSaleCounter(transaction, farmId, saleNumber);
+
+      final sale = Sale(
+        id: saleId,
+        goatIds: const [],
+        lotDocId: draft.lotDocId,
+        lotQuantity: quantity,
+        sourceLocation: draft.sourceLocation,
+        costPerGoatSnapshot: costPerGoat,
+        customerId: customerId,
+        customerName: draft.customerName.trim(),
+        mobile: draft.mobile.trim(),
+        address: draft.address.trim(),
+        sellingPricePerKg: draft.effectivePricePerKg,
+        pricingMode: draft.pricingMode,
+        fixedSalePrice: draft.isFixedPrice ? draft.fixedSalePrice : null,
+        sellingWeight: draft.totalSellingWeight,
+        totalSaleAmount: draft.totalSaleAmount,
+        deliveryType: Sale.deliveryTypeDeliverNow,
+        status: Sale.statusSold,
+        transportCost: draft.transportCost > 0 ? draft.transportCost : null,
+        amountReceived: draft.amountReceived,
+        paymentMethod: draft.paymentMethod,
+        paymentStatus: draft.paymentStatusDeliverNow,
+        onCredit: draft.onCredit && draft.remainingBalanceDeliverNow > 0,
+      );
+
+      transaction.set(_sales(farmId).doc(saleId), {
+        ...sale.toMap(),
+        'createdAt': FieldValue.serverTimestamp(),
+      });
+
+      // ---------------------------------------------------------------
+      // 4. Lot quantities. `pendingCount` mirrors farmQty for lots, so a
+      //    farm sale lowers it too. When a supplier sale leaves nothing at
+      //    the supplier and something has already arrived, every goat is
+      //    accounted for and receiving is complete.
+      // ---------------------------------------------------------------
+
+      final supplierAfter =
+      fromSupplier ? lot.supplierQty - quantity : lot.supplierQty;
+
+      final lotUpdate = <String, dynamic>{
+        if (fromSupplier)
+          'soldFromSupplierQty': FieldValue.increment(quantity)
+        else ...{
+          'soldFromFarmQty': FieldValue.increment(quantity),
+          'pendingCount': FieldValue.increment(-quantity),
+        },
+        if (fromSupplier && supplierAfter <= 0 && lot.receivedTotalQty > 0)
+          'receivingStatus': 'completed',
+        'updatedAt': FieldValue.serverTimestamp(),
+      };
+
+      transaction.update(lotRef, lotUpdate);
+
+      // ---------------------------------------------------------------
+      // 5. Dashboard aggregate. Goats sold at the supplier were never
+      //    counted in stock (stock is added when goats arrive), so only a
+      //    farm sale lowers totalStock / pendingRegistrations.
+      // ---------------------------------------------------------------
+
+      transaction.set(
+        _summaryDoc(farmId),
+        {
+          if (!fromSupplier) ...{
+            'totalStock': FieldValue.increment(-quantity),
+            'pendingRegistrations': FieldValue.increment(-quantity),
+          },
+          'totalSold': FieldValue.increment(quantity),
+          'totalProfit': FieldValue.increment(
+            SaleDraft.round2(draft.totalSaleAmount - costOfGoodsSold),
+          ),
+        },
+        SetOptions(merge: true),
+      );
+
+      // ---------------------------------------------------------------
+      // 6. Finance revenue for the money received now (never transport).
+      // ---------------------------------------------------------------
+
+      _writeInitialRevenueInTransaction(
+        transaction: transaction,
+        farmId: farmId,
+        saleId: saleId,
+        paid: draft.amountReceived,
+        revenueTotal: draft.totalSaleAmount,
+        date: DateTime.now(),
+        customerName: draft.customerName,
+        paymentMethod: _methodOrOther(draft.paymentMethod),
+      );
+    }).timeout(_timeout * 2);
+
+    return saleId;
+  }
+
+  // -----------------------------------------------------------------------
   // BRANCH B — BOOKING / HOLDING (Task 3.2)
   // -----------------------------------------------------------------------
 
