@@ -286,6 +286,142 @@ exports.scheduledHealthReminderSweep = onSchedule('every 30 minutes', async () =
 });
 
 // ---------------------------------------------------------------------
+// 3. Admin-only farm deletion
+//
+// Farm deletion is deliberately handled by a callable Cloud Function,
+// not by a browser-side Firestore delete. This lets us verify the caller
+// against /admins/{uid} and recursively remove the farm's subcollections
+// without leaving the farm's operational data orphaned.
+//
+// The owner's Firebase Auth account is NOT deleted here. This removes the
+// farm and its farm data; if the same email is registered again later, the
+// normal registration flow can create a new farm.
+// ---------------------------------------------------------------------
+
+exports.deleteFarm = onCall(
+    {
+      region: 'us-central1',
+      timeoutSeconds: 540,
+      memory: '1GiB',
+    },
+    async (request) => {
+      const uid = request.auth?.uid;
+      const farmId = String(request.data?.farmId || '').trim();
+
+      if (!uid) {
+        throw new HttpsError(
+            'unauthenticated',
+            'Admin sign-in is required.',
+        );
+      }
+
+      if (!farmId) {
+        throw new HttpsError(
+            'invalid-argument',
+            'Farm ID is required.',
+        );
+      }
+
+      let stage = 'ADMIN_CHECK';
+
+      try {
+        // Keep the same authorization source used by the admin website.
+        const adminSnap = await db.collection('admins').doc(uid).get();
+        if (!adminSnap.exists) {
+          throw new HttpsError(
+              'permission-denied',
+              'This account is not authorized as an admin.',
+          );
+        }
+
+        stage = 'FARM_LOOKUP';
+
+        const farmRef = db.collection('farms').doc(farmId);
+        const farmSnap = await farmRef.get();
+
+        if (!farmSnap.exists) {
+          throw new HttpsError(
+              'not-found',
+              'Farm ' + farmId + ' was not found.',
+          );
+        }
+
+        const farmData = farmSnap.data() || {};
+        const mobileNumber = String(
+            farmData.mobileNumber ??
+            farmData.ownerMobile ??
+            farmData.phone ??
+            '',
+        ).trim();
+
+        stage = 'PAYMENT_CLEANUP';
+
+        const paymentsSnap = await db.collection('subscriptionPayments')
+            .where('farmId', '==', farmId)
+            .get();
+
+        if (!paymentsSnap.empty) {
+          // Use small batches so a large payment history cannot exceed
+          // Firestore's 500-write batch limit.
+          for (let i = 0; i < paymentsSnap.docs.length; i += 450) {
+            const batch = db.batch();
+            const chunk = paymentsSnap.docs.slice(i, i + 450);
+            for (const payment of chunk) {
+              batch.delete(payment.ref);
+            }
+            await batch.commit();
+          }
+        }
+
+        stage = 'MOBILE_INDEX_CLEANUP';
+
+        if (mobileNumber) {
+          const mobileRef = db.collection('mobileIndex').doc(mobileNumber);
+          const mobileSnap = await mobileRef.get();
+
+          if (mobileSnap.exists &&
+              mobileSnap.data()?.farmId === farmId) {
+            await mobileRef.delete();
+          }
+        }
+
+        stage = 'FARM_RECURSIVE_DELETE';
+
+        // Admin SDK bypasses Firestore client rules here.
+        // This removes the farm document and nested subcollections.
+        await db.recursiveDelete(farmRef);
+
+        logger.info('Farm deleted successfully', {
+          farmId,
+          adminUid: uid,
+        });
+
+        return {
+          success: true,
+          farmId,
+        };
+      } catch (error) {
+        if (error instanceof HttpsError) {
+          throw error;
+        }
+
+        logger.error('deleteFarm failed', {
+          stage,
+          farmId,
+          adminUid: uid,
+          error: error?.message || String(error),
+          stack: error?.stack || null,
+        });
+
+        throw new HttpsError(
+            'internal',
+            `Farm deletion failed at ${stage}: ` +
+              (error?.message || 'Unknown server error.'),
+        );
+      }
+    },
+);
+// ---------------------------------------------------------------------
 // 3. Owner-only notification delete
 //
 // Server-enforced — not just a hidden button in the UI. A partner
