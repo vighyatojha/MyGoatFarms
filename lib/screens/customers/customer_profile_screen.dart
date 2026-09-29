@@ -1122,6 +1122,18 @@ class _CustomerProfileScreenState extends State<CustomerProfileScreen> {
                 style: AppTheme.heading(size: 13),
               ),
             ),
+            if (currentGoats.isNotEmpty)
+              TextButton.icon(
+                onPressed: _openMultiGoatCheckout,
+                icon: const Icon(Icons.logout_rounded, size: 17),
+                label: const Text('Checkout'),
+                style: TextButton.styleFrom(
+                  foregroundColor: AppColors.darkGreen,
+                  padding: const EdgeInsets.symmetric(horizontal: 5),
+                  minimumSize: Size.zero,
+                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                ),
+              ),
             TextButton.icon(
               onPressed: _openRegisterGoat,
               icon: const Icon(Icons.add, size: 17),

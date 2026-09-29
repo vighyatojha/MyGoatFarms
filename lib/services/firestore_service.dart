@@ -425,12 +425,19 @@ class FirestoreService {
 
   /// True if a farm is already registered with this mobile number.
   Future<bool> isMobileNumberTaken(String mobileNumber) async {
-    final query = await _farms
-        .where('mobileNumber', isEqualTo: mobileNumber)
-        .limit(1)
+    final normalizedMobile = mobileNumber.trim();
+
+    if (normalizedMobile.isEmpty) {
+      return false;
+    }
+
+    final doc = await _db
+        .collection('mobileIndex')
+        .doc(normalizedMobile)
         .get()
         .timeout(timeout);
-    return query.docs.isNotEmpty;
+
+    return doc.exists;
   }
 
   Stream<List<Map<String, dynamic>>>

@@ -177,7 +177,9 @@ class _FarmApprovalPendingScreenState
             : SingleChildScrollView(
           physics: const BouncingScrollPhysics(),
           padding: const EdgeInsets.fromLTRB(24, 32, 24, 24),
-          child: _farm?.status == 'Rejected'
+          child: _farm?.status == 'Blocked'
+              ? _buildBlocked()
+              : _farm?.status == 'Rejected'
               ? _buildRejected()
               : _buildWaiting(),
         ),
@@ -222,6 +224,50 @@ class _FarmApprovalPendingScreenState
           label: 'Pending approval',
           color: AppColors.warning,
           icon: Icons.schedule_rounded,
+        ),
+        const SizedBox(height: 30),
+        _contactCard(),
+        const SizedBox(height: 28),
+        _signOutButton(),
+      ],
+    );
+  }
+
+  Widget _buildBlocked() {
+    return Column(
+      children: [
+        _iconBadge(
+          icon: Icons.block_rounded,
+          color: AppColors.error,
+        ),
+        const SizedBox(height: 26),
+        Text(
+          'Farm blocked',
+          textAlign: TextAlign.center,
+          style: AppTheme.heading(size: 22, color: AppColors.error),
+        ),
+        const SizedBox(height: 10),
+        Text(
+          _farmName.isEmpty
+              ? 'Your farm account has been blocked by the admin.'
+              : '"$_farmName" has been blocked by the admin.',
+          textAlign: TextAlign.center,
+          style: AppTheme.body(size: 14, color: AppColors.textGrey)
+              .copyWith(height: 1.5),
+        ),
+        const SizedBox(height: 10),
+        Text(
+          'You cannot use the app while your farm is blocked. '
+              'Please contact admin for assistance.',
+          textAlign: TextAlign.center,
+          style: AppTheme.body(size: 13, color: AppColors.textGrey)
+              .copyWith(height: 1.5),
+        ),
+        const SizedBox(height: 8),
+        _statusChip(
+          label: 'Blocked',
+          color: AppColors.error,
+          icon: Icons.block_rounded,
         ),
         const SizedBox(height: 30),
         _contactCard(),
