@@ -629,7 +629,7 @@ class _MultiGoatCheckoutScreenState
                       'Select one or more goats to check out.',
                       style: AppTheme.body(
                         size: 10,
-                        color: Colors.white.withOpacity(.9),
+                        color: Colors.white.withValues(alpha: .9),
                       ),
                     ),
                   ],
@@ -1124,7 +1124,7 @@ class _MultiGoatCheckoutScreenState
                       '${goats.length} ${goats.length == 1 ? 'goat' : 'goats'} ready',
                       style: AppTheme.body(
                         size: 10,
-                        color: Colors.white.withOpacity(.9),
+                        color: Colors.white.withValues(alpha: .9),
                       ),
                     ),
                   ],
@@ -1254,7 +1254,7 @@ class _MultiGoatCheckoutScreenState
         vertical: 5,
       ),
       decoration: BoxDecoration(
-        color: color.withOpacity(.12),
+        color: color.withValues(alpha: .12),
         borderRadius: BorderRadius.circular(10),
       ),
       child: Text(
@@ -1336,7 +1336,7 @@ class _MultiGoatCheckoutScreenState
                   vertical: 4,
                 ),
                 decoration: BoxDecoration(
-                  color: Colors.black.withOpacity(.6),
+                  color: Colors.black.withValues(alpha: .6),
                   borderRadius:
                   BorderRadius.circular(20),
                 ),

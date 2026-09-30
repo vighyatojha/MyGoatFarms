@@ -431,7 +431,7 @@ class _SellFromLotWizardScreenState extends State<SellFromLotWizardScreen> {
         color: Colors.white,
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.05),
+            color: Colors.black.withValues(alpha: 0.05),
             blurRadius: 14,
             offset: const Offset(0, -3),
           ),
@@ -452,7 +452,7 @@ class _SellFromLotWizardScreenState extends State<SellFromLotWizardScreen> {
                     style: OutlinedButton.styleFrom(
                       foregroundColor: AppColors.primaryGreen,
                       side: BorderSide(
-                        color: AppColors.primaryGreen.withOpacity(busy ? 0.15 : 0.35),
+                        color: AppColors.primaryGreen.withValues(alpha: busy ? 0.15 : 0.35),
                       ),
                       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
                     ),
@@ -470,7 +470,7 @@ class _SellFromLotWizardScreenState extends State<SellFromLotWizardScreen> {
                     style: ElevatedButton.styleFrom(
                       backgroundColor: AppColors.primaryGreen,
                       foregroundColor: Colors.white,
-                      disabledBackgroundColor: AppColors.primaryGreen.withOpacity(0.55),
+                      disabledBackgroundColor: AppColors.primaryGreen.withValues(alpha: 0.55),
                       disabledForegroundColor: Colors.white,
                       elevation: 1,
                       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),

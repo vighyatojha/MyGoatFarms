@@ -30,7 +30,7 @@ class StatCard extends StatelessWidget {
           children: [
             Container(
               padding: const EdgeInsets.all(8),
-              decoration: BoxDecoration(color: color.withOpacity(0.12), shape: BoxShape.circle),
+              decoration: BoxDecoration(color: color.withValues(alpha: 0.12), shape: BoxShape.circle),
               child: Icon(icon, color: color, size: 20),
             ),
             const SizedBox(height: 10),
@@ -107,7 +107,7 @@ class QuickAction extends StatelessWidget {
           Container(
             width: 50,
             height: 50,
-            decoration: BoxDecoration(color: color.withOpacity(0.12), shape: BoxShape.circle),
+            decoration: BoxDecoration(color: color.withValues(alpha: 0.12), shape: BoxShape.circle),
             child: Icon(icon, color: color),
           ),
           const SizedBox(height: 6),
@@ -159,7 +159,7 @@ class ActivityTile extends StatelessWidget {
           children: [
             Container(
               padding: const EdgeInsets.all(10),
-              decoration: BoxDecoration(color: activity.color.withOpacity(0.12), shape: BoxShape.circle),
+              decoration: BoxDecoration(color: activity.color.withValues(alpha: 0.12), shape: BoxShape.circle),
               child: Icon(activity.icon, color: activity.color, size: 18),
             ),
             const SizedBox(width: 12),

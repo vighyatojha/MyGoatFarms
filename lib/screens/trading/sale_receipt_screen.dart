@@ -427,7 +427,7 @@ class _SaleReceiptScreenState extends State<SaleReceiptScreen> {
         color: Colors.white,
         borderRadius: BorderRadius.circular(18),
         border: Border.all(
-          color: color.withOpacity(0.25),
+          color: color.withValues(alpha: 0.25),
         ),
       ),
       child: Column(
@@ -436,7 +436,7 @@ class _SaleReceiptScreenState extends State<SaleReceiptScreen> {
             width: 50,
             height: 50,
             decoration: BoxDecoration(
-              color: color.withOpacity(0.12),
+              color: color.withValues(alpha: 0.12),
               shape: BoxShape.circle,
             ),
             child: Icon(
@@ -475,7 +475,7 @@ class _SaleReceiptScreenState extends State<SaleReceiptScreen> {
               vertical: 6,
             ),
             decoration: BoxDecoration(
-              color: color.withOpacity(0.10),
+              color: color.withValues(alpha: 0.10),
               borderRadius: BorderRadius.circular(20),
             ),
             child: Text(
@@ -870,10 +870,10 @@ class _SaleReceiptScreenState extends State<SaleReceiptScreen> {
       width: double.infinity,
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
-        color: color.withOpacity(0.10),
+        color: color.withValues(alpha: 0.10),
         borderRadius: BorderRadius.circular(15),
         border: Border.all(
-          color: color.withOpacity(0.22),
+          color: color.withValues(alpha: 0.22),
         ),
       ),
       child: Row(
@@ -1311,7 +1311,7 @@ class _SaleReceivePaymentSheetState extends State<SaleReceivePaymentSheet> {
                         });
                       },
                       selectedColor:
-                      AppColors.primaryGreen.withOpacity(0.15),
+                      AppColors.primaryGreen.withValues(alpha: 0.15),
                       labelStyle: TextStyle(
                         fontSize: 12,
                         fontWeight: FontWeight.w600,

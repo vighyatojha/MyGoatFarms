@@ -327,7 +327,7 @@ class _FeedUsedScreenState extends State<FeedUsedScreen> {
         ),
         borderRadius: BorderRadius.circular(22),
         boxShadow: [
-          BoxShadow(color: AppColors.darkGreen.withOpacity(.20), blurRadius: 18, offset: const Offset(0, 8)),
+          BoxShadow(color: AppColors.darkGreen.withValues(alpha: .20), blurRadius: 18, offset: const Offset(0, 8)),
         ],
       ),
       child: Row(
@@ -335,7 +335,7 @@ class _FeedUsedScreenState extends State<FeedUsedScreen> {
           Container(
             width: 54,
             height: 54,
-            decoration: BoxDecoration(color: Colors.white.withOpacity(.18), shape: BoxShape.circle),
+            decoration: BoxDecoration(color: Colors.white.withValues(alpha: .18), shape: BoxShape.circle),
             child: const Icon(Icons.restaurant_rounded, color: Colors.white, size: 28),
           ),
           const SizedBox(width: 14),
@@ -416,9 +416,9 @@ class _FeedUsedScreenState extends State<FeedUsedScreen> {
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: low ? AppColors.error.withOpacity(.07) : AppColors.lightGreen,
+        color: low ? AppColors.error.withValues(alpha: .07) : AppColors.lightGreen,
         borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: low ? AppColors.error.withOpacity(.18) : AppColors.primaryGreen.withOpacity(.12)),
+        border: Border.all(color: low ? AppColors.error.withValues(alpha: .18) : AppColors.primaryGreen.withValues(alpha: .12)),
       ),
       child: Column(
         children: [
@@ -487,7 +487,7 @@ class _FeedUsedScreenState extends State<FeedUsedScreen> {
                     color: selected ? Colors.white : Colors.transparent,
                     borderRadius: BorderRadius.circular(10),
                     boxShadow: selected
-                        ? [BoxShadow(color: Colors.black.withOpacity(.06), blurRadius: 5)]
+                        ? [BoxShadow(color: Colors.black.withValues(alpha: .06), blurRadius: 5)]
                         : null,
                   ),
                   child: Text(

@@ -282,7 +282,7 @@ class _HomeSearchScreenState extends State<HomeSearchScreen> {
         onTap: onTap,
         leading: Container(
           padding: const EdgeInsets.all(8),
-          decoration: BoxDecoration(color: color.withOpacity(0.12), shape: BoxShape.circle),
+          decoration: BoxDecoration(color: color.withValues(alpha: 0.12), shape: BoxShape.circle),
           child: Icon(icon, color: color, size: 18),
         ),
         title: Text(title, style: AppTheme.body(size: 13.5, color: AppColors.textDark)),

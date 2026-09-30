@@ -171,7 +171,7 @@ class Step3SelectedGoatDetailsState
         color: AppColors.lightGreen,
         borderRadius: BorderRadius.circular(16),
         border: Border.all(
-          color: AppColors.primaryGreen.withOpacity(0.22),
+          color: AppColors.primaryGreen.withValues(alpha: 0.22),
         ),
       ),
       child: Row(
@@ -180,7 +180,7 @@ class Step3SelectedGoatDetailsState
             width: 40,
             height: 40,
             decoration: BoxDecoration(
-              color: AppColors.primaryGreen.withOpacity(0.12),
+              color: AppColors.primaryGreen.withValues(alpha: 0.12),
               borderRadius: BorderRadius.circular(12),
             ),
             child: const Icon(
@@ -262,7 +262,7 @@ class _GoatDetailCard extends StatelessWidget {
                 width: 56,
                 height: 56,
                 decoration: BoxDecoration(
-                  color: AppColors.stockTeal.withOpacity(0.10),
+                  color: AppColors.stockTeal.withValues(alpha: 0.10),
                   borderRadius: BorderRadius.circular(12),
                 ),
                 clipBehavior: Clip.antiAlias,

@@ -148,7 +148,7 @@ class _HighlightTile extends StatelessWidget {
         color: AppColors.lightGreen,
         borderRadius: BorderRadius.circular(14),
         border: Border.all(
-          color: AppColors.primaryGreen.withOpacity(0.22),
+          color: AppColors.primaryGreen.withValues(alpha: 0.22),
         ),
       ),
       child: Column(

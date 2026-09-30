@@ -984,7 +984,7 @@ class _WaitDeliveryCustomerScreenState
               width: 56,
               height: 56,
               decoration: BoxDecoration(
-                color: color.withOpacity(0.12),
+                color: color.withValues(alpha: 0.12),
                 shape: BoxShape.circle,
               ),
               child: Icon(icon, size: 26, color: color),
@@ -1050,7 +1050,7 @@ class _WaitDeliveryCustomerScreenState
       padding: const EdgeInsets.symmetric(vertical: 12),
       decoration: AppTheme.card(radius: 18).copyWith(
         border: Border.all(
-          color: AppColors.divider.withOpacity(0.6),
+          color: AppColors.divider.withValues(alpha: 0.6),
         ),
       ),
       child: IntrinsicHeight(
@@ -1203,8 +1203,8 @@ class _WaitDeliveryCustomerScreenState
       decoration: AppTheme.card(radius: 18).copyWith(
         border: Border.all(
           color: selected
-              ? AppColors.darkGreen.withOpacity(0.55)
-              : AppColors.divider.withOpacity(0.6),
+              ? AppColors.darkGreen.withValues(alpha: 0.55)
+              : AppColors.divider.withValues(alpha: 0.6),
           width: selected ? 1.4 : 1,
         ),
       ),
@@ -1357,7 +1357,7 @@ class _WaitDeliveryCustomerScreenState
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
       decoration: BoxDecoration(
-        color: AppColors.tradingBlue.withOpacity(0.12),
+        color: AppColors.tradingBlue.withValues(alpha: 0.12),
         borderRadius: BorderRadius.circular(8),
       ),
       child: Text(
@@ -1409,7 +1409,7 @@ class _WaitDeliveryCustomerScreenState
             width: 44,
             height: 44,
             decoration: BoxDecoration(
-              color: AppColors.stockTeal.withOpacity(0.12),
+              color: AppColors.stockTeal.withValues(alpha: 0.12),
               borderRadius: BorderRadius.circular(12),
             ),
             child: const Center(
@@ -1481,7 +1481,7 @@ class _WaitDeliveryCustomerScreenState
                 border: border(AppColors.divider),
                 enabledBorder: border(AppColors.divider),
                 disabledBorder:
-                border(AppColors.divider.withOpacity(0.6)),
+                border(AppColors.divider.withValues(alpha: 0.6)),
                 focusedBorder: border(AppColors.darkGreen, 1.4),
                 errorBorder: border(AppColors.error),
                 focusedErrorBorder: border(AppColors.error, 1.4),
@@ -1606,7 +1606,7 @@ class _WaitDeliveryCustomerScreenState
                 disabledBorder: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(10),
                   borderSide: BorderSide(
-                    color: AppColors.divider.withOpacity(0.6),
+                    color: AppColors.divider.withValues(alpha: 0.6),
                   ),
                 ),
                 focusedBorder: OutlineInputBorder(
@@ -1656,7 +1656,7 @@ class _WaitDeliveryCustomerScreenState
       width: 44,
       height: 44,
       decoration: BoxDecoration(
-        color: AppColors.stockTeal.withOpacity(0.12),
+        color: AppColors.stockTeal.withValues(alpha: 0.12),
         borderRadius: BorderRadius.circular(12),
       ),
       clipBehavior: Clip.antiAlias,
@@ -1830,7 +1830,7 @@ class _WaitDeliveryCustomerScreenState
         disabledBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(10),
           borderSide: BorderSide(
-            color: AppColors.divider.withOpacity(0.6),
+            color: AppColors.divider.withValues(alpha: 0.6),
           ),
         ),
         focusedBorder: OutlineInputBorder(
@@ -2029,7 +2029,7 @@ class _WaitDeliveryCustomerScreenState
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
       decoration: BoxDecoration(
         color: _onCredit
-            ? AppColors.error.withOpacity(0.06)
+            ? AppColors.error.withValues(alpha: 0.06)
             : AppColors.paleGreen,
         borderRadius: BorderRadius.circular(13),
       ),
@@ -2123,7 +2123,7 @@ class _WaitDeliveryCustomerScreenState
                   _method = method;
                 });
               },
-              selectedColor: AppColors.primaryGreen.withOpacity(0.15),
+              selectedColor: AppColors.primaryGreen.withValues(alpha: 0.15),
               labelStyle: TextStyle(
                 fontSize: 12,
                 fontWeight: FontWeight.w600,
@@ -2164,7 +2164,7 @@ class _WaitDeliveryCustomerScreenState
         ),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.05),
+            color: Colors.black.withValues(alpha: 0.05),
             blurRadius: 12,
             offset: const Offset(0, -3),
           ),
@@ -2243,7 +2243,7 @@ class _WaitDeliveryCustomerScreenState
                   backgroundColor: AppColors.darkGreen,
                   foregroundColor: Colors.white,
                   disabledBackgroundColor:
-                  AppColors.darkGreen.withOpacity(0.35),
+                  AppColors.darkGreen.withValues(alpha: 0.35),
                   disabledForegroundColor: Colors.white,
                   elevation: 0,
                   shape: RoundedRectangleBorder(

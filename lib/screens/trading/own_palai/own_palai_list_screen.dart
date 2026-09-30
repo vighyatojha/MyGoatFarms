@@ -143,7 +143,7 @@ class _OwnPalaiListScreenState extends State<OwnPalaiListScreen> {
               child: Tooltip(
                 message: 'Move goat to Own Palai',
                 child: Material(
-                  color: AppColors.primaryGreen.withOpacity(0.10),
+                  color: AppColors.primaryGreen.withValues(alpha: 0.10),
                   shape: const CircleBorder(),
                   child: InkWell(
                     customBorder: const CircleBorder(),
@@ -408,7 +408,7 @@ class _OwnPalaiListScreenState extends State<OwnPalaiListScreen> {
         vertical: 4,
       ),
       decoration: BoxDecoration(
-        color: color.withOpacity(0.11),
+        color: color.withValues(alpha: 0.11),
         borderRadius: BorderRadius.circular(20),
       ),
       child: Text(
@@ -463,7 +463,7 @@ class _OwnPalaiListScreenState extends State<OwnPalaiListScreen> {
               width: 68,
               height: 68,
               decoration: BoxDecoration(
-                color: AppColors.primaryGreen.withOpacity(0.10),
+                color: AppColors.primaryGreen.withValues(alpha: 0.10),
                 borderRadius: BorderRadius.circular(20),
               ),
               child: const Icon(

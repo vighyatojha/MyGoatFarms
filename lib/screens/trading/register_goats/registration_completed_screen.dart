@@ -154,7 +154,7 @@ class RegistrationCompletedScreen extends StatelessWidget {
                       AppColors.tradingBlue,
                       backgroundColor:
                       AppColors.tradingBlue
-                          .withOpacity(0.07),
+                          .withValues(alpha: 0.07),
                       onTap: () =>
                           _moveToOwnPalai(context),
                     ),
@@ -172,7 +172,7 @@ class RegistrationCompletedScreen extends StatelessWidget {
                       AppColors.warning,
                       backgroundColor:
                       AppColors.warning
-                          .withOpacity(0.08),
+                          .withValues(alpha: 0.08),
                       onTap: () =>
                           _sellGoat(context),
                     ),
@@ -242,10 +242,10 @@ class RegistrationCompletedScreen extends StatelessWidget {
         vertical: 16,
       ),
       decoration: BoxDecoration(
-        color: AppColors.success.withOpacity(0.08),
+        color: AppColors.success.withValues(alpha: 0.08),
         borderRadius: BorderRadius.circular(16),
         border: Border.all(
-          color: AppColors.success.withOpacity(0.18),
+          color: AppColors.success.withValues(alpha: 0.18),
         ),
       ),
       child: Row(
@@ -255,7 +255,7 @@ class RegistrationCompletedScreen extends StatelessWidget {
             height: 50,
             decoration: BoxDecoration(
               color:
-              AppColors.success.withOpacity(0.14),
+              AppColors.success.withValues(alpha: 0.14),
               shape: BoxShape.circle,
             ),
             child: const Icon(
@@ -335,7 +335,7 @@ class RegistrationCompletedScreen extends StatelessWidget {
                 decoration: BoxDecoration(
                   color:
                   AppColors.primaryGreen
-                      .withOpacity(0.10),
+                      .withValues(alpha: 0.10),
                   borderRadius:
                   BorderRadius.circular(10),
                 ),
@@ -385,7 +385,7 @@ class RegistrationCompletedScreen extends StatelessWidget {
                 decoration: BoxDecoration(
                   color:
                   AppColors.success
-                      .withOpacity(0.10),
+                      .withValues(alpha: 0.10),
                   borderRadius:
                   BorderRadius.circular(20),
                 ),
@@ -491,7 +491,7 @@ class RegistrationCompletedScreen extends StatelessWidget {
           decoration: BoxDecoration(
             color:
             AppColors.primaryGreen
-                .withOpacity(0.08),
+                .withValues(alpha: 0.08),
             borderRadius:
             BorderRadius.circular(8),
           ),
@@ -594,7 +594,7 @@ class RegistrationCompletedScreen extends StatelessWidget {
               height: 38,
               decoration: BoxDecoration(
                 color: Colors.white
-                    .withOpacity(0.15),
+                    .withValues(alpha: 0.15),
                 borderRadius:
                 BorderRadius.circular(10),
               ),
@@ -630,7 +630,7 @@ class RegistrationCompletedScreen extends StatelessWidget {
                     TextStyle(
                       fontSize: 10,
                       color: Colors.white
-                          .withOpacity(0.78),
+                          .withValues(alpha: 0.78),
                     ),
                   ),
                 ],
@@ -676,7 +676,7 @@ class RegistrationCompletedScreen extends StatelessWidget {
             BorderRadius.circular(14),
             border: Border.all(
               color:
-              iconColor.withOpacity(0.14),
+              iconColor.withValues(alpha: 0.14),
             ),
           ),
           child: Column(
@@ -688,8 +688,8 @@ class RegistrationCompletedScreen extends StatelessWidget {
                 height: 32,
                 decoration: BoxDecoration(
                   color:
-                  iconColor.withOpacity(
-                    0.12,
+                  iconColor.withValues(alpha:
+                  0.12,
                   ),
                   borderRadius:
                   BorderRadius.circular(9),

@@ -297,7 +297,7 @@ class _GoatPhotosGrowthTabState extends State<GoatPhotosGrowthTab> {
                     if (entry.deletable && entry.photoId != null)
                       GestureDetector(
                         onTap: () => _deletePhoto(entry.photoId!),
-                        child: Icon(Icons.delete_outline, size: 17, color: AppColors.textMuted.withOpacity(0.7)),
+                        child: Icon(Icons.delete_outline, size: 17, color: AppColors.textMuted.withValues(alpha: 0.7)),
                       ),
                   ],
                 ),
@@ -314,7 +314,7 @@ class _GoatPhotosGrowthTabState extends State<GoatPhotosGrowthTab> {
                       Container(
                         padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                         decoration: BoxDecoration(
-                          color: (gain >= 0 ? AppColors.success : AppColors.error).withOpacity(0.12),
+                          color: (gain >= 0 ? AppColors.success : AppColors.error).withValues(alpha: 0.12),
                           borderRadius: BorderRadius.circular(6),
                         ),
                         child: Text(

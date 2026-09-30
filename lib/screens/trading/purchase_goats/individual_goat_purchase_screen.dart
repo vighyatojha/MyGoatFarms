@@ -401,10 +401,10 @@ class _IndividualGoatPurchaseScreenState
       margin: const EdgeInsets.only(bottom: 14),
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
-        color: AppColors.warning.withOpacity(0.10),
+        color: AppColors.warning.withValues(alpha: 0.10),
         borderRadius: BorderRadius.circular(16),
         border: Border.all(
-          color: AppColors.warning.withOpacity(0.35),
+          color: AppColors.warning.withValues(alpha: 0.35),
         ),
       ),
       child: Row(
@@ -1022,7 +1022,7 @@ class _IndividualGoatPurchaseScreenState
         color: Colors.white,
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.06),
+            color: Colors.black.withValues(alpha: 0.06),
             blurRadius: 14,
             offset: const Offset(0, -4),
           ),
@@ -1068,7 +1068,7 @@ class _IndividualGoatPurchaseScreenState
                   backgroundColor: AppColors.darkGreen,
                   foregroundColor: Colors.white,
                   disabledBackgroundColor:
-                  AppColors.darkGreen.withOpacity(0.6),
+                  AppColors.darkGreen.withValues(alpha: 0.6),
                   disabledForegroundColor: Colors.white,
                   elevation: 0,
                   shape: RoundedRectangleBorder(

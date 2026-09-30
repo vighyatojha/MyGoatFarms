@@ -247,7 +247,7 @@ class _TransferToOwnPalaiScreenState extends State<TransferToOwnPalaiScreen> {
         color: Colors.white,
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.05),
+            color: Colors.black.withValues(alpha: 0.05),
             blurRadius: 14,
             offset: const Offset(0, -3),
           ),
@@ -266,7 +266,7 @@ class _TransferToOwnPalaiScreenState extends State<TransferToOwnPalaiScreen> {
                 backgroundColor: AppColors.primaryGreen,
                 foregroundColor: Colors.white,
                 disabledBackgroundColor:
-                AppColors.primaryGreen.withOpacity(0.55),
+                AppColors.primaryGreen.withValues(alpha: 0.55),
                 disabledForegroundColor: Colors.white,
                 elevation: 1,
                 shape: RoundedRectangleBorder(

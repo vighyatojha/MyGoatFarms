@@ -162,10 +162,10 @@ class _CustomerLedgerDetailScreenState extends State<CustomerLedgerDetailScreen>
             onPressed: (_loading || _sharing) ? null : _shareLedger,
             icon: _sharing
                 ? const SizedBox(
-                    width: 20,
-                    height: 20,
-                    child: CircularProgressIndicator(strokeWidth: 2, color: AppColors.primaryGreen),
-                  )
+              width: 20,
+              height: 20,
+              child: CircularProgressIndicator(strokeWidth: 2, color: AppColors.primaryGreen),
+            )
                 : const Icon(Icons.share_outlined),
           ),
         ],
@@ -230,7 +230,7 @@ class _CustomerLedgerDetailScreenState extends State<CustomerLedgerDetailScreen>
                 decoration: BoxDecoration(
                   color: Colors.white,
                   borderRadius: BorderRadius.circular(18),
-                  border: Border.all(color: AppColors.divider.withOpacity(0.7)),
+                  border: Border.all(color: AppColors.divider.withValues(alpha: 0.7)),
                 ),
                 child: Column(
                   children: [
@@ -258,7 +258,7 @@ class _CustomerLedgerDetailScreenState extends State<CustomerLedgerDetailScreen>
         children: [
           Container(
             padding: const EdgeInsets.all(8),
-            decoration: BoxDecoration(color: color.withOpacity(0.12), shape: BoxShape.circle),
+            decoration: BoxDecoration(color: color.withValues(alpha: 0.12), shape: BoxShape.circle),
             child: Icon(icon, color: color, size: 18),
           ),
           const SizedBox(height: 10),

@@ -6,7 +6,6 @@ import '../../../models/trading_purchase_model.dart';
 import '../../../services/firestore_service.dart';
 import '../../../services/trading_service.dart';
 import '../lots/lot_widgets.dart';
-import '../purchase_goats/purchase_wizard_widgets.dart';
 
 /// Step 1 of Sell From Lot — pick which lot to sell from.
 ///

@@ -32,7 +32,7 @@ class SupplierLedgerEntryTile extends StatelessWidget {
                 width: 34,
                 height: 34,
                 decoration: BoxDecoration(
-                  color: color.withOpacity(0.10),
+                  color: color.withValues(alpha: 0.10),
                   shape: BoxShape.circle,
                 ),
                 child: Icon(
@@ -80,7 +80,7 @@ class SupplierLedgerEntryTile extends StatelessWidget {
           ),
           if (showDivider) ...[
             const SizedBox(height: 10),
-            Divider(height: 1, color: AppColors.divider.withOpacity(0.6)),
+            Divider(height: 1, color: AppColors.divider.withValues(alpha: 0.6)),
           ],
         ],
       ),

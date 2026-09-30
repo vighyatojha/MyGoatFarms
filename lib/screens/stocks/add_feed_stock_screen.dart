@@ -635,7 +635,7 @@ class _AddFeedStockScreenState extends State<AddFeedStockScreen> {
         borderRadius: BorderRadius.circular(22),
         boxShadow: [
           BoxShadow(
-            color: AppColors.darkGreen.withOpacity(.20),
+            color: AppColors.darkGreen.withValues(alpha: .20),
             blurRadius: 18,
             offset: const Offset(0, 8),
           ),
@@ -647,7 +647,7 @@ class _AddFeedStockScreenState extends State<AddFeedStockScreen> {
             width: 54,
             height: 54,
             decoration: BoxDecoration(
-              color: Colors.white.withOpacity(.18),
+              color: Colors.white.withValues(alpha: .18),
               shape: BoxShape.circle,
             ),
             child: const Icon(Icons.grass_rounded, color: Colors.white, size: 28),
@@ -872,7 +872,7 @@ class _AddFeedStockScreenState extends State<AddFeedStockScreen> {
                       decoration: BoxDecoration(
                         color: AppColors.lightGreen,
                         borderRadius: BorderRadius.circular(15),
-                        border: Border.all(color: AppColors.primaryGreen.withOpacity(.25)),
+                        border: Border.all(color: AppColors.primaryGreen.withValues(alpha: .25)),
                       ),
                       child: Row(
                         children: [
@@ -955,7 +955,7 @@ class _AddFeedStockScreenState extends State<AddFeedStockScreen> {
               padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
               decoration: BoxDecoration(
                 color: item.isLowStock
-                    ? AppColors.warning.withOpacity(.12)
+                    ? AppColors.warning.withValues(alpha: .12)
                     : AppColors.lightGreen,
                 borderRadius: BorderRadius.circular(20),
               ),
@@ -1079,7 +1079,7 @@ class _AddFeedStockScreenState extends State<AddFeedStockScreen> {
       decoration: BoxDecoration(
         color: AppColors.lightGreen,
         borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: AppColors.primaryGreen.withOpacity(.16)),
+        border: Border.all(color: AppColors.primaryGreen.withValues(alpha: .16)),
       ),
       child: Row(
         children: [
@@ -1144,7 +1144,7 @@ class _AddFeedStockScreenState extends State<AddFeedStockScreen> {
                       color: selected ? Colors.white : Colors.transparent,
                       borderRadius: BorderRadius.circular(10),
                       boxShadow: selected
-                          ? [BoxShadow(color: Colors.black.withOpacity(.06), blurRadius: 5)]
+                          ? [BoxShadow(color: Colors.black.withValues(alpha: .06), blurRadius: 5)]
                           : null,
                     ),
                     child: Text(
@@ -1185,7 +1185,7 @@ class _AddFeedStockScreenState extends State<AddFeedStockScreen> {
       decoration: BoxDecoration(
         color: AppColors.paleGreen,
         borderRadius: BorderRadius.circular(13),
-        border: Border.all(color: AppColors.primaryGreen.withOpacity(.14)),
+        border: Border.all(color: AppColors.primaryGreen.withValues(alpha: .14)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -1327,9 +1327,9 @@ class _AddFeedStockScreenState extends State<AddFeedStockScreen> {
     return Container(
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
-        color: AppColors.info.withOpacity(.08),
+        color: AppColors.info.withValues(alpha: .08),
         borderRadius: BorderRadius.circular(15),
-        border: Border.all(color: AppColors.info.withOpacity(.18)),
+        border: Border.all(color: AppColors.info.withValues(alpha: .18)),
       ),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,

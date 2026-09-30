@@ -245,7 +245,7 @@ class _CustomerSelectionSheetState extends State<_CustomerSelectionSheet> {
                     itemBuilder: (context, index) {
                       final customer = customers[index];
                       return Material(
-                        color: AppColors.lightGreen.withOpacity(0.35),
+                        color: AppColors.lightGreen.withValues(alpha: 0.35),
                         borderRadius: BorderRadius.circular(14),
                         child: InkWell(
                           borderRadius: BorderRadius.circular(14),

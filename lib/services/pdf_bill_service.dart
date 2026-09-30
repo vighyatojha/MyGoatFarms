@@ -7,7 +7,6 @@ import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
 
 import '../models/bill_settings_model.dart';
-import '../models/goat_history_models.dart';
 import '../models/palai_models.dart';
 
 /// PDF generator for Palai monthly reports and the single-goat check-out

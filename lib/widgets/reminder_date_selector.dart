@@ -60,7 +60,7 @@ class ReminderDateSelector extends StatelessWidget {
       decoration: BoxDecoration(
         color: AppColors.lightGreen,
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: AppColors.primaryGreen.withOpacity(0.35)),
+        border: Border.all(color: AppColors.primaryGreen.withValues(alpha: 0.35)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -125,7 +125,7 @@ class ReminderDateSelector extends StatelessWidget {
       width: double.infinity,
       padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
       decoration: BoxDecoration(
-        border: Border.all(color: AppColors.textMuted.withOpacity(0.4)),
+        border: Border.all(color: AppColors.textMuted.withValues(alpha: 0.4)),
         borderRadius: BorderRadius.circular(12),
       ),
       child: Column(
@@ -170,7 +170,7 @@ class ReminderDateSelector extends StatelessWidget {
                 width: double.infinity,
                 padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
                 decoration: BoxDecoration(
-                  color: AppColors.lightGreen.withOpacity(0.5),
+                  color: AppColors.lightGreen.withValues(alpha: 0.5),
                   borderRadius: BorderRadius.circular(10),
                 ),
                 child: Row(

@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../app_theme.dart';
-import '../../models/customer_credit.dart';
+import '../../models/expense_categories.dart';
 import '../../models/finance_scope.dart';
 import '../../models/finance_summary_model.dart';
 import '../../models/trading_finance_summary.dart';
@@ -371,6 +371,10 @@ class _TradingFinanceViewState extends State<TradingFinanceView> {
           ),
           const SizedBox(height: 8),
           row('Purchase value (lots bought)', s.lotPurchaseValue),
+          row(
+            'Paid to suppliers (lot payments)',
+            s.expenseByCategory[ExpenseCategories.supplierPayment] ?? 0,
+          ),
           row('Supplier pending (now)', s.lotSupplierPending),
           const Divider(height: 14),
           row('Sales value (${s.lotGoatsSold} goats)', s.lotSalesValue),

@@ -437,7 +437,7 @@ class _TransferToCustomerPalaiWizardScreenState
         color: Colors.white,
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.05),
+            color: Colors.black.withValues(alpha: 0.05),
             blurRadius: 14,
             offset: const Offset(0, -3),
           ),
@@ -459,7 +459,7 @@ class _TransferToCustomerPalaiWizardScreenState
                       foregroundColor: AppColors.primaryGreen,
                       side: BorderSide(
                         color: AppColors.primaryGreen
-                            .withOpacity(busy ? 0.15 : 0.35),
+                            .withValues(alpha: busy ? 0.15 : 0.35),
                       ),
                       shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(15),
@@ -483,7 +483,7 @@ class _TransferToCustomerPalaiWizardScreenState
                       backgroundColor: AppColors.primaryGreen,
                       foregroundColor: Colors.white,
                       disabledBackgroundColor:
-                      AppColors.primaryGreen.withOpacity(0.55),
+                      AppColors.primaryGreen.withValues(alpha: 0.55),
                       disabledForegroundColor: Colors.white,
                       elevation: 1,
                       shape: RoundedRectangleBorder(

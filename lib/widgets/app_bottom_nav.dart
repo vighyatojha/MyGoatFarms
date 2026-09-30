@@ -73,7 +73,7 @@ class AppBottomNav extends StatelessWidget {
                   ),
                   boxShadow: [
                     BoxShadow(
-                      color: Colors.black.withOpacity(0.055),
+                      color: Colors.black.withValues(alpha: 0.055),
                       blurRadius: 12,
                       offset: const Offset(0, -3),
                     ),
@@ -132,8 +132,8 @@ class AppBottomNav extends StatelessWidget {
       child: InkWell(
         onTap: () => onTap(item.shellIndex),
         borderRadius: BorderRadius.circular(18),
-        splashColor: AppColors.primaryGreen.withOpacity(0.07),
-        highlightColor: AppColors.primaryGreen.withOpacity(0.03),
+        splashColor: AppColors.primaryGreen.withValues(alpha: 0.07),
+        highlightColor: AppColors.primaryGreen.withValues(alpha: 0.03),
         child: Center(
           child: AnimatedContainer(
             duration: const Duration(milliseconds: 180),
@@ -142,7 +142,7 @@ class AppBottomNav extends StatelessWidget {
             height: 48,
             decoration: BoxDecoration(
               color: selected
-                  ? AppColors.primaryGreen.withOpacity(0.09)
+                  ? AppColors.primaryGreen.withValues(alpha: 0.09)
                   : Colors.transparent,
               borderRadius: BorderRadius.circular(16),
             ),
@@ -257,8 +257,8 @@ class _StockButton extends StatelessWidget {
                 ),
                 boxShadow: [
                   BoxShadow(
-                    color: AppColors.primaryGreen.withOpacity(
-                      selected ? 0.30 : 0.20,
+                    color: AppColors.primaryGreen.withValues(alpha:
+                    selected ? 0.30 : 0.20,
                     ),
                     blurRadius: selected ? 13 : 9,
                     offset: const Offset(0, 3),

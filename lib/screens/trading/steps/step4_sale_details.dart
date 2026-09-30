@@ -245,7 +245,7 @@ class _Step4SaleDetailsState extends State<Step4SaleDetails> {
         color: AppColors.lightGreen,
         borderRadius: BorderRadius.circular(18),
         border: Border.all(
-          color: AppColors.primaryGreen.withOpacity(0.22),
+          color: AppColors.primaryGreen.withValues(alpha: 0.22),
         ),
       ),
       child: Row(
@@ -255,7 +255,7 @@ class _Step4SaleDetailsState extends State<Step4SaleDetails> {
             width: 44,
             height: 44,
             decoration: BoxDecoration(
-              color: AppColors.primaryGreen.withOpacity(0.12),
+              color: AppColors.primaryGreen.withValues(alpha: 0.12),
               borderRadius: BorderRadius.circular(13),
             ),
             child: Icon(
@@ -356,7 +356,7 @@ class _PricingModeSlider extends StatelessWidget {
               color: AppColors.paleGreen,
               borderRadius: BorderRadius.circular(14),
               border: Border.all(
-                color: AppColors.primaryGreen.withOpacity(0.18),
+                color: AppColors.primaryGreen.withValues(alpha: 0.18),
               ),
             ),
             child: Stack(
@@ -378,7 +378,7 @@ class _PricingModeSlider extends StatelessWidget {
                         boxShadow: [
                           BoxShadow(
                             color: AppColors.primaryGreen
-                                .withOpacity(0.30),
+                                .withValues(alpha: 0.30),
                             blurRadius: 8,
                             offset: const Offset(0, 2),
                           ),

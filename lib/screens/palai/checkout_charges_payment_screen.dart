@@ -806,7 +806,7 @@ class _CheckoutChargesPaymentScreenState
             decoration:
             BoxDecoration(
               color: Colors.white
-                  .withOpacity(.18),
+                  .withValues(alpha: .18),
               shape:
               BoxShape.circle,
             ),
@@ -840,7 +840,7 @@ class _CheckoutChargesPaymentScreenState
                   AppTheme.body(
                     size: 11,
                     color: Colors.white
-                        .withOpacity(.9),
+                        .withValues(alpha: .9),
                   ),
                 ),
               ],

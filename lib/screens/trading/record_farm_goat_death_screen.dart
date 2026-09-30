@@ -196,9 +196,9 @@ class _RecordFarmGoatDeathScreenState
             Container(
               padding: const EdgeInsets.all(12),
               decoration: BoxDecoration(
-                color: AppColors.error.withOpacity(0.07),
+                color: AppColors.error.withValues(alpha: 0.07),
                 borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: AppColors.error.withOpacity(0.25)),
+                border: Border.all(color: AppColors.error.withValues(alpha: 0.25)),
               ),
               child: Row(
                 children: [

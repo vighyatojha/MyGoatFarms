@@ -379,7 +379,7 @@ class _HomeScreenState extends State<HomeScreen> {
           Container(
             padding: const EdgeInsets.all(8),
             decoration: BoxDecoration(
-              color: AppColors.primaryGreen.withOpacity(0.12),
+              color: AppColors.primaryGreen.withValues(alpha: 0.12),
               shape: BoxShape.circle,
             ),
             child: const Icon(Icons.search_rounded, color: AppColors.primaryGreen, size: 18),
@@ -832,9 +832,9 @@ class _ShimmerState extends State<_Shimmer> with SingleTickerProviderStateMixin 
             final t = _controller.value;
             return LinearGradient(
               colors: [
-                AppColors.lightGreen.withOpacity(0.5),
+                AppColors.lightGreen.withValues(alpha: 0.5),
                 Colors.white,
-                AppColors.lightGreen.withOpacity(0.5),
+                AppColors.lightGreen.withValues(alpha: 0.5),
               ],
               stops: const [0.35, 0.5, 0.65],
               begin: Alignment(-1 - t * 2, 0),

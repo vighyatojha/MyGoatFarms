@@ -602,10 +602,10 @@ class _GoatRegistrationFormScreenState
         vertical: 12,
       ),
       decoration: BoxDecoration(
-        color: AppColors.tradingBlue.withOpacity(0.08),
+        color: AppColors.tradingBlue.withValues(alpha: 0.08),
         borderRadius: BorderRadius.circular(14),
         border: Border.all(
-          color: AppColors.tradingBlue.withOpacity(0.18),
+          color: AppColors.tradingBlue.withValues(alpha: 0.18),
         ),
       ),
       child: Column(
@@ -618,7 +618,7 @@ class _GoatRegistrationFormScreenState
                 height: 34,
                 decoration: BoxDecoration(
                   color:
-                  AppColors.tradingBlue.withOpacity(0.12),
+                  AppColors.tradingBlue.withValues(alpha: 0.12),
                   borderRadius: BorderRadius.circular(10),
                 ),
                 child: const Icon(
@@ -674,7 +674,7 @@ class _GoatRegistrationFormScreenState
               value: progress,
               minHeight: 7,
               backgroundColor:
-              AppColors.tradingBlue.withOpacity(0.12),
+              AppColors.tradingBlue.withValues(alpha: 0.12),
               valueColor:
               const AlwaysStoppedAnimation(
                 AppColors.tradingBlue,
@@ -860,7 +860,7 @@ class _GoatRegistrationFormScreenState
               AppColors.primaryGreen,
               foregroundColor: Colors.white,
               disabledBackgroundColor:
-              AppColors.primaryGreen.withOpacity(0.5),
+              AppColors.primaryGreen.withValues(alpha: 0.5),
               elevation: 0,
               shape: RoundedRectangleBorder(
                 borderRadius:
@@ -914,10 +914,10 @@ class _GoatRegistrationFormScreenState
               AppColors.primaryGreen,
               disabledForegroundColor:
               AppColors.primaryGreen
-                  .withOpacity(0.45),
+                  .withValues(alpha: 0.45),
               side: BorderSide(
                 color: AppColors.primaryGreen
-                    .withOpacity(0.7),
+                    .withValues(alpha: 0.7),
               ),
               shape: RoundedRectangleBorder(
                 borderRadius:

@@ -317,9 +317,9 @@ class _LotDetailScreenState extends State<LotDetailScreen> {
       width: double.infinity,
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: AppColors.primaryGreen.withOpacity(0.06),
+        color: AppColors.primaryGreen.withValues(alpha: 0.06),
         borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: AppColors.primaryGreen.withOpacity(0.18)),
+        border: Border.all(color: AppColors.primaryGreen.withValues(alpha: 0.18)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,

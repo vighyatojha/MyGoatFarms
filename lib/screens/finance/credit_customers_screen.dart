@@ -230,7 +230,7 @@ class _CreditCustomersScreenState extends State<CreditCustomersScreen> {
             width: 44,
             height: 44,
             decoration: BoxDecoration(
-              color: AppColors.error.withOpacity(0.10),
+              color: AppColors.error.withValues(alpha: 0.10),
               borderRadius: BorderRadius.circular(12),
             ),
             child: const Icon(

@@ -140,7 +140,7 @@ class _GoatPaymentTabState extends State<GoatPaymentTab> {
             decoration: AppTheme.card(radius: 12),
             child: Column(
               children: [
-                Icon(Icons.receipt_long_outlined, size: 26, color: AppColors.textMuted.withOpacity(0.6)),
+                Icon(Icons.receipt_long_outlined, size: 26, color: AppColors.textMuted.withValues(alpha: 0.6)),
                 const SizedBox(height: 8),
                 Text('No bills include this goat yet', style: AppTheme.body(size: 12, color: AppColors.textMuted)),
               ],

@@ -608,7 +608,7 @@ class _CompleteBookingDeliveryScreenState
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
       decoration: BoxDecoration(
         color: _onCredit
-            ? AppColors.error.withOpacity(0.06)
+            ? AppColors.error.withValues(alpha: 0.06)
             : AppColors.paleGreen,
         borderRadius: BorderRadius.circular(13),
       ),
@@ -690,7 +690,7 @@ class _CompleteBookingDeliveryScreenState
                   _method = method;
                 });
               },
-              selectedColor: AppColors.primaryGreen.withOpacity(0.15),
+              selectedColor: AppColors.primaryGreen.withValues(alpha: 0.15),
               labelStyle: TextStyle(
                 fontSize: 12,
                 fontWeight: FontWeight.w600,
@@ -762,7 +762,7 @@ class _CompleteBookingDeliveryScreenState
                   padding:
                   const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
                   decoration: BoxDecoration(
-                    color: statusColor.withOpacity(0.10),
+                    color: statusColor.withValues(alpha: 0.10),
                     borderRadius: BorderRadius.circular(20),
                   ),
                   child: Text(

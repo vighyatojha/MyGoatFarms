@@ -1072,7 +1072,7 @@ class _CustomerGoatsProgressReportScreenState
                   ),
                   decoration: BoxDecoration(
                     color:
-                    AppColors.primaryGreen.withOpacity(0.12),
+                    AppColors.primaryGreen.withValues(alpha: 0.12),
                     borderRadius: BorderRadius.circular(6),
                   ),
                   child: Text(
@@ -1106,7 +1106,7 @@ class _CustomerGoatsProgressReportScreenState
         color: Colors.white,
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.05),
+            color: Colors.black.withValues(alpha: 0.05),
             blurRadius: 8,
             offset: const Offset(0, -2),
           ),
@@ -1149,7 +1149,7 @@ class _CustomerGoatsProgressReportScreenState
               padding: const EdgeInsets.all(18),
               decoration: BoxDecoration(
                 color:
-                AppColors.primaryGreen.withOpacity(0.10),
+                AppColors.primaryGreen.withValues(alpha: 0.10),
                 shape: BoxShape.circle,
               ),
               child: const Icon(
@@ -1348,7 +1348,7 @@ class _CustomerGoatsProgressReportScreenState
                           BoxDecoration(
                             color: AppColors
                                 .primaryGreen
-                                .withOpacity(0.12),
+                                .withValues(alpha: 0.12),
                             borderRadius:
                             BorderRadius.circular(5),
                           ),
@@ -1392,7 +1392,7 @@ class _CustomerGoatsProgressReportScreenState
                       color: captured != null
                           ? AppColors.primaryGreen
                           : AppColors.primaryGreen
-                          .withOpacity(0.4),
+                          .withValues(alpha: 0.4),
                       width:
                       captured != null ? 2 : 1.5,
                     ),
@@ -1767,7 +1767,7 @@ class _CustomerGoatsProgressReportScreenState
           width: double.infinity,
           padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
           decoration: BoxDecoration(
-            color: AppColors.error.withOpacity(0.06),
+            color: AppColors.error.withValues(alpha: 0.06),
             borderRadius: BorderRadius.circular(8),
           ),
           child: Column(
@@ -1808,12 +1808,12 @@ class _CustomerGoatsProgressReportScreenState
           padding: const EdgeInsets.all(10),
           decoration: BoxDecoration(
             color:
-            AppColors.warning.withOpacity(0.12),
+            AppColors.warning.withValues(alpha: 0.12),
             borderRadius:
             BorderRadius.circular(8),
             border: Border.all(
               color:
-              AppColors.warning.withOpacity(0.4),
+              AppColors.warning.withValues(alpha: 0.4),
             ),
           ),
           child: Row(
@@ -1855,12 +1855,12 @@ class _CustomerGoatsProgressReportScreenState
           padding: const EdgeInsets.all(10),
           decoration: BoxDecoration(
             color:
-            AppColors.warning.withOpacity(0.12),
+            AppColors.warning.withValues(alpha: 0.12),
             borderRadius:
             BorderRadius.circular(8),
             border: Border.all(
               color:
-              AppColors.warning.withOpacity(0.4),
+              AppColors.warning.withValues(alpha: 0.4),
             ),
           ),
           child: Column(
@@ -2014,7 +2014,7 @@ class _CustomerGoatsProgressReportScreenState
       padding: const EdgeInsets.all(10),
       decoration: BoxDecoration(
         color:
-        AppColors.lightGreen.withOpacity(0.5),
+        AppColors.lightGreen.withValues(alpha: 0.5),
         borderRadius:
         BorderRadius.circular(10),
       ),
@@ -2157,7 +2157,7 @@ class _CustomerGoatsProgressReportScreenState
         color: Colors.white,
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.05),
+            color: Colors.black.withValues(alpha: 0.05),
             blurRadius: 8,
             offset: const Offset(0, -2),
           ),

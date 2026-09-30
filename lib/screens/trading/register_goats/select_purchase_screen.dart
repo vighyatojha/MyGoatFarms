@@ -184,7 +184,7 @@ class _SelectPurchaseScreenState extends State<SelectPurchaseScreen> {
                 width: 52,
                 height: 52,
                 decoration: BoxDecoration(
-                  color: iconColor.withOpacity(0.10),
+                  color: iconColor.withValues(alpha: 0.10),
                   shape: BoxShape.circle,
                 ),
                 child: Icon(
@@ -251,7 +251,7 @@ class _PurchaseCard extends StatelessWidget {
                     width: 40,
                     height: 40,
                     decoration: BoxDecoration(
-                      color: AppColors.tradingBlue.withOpacity(0.11),
+                      color: AppColors.tradingBlue.withValues(alpha: 0.11),
                       borderRadius: BorderRadius.circular(12),
                     ),
                     child: const Icon(
@@ -288,7 +288,7 @@ class _PurchaseCard extends StatelessWidget {
                       vertical: 5,
                     ),
                     decoration: BoxDecoration(
-                      color: AppColors.warning.withOpacity(0.11),
+                      color: AppColors.warning.withValues(alpha: 0.11),
                       borderRadius: BorderRadius.circular(20),
                     ),
                     child: Text(
@@ -413,7 +413,7 @@ class _InfoItem extends StatelessWidget {
           width: 30,
           height: 30,
           decoration: BoxDecoration(
-            color: color.withOpacity(0.10),
+            color: color.withValues(alpha: 0.10),
             borderRadius: BorderRadius.circular(9),
           ),
           child: Icon(
@@ -602,7 +602,7 @@ class _SkeletonBox extends StatelessWidget {
       width: width,
       height: height,
       decoration: BoxDecoration(
-        color: AppColors.divider.withOpacity(0.55),
+        color: AppColors.divider.withValues(alpha: 0.55),
         borderRadius: BorderRadius.circular(radius),
       ),
     );

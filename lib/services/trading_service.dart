@@ -2,7 +2,6 @@ import 'dart:async';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 
-import '../models/activity_model.dart';
 import '../models/expense_categories.dart';
 import '../models/expense_model.dart';
 import '../models/goat_model.dart';

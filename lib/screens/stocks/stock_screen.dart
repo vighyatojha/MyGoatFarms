@@ -1,6 +1,5 @@
 import 'dart:async';
 
-import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 
@@ -618,8 +617,8 @@ class _StockScreenState extends State<StockScreen> {
           Border.all(
             color: AppColors
                 .primaryGreen
-                .withOpacity(
-              0.16,
+                .withValues(alpha:
+            0.16,
             ),
           ),
         ),
@@ -863,15 +862,15 @@ class _StockScreenState extends State<StockScreen> {
         border:
         Border.all(
           color: AppColors.divider
-              .withOpacity(
-            0.7,
+              .withValues(alpha:
+          0.7,
           ),
         ),
         boxShadow: [
           BoxShadow(
             color: Colors.black
-                .withOpacity(
-              0.035,
+                .withValues(alpha:
+            0.035,
             ),
             blurRadius: 10,
             offset:
@@ -893,8 +892,8 @@ class _StockScreenState extends State<StockScreen> {
             decoration:
             BoxDecoration(
               color: color
-                  .withOpacity(
-                0.10,
+                  .withValues(alpha:
+              0.10,
               ),
               shape:
               BoxShape.circle,
@@ -1014,8 +1013,8 @@ class _StockScreenState extends State<StockScreen> {
           decoration:
           BoxDecoration(
             color: AppColors.error
-                .withOpacity(
-              0.07,
+                .withValues(alpha:
+            0.07,
             ),
             borderRadius:
             BorderRadius.circular(
@@ -1024,8 +1023,8 @@ class _StockScreenState extends State<StockScreen> {
             border:
             Border.all(
               color: AppColors.error
-                  .withOpacity(
-                0.20,
+                  .withValues(alpha:
+              0.20,
               ),
             ),
           ),
@@ -1038,8 +1037,8 @@ class _StockScreenState extends State<StockScreen> {
                 BoxDecoration(
                   color: AppColors
                       .error
-                      .withOpacity(
-                    0.11,
+                      .withValues(alpha:
+                  0.11,
                   ),
                   shape:
                   BoxShape.circle,
@@ -1288,8 +1287,8 @@ class _StockScreenState extends State<StockScreen> {
             border:
             Border.all(
               color: color
-                  .withOpacity(
-                0.16,
+                  .withValues(alpha:
+              0.16,
               ),
             ),
           ),
@@ -1309,8 +1308,8 @@ class _StockScreenState extends State<StockScreen> {
                   decoration:
                   BoxDecoration(
                     color: color
-                        .withOpacity(
-                      0.10,
+                        .withValues(alpha:
+                    0.10,
                     ),
                     borderRadius:
                     BorderRadius
@@ -1483,19 +1482,19 @@ class _StockScreenState extends State<StockScreen> {
             Border.all(
               color: low
                   ? AppColors.error
-                  .withOpacity(
-                0.25,
+                  .withValues(alpha:
+              0.25,
               )
                   : AppColors.divider
-                  .withOpacity(
-                0.75,
+                  .withValues(alpha:
+              0.75,
               ),
             ),
             boxShadow: [
               BoxShadow(
                 color: Colors.black
-                    .withOpacity(
-                  0.025,
+                    .withValues(alpha:
+                0.025,
                 ),
                 blurRadius: 9,
                 offset:
@@ -1529,8 +1528,8 @@ class _StockScreenState extends State<StockScreen> {
                         decoration:
                         BoxDecoration(
                           color: color
-                              .withOpacity(
-                            0.10,
+                              .withValues(alpha:
+                          0.10,
                           ),
                           shape:
                           BoxShape
@@ -1647,8 +1646,8 @@ class _StockScreenState extends State<StockScreen> {
                   decoration:
                   BoxDecoration(
                     color: color
-                        .withOpacity(
-                      0.08,
+                        .withValues(alpha:
+                    0.08,
                     ),
                     borderRadius:
                     BorderRadius
@@ -1716,8 +1715,8 @@ class _StockScreenState extends State<StockScreen> {
         border:
         Border.all(
           color: AppColors.divider
-              .withOpacity(
-            0.7,
+              .withValues(alpha:
+          0.7,
           ),
         ),
       ),
@@ -1729,8 +1728,8 @@ class _StockScreenState extends State<StockScreen> {
             decoration:
             BoxDecoration(
               color: color
-                  .withOpacity(
-                0.09,
+                  .withValues(alpha:
+              0.09,
               ),
               shape:
               BoxShape.circle,
@@ -1790,8 +1789,8 @@ class _StockScreenState extends State<StockScreen> {
                 side:
                 BorderSide(
                   color: color
-                      .withOpacity(
-                    0.35,
+                      .withValues(alpha:
+                  0.35,
                   ),
                 ),
                 shape:
@@ -1885,8 +1884,8 @@ class _StockScreenState extends State<StockScreen> {
                         decoration:
                         BoxDecoration(
                           color: color
-                              .withOpacity(
-                            0.10,
+                              .withValues(alpha:
+                          0.10,
                           ),
                           shape:
                           BoxShape
@@ -2053,8 +2052,8 @@ class _StockScreenState extends State<StockScreen> {
                     color: item
                         .isLowStock
                         ? AppColors.error
-                        .withOpacity(
-                      0.07,
+                        .withValues(alpha:
+                    0.07,
                     )
                         : AppColors
                         .lightGreen,
@@ -2162,8 +2161,8 @@ class _StockScreenState extends State<StockScreen> {
                           side:
                           BorderSide(
                             color: color
-                                .withOpacity(
-                              0.35,
+                                .withValues(alpha:
+                            0.35,
                             ),
                           ),
                           padding:
@@ -2405,8 +2404,8 @@ class _StockScreenState extends State<StockScreen> {
             Border.all(
               color: AppColors
                   .divider
-                  .withOpacity(
-                0.7,
+                  .withValues(alpha:
+              0.7,
               ),
             ),
           ),
@@ -2458,8 +2457,8 @@ class _StockScreenState extends State<StockScreen> {
                 decoration:
                 BoxDecoration(
                   color: color
-                      .withOpacity(
-                    0.10,
+                      .withValues(alpha:
+                  0.10,
                   ),
                   shape:
                   BoxShape.circle,
@@ -2598,8 +2597,8 @@ class _StockScreenState extends State<StockScreen> {
               height: 1,
               color: AppColors
                   .divider
-                  .withOpacity(
-                0.65,
+                  .withValues(alpha:
+              0.65,
               ),
             ),
           ],

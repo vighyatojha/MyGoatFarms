@@ -442,7 +442,7 @@ class Step5DeliveryOptionsState extends State<Step5DeliveryOptions> {
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
       decoration: BoxDecoration(
         color: draft.onCredit
-            ? AppColors.error.withOpacity(0.06)
+            ? AppColors.error.withValues(alpha: 0.06)
             : AppColors.paleGreen,
         borderRadius: BorderRadius.circular(13),
       ),
@@ -522,7 +522,7 @@ class Step5DeliveryOptionsState extends State<Step5DeliveryOptions> {
                   draft.paymentMethod = method;
                 });
               },
-              selectedColor: AppColors.primaryGreen.withOpacity(0.15),
+              selectedColor: AppColors.primaryGreen.withValues(alpha: 0.15),
               labelStyle: TextStyle(
                 fontSize: 12,
                 fontWeight: FontWeight.w600,
@@ -912,7 +912,7 @@ class Step5DeliveryOptionsState extends State<Step5DeliveryOptions> {
                     ),
                     decoration: BoxDecoration(
                       color: (statusColor ?? AppColors.textGrey)
-                          .withOpacity(0.10),
+                          .withValues(alpha: 0.10),
                       borderRadius: BorderRadius.circular(20),
                     ),
                     child: Text(
@@ -1014,10 +1014,10 @@ class Step5DeliveryOptionsState extends State<Step5DeliveryOptions> {
                 width: double.infinity,
                 padding: const EdgeInsets.all(12),
                 decoration: BoxDecoration(
-                  color: AppColors.warning.withOpacity(0.08),
+                  color: AppColors.warning.withValues(alpha: 0.08),
                   borderRadius: BorderRadius.circular(12),
                   border: Border.all(
-                    color: AppColors.warning.withOpacity(0.35),
+                    color: AppColors.warning.withValues(alpha: 0.35),
                   ),
                 ),
                 child: Row(
@@ -1467,7 +1467,7 @@ class _BranchCard extends StatelessWidget {
                     color: (selected
                         ? AppColors.primaryGreen
                         : AppColors.textGrey)
-                        .withOpacity(0.10),
+                        .withValues(alpha: 0.10),
                     borderRadius: BorderRadius.circular(11),
                   ),
                   child: Icon(

@@ -298,7 +298,7 @@ class Step2CustomerLookupState extends State<Step2CustomerLookup> {
             style: OutlinedButton.styleFrom(
               foregroundColor: AppColors.primaryGreen,
               side: BorderSide(
-                color: AppColors.primaryGreen.withOpacity(0.35),
+                color: AppColors.primaryGreen.withValues(alpha: 0.35),
               ),
               shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(15),
@@ -335,7 +335,7 @@ class Step2CustomerLookupState extends State<Step2CustomerLookup> {
                   color: (draft.isExistingPalaiCustomer
                       ? AppColors.tradingBlue
                       : AppColors.info)
-                      .withOpacity(0.10),
+                      .withValues(alpha: 0.10),
                   borderRadius: BorderRadius.circular(12),
                 ),
                 child: Row(
@@ -473,7 +473,7 @@ class _CustomerMatchTile extends StatelessWidget {
                   color: (isPalai
                       ? AppColors.tradingBlue
                       : AppColors.primaryGreen)
-                      .withOpacity(0.10),
+                      .withValues(alpha: 0.10),
                   shape: BoxShape.circle,
                 ),
                 child: Icon(
@@ -509,7 +509,7 @@ class _CustomerMatchTile extends StatelessWidget {
                               vertical: 3,
                             ),
                             decoration: BoxDecoration(
-                              color: AppColors.tradingBlue.withOpacity(0.10),
+                              color: AppColors.tradingBlue.withValues(alpha: 0.10),
                               borderRadius: BorderRadius.circular(20),
                             ),
                             child: Text(

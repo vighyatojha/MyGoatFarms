@@ -210,7 +210,7 @@ class _WaitDeliveryCustomerListScreenState
       height: 46,
       decoration: AppTheme.card(radius: 15).copyWith(
         border: Border.all(
-          color: AppColors.divider.withOpacity(0.6),
+          color: AppColors.divider.withValues(alpha: 0.6),
         ),
       ),
       child: TextField(
@@ -276,7 +276,7 @@ class _WaitDeliveryCustomerListScreenState
           padding: const EdgeInsets.all(11),
           decoration: AppTheme.card(radius: 18).copyWith(
             border: Border.all(
-              color: AppColors.divider.withOpacity(0.6),
+              color: AppColors.divider.withValues(alpha: 0.6),
             ),
           ),
           child: Row(
@@ -371,7 +371,7 @@ class _WaitDeliveryCustomerListScreenState
       width: 46,
       height: 46,
       decoration: BoxDecoration(
-        color: AppColors.warning.withOpacity(0.14),
+        color: AppColors.warning.withValues(alpha: 0.14),
         borderRadius: BorderRadius.circular(13),
       ),
       alignment: Alignment.center,
@@ -389,9 +389,9 @@ class _WaitDeliveryCustomerListScreenState
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
       decoration: BoxDecoration(
-        color: AppColors.warning.withOpacity(0.12),
+        color: AppColors.warning.withValues(alpha: 0.12),
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: AppColors.warning.withOpacity(0.30)),
+        border: Border.all(color: AppColors.warning.withValues(alpha: 0.30)),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
@@ -459,7 +459,7 @@ class _WaitDeliveryCustomerListScreenState
               width: 56,
               height: 56,
               decoration: BoxDecoration(
-                color: AppColors.warning.withOpacity(0.12),
+                color: AppColors.warning.withValues(alpha: 0.12),
                 shape: BoxShape.circle,
               ),
               child: const Icon(

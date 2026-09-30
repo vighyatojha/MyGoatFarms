@@ -356,19 +356,19 @@ class _GoatReportGenerateScreenState extends State<GoatReportGenerateScreen> {
                 label: const Text('Whole Period', style: TextStyle(fontSize: 12)),
                 selected: _mode == _RangeMode.wholePeriod,
                 onSelected: (_) => setState(() => _mode = _RangeMode.wholePeriod),
-                selectedColor: AppColors.primaryGreen.withOpacity(0.2),
+                selectedColor: AppColors.primaryGreen.withValues(alpha: 0.2),
               ),
               ChoiceChip(
                 label: const Text('One Month', style: TextStyle(fontSize: 12)),
                 selected: _mode == _RangeMode.oneMonth,
                 onSelected: (_) => setState(() => _mode = _RangeMode.oneMonth),
-                selectedColor: AppColors.primaryGreen.withOpacity(0.2),
+                selectedColor: AppColors.primaryGreen.withValues(alpha: 0.2),
               ),
               ChoiceChip(
                 label: const Text('Custom Range', style: TextStyle(fontSize: 12)),
                 selected: _mode == _RangeMode.custom,
                 onSelected: (_) => setState(() => _mode = _RangeMode.custom),
-                selectedColor: AppColors.primaryGreen.withOpacity(0.2),
+                selectedColor: AppColors.primaryGreen.withValues(alpha: 0.2),
               ),
             ],
           ),
@@ -444,7 +444,7 @@ class _GoatReportGenerateScreenState extends State<GoatReportGenerateScreen> {
                     decoration: BoxDecoration(
                       color: Colors.white,
                       borderRadius: BorderRadius.circular(10),
-                      border: Border.all(color: AppColors.primaryGreen.withOpacity(0.4)),
+                      border: Border.all(color: AppColors.primaryGreen.withValues(alpha: 0.4)),
                     ),
                     child: _capturedEndPhoto != null
                         ? ClipRRect(

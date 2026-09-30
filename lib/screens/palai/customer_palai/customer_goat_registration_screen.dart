@@ -1021,7 +1021,7 @@ class _CustomerGoatRegistrationScreenState
               BoxShape.circle,
               color:
               AppColors.primaryGreen
-                  .withOpacity(0.12),
+                  .withValues(alpha: 0.12),
             ),
 
             child: const Icon(
@@ -1557,10 +1557,10 @@ class _CustomerGoatRegistrationScreenState
       const EdgeInsets.all(16),
 
       decoration: BoxDecoration(
-        color: AppColors.error.withOpacity(0.08),
+        color: AppColors.error.withValues(alpha: 0.08),
         borderRadius: BorderRadius.circular(14),
         border: Border.all(
-          color: AppColors.error.withOpacity(0.4),
+          color: AppColors.error.withValues(alpha: 0.4),
         ),
       ),
 

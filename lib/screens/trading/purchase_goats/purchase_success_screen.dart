@@ -52,7 +52,7 @@ class PurchaseSuccessScreen extends StatelessWidget {
                 width: 92,
                 height: 92,
                 decoration: BoxDecoration(
-                  color: AppColors.primaryGreen.withOpacity(0.12),
+                  color: AppColors.primaryGreen.withValues(alpha: 0.12),
                   shape: BoxShape.circle,
                 ),
                 child: const Icon(
@@ -95,10 +95,10 @@ class PurchaseSuccessScreen extends StatelessWidget {
                 width: double.infinity,
                 padding: const EdgeInsets.all(18),
                 decoration: BoxDecoration(
-                  color: AppColors.primaryGreen.withOpacity(0.06),
+                  color: AppColors.primaryGreen.withValues(alpha: 0.06),
                   borderRadius: BorderRadius.circular(18),
                   border: Border.all(
-                    color: AppColors.primaryGreen.withOpacity(0.18),
+                    color: AppColors.primaryGreen.withValues(alpha: 0.18),
                   ),
                 ),
                 child: Column(
@@ -184,7 +184,7 @@ class PurchaseSuccessScreen extends StatelessWidget {
                               vertical: 5,
                             ),
                             decoration: BoxDecoration(
-                              color: statusColor.withOpacity(0.12),
+                              color: statusColor.withValues(alpha: 0.12),
                               borderRadius: BorderRadius.circular(20),
                             ),
                             child: Text(

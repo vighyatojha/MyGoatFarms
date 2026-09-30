@@ -44,7 +44,7 @@ class SplashScreen extends StatelessWidget {
 
                     boxShadow: [
                       BoxShadow(
-                        color: Colors.black.withOpacity(0.15),
+                        color: Colors.black.withValues(alpha: 0.15),
                         blurRadius: 24,
                         spreadRadius: 2,
                       ),
@@ -116,7 +116,7 @@ class SplashScreen extends StatelessWidget {
 
                     style: AppTheme.body(
                       size: 15,
-                      color: Colors.white.withOpacity(0.9),
+                      color: Colors.white.withValues(alpha: 0.9),
                       weight: FontWeight.w500,
                     ),
                   ),

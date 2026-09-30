@@ -16,7 +16,7 @@ class PhotoViewerScreen extends StatelessWidget {
     Navigator.of(context).push(
       PageRouteBuilder(
         opaque: false,
-        barrierColor: Colors.black.withOpacity(.92),
+        barrierColor: Colors.black.withValues(alpha: .92),
         pageBuilder: (_, __, ___) => PhotoViewerScreen(bytes: bytes, title: title),
       ),
     );

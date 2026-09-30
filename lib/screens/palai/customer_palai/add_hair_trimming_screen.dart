@@ -339,7 +339,7 @@ class _DateTile extends StatelessWidget {
           labelText: optional ? '$label (optional)' : label,
           border: const OutlineInputBorder(),
           filled: locked,
-          fillColor: locked ? AppColors.textMuted.withOpacity(0.06) : null,
+          fillColor: locked ? AppColors.textMuted.withValues(alpha: 0.06) : null,
           suffixIcon: onClear != null
               ? IconButton(
             icon: const Icon(

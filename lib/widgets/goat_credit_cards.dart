@@ -79,7 +79,7 @@ class _GoatCreditSummaryCardState extends State<GoatCreditSummaryCard> {
                 color: Colors.white,
                 borderRadius: BorderRadius.circular(14),
                 border: Border.all(
-                  color: AppColors.error.withOpacity(0.35),
+                  color: AppColors.error.withValues(alpha: 0.35),
                 ),
               ),
               child: Row(
@@ -88,7 +88,7 @@ class _GoatCreditSummaryCardState extends State<GoatCreditSummaryCard> {
                     width: 40,
                     height: 40,
                     decoration: BoxDecoration(
-                      color: AppColors.error.withOpacity(0.10),
+                      color: AppColors.error.withValues(alpha: 0.10),
                       borderRadius: BorderRadius.circular(11),
                     ),
                     child: const Icon(
@@ -221,7 +221,7 @@ class _GoatCreditProfileCardState extends State<GoatCreditProfileCard> {
               color: Colors.white,
               borderRadius: BorderRadius.circular(14),
               border: Border.all(
-                color: AppColors.error.withOpacity(0.35),
+                color: AppColors.error.withValues(alpha: 0.35),
               ),
             ),
             child: Column(
@@ -271,7 +271,7 @@ class _GoatCreditProfileCardState extends State<GoatCreditProfileCard> {
                       vertical: 8,
                     ),
                     decoration: BoxDecoration(
-                      color: AppColors.error.withOpacity(0.06),
+                      color: AppColors.error.withValues(alpha: 0.06),
                       borderRadius: BorderRadius.circular(8),
                     ),
                     child: Row(

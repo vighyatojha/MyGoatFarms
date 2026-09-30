@@ -47,7 +47,7 @@ class FinanceStatTile extends StatelessWidget {
             Container(
               padding: const EdgeInsets.all(8),
               decoration: BoxDecoration(
-                color: color.withOpacity(0.12),
+                color: color.withValues(alpha: 0.12),
                 shape: BoxShape.circle,
               ),
               child: Icon(icon, color: color, size: 18),
@@ -172,7 +172,7 @@ class FinanceModeCard extends StatelessWidget {
               child: LinearProgressIndicator(
                 value: cashShare,
                 minHeight: 8,
-                backgroundColor: AppColors.info.withOpacity(0.25),
+                backgroundColor: AppColors.info.withValues(alpha: 0.25),
                 valueColor: const AlwaysStoppedAnimation(AppColors.warning),
               ),
             ),
@@ -188,7 +188,7 @@ class FinanceModeCard extends StatelessWidget {
         Container(
           padding: const EdgeInsets.all(7),
           decoration: BoxDecoration(
-            color: color.withOpacity(0.12),
+            color: color.withValues(alpha: 0.12),
             shape: BoxShape.circle,
           ),
           child: Icon(icon, color: color, size: 16),
@@ -230,9 +230,9 @@ class FinanceActionButton extends StatelessWidget {
       child: Container(
         padding: const EdgeInsets.symmetric(vertical: 12),
         decoration: BoxDecoration(
-          color: color.withOpacity(0.10),
+          color: color.withValues(alpha: 0.10),
           borderRadius: BorderRadius.circular(14),
-          border: Border.all(color: color.withOpacity(0.25)),
+          border: Border.all(color: color.withValues(alpha: 0.25)),
         ),
         child: Column(
           children: [
@@ -358,7 +358,7 @@ class FinanceRecentList extends StatelessWidget {
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: AppColors.divider.withOpacity(0.7)),
+        border: Border.all(color: AppColors.divider.withValues(alpha: 0.7)),
       ),
       child: Column(
         children: [

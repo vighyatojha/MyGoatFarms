@@ -670,7 +670,7 @@ class _RevenueListScreenState extends State<RevenueListScreen> {
                       ),
                       decoration: BoxDecoration(
                         color: AppColors.primaryGreen
-                            .withOpacity(0.12),
+                            .withValues(alpha: 0.12),
                         borderRadius:
                         BorderRadius.circular(20),
                       ),
@@ -835,7 +835,7 @@ class _RevenueListScreenState extends State<RevenueListScreen> {
               width: 40,
               height: 40,
               decoration: BoxDecoration(
-                color: AppColors.success.withOpacity(0.10),
+                color: AppColors.success.withValues(alpha: 0.10),
                 shape: BoxShape.circle,
               ),
               child: const Icon(

@@ -401,7 +401,7 @@ class _OwnPalaiGoatProfileScreenState extends State<OwnPalaiGoatProfileScreen>
                   : Container(
                 width: 64,
                 height: 64,
-                color: AppColors.stockTeal.withOpacity(0.10),
+                color: AppColors.stockTeal.withValues(alpha: 0.10),
                 child: const Icon(GoatIcons.paw,
                     color: AppColors.stockTeal, size: 26),
               ),
@@ -474,7 +474,7 @@ class _OwnPalaiGoatProfileScreenState extends State<OwnPalaiGoatProfileScreen>
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
       decoration: BoxDecoration(
-        color: color.withOpacity(0.12),
+        color: color.withValues(alpha: 0.12),
         borderRadius: BorderRadius.circular(6),
       ),
       child: Text(
@@ -1117,7 +1117,7 @@ Widget _logFieldIcon(IconData icon, Color color) {
     width: 30,
     height: 30,
     decoration: BoxDecoration(
-      color: color.withOpacity(0.09),
+      color: color.withValues(alpha: 0.09),
       borderRadius: BorderRadius.circular(9),
     ),
     child: Icon(icon, size: 16, color: color),
@@ -1139,14 +1139,14 @@ InputDecoration _logInputDecoration(String hint) {
     hintText: hint,
     hintStyle: AppTheme.body(size: 11.5, color: AppColors.textGrey),
     filled: true,
-    fillColor: AppColors.paleGreen.withOpacity(0.55),
+    fillColor: AppColors.paleGreen.withValues(alpha: 0.55),
     border: OutlineInputBorder(
       borderRadius: BorderRadius.circular(11),
       borderSide: BorderSide.none,
     ),
     enabledBorder: OutlineInputBorder(
       borderRadius: BorderRadius.circular(11),
-      borderSide: BorderSide(color: AppColors.divider.withOpacity(0.6)),
+      borderSide: BorderSide(color: AppColors.divider.withValues(alpha: 0.6)),
     ),
     focusedBorder: OutlineInputBorder(
       borderRadius: BorderRadius.circular(11),
@@ -1212,7 +1212,7 @@ Widget _dueBadge(GoatHealthRecord? latest) {
     margin: const EdgeInsets.only(right: 2),
     padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
     decoration: BoxDecoration(
-      color: color.withOpacity(0.10),
+      color: color.withValues(alpha: 0.10),
       borderRadius: BorderRadius.circular(20),
     ),
     child: Text(
@@ -1272,7 +1272,7 @@ class _StatTile extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
       decoration: BoxDecoration(
-        color: color.withOpacity(0.08),
+        color: color.withValues(alpha: 0.08),
         borderRadius: BorderRadius.circular(11),
       ),
       child: Column(
@@ -1475,7 +1475,7 @@ class _HealthSummaryTabState extends State<_HealthSummaryTab> {
                 padding:
                 const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                 decoration: BoxDecoration(
-                  color: statusColor.withOpacity(0.10),
+                  color: statusColor.withValues(alpha: 0.10),
                   borderRadius: BorderRadius.circular(20),
                 ),
                 child: Text(
@@ -1553,7 +1553,7 @@ class _HealthSummaryTabState extends State<_HealthSummaryTab> {
             width: 29,
             height: 29,
             decoration: BoxDecoration(
-              color: color.withOpacity(0.09),
+              color: color.withValues(alpha: 0.09),
               borderRadius: BorderRadius.circular(9),
             ),
             child: Icon(_healthIcon(type), size: 15, color: color),
@@ -1872,7 +1872,7 @@ class _HealthTypeTabState extends State<_HealthTypeTab>
             width: double.infinity,
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
             decoration: BoxDecoration(
-              color: color.withOpacity(0.06),
+              color: color.withValues(alpha: 0.06),
               borderRadius: BorderRadius.circular(11),
             ),
             child: Row(
@@ -1927,7 +1927,7 @@ class _HealthTypeTabState extends State<_HealthTypeTab>
             onPressed: (_saving || _loadingReminderSetting) ? null : _save,
             style: ElevatedButton.styleFrom(
               backgroundColor: color,
-              disabledBackgroundColor: color.withOpacity(0.5),
+              disabledBackgroundColor: color.withValues(alpha: 0.5),
               foregroundColor: Colors.white,
               elevation: 0,
               shape: RoundedRectangleBorder(
@@ -2012,8 +2012,8 @@ class _HealthTypeTabState extends State<_HealthTypeTab>
             padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 10),
             decoration: BoxDecoration(
               color: _setNextDueDate
-                  ? AppColors.info.withOpacity(0.07)
-                  : AppColors.paleGreen.withOpacity(0.55),
+                  ? AppColors.info.withValues(alpha: 0.07)
+                  : AppColors.paleGreen.withValues(alpha: 0.55),
               borderRadius: BorderRadius.circular(11),
             ),
             child: Row(
@@ -2067,9 +2067,9 @@ class _HealthTypeTabState extends State<_HealthTypeTab>
               padding:
               const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
               decoration: BoxDecoration(
-                color: AppColors.info.withOpacity(0.06),
+                color: AppColors.info.withValues(alpha: 0.06),
                 borderRadius: BorderRadius.circular(11),
-                border: Border.all(color: AppColors.info.withOpacity(0.15)),
+                border: Border.all(color: AppColors.info.withValues(alpha: 0.15)),
               ),
               child: Row(
                 children: [
@@ -2680,7 +2680,7 @@ class _ProgressTabState extends State<_ProgressTab>
                 height: 48,
                 padding: const EdgeInsets.symmetric(horizontal: 13),
                 decoration: BoxDecoration(
-                  color: AppColors.stockTeal.withOpacity(0.08),
+                  color: AppColors.stockTeal.withValues(alpha: 0.08),
                   borderRadius: BorderRadius.circular(11),
                 ),
                 alignment: Alignment.center,
@@ -2707,7 +2707,7 @@ class _ProgressTabState extends State<_ProgressTab>
               padding:
               const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
               decoration: BoxDecoration(
-                color: AppColors.tradingBlue.withOpacity(0.07),
+                color: AppColors.tradingBlue.withValues(alpha: 0.07),
                 borderRadius: BorderRadius.circular(11),
               ),
               child: Row(
@@ -2755,7 +2755,7 @@ class _ProgressTabState extends State<_ProgressTab>
               style: ElevatedButton.styleFrom(
                 backgroundColor: AppColors.stockTeal,
                 disabledBackgroundColor:
-                AppColors.stockTeal.withOpacity(0.55),
+                AppColors.stockTeal.withValues(alpha: 0.55),
                 foregroundColor: Colors.white,
                 elevation: 0,
                 shape: RoundedRectangleBorder(
@@ -2797,7 +2797,7 @@ class _ProgressTabState extends State<_ProgressTab>
       width: 30,
       height: 30,
       decoration: BoxDecoration(
-        color: color.withOpacity(0.09),
+        color: color.withValues(alpha: 0.09),
         borderRadius: BorderRadius.circular(9),
       ),
       child: Icon(icon, size: 16, color: color),
@@ -2840,14 +2840,14 @@ class _ProgressTabState extends State<_ProgressTab>
         hintText: hint,
         hintStyle: AppTheme.body(size: 11.5, color: AppColors.textGrey),
         filled: true,
-        fillColor: AppColors.paleGreen.withOpacity(0.55),
+        fillColor: AppColors.paleGreen.withValues(alpha: 0.55),
         border: OutlineInputBorder(
           borderRadius: BorderRadius.circular(11),
           borderSide: BorderSide.none,
         ),
         enabledBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(11),
-          borderSide: BorderSide(color: AppColors.divider.withOpacity(0.6)),
+          borderSide: BorderSide(color: AppColors.divider.withValues(alpha: 0.6)),
         ),
         focusedBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(11),
@@ -3060,10 +3060,10 @@ class _CompactPhotoPicker extends StatelessWidget {
                 width: 54,
                 height: 54,
                 decoration: BoxDecoration(
-                  color: AppColors.stockTeal.withOpacity(0.08),
+                  color: AppColors.stockTeal.withValues(alpha: 0.08),
                   borderRadius: BorderRadius.circular(14),
                   border: Border.all(
-                    color: AppColors.stockTeal.withOpacity(0.18),
+                    color: AppColors.stockTeal.withValues(alpha: 0.18),
                     width: 1,
                   ),
                 ),

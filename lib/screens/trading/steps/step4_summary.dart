@@ -448,9 +448,9 @@ class Step4SummaryState extends State<Step4Summary> {
     return Container(
       padding: const EdgeInsets.all(15),
       decoration: BoxDecoration(
-        color: foreground.withOpacity(0.10),
+        color: foreground.withValues(alpha: 0.10),
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: foreground.withOpacity(0.18)),
+        border: Border.all(color: foreground.withValues(alpha: 0.18)),
       ),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -459,7 +459,7 @@ class Step4SummaryState extends State<Step4Summary> {
             width: 42,
             height: 42,
             decoration: BoxDecoration(
-              color: foreground.withOpacity(0.12),
+              color: foreground.withValues(alpha: 0.12),
               shape: BoxShape.circle,
             ),
             child: Icon(

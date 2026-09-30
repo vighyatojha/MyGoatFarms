@@ -78,7 +78,7 @@ class _HealthRemindersScreenState extends State<HealthRemindersScreen> {
                   children: [
                     Container(
                       padding: const EdgeInsets.all(18),
-                      decoration: BoxDecoration(color: AppColors.success.withOpacity(0.10), shape: BoxShape.circle),
+                      decoration: BoxDecoration(color: AppColors.success.withValues(alpha: 0.10), shape: BoxShape.circle),
                       child: const Icon(Icons.check_circle_outline, size: 32, color: AppColors.success),
                     ),
                     const SizedBox(height: 14),
@@ -138,7 +138,7 @@ class _HealthRemindersScreenState extends State<HealthRemindersScreen> {
             children: [
               Container(
                 padding: const EdgeInsets.all(9),
-                decoration: BoxDecoration(color: color.withOpacity(0.12), shape: BoxShape.circle),
+                decoration: BoxDecoration(color: color.withValues(alpha: 0.12), shape: BoxShape.circle),
                 child: Icon(
                   overdue ? Icons.warning_amber_rounded : Icons.notifications_active_outlined,
                   size: 18,
@@ -163,7 +163,7 @@ class _HealthRemindersScreenState extends State<HealthRemindersScreen> {
                         Container(
                           padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                           decoration: BoxDecoration(
-                            color: AppColors.primaryGreen.withOpacity(0.12),
+                            color: AppColors.primaryGreen.withValues(alpha: 0.12),
                             borderRadius: BorderRadius.circular(6),
                           ),
                           child: Text('ID: $goatId', style: AppTheme.body(size: 9.5, color: AppColors.primaryGreen)),

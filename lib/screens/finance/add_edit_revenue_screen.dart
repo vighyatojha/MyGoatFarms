@@ -163,9 +163,9 @@ class _AddEditRevenueScreenState extends State<AddEditRevenueScreen> {
                 padding: const EdgeInsets.all(14),
                 margin: const EdgeInsets.only(bottom: 14),
                 decoration: BoxDecoration(
-                  color: AppColors.info.withOpacity(.08),
+                  color: AppColors.info.withValues(alpha: .08),
                   borderRadius: BorderRadius.circular(15),
-                  border: Border.all(color: AppColors.info.withOpacity(.18)),
+                  border: Border.all(color: AppColors.info.withValues(alpha: .18)),
                 ),
                 child: Row(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -175,7 +175,7 @@ class _AddEditRevenueScreenState extends State<AddEditRevenueScreen> {
                     Expanded(
                       child: Text(
                         'Use this only for income outside customer billing — like a goat sale. '
-                        'Customer payments already appear here automatically.',
+                            'Customer payments already appear here automatically.',
                         style: AppTheme.body(size: 11, color: AppColors.textDark),
                       ),
                     ),
@@ -361,10 +361,10 @@ class _AddEditRevenueScreenState extends State<AddEditRevenueScreen> {
           onPressed: _saving ? null : _save,
           icon: _saving
               ? const SizedBox(
-                  width: 19,
-                  height: 19,
-                  child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
-                )
+            width: 19,
+            height: 19,
+            child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+          )
               : const Icon(Icons.check_rounded),
           label: Text(_saving ? 'Saving...' : (_isEditing ? 'Save Changes' : 'Add Revenue')),
           style: ElevatedButton.styleFrom(

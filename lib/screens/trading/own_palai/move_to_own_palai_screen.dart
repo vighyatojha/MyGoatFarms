@@ -226,10 +226,10 @@ class _MoveToOwnPalaiScreenState extends State<MoveToOwnPalaiScreen> {
           vertical: 11,
         ),
         decoration: BoxDecoration(
-          color: AppColors.tradingBlue.withOpacity(0.09),
+          color: AppColors.tradingBlue.withValues(alpha: 0.09),
           borderRadius: BorderRadius.circular(14),
           border: Border.all(
-            color: AppColors.tradingBlue.withOpacity(0.12),
+            color: AppColors.tradingBlue.withValues(alpha: 0.12),
           ),
         ),
         child: Row(
@@ -238,7 +238,7 @@ class _MoveToOwnPalaiScreenState extends State<MoveToOwnPalaiScreen> {
               width: 34,
               height: 34,
               decoration: BoxDecoration(
-                color: AppColors.tradingBlue.withOpacity(0.13),
+                color: AppColors.tradingBlue.withValues(alpha: 0.13),
                 borderRadius: BorderRadius.circular(10),
               ),
               child: const Icon(
@@ -415,7 +415,7 @@ class _MoveToOwnPalaiScreenState extends State<MoveToOwnPalaiScreen> {
         vertical: 4,
       ),
       decoration: BoxDecoration(
-        color: AppColors.success.withOpacity(0.10),
+        color: AppColors.success.withValues(alpha: 0.10),
         borderRadius: BorderRadius.circular(20),
       ),
       child: Text(
@@ -437,7 +437,7 @@ class _MoveToOwnPalaiScreenState extends State<MoveToOwnPalaiScreen> {
         width: 56,
         alignment: Alignment.center,
         decoration: BoxDecoration(
-          color: AppColors.tradingBlue.withOpacity(0.08),
+          color: AppColors.tradingBlue.withValues(alpha: 0.08),
           borderRadius: BorderRadius.circular(10),
         ),
         child: const _TinySkeleton(),
@@ -505,7 +505,7 @@ class _MoveToOwnPalaiScreenState extends State<MoveToOwnPalaiScreen> {
               width: 68,
               height: 68,
               decoration: BoxDecoration(
-                color: AppColors.tradingBlue.withOpacity(0.10),
+                color: AppColors.tradingBlue.withValues(alpha: 0.10),
                 borderRadius: BorderRadius.circular(20),
               ),
               child: const Icon(
@@ -550,7 +550,7 @@ class _MoveToOwnPalaiScreenState extends State<MoveToOwnPalaiScreen> {
               width: 62,
               height: 62,
               decoration: BoxDecoration(
-                color: AppColors.error.withOpacity(0.10),
+                color: AppColors.error.withValues(alpha: 0.10),
                 borderRadius: BorderRadius.circular(18),
               ),
               child: const Icon(

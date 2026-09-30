@@ -350,7 +350,7 @@ class LotTransferGoatsFormState extends State<LotTransferGoatsForm> {
                         style: OutlinedButton.styleFrom(
                           foregroundColor: AppColors.primaryGreen,
                           side: BorderSide(
-                            color: AppColors.primaryGreen.withOpacity(0.4),
+                            color: AppColors.primaryGreen.withValues(alpha: 0.4),
                           ),
                           shape: RoundedRectangleBorder(
                             borderRadius: BorderRadius.circular(13),

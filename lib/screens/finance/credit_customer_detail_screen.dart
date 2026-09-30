@@ -280,7 +280,7 @@ class _CreditCustomerDetailScreenState
             width: double.infinity,
             padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
             decoration: BoxDecoration(
-              color: AppColors.error.withOpacity(0.07),
+              color: AppColors.error.withValues(alpha: 0.07),
               borderRadius: BorderRadius.circular(12),
             ),
             child: Row(
@@ -380,7 +380,7 @@ class _CreditCustomerDetailScreenState
                     vertical: 4,
                   ),
                   decoration: BoxDecoration(
-                    color: AppColors.warning.withOpacity(0.14),
+                    color: AppColors.warning.withValues(alpha: 0.14),
                     borderRadius: BorderRadius.circular(20),
                   ),
                   child: Text(

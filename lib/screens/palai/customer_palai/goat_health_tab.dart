@@ -224,7 +224,7 @@ class _GoatHealthTabState extends State<GoatHealthTab> {
         margin: const EdgeInsets.only(bottom: 8),
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
         decoration: BoxDecoration(
-          color: color.withOpacity(0.10),
+          color: color.withValues(alpha: 0.10),
           borderRadius: BorderRadius.circular(10),
         ),
         child: Row(
@@ -269,9 +269,9 @@ class _GoatHealthTabState extends State<GoatHealthTab> {
       margin: const EdgeInsets.only(bottom: 10),
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
       decoration: BoxDecoration(
-        color: color.withOpacity(0.12),
+        color: color.withValues(alpha: 0.12),
         borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: color.withOpacity(0.4)),
+        border: Border.all(color: color.withValues(alpha: 0.4)),
       ),
       child: Row(
         children: [
@@ -378,7 +378,7 @@ class _GoatHealthTabState extends State<GoatHealthTab> {
       decoration: AppTheme.card(radius: 12),
       child: Column(
         children: [
-          Icon(Icons.health_and_safety_outlined, size: 28, color: AppColors.textMuted.withOpacity(0.6)),
+          Icon(Icons.health_and_safety_outlined, size: 28, color: AppColors.textMuted.withValues(alpha: 0.6)),
           const SizedBox(height: 8),
           Text('No health history yet', style: AppTheme.body(size: 12, color: AppColors.textMuted)),
         ],
@@ -423,7 +423,7 @@ class _GoatHealthTabState extends State<GoatHealthTab> {
                     Text(record.healthStatus, style: AppTheme.body(size: 11, color: color)),
                     if (record.updatedAt != null) ...[
                       const SizedBox(width: 6),
-                      Icon(Icons.edit, size: 11, color: AppColors.textMuted.withOpacity(0.7)),
+                      Icon(Icons.edit, size: 11, color: AppColors.textMuted.withValues(alpha: 0.7)),
                     ],
                   ],
                 ),
@@ -645,7 +645,7 @@ class _HealthUpdateFormScreenState extends State<_HealthUpdateFormScreen> {
                   label: Text(option, style: const TextStyle(fontSize: 12)),
                   selected: _status == option,
                   onSelected: (_) => setState(() => _status = option),
-                  selectedColor: AppColors.primaryGreen.withOpacity(0.2),
+                  selectedColor: AppColors.primaryGreen.withValues(alpha: 0.2),
                 ),
             ],
           ),
@@ -703,7 +703,7 @@ class _HealthUpdateFormScreenState extends State<_HealthUpdateFormScreen> {
                   decoration: BoxDecoration(
                     color: Colors.white,
                     borderRadius: BorderRadius.circular(10),
-                    border: Border.all(color: AppColors.primaryGreen.withOpacity(0.4)),
+                    border: Border.all(color: AppColors.primaryGreen.withValues(alpha: 0.4)),
                   ),
                   child: _newPhoto != null
                       ? ClipRRect(

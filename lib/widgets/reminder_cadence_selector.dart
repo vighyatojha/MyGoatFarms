@@ -77,7 +77,7 @@ class ReminderCadenceSelector extends StatelessWidget {
       decoration: BoxDecoration(
         color: AppColors.lightGreen,
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: AppColors.primaryGreen.withOpacity(0.35)),
+        border: Border.all(color: AppColors.primaryGreen.withValues(alpha: 0.35)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -123,7 +123,7 @@ class ReminderCadenceSelector extends StatelessWidget {
       width: double.infinity,
       padding: const EdgeInsets.fromLTRB(14, 12, 14, 4),
       decoration: BoxDecoration(
-        border: Border.all(color: AppColors.textMuted.withOpacity(0.4)),
+        border: Border.all(color: AppColors.textMuted.withValues(alpha: 0.4)),
         borderRadius: BorderRadius.circular(12),
       ),
       child: Column(
@@ -164,9 +164,9 @@ class ReminderCadenceSelector extends StatelessWidget {
                   SliderTheme(
                     data: SliderTheme.of(context).copyWith(
                       activeTrackColor: AppColors.primaryGreen,
-                      inactiveTrackColor: AppColors.primaryGreen.withOpacity(0.15),
+                      inactiveTrackColor: AppColors.primaryGreen.withValues(alpha: 0.15),
                       thumbColor: AppColors.primaryGreen,
-                      overlayColor: AppColors.primaryGreen.withOpacity(0.15),
+                      overlayColor: AppColors.primaryGreen.withValues(alpha: 0.15),
                       valueIndicatorColor: AppColors.primaryGreen,
                       trackHeight: 4,
                     ),

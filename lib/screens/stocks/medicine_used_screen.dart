@@ -152,7 +152,7 @@ class _MedicineUsedScreenState extends State<MedicineUsedScreen> {
                 const SizedBox(height: 18),
                 CircleAvatar(
                   radius: 28,
-                  backgroundColor: AppColors.info.withOpacity(.10),
+                  backgroundColor: AppColors.info.withValues(alpha: .10),
                   child: const Icon(Icons.medication_outlined, color: AppColors.info, size: 28),
                 ),
                 const SizedBox(height: 12),
@@ -301,7 +301,7 @@ class _MedicineUsedScreenState extends State<MedicineUsedScreen> {
         ),
         borderRadius: BorderRadius.circular(22),
         boxShadow: [
-          BoxShadow(color: _medicineBlueDark.withOpacity(.20), blurRadius: 18, offset: const Offset(0, 8)),
+          BoxShadow(color: _medicineBlueDark.withValues(alpha: .20), blurRadius: 18, offset: const Offset(0, 8)),
         ],
       ),
       child: Row(
@@ -309,7 +309,7 @@ class _MedicineUsedScreenState extends State<MedicineUsedScreen> {
           Container(
             width: 54,
             height: 54,
-            decoration: BoxDecoration(color: Colors.white.withOpacity(.18), shape: BoxShape.circle),
+            decoration: BoxDecoration(color: Colors.white.withValues(alpha: .18), shape: BoxShape.circle),
             child: const Icon(Icons.medication_rounded, color: Colors.white, size: 28),
           ),
           const SizedBox(width: 14),
@@ -388,9 +388,9 @@ class _MedicineUsedScreenState extends State<MedicineUsedScreen> {
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: low ? AppColors.error.withOpacity(.07) : AppColors.info.withOpacity(.10),
+        color: low ? AppColors.error.withValues(alpha: .07) : AppColors.info.withValues(alpha: .10),
         borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: low ? AppColors.error.withOpacity(.18) : AppColors.info.withOpacity(.12)),
+        border: Border.all(color: low ? AppColors.error.withValues(alpha: .18) : AppColors.info.withValues(alpha: .12)),
       ),
       child: Column(
         children: [
@@ -492,7 +492,7 @@ class _MedicineUsedScreenState extends State<MedicineUsedScreen> {
         Container(
           width: 34,
           height: 34,
-          decoration: BoxDecoration(color: AppColors.info.withOpacity(.10), borderRadius: BorderRadius.circular(10)),
+          decoration: BoxDecoration(color: AppColors.info.withValues(alpha: .10), borderRadius: BorderRadius.circular(10)),
           child: Icon(icon, color: AppColors.info, size: 18),
         ),
         const SizedBox(width: 10),
@@ -530,7 +530,7 @@ class _MedicineUsedScreenState extends State<MedicineUsedScreen> {
           children: [
             CircleAvatar(
               radius: 42,
-              backgroundColor: AppColors.info.withOpacity(.10),
+              backgroundColor: AppColors.info.withValues(alpha: .10),
               child: const Icon(Icons.medication_outlined, color: AppColors.info, size: 38),
             ),
             const SizedBox(height: 16),

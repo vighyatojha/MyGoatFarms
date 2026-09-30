@@ -291,7 +291,7 @@ class _PalaiScreenState extends State<PalaiScreen> {
           width: 38,
           height: 38,
           decoration: BoxDecoration(
-            color: AppColors.primaryGreen.withOpacity(0.10),
+            color: AppColors.primaryGreen.withValues(alpha: 0.10),
             borderRadius: BorderRadius.circular(11),
           ),
           child: const Icon(
@@ -456,11 +456,11 @@ class _PalaiScreenState extends State<PalaiScreen> {
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(18),
             border: Border.all(
-              color: color.withOpacity(0.10),
+              color: color.withValues(alpha: 0.10),
             ),
             boxShadow: [
               BoxShadow(
-                color: Colors.black.withOpacity(0.035),
+                color: Colors.black.withValues(alpha: 0.035),
                 blurRadius: 12,
                 offset: const Offset(0, 4),
               ),
@@ -476,7 +476,7 @@ class _PalaiScreenState extends State<PalaiScreen> {
                     width: 34,
                     height: 34,
                     decoration: BoxDecoration(
-                      color: color.withOpacity(0.11),
+                      color: color.withValues(alpha: 0.11),
                       borderRadius: BorderRadius.circular(11),
                     ),
                     child: Icon(
@@ -489,7 +489,7 @@ class _PalaiScreenState extends State<PalaiScreen> {
                   Icon(
                     Icons.arrow_forward_ios_rounded,
                     size: 11,
-                    color: AppColors.textGrey.withOpacity(0.65),
+                    color: AppColors.textGrey.withValues(alpha: 0.65),
                   ),
                 ],
               ),
@@ -591,7 +591,7 @@ class _PalaiScreenState extends State<PalaiScreen> {
             color: AppColors.paleGreen,
             borderRadius: BorderRadius.circular(14),
             border: Border.all(
-              color: color.withOpacity(0.10),
+              color: color.withValues(alpha: 0.10),
             ),
           ),
           child: Row(
@@ -600,7 +600,7 @@ class _PalaiScreenState extends State<PalaiScreen> {
                 width: 38,
                 height: 38,
                 decoration: BoxDecoration(
-                  color: color.withOpacity(0.12),
+                  color: color.withValues(alpha: 0.12),
                   borderRadius: BorderRadius.circular(11),
                 ),
                 child: Icon(

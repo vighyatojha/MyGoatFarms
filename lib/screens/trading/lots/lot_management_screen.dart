@@ -168,10 +168,10 @@ class _LotManagementScreenState extends State<LotManagementScreen> {
           child: Container(
             padding: const EdgeInsets.all(14),
             decoration: BoxDecoration(
-              color: AppColors.warning.withOpacity(0.10),
+              color: AppColors.warning.withValues(alpha: 0.10),
               borderRadius: BorderRadius.circular(16),
               border: Border.all(
-                color: AppColors.warning.withOpacity(0.35),
+                color: AppColors.warning.withValues(alpha: 0.35),
               ),
             ),
             child: Row(

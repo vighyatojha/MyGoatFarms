@@ -101,14 +101,14 @@ Future<DateTime?> showWizardDatePicker({
             dayForegroundColor: WidgetStateProperty.resolveWith((states) {
               if (states.contains(WidgetState.selected)) return Colors.white;
               if (states.contains(WidgetState.disabled)) {
-                return AppColors.textDark.withOpacity(0.3);
+                return AppColors.textDark.withValues(alpha: 0.3);
               }
               return AppColors.textDark;
             }),
             todayForegroundColor: WidgetStateProperty.resolveWith((states) {
               if (states.contains(WidgetState.selected)) return Colors.white;
               if (states.contains(WidgetState.disabled)) {
-                return AppColors.textDark.withOpacity(0.3);
+                return AppColors.textDark.withValues(alpha: 0.3);
               }
               return AppColors.primaryGreen;
             }),
@@ -204,7 +204,7 @@ Future<bool> showWizardConfirm({
               width: 52,
               height: 52,
               decoration: BoxDecoration(
-                color: color.withOpacity(0.10),
+                color: color.withValues(alpha: 0.10),
                 shape: BoxShape.circle,
               ),
               child: Icon(icon, color: color, size: 27),
@@ -316,7 +316,7 @@ class WizardSectionCard extends StatelessWidget {
                 width: 32,
                 height: 32,
                 decoration: BoxDecoration(
-                  color: AppColors.primaryGreen.withOpacity(0.10),
+                  color: AppColors.primaryGreen.withValues(alpha: 0.10),
                   shape: BoxShape.circle,
                 ),
                 child: Icon(
@@ -397,7 +397,7 @@ InputDecoration _wizardDecoration({
     ),
     hintStyle: AppTheme.body(
       size: 12,
-      color: AppColors.textGrey.withOpacity(0.7),
+      color: AppColors.textGrey.withValues(alpha: 0.7),
     ),
     filled: true,
     fillColor: Colors.white,
@@ -665,7 +665,7 @@ class WizardResultCard extends StatelessWidget {
         color: AppColors.lightGreen,
         borderRadius: BorderRadius.circular(18),
         border: Border.all(
-          color: AppColors.primaryGreen.withOpacity(0.22),
+          color: AppColors.primaryGreen.withValues(alpha: 0.22),
         ),
       ),
       child: Row(
@@ -675,7 +675,7 @@ class WizardResultCard extends StatelessWidget {
             width: 44,
             height: 44,
             decoration: BoxDecoration(
-              color: AppColors.primaryGreen.withOpacity(0.12),
+              color: AppColors.primaryGreen.withValues(alpha: 0.12),
               borderRadius: BorderRadius.circular(13),
             ),
             child: Icon(icon, color: AppColors.darkGreen, size: 22),
@@ -833,7 +833,7 @@ class WizardNote extends StatelessWidget {
       decoration: BoxDecoration(
         color: tone == WizardNoteTone.info
             ? AppColors.paleGreen
-            : color.withOpacity(0.08),
+            : color.withValues(alpha: 0.08),
         borderRadius: BorderRadius.circular(12),
       ),
       child: Row(

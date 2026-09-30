@@ -165,7 +165,7 @@ class _GoatMonthlyReportsTabState extends State<GoatMonthlyReportsTab> {
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      Icon(Icons.description_outlined, size: 30, color: AppColors.textMuted.withOpacity(0.6)),
+                      Icon(Icons.description_outlined, size: 30, color: AppColors.textMuted.withValues(alpha: 0.6)),
                       const SizedBox(height: 10),
                       Text('No reports yet', style: AppTheme.heading(size: 14)),
                       const SizedBox(height: 6),
@@ -200,7 +200,7 @@ class _GoatMonthlyReportsTabState extends State<GoatMonthlyReportsTab> {
         ),
         if (_reopening)
           Container(
-            color: Colors.black.withOpacity(0.15),
+            color: Colors.black.withValues(alpha: 0.15),
             child: const Center(child: CircularProgressIndicator(color: AppColors.primaryGreen)),
           ),
       ],

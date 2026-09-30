@@ -462,7 +462,7 @@ class _GenerateReportScreenState extends State<GenerateReportScreen> {
                           const SizedBox(width: 8),
                           Container(
                             padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                            decoration: BoxDecoration(color: AppColors.warning.withOpacity(0.15), borderRadius: BorderRadius.circular(8)),
+                            decoration: BoxDecoration(color: AppColors.warning.withValues(alpha: 0.15), borderRadius: BorderRadius.circular(8)),
                             child: Text(badge, style: AppTheme.body(size: 10, color: AppColors.warning, weight: FontWeight.w700)),
                           ),
                         ],
@@ -626,7 +626,7 @@ class _GenerateReportScreenState extends State<GenerateReportScreen> {
         decoration: BoxDecoration(
           color: Colors.white,
           borderRadius: BorderRadius.circular(14),
-          border: Border.all(color: AppColors.primaryGreen.withOpacity(0.4), width: 1.5),
+          border: Border.all(color: AppColors.primaryGreen.withValues(alpha: 0.4), width: 1.5),
         ),
         child: _capturingPhoto
             ? const Center(child: CircularProgressIndicator(strokeWidth: 2, color: AppColors.primaryGreen))

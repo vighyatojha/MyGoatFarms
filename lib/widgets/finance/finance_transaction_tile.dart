@@ -36,7 +36,7 @@ class FinanceTransactionTile extends StatelessWidget {
                   width: 38,
                   height: 38,
                   decoration: BoxDecoration(
-                    color: color.withOpacity(0.10),
+                    color: color.withValues(alpha: 0.10),
                     shape: BoxShape.circle,
                   ),
                   child: Icon(
@@ -95,7 +95,7 @@ class FinanceTransactionTile extends StatelessWidget {
             ),
             if (showDivider) ...[
               const SizedBox(height: 11),
-              Divider(height: 1, color: AppColors.divider.withOpacity(0.65)),
+              Divider(height: 1, color: AppColors.divider.withValues(alpha: 0.65)),
             ],
           ],
         ),

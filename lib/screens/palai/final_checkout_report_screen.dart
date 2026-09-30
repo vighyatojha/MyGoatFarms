@@ -876,7 +876,7 @@ class _FinalCheckoutReportScreenState
         color: Colors.white,
         borderRadius: BorderRadius.circular(16),
         border: Border.all(
-          color: AppColors.primaryGreen.withOpacity(.18),
+          color: AppColors.primaryGreen.withValues(alpha: .18),
         ),
       ),
       child: Column(
@@ -1304,7 +1304,7 @@ class _FinalCheckoutReportScreenState
         color: Colors.white,
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(.06),
+            color: Colors.black.withValues(alpha: .06),
             blurRadius: 10,
             offset: const Offset(0, -2),
           ),

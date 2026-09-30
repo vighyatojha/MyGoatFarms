@@ -534,8 +534,8 @@ class _MonthlyBillsScreenState
         ),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(
-              0.04,
+            color: Colors.black.withValues(alpha:
+            0.04,
             ),
             blurRadius: 10,
             offset: const Offset(
@@ -959,8 +959,8 @@ class _MonthlyBillsScreenState
         vertical: 5,
       ),
       decoration: BoxDecoration(
-        color: color.withOpacity(
-          0.10,
+        color: color.withValues(alpha:
+        0.10,
         ),
         borderRadius:
         BorderRadius.circular(8),

@@ -307,9 +307,9 @@ class _FarmApprovalPendingScreenState
             width: double.infinity,
             padding: const EdgeInsets.all(16),
             decoration: BoxDecoration(
-              color: AppColors.error.withOpacity(0.06),
+              color: AppColors.error.withValues(alpha: 0.06),
               borderRadius: BorderRadius.circular(14),
-              border: Border.all(color: AppColors.error.withOpacity(0.18)),
+              border: Border.all(color: AppColors.error.withValues(alpha: 0.18)),
             ),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -352,7 +352,7 @@ class _FarmApprovalPendingScreenState
         shape: BoxShape.circle,
         boxShadow: [
           BoxShadow(
-            color: color.withOpacity(0.14),
+            color: color.withValues(alpha: 0.14),
             blurRadius: 24,
             offset: const Offset(0, 8),
           ),
@@ -370,7 +370,7 @@ class _FarmApprovalPendingScreenState
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
       decoration: BoxDecoration(
-        color: color.withOpacity(0.12),
+        color: color.withValues(alpha: 0.12),
         borderRadius: BorderRadius.circular(999),
       ),
       child: Row(
@@ -471,7 +471,7 @@ class _FarmApprovalPendingScreenState
                 style: AppTheme.body(size: 13.5, color: AppColors.textDark),
               ),
             ),
-            Icon(Icons.chevron_right_rounded, size: 18, color: AppColors.textGrey.withOpacity(0.6)),
+            Icon(Icons.chevron_right_rounded, size: 18, color: AppColors.textGrey.withValues(alpha: 0.6)),
           ],
         ),
       ),

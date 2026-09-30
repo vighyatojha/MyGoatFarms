@@ -285,11 +285,11 @@ class _HealthRecordsScreenState extends State<HealthRecordsScreen>
           color: Colors.white,
           borderRadius: BorderRadius.circular(18),
           border: Border.all(
-            color: color.withOpacity(0.13),
+            color: color.withValues(alpha: 0.13),
           ),
           boxShadow: [
             BoxShadow(
-              color: Colors.black.withOpacity(0.035),
+              color: Colors.black.withValues(alpha: 0.035),
               blurRadius: 10,
               offset: const Offset(0, 4),
             ),
@@ -301,7 +301,7 @@ class _HealthRecordsScreenState extends State<HealthRecordsScreen>
               width: 56,
               height: 56,
               decoration: BoxDecoration(
-                color: color.withOpacity(0.11),
+                color: color.withValues(alpha: 0.11),
                 shape: BoxShape.circle,
               ),
               child: Icon(
@@ -368,11 +368,11 @@ class _HealthRecordsScreenState extends State<HealthRecordsScreen>
               color: Colors.white,
               borderRadius: BorderRadius.circular(20),
               border: Border.all(
-                color: AppColors.primaryGreen.withOpacity(0.10),
+                color: AppColors.primaryGreen.withValues(alpha: 0.10),
               ),
               boxShadow: [
                 BoxShadow(
-                  color: Colors.black.withOpacity(0.025),
+                  color: Colors.black.withValues(alpha: 0.025),
                   blurRadius: 10,
                   offset: const Offset(0, 4),
                 ),
@@ -384,7 +384,7 @@ class _HealthRecordsScreenState extends State<HealthRecordsScreen>
                   width: 54,
                   height: 54,
                   decoration: BoxDecoration(
-                    color: AppColors.primaryGreen.withOpacity(0.10),
+                    color: AppColors.primaryGreen.withValues(alpha: 0.10),
                     shape: BoxShape.circle,
                   ),
                   child: const Icon(
@@ -661,7 +661,7 @@ class _HealthStatusSelectionScreenState
                     color: Colors.white,
                     borderRadius: BorderRadius.circular(20),
                     border: Border.all(
-                      color: _color.withOpacity(0.12),
+                      color: _color.withValues(alpha: 0.12),
                     ),
                   ),
                   child: Row(
@@ -670,7 +670,7 @@ class _HealthStatusSelectionScreenState
                         width: 54,
                         height: 54,
                         decoration: BoxDecoration(
-                          color: _color.withOpacity(0.11),
+                          color: _color.withValues(alpha: 0.11),
                           shape: BoxShape.circle,
                         ),
                         child: Icon(
@@ -914,7 +914,7 @@ class _HealthStatusRecordsScreenState
         width: 52,
         height: 52,
         decoration: BoxDecoration(
-          color: _color.withOpacity(0.10),
+          color: _color.withValues(alpha: 0.10),
           shape: BoxShape.circle,
         ),
         child: Icon(
@@ -935,7 +935,7 @@ class _HealthStatusRecordsScreenState
             width: 52,
             height: 52,
             decoration: BoxDecoration(
-              color: _color.withOpacity(0.10),
+              color: _color.withValues(alpha: 0.10),
               shape: BoxShape.circle,
             ),
             child: Icon(
@@ -1027,10 +1027,10 @@ class _HealthStatusRecordsScreenState
               vertical: 11,
             ),
             decoration: BoxDecoration(
-              color: _color.withOpacity(0.07),
+              color: _color.withValues(alpha: 0.07),
               borderRadius: BorderRadius.circular(13),
               border: Border.all(
-                color: _color.withOpacity(0.10),
+                color: _color.withValues(alpha: 0.10),
               ),
             ),
             child: Row(
@@ -1069,7 +1069,7 @@ class _HealthStatusRecordsScreenState
                   Icon(
                     _icon,
                     size: 45,
-                    color: _color.withOpacity(0.30),
+                    color: _color.withValues(alpha: 0.30),
                   ),
                   const SizedBox(height: 12),
                   Text(
@@ -1112,11 +1112,11 @@ class _HealthStatusRecordsScreenState
                       color: Colors.white,
                       borderRadius: BorderRadius.circular(16),
                       border: Border.all(
-                        color: _color.withOpacity(0.08),
+                        color: _color.withValues(alpha: 0.08),
                       ),
                       boxShadow: [
                         BoxShadow(
-                          color: Colors.black.withOpacity(0.025),
+                          color: Colors.black.withValues(alpha: 0.025),
                           blurRadius: 8,
                           offset: const Offset(0, 3),
                         ),
@@ -1158,7 +1158,7 @@ class _HealthStatusRecordsScreenState
                                       vertical: 4,
                                     ),
                                     decoration: BoxDecoration(
-                                      color: _color.withOpacity(0.10),
+                                      color: _color.withValues(alpha: 0.10),
                                       borderRadius:
                                       BorderRadius.circular(20),
                                     ),
@@ -1235,7 +1235,7 @@ class _HealthStatusRecordsScreenState
                                 foregroundColor: AppColors.success,
                                 side: BorderSide(
                                   color: AppColors.success
-                                      .withOpacity(0.5),
+                                      .withValues(alpha: 0.5),
                                 ),
                                 padding: EdgeInsets.zero,
                                 shape: RoundedRectangleBorder(
@@ -1285,10 +1285,10 @@ class _StatusCard extends StatelessWidget {
         margin: const EdgeInsets.only(bottom: 13),
         padding: const EdgeInsets.all(15),
         decoration: BoxDecoration(
-          color: color.withOpacity(0.055),
+          color: color.withValues(alpha: 0.055),
           borderRadius: BorderRadius.circular(17),
           border: Border.all(
-            color: color.withOpacity(0.18),
+            color: color.withValues(alpha: 0.18),
           ),
         ),
         child: Row(
@@ -1297,7 +1297,7 @@ class _StatusCard extends StatelessWidget {
               width: 50,
               height: 50,
               decoration: BoxDecoration(
-                color: color.withOpacity(0.11),
+                color: color.withValues(alpha: 0.11),
                 shape: BoxShape.circle,
               ),
               child: Icon(

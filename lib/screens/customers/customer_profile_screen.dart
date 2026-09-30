@@ -805,7 +805,7 @@ class _CustomerProfileScreenState extends State<CustomerProfileScreen> {
             width: 34,
             height: 34,
             decoration: BoxDecoration(
-              color: color.withOpacity(0.12),
+              color: color.withValues(alpha: 0.12),
               shape: BoxShape.circle,
             ),
             child: Icon(
@@ -1009,7 +1009,7 @@ class _CustomerProfileScreenState extends State<CustomerProfileScreen> {
         color: AppColors.lightGreen,
         borderRadius: BorderRadius.circular(13),
         border: Border.all(
-          color: AppColors.primaryGreen.withOpacity(0.12),
+          color: AppColors.primaryGreen.withValues(alpha: 0.12),
         ),
       ),
       child: Row(
@@ -1067,7 +1067,7 @@ class _CustomerProfileScreenState extends State<CustomerProfileScreen> {
           boxShadow: selected
               ? [
             BoxShadow(
-              color: Colors.black.withOpacity(0.06),
+              color: Colors.black.withValues(alpha: 0.06),
               blurRadius: 5,
               offset: const Offset(0, 2),
             ),
@@ -1339,7 +1339,7 @@ class _CustomerProfileScreenState extends State<CustomerProfileScreen> {
             width: 34,
             height: 34,
             decoration: BoxDecoration(
-              color: color.withOpacity(0.12),
+              color: color.withValues(alpha: 0.12),
               shape: BoxShape.circle,
             ),
             child: Icon(
@@ -1556,12 +1556,12 @@ class _CustomerProfileScreenState extends State<CustomerProfileScreen> {
                       decoration: BoxDecoration(
                         color: goat.isCheckedOut
                             ? AppColors.lightGreen
-                            : healthColor.withOpacity(0.09),
+                            : healthColor.withValues(alpha: 0.09),
                         borderRadius: BorderRadius.circular(18),
                         border: Border.all(
                           color: goat.isCheckedOut
-                              ? AppColors.primaryGreen.withOpacity(0.22)
-                              : healthColor.withOpacity(0.45),
+                              ? AppColors.primaryGreen.withValues(alpha: 0.22)
+                              : healthColor.withValues(alpha: 0.45),
                         ),
                       ),
                       child: Row(
@@ -1783,7 +1783,7 @@ class _CustomerProfileScreenState extends State<CustomerProfileScreen> {
         shape: BoxShape.circle,
         color: AppColors.lightGreen,
         border: Border.all(
-          color: healthColor.withOpacity(0.55),
+          color: healthColor.withValues(alpha: 0.55),
           width: 2,
         ),
       ),
@@ -2203,7 +2203,7 @@ class _CustomerProfileScreenState extends State<CustomerProfileScreen> {
                 width: 39,
                 height: 39,
                 decoration: BoxDecoration(
-                  color: cardColor.withOpacity(0.11),
+                  color: cardColor.withValues(alpha: 0.11),
                   shape: BoxShape.circle,
                 ),
                 child: Icon(
@@ -3166,7 +3166,7 @@ class _SkeletonBoxState
           width: widget.width,
           height: widget.height,
           decoration: BoxDecoration(
-            color: Colors.grey.withOpacity(opacity),
+            color: Colors.grey.withValues(alpha: opacity),
             borderRadius:
             BorderRadius.circular(widget.radius),
           ),
@@ -4342,8 +4342,8 @@ class _AddOutstandingSheetState
                         BoxDecoration(
                           color: AppColors
                               .error
-                              .withOpacity(
-                            0.10,
+                              .withValues(alpha:
+                          0.10,
                           ),
                           borderRadius:
                           BorderRadius

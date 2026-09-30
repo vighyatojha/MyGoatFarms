@@ -1155,7 +1155,7 @@ class _GoatStockListScreenState
       ),
       decoration: AppTheme.card(radius: 18).copyWith(
         border: Border.all(
-          color: AppColors.divider.withOpacity(0.6),
+          color: AppColors.divider.withValues(alpha: 0.6),
         ),
       ),
       child: IntrinsicHeight(
@@ -1251,7 +1251,7 @@ class _GoatStockListScreenState
               width: 34,
               height: 34,
               decoration: BoxDecoration(
-                color: color.withOpacity(0.12),
+                color: color.withValues(alpha: 0.12),
                 shape: BoxShape.circle,
               ),
               child: Icon(
@@ -1303,7 +1303,7 @@ class _GoatStockListScreenState
       height: 46,
       decoration: AppTheme.card(radius: 15).copyWith(
         border: Border.all(
-          color: AppColors.divider.withOpacity(0.6),
+          color: AppColors.divider.withValues(alpha: 0.6),
         ),
       ),
       child: TextField(
@@ -1479,7 +1479,7 @@ class _GoatStockListScreenState
                     vertical: 1,
                   ),
                   decoration: BoxDecoration(
-                    color: Colors.white.withOpacity(0.18),
+                    color: Colors.white.withValues(alpha: 0.18),
                     borderRadius: BorderRadius.circular(8),
                   ),
                   child: Text(
@@ -1561,7 +1561,7 @@ class _GoatStockListScreenState
               width: 56,
               height: 56,
               decoration: BoxDecoration(
-                color: AppColors.stockTeal.withOpacity(0.12),
+                color: AppColors.stockTeal.withValues(alpha: 0.12),
                 shape: BoxShape.circle,
               ),
               child: const Icon(
@@ -1763,7 +1763,7 @@ class _GoatStockCard extends StatelessWidget {
           padding: const EdgeInsets.all(11),
           decoration: AppTheme.card(radius: 18).copyWith(
             border: Border.all(
-              color: AppColors.divider.withOpacity(0.6),
+              color: AppColors.divider.withValues(alpha: 0.6),
             ),
           ),
           child: Column(
@@ -1935,7 +1935,7 @@ class _GoatStockCard extends StatelessWidget {
       width: 62,
       height: 62,
       decoration: BoxDecoration(
-        color: AppColors.stockTeal.withOpacity(0.12),
+        color: AppColors.stockTeal.withValues(alpha: 0.12),
         borderRadius: BorderRadius.circular(15),
       ),
       clipBehavior: Clip.antiAlias,
@@ -1968,7 +1968,7 @@ class _GoatStockCard extends StatelessWidget {
                   vertical: 1,
                 ),
                 decoration: BoxDecoration(
-                  color: Colors.black.withOpacity(0.55),
+                  color: Colors.black.withValues(alpha: 0.55),
                   borderRadius: BorderRadius.circular(6),
                 ),
                 child: Text(
@@ -1994,10 +1994,10 @@ class _GoatStockCard extends StatelessWidget {
         vertical: 4,
       ),
       decoration: BoxDecoration(
-        color: color.withOpacity(0.12),
+        color: color.withValues(alpha: 0.12),
         borderRadius: BorderRadius.circular(16),
         border: Border.all(
-          color: color.withOpacity(0.30),
+          color: color.withValues(alpha: 0.30),
         ),
       ),
       child: Row(
@@ -2078,7 +2078,7 @@ class _GoatStockCard extends StatelessWidget {
         vertical: 3,
       ),
       decoration: BoxDecoration(
-        color: color.withOpacity(0.10),
+        color: color.withValues(alpha: 0.10),
         borderRadius: BorderRadius.circular(7),
       ),
       child: Text(
@@ -2370,7 +2370,7 @@ class _UnregisteredBatchCard extends StatelessWidget {
           padding: const EdgeInsets.all(11),
           decoration: AppTheme.card(radius: 18).copyWith(
             border: Border.all(
-              color: AppColors.divider.withOpacity(0.6),
+              color: AppColors.divider.withValues(alpha: 0.6),
             ),
           ),
           child: Column(
@@ -2383,7 +2383,7 @@ class _UnregisteredBatchCard extends StatelessWidget {
                     width: 62,
                     height: 62,
                     decoration: BoxDecoration(
-                      color: color.withOpacity(0.12),
+                      color: color.withValues(alpha: 0.12),
                       borderRadius: BorderRadius.circular(15),
                     ),
                     child: Icon(
@@ -2510,10 +2510,10 @@ class _UnregisteredBatchCard extends StatelessWidget {
         vertical: 4,
       ),
       decoration: BoxDecoration(
-        color: color.withOpacity(0.12),
+        color: color.withValues(alpha: 0.12),
         borderRadius: BorderRadius.circular(16),
         border: Border.all(
-          color: color.withOpacity(0.30),
+          color: color.withValues(alpha: 0.30),
         ),
       ),
       child: Row(
@@ -2714,7 +2714,7 @@ class _GoatStockSkeletonState
       width: double.infinity,
       height: height,
       decoration: BoxDecoration(
-        color: AppColors.divider.withOpacity(opacity),
+        color: AppColors.divider.withValues(alpha: opacity),
         borderRadius: BorderRadius.circular(radius),
       ),
     );
@@ -2726,7 +2726,7 @@ class _GoatStockSkeletonState
     return Container(
       height: 36,
       decoration: BoxDecoration(
-        color: AppColors.divider.withOpacity(opacity),
+        color: AppColors.divider.withValues(alpha: opacity),
         borderRadius: BorderRadius.circular(18),
       ),
     );
@@ -2741,7 +2741,7 @@ class _GoatStockSkeletonState
       width: width,
       height: height,
       decoration: BoxDecoration(
-        color: AppColors.divider.withOpacity(opacity),
+        color: AppColors.divider.withValues(alpha: opacity),
         borderRadius: BorderRadius.circular(5),
       ),
     );
@@ -2761,7 +2761,7 @@ class _GoatStockSkeletonState
             height: 62,
             decoration: BoxDecoration(
               color:
-              AppColors.divider.withOpacity(opacity),
+              AppColors.divider.withValues(alpha: opacity),
               borderRadius: BorderRadius.circular(15),
             ),
           ),

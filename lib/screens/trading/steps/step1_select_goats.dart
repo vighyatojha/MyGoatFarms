@@ -256,7 +256,7 @@ class _Step1SelectGoatsState extends State<Step1SelectGoats> {
                         Icon(
                           GoatIcons.paw,
                           size: 40,
-                          color: AppColors.textGrey.withOpacity(0.5),
+                          color: AppColors.textGrey.withValues(alpha: 0.5),
                         ),
                         const SizedBox(height: 10),
                         Text(
@@ -379,7 +379,7 @@ class _GoatSelectTile extends StatelessWidget {
             ),
             boxShadow: [
               BoxShadow(
-                color: Colors.black.withOpacity(0.04),
+                color: Colors.black.withValues(alpha: 0.04),
                 blurRadius: 8,
                 offset: const Offset(0, 2),
               ),
@@ -395,7 +395,7 @@ class _GoatSelectTile extends StatelessWidget {
                 width: 52,
                 height: 52,
                 decoration: BoxDecoration(
-                  color: AppColors.stockTeal.withOpacity(0.10),
+                  color: AppColors.stockTeal.withValues(alpha: 0.10),
                   borderRadius: BorderRadius.circular(11),
                 ),
                 clipBehavior: Clip.antiAlias,
@@ -438,7 +438,7 @@ class _GoatSelectTile extends StatelessWidget {
                             vertical: 3,
                           ),
                           decoration: BoxDecoration(
-                            color: _statusColor.withOpacity(0.10),
+                            color: _statusColor.withValues(alpha: 0.10),
                             borderRadius: BorderRadius.circular(20),
                           ),
                           child: Text(

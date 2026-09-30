@@ -935,7 +935,7 @@ class _TradingDashboardScreenState extends State<TradingDashboardScreen> {
                   width: 38,
                   height: 38,
                   decoration: BoxDecoration(
-                    color: Colors.white.withOpacity(0.14),
+                    color: Colors.white.withValues(alpha: 0.14),
                     borderRadius: BorderRadius.circular(12),
                   ),
                   child: const Icon(
@@ -986,7 +986,7 @@ class _TradingDashboardScreenState extends State<TradingDashboardScreen> {
               ],
             ),
             const SizedBox(height: 10),
-            Divider(height: 1, color: Colors.white.withOpacity(0.15)),
+            Divider(height: 1, color: Colors.white.withValues(alpha: 0.15)),
             const SizedBox(height: 10),
             Row(
               children: [
@@ -1140,7 +1140,7 @@ class _TradingDashboardScreenState extends State<TradingDashboardScreen> {
             width: 52,
             height: 52,
             decoration: BoxDecoration(
-              color: AppColors.success.withOpacity(0.10),
+              color: AppColors.success.withValues(alpha: 0.10),
               shape: BoxShape.circle,
             ),
             child: const Icon(
@@ -1235,7 +1235,7 @@ class _TradingDashboardScreenState extends State<TradingDashboardScreen> {
           Container(
             padding: const EdgeInsets.all(10),
             decoration: BoxDecoration(
-              color: AppColors.paleGreen.withOpacity(0.55),
+              color: AppColors.paleGreen.withValues(alpha: 0.55),
               borderRadius: BorderRadius.circular(12),
             ),
             child: Column(
@@ -1251,7 +1251,7 @@ class _TradingDashboardScreenState extends State<TradingDashboardScreen> {
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
             decoration: BoxDecoration(
-              color: AppColors.primaryGreen.withOpacity(0.07),
+              color: AppColors.primaryGreen.withValues(alpha: 0.07),
               borderRadius: BorderRadius.circular(12),
             ),
             child: Row(
@@ -1363,7 +1363,7 @@ class _TradingDashboardScreenState extends State<TradingDashboardScreen> {
           Container(
             padding: const EdgeInsets.all(10),
             decoration: BoxDecoration(
-              color: AppColors.paleGreen.withOpacity(0.55),
+              color: AppColors.paleGreen.withValues(alpha: 0.55),
               borderRadius: BorderRadius.circular(12),
             ),
             child: Column(
@@ -1380,7 +1380,7 @@ class _TradingDashboardScreenState extends State<TradingDashboardScreen> {
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
               decoration: BoxDecoration(
-                color: AppColors.error.withOpacity(0.07),
+                color: AppColors.error.withValues(alpha: 0.07),
                 borderRadius: BorderRadius.circular(12),
               ),
               child: Row(
@@ -1557,7 +1557,7 @@ class _IconBox extends StatelessWidget {
       width: size,
       height: size,
       decoration: BoxDecoration(
-        color: color.withOpacity(0.10),
+        color: color.withValues(alpha: 0.10),
         borderRadius: BorderRadius.circular(size * 0.3),
       ),
       child: Icon(icon, color: color, size: size * 0.55),
@@ -1577,7 +1577,7 @@ class _Pill extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
       decoration: BoxDecoration(
-        color: solid ? color : color.withOpacity(0.10),
+        color: solid ? color : color.withValues(alpha: 0.10),
         borderRadius: BorderRadius.circular(20),
       ),
       child: Text(
@@ -1874,7 +1874,7 @@ class _Bone extends StatelessWidget {
       width: width,
       height: height,
       decoration: BoxDecoration(
-        color: AppColors.textGrey.withOpacity(0.18),
+        color: AppColors.textGrey.withValues(alpha: 0.18),
         borderRadius: BorderRadius.circular(radius),
       ),
     );

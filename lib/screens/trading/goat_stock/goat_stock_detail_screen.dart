@@ -571,11 +571,11 @@ class _GoatStockDetailScreenState
               width: 74,
               height: 74,
               decoration: BoxDecoration(
-                color: AppColors.stockTeal.withOpacity(0.08),
+                color: AppColors.stockTeal.withValues(alpha: 0.08),
                 borderRadius: BorderRadius.circular(13),
                 border: Border.all(
                   color:
-                  AppColors.stockTeal.withOpacity(0.14),
+                  AppColors.stockTeal.withValues(alpha: 0.14),
                 ),
                 image: hasPhoto
                     ? DecorationImage(
@@ -623,7 +623,7 @@ class _GoatStockDetailScreenState
                     vertical: 4,
                   ),
                   decoration: BoxDecoration(
-                    color: statusColor.withOpacity(0.10),
+                    color: statusColor.withValues(alpha: 0.10),
                     borderRadius: BorderRadius.circular(20),
                   ),
                   child: Row(
@@ -674,10 +674,10 @@ class _GoatStockDetailScreenState
         vertical: 9,
       ),
       decoration: BoxDecoration(
-        color: color.withOpacity(0.065),
+        color: color.withValues(alpha: 0.065),
         borderRadius: BorderRadius.circular(13),
         border: Border.all(
-          color: color.withOpacity(0.12),
+          color: color.withValues(alpha: 0.12),
         ),
       ),
       child: Row(
@@ -686,7 +686,7 @@ class _GoatStockDetailScreenState
             width: 32,
             height: 32,
             decoration: BoxDecoration(
-              color: color.withOpacity(0.11),
+              color: color.withValues(alpha: 0.11),
               borderRadius: BorderRadius.circular(9),
             ),
             child: Icon(
@@ -821,7 +821,7 @@ class _GoatStockDetailScreenState
                   vertical: 4,
                 ),
                 decoration: BoxDecoration(
-                  color: statusColor.withOpacity(0.09),
+                  color: statusColor.withValues(alpha: 0.09),
                   borderRadius: BorderRadius.circular(20),
                 ),
                 child: Text(
@@ -906,10 +906,10 @@ class _GoatStockDetailScreenState
               width: double.infinity,
               padding: const EdgeInsets.all(11),
               decoration: BoxDecoration(
-                color: AppColors.warning.withOpacity(0.08),
+                color: AppColors.warning.withValues(alpha: 0.08),
                 borderRadius: BorderRadius.circular(12),
                 border: Border.all(
-                  color: AppColors.warning.withOpacity(0.30),
+                  color: AppColors.warning.withValues(alpha: 0.30),
                 ),
               ),
               child: Row(
@@ -954,7 +954,7 @@ class _GoatStockDetailScreenState
                 style: OutlinedButton.styleFrom(
                   foregroundColor: AppColors.primaryGreen,
                   side: BorderSide(
-                    color: AppColors.primaryGreen.withOpacity(0.65),
+                    color: AppColors.primaryGreen.withValues(alpha: 0.65),
                   ),
                   padding: const EdgeInsets.symmetric(
                     horizontal: 14,
@@ -983,7 +983,7 @@ class _GoatStockDetailScreenState
       width: size,
       height: size,
       decoration: BoxDecoration(
-        color: color.withOpacity(0.09),
+        color: color.withValues(alpha: 0.09),
         borderRadius: BorderRadius.circular(9),
       ),
       child: Icon(

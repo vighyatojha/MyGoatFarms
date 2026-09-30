@@ -12,11 +12,11 @@ import '../l10n/app_strings.dart';
 /// incomplete, and again immediately after they back out of the Profile
 /// screen without finishing it.
 Future<void> showProfileCompletionDialog(
-  BuildContext context, {
-  required int percent,
-  required VoidCallback onCompleteNow,
-  required VoidCallback onLater,
-}) {
+    BuildContext context, {
+      required int percent,
+      required VoidCallback onCompleteNow,
+      required VoidCallback onLater,
+    }) {
   return showDialog(
     context: context,
     barrierDismissible: false,
@@ -52,7 +52,7 @@ class _ProfileCompletionDialog extends StatelessWidget {
             color: Colors.white,
             borderRadius: BorderRadius.circular(24),
             boxShadow: [
-              BoxShadow(color: Colors.black.withOpacity(0.15), blurRadius: 24, offset: const Offset(0, 8)),
+              BoxShadow(color: Colors.black.withValues(alpha: 0.15), blurRadius: 24, offset: const Offset(0, 8)),
             ],
           ),
           child: Column(

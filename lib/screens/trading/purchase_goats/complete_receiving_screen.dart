@@ -387,7 +387,7 @@ class _CompleteReceivingScreenState
                     backgroundColor: AppColors.primaryGreen,
                     foregroundColor: Colors.white,
                     disabledBackgroundColor:
-                    AppColors.primaryGreen.withOpacity(0.5),
+                    AppColors.primaryGreen.withValues(alpha: 0.5),
                     elevation: 0,
                     shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(16),
@@ -443,7 +443,7 @@ class _CompleteReceivingScreenState
                 height: 46,
                 decoration: BoxDecoration(
                   color:
-                  AppColors.primaryGreen.withOpacity(0.12),
+                  AppColors.primaryGreen.withValues(alpha: 0.12),
                   shape: BoxShape.circle,
                 ),
                 child: const Icon(

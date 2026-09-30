@@ -898,7 +898,7 @@ class _SummaryCard extends StatelessWidget {
             decoration:
             BoxDecoration(
               color:
-              color.withOpacity(0.12),
+              color.withValues(alpha: 0.12),
               shape:
               BoxShape.circle,
             ),
@@ -1216,7 +1216,7 @@ class _MoneyBadge extends StatelessWidget {
       decoration:
       BoxDecoration(
         color:
-        color.withOpacity(0.08),
+        color.withValues(alpha: 0.08),
         borderRadius:
         BorderRadius.circular(10),
       ),

@@ -261,7 +261,7 @@ class _StepLotPaymentState extends State<StepLotPayment> {
                       vertical: 5,
                     ),
                     decoration: BoxDecoration(
-                      color: statusColor.withOpacity(0.12),
+                      color: statusColor.withValues(alpha: 0.12),
                       borderRadius: BorderRadius.circular(20),
                     ),
                     child: Text(
@@ -332,7 +332,7 @@ class _QuickAmountChip extends StatelessWidget {
         ),
       ),
       backgroundColor: AppColors.lightGreen,
-      side: BorderSide(color: AppColors.primaryGreen.withOpacity(0.25)),
+      side: BorderSide(color: AppColors.primaryGreen.withValues(alpha: 0.25)),
       onPressed: onTap,
     );
   }

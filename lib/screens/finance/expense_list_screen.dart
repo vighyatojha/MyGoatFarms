@@ -269,7 +269,7 @@ class _ExpenseListScreenState extends State<ExpenseListScreen> {
               width: 40,
               height: 40,
               decoration: BoxDecoration(
-                color: AppColors.error.withOpacity(0.10),
+                color: AppColors.error.withValues(alpha: 0.10),
                 shape: BoxShape.circle,
               ),
               child: const Icon(Icons.remove_circle_outline, color: AppColors.error, size: 20),

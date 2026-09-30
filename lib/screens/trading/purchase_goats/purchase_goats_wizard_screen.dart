@@ -190,7 +190,7 @@ class _PurchaseGoatsWizardScreenState
                 width: 52,
                 height: 52,
                 decoration: BoxDecoration(
-                  color: AppColors.primaryGreen.withOpacity(0.10),
+                  color: AppColors.primaryGreen.withValues(alpha: 0.10),
                   shape: BoxShape.circle,
                 ),
                 child: const Icon(
@@ -521,7 +521,7 @@ class _PurchaseGoatsWizardScreenState
         color: Colors.white,
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.05),
+            color: Colors.black.withValues(alpha: 0.05),
             blurRadius: 14,
             offset: const Offset(0, -3),
           ),
@@ -550,7 +550,7 @@ class _PurchaseGoatsWizardScreenState
                             foregroundColor: AppColors.primaryGreen,
                             side: BorderSide(
                               color: AppColors.primaryGreen
-                                  .withOpacity(busy ? 0.15 : 0.35),
+                                  .withValues(alpha: busy ? 0.15 : 0.35),
                             ),
                             shape: RoundedRectangleBorder(
                               borderRadius: BorderRadius.circular(15),
@@ -575,7 +575,7 @@ class _PurchaseGoatsWizardScreenState
                           backgroundColor: AppColors.primaryGreen,
                           foregroundColor: Colors.white,
                           disabledBackgroundColor:
-                          AppColors.primaryGreen.withOpacity(0.55),
+                          AppColors.primaryGreen.withValues(alpha: 0.55),
                           disabledForegroundColor: Colors.white,
                           elevation: 1,
                           shape: RoundedRectangleBorder(
@@ -684,7 +684,7 @@ class _ChoiceTile extends StatelessWidget {
                 width: 44,
                 height: 44,
                 decoration: BoxDecoration(
-                  color: AppColors.primaryGreen.withOpacity(0.12),
+                  color: AppColors.primaryGreen.withValues(alpha: 0.12),
                   borderRadius: BorderRadius.circular(13),
                 ),
                 child: Icon(icon, color: AppColors.darkGreen, size: 23),

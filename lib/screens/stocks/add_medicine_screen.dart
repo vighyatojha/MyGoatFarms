@@ -373,7 +373,7 @@ class _AddMedicineScreenState extends State<AddMedicineScreen> {
                 width: 34,
                 height: 34,
                 decoration: BoxDecoration(
-                  color: AppColors.info.withOpacity(.10),
+                  color: AppColors.info.withValues(alpha: .10),
                   borderRadius: BorderRadius.circular(10),
                 ),
                 child: const Icon(Icons.currency_rupee_rounded, color: AppColors.info, size: 18),
@@ -462,7 +462,7 @@ class _AddMedicineScreenState extends State<AddMedicineScreen> {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
       decoration: BoxDecoration(
-        color: AppColors.info.withOpacity(.08),
+        color: AppColors.info.withValues(alpha: .08),
         borderRadius: BorderRadius.circular(13),
       ),
       child: Row(
@@ -637,7 +637,7 @@ class _AddMedicineScreenState extends State<AddMedicineScreen> {
         borderRadius: BorderRadius.circular(22),
         boxShadow: [
           BoxShadow(
-            color: _medicineBlueDark.withOpacity(.20),
+            color: _medicineBlueDark.withValues(alpha: .20),
             blurRadius: 18,
             offset: const Offset(0, 8),
           ),
@@ -649,7 +649,7 @@ class _AddMedicineScreenState extends State<AddMedicineScreen> {
             width: 54,
             height: 54,
             decoration: BoxDecoration(
-              color: Colors.white.withOpacity(.18),
+              color: Colors.white.withValues(alpha: .18),
               shape: BoxShape.circle,
             ),
             child: const Icon(Icons.medication_rounded, color: Colors.white, size: 28),
@@ -693,7 +693,7 @@ class _AddMedicineScreenState extends State<AddMedicineScreen> {
                 width: 34,
                 height: 34,
                 decoration: BoxDecoration(
-                  color: AppColors.info.withOpacity(.10),
+                  color: AppColors.info.withValues(alpha: .10),
                   borderRadius: BorderRadius.circular(10),
                 ),
                 child: Icon(icon, color: AppColors.info, size: 18),
@@ -832,7 +832,7 @@ class _AddMedicineScreenState extends State<AddMedicineScreen> {
                         width: 42,
                         height: 42,
                         decoration: BoxDecoration(
-                          color: AppColors.info.withOpacity(.10),
+                          color: AppColors.info.withValues(alpha: .10),
                           borderRadius: BorderRadius.circular(12),
                         ),
                         child: const Icon(
@@ -881,9 +881,9 @@ class _AddMedicineScreenState extends State<AddMedicineScreen> {
                       width: double.infinity,
                       padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 16),
                       decoration: BoxDecoration(
-                        color: AppColors.info.withOpacity(.10),
+                        color: AppColors.info.withValues(alpha: .10),
                         borderRadius: BorderRadius.circular(15),
-                        border: Border.all(color: AppColors.info.withOpacity(.25)),
+                        border: Border.all(color: AppColors.info.withValues(alpha: .25)),
                       ),
                       child: Row(
                         children: [
@@ -929,7 +929,7 @@ class _AddMedicineScreenState extends State<AddMedicineScreen> {
       child: Container(
         padding: const EdgeInsets.all(13),
         decoration: BoxDecoration(
-          color: selected ? AppColors.info.withOpacity(.10) : Colors.white,
+          color: selected ? AppColors.info.withValues(alpha: .10) : Colors.white,
           borderRadius: BorderRadius.circular(16),
           border: Border.all(
             color: selected
@@ -944,7 +944,7 @@ class _AddMedicineScreenState extends State<AddMedicineScreen> {
               height: 42,
               clipBehavior: Clip.antiAlias,
               decoration: BoxDecoration(
-                color: AppColors.info.withOpacity(.10),
+                color: AppColors.info.withValues(alpha: .10),
                 shape: BoxShape.circle,
               ),
               child: item.hasPhoto
@@ -969,8 +969,8 @@ class _AddMedicineScreenState extends State<AddMedicineScreen> {
               padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
               decoration: BoxDecoration(
                 color: item.isLowStock
-                    ? AppColors.warning.withOpacity(.12)
-                    : AppColors.info.withOpacity(.10),
+                    ? AppColors.warning.withValues(alpha: .12)
+                    : AppColors.info.withValues(alpha: .10),
                 borderRadius: BorderRadius.circular(20),
               ),
               child: Text(
@@ -1077,9 +1077,9 @@ class _AddMedicineScreenState extends State<AddMedicineScreen> {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 11),
       decoration: BoxDecoration(
-        color: AppColors.info.withOpacity(.10),
+        color: AppColors.info.withValues(alpha: .10),
         borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: AppColors.info.withOpacity(.16)),
+        border: Border.all(color: AppColors.info.withValues(alpha: .16)),
       ),
       child: Row(
         children: [
@@ -1121,7 +1121,7 @@ class _AddMedicineScreenState extends State<AddMedicineScreen> {
         Container(
           padding: const EdgeInsets.all(4),
           decoration: BoxDecoration(
-            color: AppColors.info.withOpacity(.10),
+            color: AppColors.info.withValues(alpha: .10),
             borderRadius: BorderRadius.circular(13),
           ),
           child: Row(
@@ -1137,7 +1137,7 @@ class _AddMedicineScreenState extends State<AddMedicineScreen> {
                       color: selected ? Colors.white : Colors.transparent,
                       borderRadius: BorderRadius.circular(10),
                       boxShadow: selected
-                          ? [BoxShadow(color: Colors.black.withOpacity(.06), blurRadius: 5)]
+                          ? [BoxShadow(color: Colors.black.withValues(alpha: .06), blurRadius: 5)]
                           : null,
                     ),
                     child: Text(
@@ -1253,9 +1253,9 @@ class _AddMedicineScreenState extends State<AddMedicineScreen> {
             height: 72,
             clipBehavior: Clip.antiAlias,
             decoration: BoxDecoration(
-              color: AppColors.info.withOpacity(.08),
+              color: AppColors.info.withValues(alpha: .08),
               borderRadius: BorderRadius.circular(16),
-              border: Border.all(color: AppColors.info.withOpacity(.20)),
+              border: Border.all(color: AppColors.info.withValues(alpha: .20)),
             ),
             child: _pickingPhoto
                 ? const Center(
@@ -1293,7 +1293,7 @@ class _AddMedicineScreenState extends State<AddMedicineScreen> {
                 label: Text(photo != null ? 'Change Photo' : 'Add Photo'),
                 style: OutlinedButton.styleFrom(
                   foregroundColor: AppColors.info,
-                  side: BorderSide(color: AppColors.info.withOpacity(.35)),
+                  side: BorderSide(color: AppColors.info.withValues(alpha: .35)),
                   padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                   shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
                   textStyle: const TextStyle(fontSize: 11, fontWeight: FontWeight.w700),
@@ -1363,9 +1363,9 @@ class _AddMedicineScreenState extends State<AddMedicineScreen> {
     return Container(
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
-        color: AppColors.info.withOpacity(.08),
+        color: AppColors.info.withValues(alpha: .08),
         borderRadius: BorderRadius.circular(15),
-        border: Border.all(color: AppColors.info.withOpacity(.18)),
+        border: Border.all(color: AppColors.info.withValues(alpha: .18)),
       ),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,

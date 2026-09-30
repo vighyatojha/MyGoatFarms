@@ -512,9 +512,9 @@ class _BillSettingsScreenState extends State<BillSettingsScreen> {
             width: 54,
             height: 54,
             decoration: BoxDecoration(
-              color: Colors.white.withOpacity(.16),
+              color: Colors.white.withValues(alpha: .16),
               borderRadius: BorderRadius.circular(17),
-              border: Border.all(color: Colors.white.withOpacity(.25)),
+              border: Border.all(color: Colors.white.withValues(alpha: .25)),
             ),
             child: const Icon(
               Icons.receipt_long_rounded,
@@ -536,7 +536,7 @@ class _BillSettingsScreenState extends State<BillSettingsScreen> {
                   'Only bill identity, header, footer, terms and notes are configured here. Progress and payment details come from their own screens.',
                   style: AppTheme.body(
                     size: 11,
-                    color: Colors.white.withOpacity(.86),
+                    color: Colors.white.withValues(alpha: .86),
                   ),
                 ),
               ],
@@ -830,7 +830,7 @@ class _BillSettingsScreenState extends State<BillSettingsScreen> {
     return Container(
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
-        color: AppColors.lightGreen.withOpacity(.45),
+        color: AppColors.lightGreen.withValues(alpha: .45),
         borderRadius: BorderRadius.circular(16),
       ),
       child: Row(

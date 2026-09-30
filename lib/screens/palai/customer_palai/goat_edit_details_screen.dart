@@ -385,7 +385,7 @@ class _GoatEditDetailsScreenState extends State<GoatEditDetailsScreen> {
               decoration: BoxDecoration(
                 color: Colors.white,
                 borderRadius: BorderRadius.circular(16),
-                border: Border.all(color: AppColors.primaryGreen.withOpacity(0.4), width: 1.5),
+                border: Border.all(color: AppColors.primaryGreen.withValues(alpha: 0.4), width: 1.5),
               ),
               child: _beforeImageBytes != null
                   ? ClipRRect(

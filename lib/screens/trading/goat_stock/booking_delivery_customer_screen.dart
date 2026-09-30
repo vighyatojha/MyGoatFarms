@@ -917,7 +917,7 @@ class _BookingDeliveryCustomerScreenState
               width: 56,
               height: 56,
               decoration: BoxDecoration(
-                color: color.withOpacity(0.12),
+                color: color.withValues(alpha: 0.12),
                 shape: BoxShape.circle,
               ),
               child: Icon(icon, size: 26, color: color),
@@ -968,7 +968,7 @@ class _BookingDeliveryCustomerScreenState
       width: double.infinity,
       padding: const EdgeInsets.symmetric(vertical: 12),
       decoration: AppTheme.card(radius: 18).copyWith(
-        border: Border.all(color: AppColors.divider.withOpacity(0.6)),
+        border: Border.all(color: AppColors.divider.withValues(alpha: 0.6)),
       ),
       child: IntrinsicHeight(
         child: Row(
@@ -1125,8 +1125,8 @@ class _BookingDeliveryCustomerScreenState
       decoration: AppTheme.card(radius: 18).copyWith(
         border: Border.all(
           color: selected
-              ? AppColors.darkGreen.withOpacity(0.55)
-              : AppColors.divider.withOpacity(0.6),
+              ? AppColors.darkGreen.withValues(alpha: 0.55)
+              : AppColors.divider.withValues(alpha: 0.6),
           width: selected ? 1.4 : 1,
         ),
       ),
@@ -1293,7 +1293,7 @@ class _BookingDeliveryCustomerScreenState
             width: 44,
             height: 44,
             decoration: BoxDecoration(
-              color: AppColors.stockTeal.withOpacity(0.12),
+              color: AppColors.stockTeal.withValues(alpha: 0.12),
               borderRadius: BorderRadius.circular(12),
             ),
             child: const Center(
@@ -1334,7 +1334,7 @@ class _BookingDeliveryCustomerScreenState
       width: 44,
       height: 44,
       decoration: BoxDecoration(
-        color: AppColors.stockTeal.withOpacity(0.12),
+        color: AppColors.stockTeal.withValues(alpha: 0.12),
         borderRadius: BorderRadius.circular(12),
       ),
       clipBehavior: Clip.antiAlias,
@@ -1423,7 +1423,7 @@ class _BookingDeliveryCustomerScreenState
         contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
         border: border(AppColors.divider),
         enabledBorder: border(AppColors.divider),
-        disabledBorder: border(AppColors.divider.withOpacity(0.6)),
+        disabledBorder: border(AppColors.divider.withValues(alpha: 0.6)),
         focusedBorder: border(AppColors.darkGreen, 1.4),
       ),
     );
@@ -1630,7 +1630,7 @@ class _BookingDeliveryCustomerScreenState
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
       decoration: BoxDecoration(
-        color: _onCredit ? AppColors.error.withOpacity(0.06) : AppColors.paleGreen,
+        color: _onCredit ? AppColors.error.withValues(alpha: 0.06) : AppColors.paleGreen,
         borderRadius: BorderRadius.circular(13),
       ),
       child: Row(
@@ -1711,7 +1711,7 @@ class _BookingDeliveryCustomerScreenState
                   _method = method;
                 });
               },
-              selectedColor: AppColors.primaryGreen.withOpacity(0.15),
+              selectedColor: AppColors.primaryGreen.withValues(alpha: 0.15),
               labelStyle: TextStyle(
                 fontSize: 12,
                 fontWeight: FontWeight.w600,
@@ -1747,7 +1747,7 @@ class _BookingDeliveryCustomerScreenState
         color: Colors.white,
         border: const Border(top: BorderSide(color: AppColors.divider)),
         boxShadow: [
-          BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 12, offset: const Offset(0, -3)),
+          BoxShadow(color: Colors.black.withValues(alpha: 0.05), blurRadius: 12, offset: const Offset(0, -3)),
         ],
       ),
       padding: const EdgeInsets.fromLTRB(14, 10, 14, 12),
@@ -1807,7 +1807,7 @@ class _BookingDeliveryCustomerScreenState
                 style: ElevatedButton.styleFrom(
                   backgroundColor: AppColors.darkGreen,
                   foregroundColor: Colors.white,
-                  disabledBackgroundColor: AppColors.darkGreen.withOpacity(0.35),
+                  disabledBackgroundColor: AppColors.darkGreen.withValues(alpha: 0.35),
                   disabledForegroundColor: Colors.white,
                   elevation: 0,
                   shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(13)),

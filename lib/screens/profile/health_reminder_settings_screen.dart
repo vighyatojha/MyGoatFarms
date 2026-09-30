@@ -191,9 +191,9 @@ class _HealthReminderSettingsScreenState
                 SliderTheme(
                   data: SliderTheme.of(context).copyWith(
                     activeTrackColor: AppColors.primaryGreen,
-                    inactiveTrackColor: AppColors.primaryGreen.withOpacity(0.15),
+                    inactiveTrackColor: AppColors.primaryGreen.withValues(alpha: 0.15),
                     thumbColor: AppColors.primaryGreen,
-                    overlayColor: AppColors.primaryGreen.withOpacity(0.15),
+                    overlayColor: AppColors.primaryGreen.withValues(alpha: 0.15),
                     valueIndicatorColor: AppColors.primaryGreen,
                     trackHeight: 4,
                   ),
@@ -309,7 +309,7 @@ class _HealthReminderSettingsScreenState
     return Container(
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
-        color: AppColors.lightGreen.withOpacity(.45),
+        color: AppColors.lightGreen.withValues(alpha: .45),
         borderRadius: BorderRadius.circular(16),
       ),
       child: const Row(

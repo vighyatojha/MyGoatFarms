@@ -588,12 +588,12 @@ class _GoatListScreenState extends State<GoatListScreen> {
       ),
       decoration: BoxDecoration(
         color:
-        AppColors.warning.withOpacity(0.12),
+        AppColors.warning.withValues(alpha: 0.12),
         borderRadius:
         BorderRadius.circular(12),
         border: Border.all(
           color:
-          AppColors.warning.withOpacity(0.35),
+          AppColors.warning.withValues(alpha: 0.35),
         ),
       ),
       child: Row(
@@ -656,7 +656,7 @@ class _GoatListScreenState extends State<GoatListScreen> {
               height: 88,
               decoration: BoxDecoration(
                 color:
-                AppColors.error.withOpacity(0.1),
+                AppColors.error.withValues(alpha: 0.1),
                 shape: BoxShape.circle,
               ),
               child: const Icon(
@@ -824,7 +824,7 @@ class _GoatListScreenState extends State<GoatListScreen> {
           BoxShadow(
             color:
             AppColors.darkGreen
-                .withOpacity(0.25),
+                .withValues(alpha: 0.25),
             blurRadius: 14,
             offset: const Offset(0, 6),
           ),
@@ -849,7 +849,7 @@ class _GoatListScreenState extends State<GoatListScreen> {
                   style: AppTheme.body(
                     size: 12,
                     color: Colors.white
-                        .withOpacity(0.9),
+                        .withValues(alpha: 0.9),
                   ),
                 ),
               ],
@@ -915,9 +915,9 @@ class _GoatListScreenState extends State<GoatListScreen> {
             child: Container(
               padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
               decoration: BoxDecoration(
-                color: AppColors.error.withOpacity(0.10),
+                color: AppColors.error.withValues(alpha: 0.10),
                 borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: AppColors.error.withOpacity(0.35)),
+                border: Border.all(color: AppColors.error.withValues(alpha: 0.35)),
               ),
               child: Row(
                 children: [
@@ -954,7 +954,7 @@ class _GoatListScreenState extends State<GoatListScreen> {
           const EdgeInsets.all(8),
           decoration: BoxDecoration(
             color: Colors.white
-                .withOpacity(0.18),
+                .withValues(alpha: 0.18),
             shape: BoxShape.circle,
           ),
           child: Icon(
@@ -980,7 +980,7 @@ class _GoatListScreenState extends State<GoatListScreen> {
           style: AppTheme.body(
             size: 9,
             color: Colors.white
-                .withOpacity(0.85),
+                .withValues(alpha: 0.85),
           ),
         ),
       ],
@@ -1413,7 +1413,7 @@ class _GoatListScreenState extends State<GoatListScreen> {
                 decoration:
                 BoxDecoration(
                   color: color
-                      .withOpacity(0.10),
+                      .withValues(alpha: 0.10),
                   shape:
                   BoxShape.circle,
                 ),
@@ -1543,7 +1543,7 @@ class _GoatListScreenState extends State<GoatListScreen> {
                         Icon(
                           Icons.chevron_right_rounded,
                           size: 18,
-                          color: AppColors.textGrey.withOpacity(0.7),
+                          color: AppColors.textGrey.withValues(alpha: 0.7),
                         ),
                       ],
                     ),
@@ -1641,12 +1641,12 @@ class _GoatListScreenState extends State<GoatListScreen> {
         shape: BoxShape.circle,
         color: AppColors.lightGreen,
         border: Border.all(
-          color: healthColor.withOpacity(0.55),
+          color: healthColor.withValues(alpha: 0.55),
           width: 2.5,
         ),
         boxShadow: [
           BoxShadow(
-            color: healthColor.withOpacity(0.10),
+            color: healthColor.withValues(alpha: 0.10),
             blurRadius: 8,
             offset: const Offset(0, 3),
           ),
@@ -1694,7 +1694,7 @@ class _GoatListScreenState extends State<GoatListScreen> {
         color: AppColors.lightGreen,
         borderRadius: BorderRadius.circular(12),
         border: Border.all(
-          color: AppColors.primaryGreen.withOpacity(0.08),
+          color: AppColors.primaryGreen.withValues(alpha: 0.08),
         ),
       ),
       child: Column(
@@ -1736,7 +1736,7 @@ class _GoatListScreenState extends State<GoatListScreen> {
         vertical: 4,
       ),
       decoration: BoxDecoration(
-        color: healthColor.withOpacity(0.10),
+        color: healthColor.withValues(alpha: 0.10),
         borderRadius: BorderRadius.circular(20),
       ),
       child: Row(
@@ -1793,7 +1793,7 @@ class _GoatListScreenState extends State<GoatListScreen> {
         vertical: 5,
       ),
       decoration: BoxDecoration(
-        color: color.withOpacity(0.09),
+        color: color.withValues(alpha: 0.09),
         borderRadius: BorderRadius.circular(9),
       ),
       child: Row(
@@ -2170,10 +2170,10 @@ class _ShimmerState
             return LinearGradient(
               colors: [
                 AppColors.lightGreen
-                    .withOpacity(0.5),
+                    .withValues(alpha: 0.5),
                 Colors.white,
                 AppColors.lightGreen
-                    .withOpacity(0.5),
+                    .withValues(alpha: 0.5),
               ],
               stops: const [
                 0.35,

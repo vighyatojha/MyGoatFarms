@@ -39,7 +39,7 @@ class PhotoUploadCircle extends StatelessWidget {
                 decoration: BoxDecoration(
                   shape: BoxShape.circle,
                   color: Colors.white,
-                  border: Border.all(color: AppColors.primaryGreen.withOpacity(0.35), width: 2),
+                  border: Border.all(color: AppColors.primaryGreen.withValues(alpha: 0.35), width: 2),
                 ),
                 child: ClipOval(
                   child: imageBytes != null

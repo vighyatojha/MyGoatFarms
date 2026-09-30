@@ -311,21 +311,21 @@ class _RegisterScreenState extends State<RegisterScreen> {
       focusedBorder: OutlineInputBorder(
         borderRadius: BorderRadius.circular(22),
         borderSide: BorderSide(
-          color: AppColors.primaryGreen.withOpacity(0.45),
+          color: AppColors.primaryGreen.withValues(alpha: 0.45),
           width: 1.4,
         ),
       ),
       errorBorder: OutlineInputBorder(
         borderRadius: BorderRadius.circular(22),
         borderSide: BorderSide(
-          color: AppColors.error.withOpacity(0.55),
+          color: AppColors.error.withValues(alpha: 0.55),
           width: 1.2,
         ),
       ),
       focusedErrorBorder: OutlineInputBorder(
         borderRadius: BorderRadius.circular(22),
         borderSide: BorderSide(
-          color: AppColors.error.withOpacity(0.75),
+          color: AppColors.error.withValues(alpha: 0.75),
           width: 1.4,
         ),
       ),
@@ -337,7 +337,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
       hintStyle: TextStyle(
         fontFamily: 'Baloo2',
         fontSize: 15,
-        color: AppColors.textGrey.withOpacity(0.75),
+        color: AppColors.textGrey.withValues(alpha: 0.75),
       ),
     );
   }
@@ -416,7 +416,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                       textAlign: TextAlign.center,
                       style: AppTheme.body(
                         size: 12,
-                        color: Colors.white.withOpacity(0.88),
+                        color: Colors.white.withValues(alpha: 0.88),
                       ),
                     ),
                   ],
@@ -685,10 +685,10 @@ class _RegisterScreenState extends State<RegisterScreen> {
                       Container(
                         padding: const EdgeInsets.all(14),
                         decoration: BoxDecoration(
-                          color: AppColors.primaryGreen.withOpacity(0.07),
+                          color: AppColors.primaryGreen.withValues(alpha: 0.07),
                           borderRadius: BorderRadius.circular(18),
                           border: Border.all(
-                            color: AppColors.primaryGreen.withOpacity(0.10),
+                            color: AppColors.primaryGreen.withValues(alpha: 0.10),
                           ),
                         ),
                         child: Row(
@@ -698,7 +698,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                               width: 34,
                               height: 34,
                               decoration: BoxDecoration(
-                                color: AppColors.primaryGreen.withOpacity(0.12),
+                                color: AppColors.primaryGreen.withValues(alpha: 0.12),
                                 shape: BoxShape.circle,
                               ),
                               child: const Icon(
@@ -728,10 +728,10 @@ class _RegisterScreenState extends State<RegisterScreen> {
                           style: ElevatedButton.styleFrom(
                             backgroundColor: AppColors.primaryGreen,
                             disabledBackgroundColor:
-                            AppColors.primaryGreen.withOpacity(0.55),
+                            AppColors.primaryGreen.withValues(alpha: 0.55),
                             elevation: 2,
                             shadowColor:
-                            AppColors.primaryGreen.withOpacity(0.25),
+                            AppColors.primaryGreen.withValues(alpha: 0.25),
                             shape: RoundedRectangleBorder(
                               borderRadius: BorderRadius.circular(28),
                             ),
@@ -1067,7 +1067,7 @@ class _EmailVerificationScreenState
                     shape: BoxShape.circle,
                     boxShadow: [
                       BoxShadow(
-                        color: AppColors.primaryGreen.withOpacity(0.12),
+                        color: AppColors.primaryGreen.withValues(alpha: 0.12),
                         blurRadius: 24,
                         offset: const Offset(0, 8),
                       ),
@@ -1116,7 +1116,7 @@ class _EmailVerificationScreenState
                     borderRadius: BorderRadius.circular(22),
                     boxShadow: [
                       BoxShadow(
-                        color: Colors.black.withOpacity(0.04),
+                        color: Colors.black.withValues(alpha: 0.04),
                         blurRadius: 20,
                         offset: const Offset(0, 8),
                       ),
@@ -1155,7 +1155,7 @@ class _EmailVerificationScreenState
                     style: ElevatedButton.styleFrom(
                       backgroundColor: AppColors.primaryGreen,
                       disabledBackgroundColor:
-                      AppColors.primaryGreen.withOpacity(0.55),
+                      AppColors.primaryGreen.withValues(alpha: 0.55),
                       elevation: 2,
                       shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(27),
@@ -1285,7 +1285,7 @@ class _VerificationStep extends StatelessWidget {
           width: 30,
           height: 30,
           decoration: BoxDecoration(
-            color: AppColors.primaryGreen.withOpacity(0.10),
+            color: AppColors.primaryGreen.withValues(alpha: 0.10),
             shape: BoxShape.circle,
           ),
           alignment: Alignment.center,
@@ -1440,8 +1440,8 @@ class _PasswordRule extends StatelessWidget {
       ),
       decoration: BoxDecoration(
         color: valid
-            ? AppColors.success.withOpacity(0.10)
-            : Colors.black.withOpacity(0.035),
+            ? AppColors.success.withValues(alpha: 0.10)
+            : Colors.black.withValues(alpha: 0.035),
         borderRadius: BorderRadius.circular(20),
       ),
       child: Row(
@@ -1457,7 +1457,7 @@ class _PasswordRule extends StatelessWidget {
               size: 13,
               color: valid
                   ? AppColors.success
-                  : AppColors.textGrey.withOpacity(0.55),
+                  : AppColors.textGrey.withValues(alpha: 0.55),
             ),
           ),
           const SizedBox(width: 5),

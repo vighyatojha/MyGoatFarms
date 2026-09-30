@@ -211,7 +211,7 @@ class _SupplierLedgerDetailScreenState extends State<SupplierLedgerDetailScreen>
                 decoration: BoxDecoration(
                   color: Colors.white,
                   borderRadius: BorderRadius.circular(18),
-                  border: Border.all(color: AppColors.divider.withOpacity(0.7)),
+                  border: Border.all(color: AppColors.divider.withValues(alpha: 0.7)),
                 ),
                 child: Column(
                   children: [
@@ -239,7 +239,7 @@ class _SupplierLedgerDetailScreenState extends State<SupplierLedgerDetailScreen>
         children: [
           Container(
             padding: const EdgeInsets.all(8),
-            decoration: BoxDecoration(color: color.withOpacity(0.12), shape: BoxShape.circle),
+            decoration: BoxDecoration(color: color.withValues(alpha: 0.12), shape: BoxShape.circle),
             child: Icon(icon, color: color, size: 18),
           ),
           const SizedBox(height: 10),
