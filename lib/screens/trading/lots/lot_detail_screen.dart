@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../../../app_theme.dart';
 import '../../../models/purchase_costing.dart';
 import '../../../models/sale_model.dart';
+import '../../../models/trading_lot_death_model.dart';
 import '../../../models/trading_lot_payment_model.dart';
 import '../../../models/trading_lot_receiving_model.dart';
 import '../../../models/partner_permission_keys.dart';
@@ -18,6 +19,7 @@ import '../sell_from_lot/sell_from_lot_wizard_screen.dart';
 import 'lot_sales_cards.dart';
 import 'lot_widgets.dart';
 import 'receive_lot_screen.dart';
+import 'record_lot_death_sheet.dart';
 import 'transfer_to_customer_palai_wizard_screen.dart';
 import 'transfer_to_own_palai_screen.dart';
 
@@ -47,6 +49,7 @@ class _LotDetailScreenState extends State<LotDetailScreen> {
   late final Stream<TradingPurchase?> _lotStream;
   late final Stream<List<LotPayment>> _paymentsStream;
   late final Stream<List<LotReceiving>> _receivingsStream;
+  late final Stream<List<LotDeath>> _deathsStream;
   late final Stream<List<Sale>> _salesStream;
 
   @override
@@ -59,6 +62,7 @@ class _LotDetailScreenState extends State<LotDetailScreen> {
     _paymentsStream = service.lotPaymentsStream(widget.farmId, widget.lotDocId);
     _receivingsStream =
         service.lotReceivingsStream(widget.farmId, widget.lotDocId);
+    _deathsStream = service.lotDeathsStream(widget.farmId, widget.lotDocId);
     _salesStream = service.salesForLotStream(widget.farmId, widget.lotDocId);
   }
 
@@ -82,6 +86,16 @@ class _LotDetailScreenState extends State<LotDetailScreen> {
     );
 
     if (saved == true) _snack('Receiving saved.');
+  }
+
+  Future<void> _recordDeath(TradingPurchase lot) async {
+    final saved = await showRecordLotDeathSheet(
+      context: context,
+      farmId: widget.farmId,
+      lot: lot,
+    );
+
+    if (saved == true) _snack('Death recorded.');
   }
 
   Future<void> _addPayment(TradingPurchase lot) async {
@@ -313,10 +327,15 @@ class _LotDetailScreenState extends State<LotDetailScreen> {
             label: 'Moved to individual goats',
             value: '${lot.registeredCount}',
           ),
-        if (lot.mortality > 0)
+        if (lot.transitDeathQty > 0)
           WizardComputedRow(
             label: 'Died in transit',
-            value: '${lot.mortality}',
+            value: '${lot.transitDeathQty}',
+          ),
+        if (lot.farmDeathQty > 0)
+          WizardComputedRow(
+            label: 'Died at farm',
+            value: '${lot.farmDeathQty}',
           ),
         const Divider(height: 18, color: AppColors.divider),
         WizardComputedRow(
@@ -360,7 +379,7 @@ class _LotDetailScreenState extends State<LotDetailScreen> {
         if (lot.market.trim().isNotEmpty)
           WizardComputedRow(label: 'Market', value: lot.market),
         if (lot.vehicleNumber.trim().isNotEmpty)
-          WizardComputedRow(label: 'Vehicle', value: lot.vehicleNumber),
+          WizardComputedRow(label: 'Vehicle / Transport', value: lot.vehicleNumber),
         if (lot.remarks.trim().isNotEmpty)
           WizardComputedRow(label: 'Remarks', value: lot.remarks.trim()),
         if (lot.expectedDeliveryDate != null && lot.supplierQty > 0)
@@ -421,7 +440,7 @@ class _LotDetailScreenState extends State<LotDetailScreen> {
         else ...[
           WizardComputedRow(
             label: 'Received alive',
-            value: '${lot.receivedAliveQty} of ${lot.totalGoats}',
+            value: '${lot.arrivedAliveQty} of ${lot.totalGoats}',
           ),
           WizardComputedRow(
             label: 'Weight at purchase (received goats)',
@@ -475,6 +494,50 @@ class _LotDetailScreenState extends State<LotDetailScreen> {
                           style: AppTheme.body(
                             size: 12,
                             color: AppColors.textDark,
+                            weight: FontWeight.w600,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+              ],
+            );
+          },
+        ),
+
+        StreamBuilder<List<LotDeath>>(
+          stream: _deathsStream,
+          builder: (context, snapshot) {
+            final deaths = snapshot.data ?? const <LotDeath>[];
+
+            if (deaths.isEmpty) return const SizedBox.shrink();
+
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Divider(height: 22, color: AppColors.divider),
+                Text('Deaths at farm', style: AppTheme.body(size: 11)),
+                const SizedBox(height: 6),
+                for (final d in deaths)
+                  Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 4),
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            '${wizardDate(d.date)} • ${d.reason}'
+                                '${d.note.trim().isEmpty ? '' : ' • ${d.note.trim()}'}',
+                            style: AppTheme.body(
+                              size: 12,
+                              color: AppColors.textDark,
+                            ),
+                          ),
+                        ),
+                        Text(
+                          '${d.qty} • ${wizardCurrency(d.lossAmount)}',
+                          style: AppTheme.body(
+                            size: 12,
+                            color: AppColors.error,
                             weight: FontWeight.w600,
                           ),
                         ),
@@ -640,6 +703,15 @@ class _LotDetailScreenState extends State<LotDetailScreen> {
               : 'Needs goats at the farm',
           enabled: lotOk && lot.farmAvailableQty > 0,
           onTap: () => _transferToCustomerPalai(lot),
+        ),
+        _ActionButton(
+          icon: Icons.warning_amber_rounded,
+          label: 'Record Death',
+          hint: lot.farmAvailableQty > 0
+              ? '${lot.farmAvailableQty} at farm'
+              : 'Needs goats at the farm',
+          enabled: lotOk && lot.farmAvailableQty > 0,
+          onTap: () => _recordDeath(lot),
         ),
       ],
     );

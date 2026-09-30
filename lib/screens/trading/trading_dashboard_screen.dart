@@ -103,12 +103,8 @@ class _TradingDashboardScreenState extends State<TradingDashboardScreen> {
     _summaryStream = next == null
         ? null
         : TradingService.instance.dashboardSummaryStream(next);
-    // TradingService.pendingReceivingStream is no longer read here —
-    // Pending Receiving is driven entirely by _lotOverviewStream now
-    // (TradingLotOverview.pendingReceiving), which is lot-aware in a way
-    // that stream isn't (see that class's doc comment). The service
-    // method itself is left in place; nothing else in the dashboard
-    // calls it.
+    // Pending Receiving is driven entirely by _lotOverviewStream
+    // (TradingLotOverview.pendingReceiving), which is lot-aware.
     _lotOverviewStream = next == null
         ? null
         : TradingService.instance.lotOverviewStream(next);

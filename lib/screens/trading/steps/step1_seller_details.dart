@@ -16,7 +16,7 @@ import '../purchase_goats/purchase_wizard_widgets.dart';
 ///
 /// Optional:
 /// - Market / Location
-/// - Vehicle Number
+/// - Vehicle / Transport Details (free text: vehicle number, driver, tempo…)
 /// - Expected Delivery Date (when the supplier is due to deliver the lot)
 /// - Remarks (saved with the lot whether or not the goats have arrived)
 class Step1SellerDetails extends StatefulWidget {
@@ -203,20 +203,19 @@ class _Step1SellerDetailsState extends State<Step1SellerDetails> {
 
               wizardField(
                 controller: _vehicleController,
-                label: 'Vehicle Number',
-                hint: 'e.g. MH12AB1234',
+                label: 'Vehicle / Transport Details',
+                hint: 'e.g. MH12AB1234, tempo, driver name',
                 icon: Icons.local_shipping_outlined,
                 optional: true,
-                textCapitalization: TextCapitalization.characters,
+                textCapitalization: TextCapitalization.sentences,
                 textInputAction: TextInputAction.done,
                 inputFormatters: [
-                  // Vehicle numbers have no spaces or symbols worth keeping.
-                  FilteringTextInputFormatter.allow(
-                    RegExp(r'[A-Za-z0-9 -]'),
-                  ),
+                  // Free text (vehicle number, driver, transport mode) —
+                  // just cap the length so it stays a one-line detail.
+                  LengthLimitingTextInputFormatter(120),
                 ],
                 onChanged: (value) {
-                  draft.vehicleNumber = value.toUpperCase();
+                  draft.vehicleNumber = value;
                 },
               ),
 

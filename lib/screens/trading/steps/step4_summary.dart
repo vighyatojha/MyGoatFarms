@@ -219,7 +219,7 @@ class Step4SummaryState extends State<Step4Summary> {
               ),
             if (draft.vehicleNumber.trim().isNotEmpty)
               WizardComputedRow(
-                label: 'Vehicle No.',
+                label: 'Vehicle / Transport',
                 value: draft.vehicleNumber.trim(),
               ),
             WizardComputedRow(

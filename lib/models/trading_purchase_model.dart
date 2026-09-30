@@ -170,6 +170,13 @@ class TradingPurchase {
   /// every receiving event. (Goats that died on arrival are [mortality].)
   final int receivedAliveQty;
 
+  /// Of [mortality], how many died AT THE FARM after arriving (Record
+  /// Death). Display-only: the counter maths never reads it. Recording such
+  /// a death moves one goat from [receivedAliveQty] to [mortality], so
+  /// "received alive" = receivedAliveQty + farmDeathQty and "died in
+  /// transit" = mortality - farmDeathQty.
+  final int farmDeathQty;
+
   /// Goats sold directly from the lot while still at the supplier.
   final int soldFromSupplierQty;
 
@@ -227,6 +234,7 @@ class TradingPurchase {
     this.lotSchema = 0,
     this.expectedDeliveryDate,
     this.receivedAliveQty = 0,
+    this.farmDeathQty = 0,
     this.soldFromSupplierQty = 0,
     this.soldFromFarmQty = 0,
     this.reservedFarmQty = 0,
@@ -257,6 +265,15 @@ class TradingPurchase {
 
   /// Goats already accounted for at receiving (arrived alive + died).
   int get receivedTotalQty => receivedAliveQty + mortality;
+
+  /// Goats that arrived alive, counting ones that later died at the farm.
+  int get arrivedAliveQty => receivedAliveQty + farmDeathQty;
+
+  /// Goats that died in transit only (excludes farm deaths).
+  int get transitDeathQty {
+    final v = mortality - farmDeathQty;
+    return v < 0 ? 0 : v;
+  }
 
   /// Goats still at the supplier and available to sell from there.
   int get supplierQty {
@@ -484,6 +501,7 @@ class TradingPurchase {
       lotSchema: intFrom('lotSchema'),
       expectedDeliveryDate: nullableDateFrom('expectedDeliveryDate'),
       receivedAliveQty: intFrom('receivedAliveQty'),
+      farmDeathQty: intFrom('farmDeathQty'),
       soldFromSupplierQty: intFrom('soldFromSupplierQty'),
       soldFromFarmQty: intFrom('soldFromFarmQty'),
       reservedFarmQty: intFrom('reservedFarmQty'),
@@ -538,6 +556,7 @@ class TradingPurchase {
 
       'lotSchema': lotSchema,
       'receivedAliveQty': receivedAliveQty,
+      'farmDeathQty': farmDeathQty,
       'soldFromSupplierQty': soldFromSupplierQty,
       'soldFromFarmQty': soldFromFarmQty,
       'reservedFarmQty': reservedFarmQty,

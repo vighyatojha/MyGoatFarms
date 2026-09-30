@@ -9,6 +9,7 @@ import '../models/goat_model.dart';
 import '../models/legacy_conversion_plan.dart';
 import '../models/purchase_costing.dart';
 import '../models/sale_model.dart';
+import '../models/trading_lot_death_model.dart';
 import '../models/trading_lot_payment_model.dart';
 import '../models/trading_lot_receiving_model.dart';
 import '../models/trading_lot_overview.dart';
@@ -178,43 +179,6 @@ class TradingService {
             (doc) => TradingPurchase.fromDoc(doc),
       )
           .toList(),
-    );
-  }
-
-  // -----------------------------------------------------------------------
-  // PENDING RECEIVING
-  // -----------------------------------------------------------------------
-
-  /// Streams only purchases where receiving has not yet been completed.
-  ///
-  /// This is used by the Trading Dashboard to show the
-  /// "Pending Receiving" section.
-  Stream<List<TradingPurchase>> pendingReceivingStream(
-      String farmId,
-      ) {
-    return _tradingPurchases(farmId)
-        .where(
-      'receivingStatus',
-      isEqualTo: 'pending',
-    )
-        .snapshots()
-        .map(
-          (snapshot) {
-        final purchases = snapshot.docs
-            .map(
-              (doc) => TradingPurchase.fromDoc(doc),
-        )
-            .toList();
-
-        purchases.sort(
-              (a, b) => (b.createdAt ?? DateTime(2000))
-              .compareTo(
-            a.createdAt ?? DateTime(2000),
-          ),
-        );
-
-        return purchases;
-      },
     );
   }
 
@@ -997,6 +961,136 @@ class TradingService {
       list.sort((a, b) => b.date.compareTo(a.date));
       return list;
     });
+  }
+
+  Stream<List<LotDeath>> lotDeathsStream(
+      String farmId,
+      String lotDocId,
+      ) {
+    return _tradingPurchases(farmId)
+        .doc(lotDocId)
+        .collection('deaths')
+        .snapshots()
+        .map((snapshot) {
+      final list = snapshot.docs.map(LotDeath.fromDoc).toList();
+      list.sort((a, b) => b.date.compareTo(a.date));
+      return list;
+    });
+  }
+
+  // -----------------------------------------------------------------------
+  // RECORD DEATH (goats at the farm, still in the lot)
+  // -----------------------------------------------------------------------
+
+  /// Records [qty] goats of the lot that died at the farm.
+  ///
+  /// Only goats that are at the farm and not reserved for a Booking / Wait
+  /// sale can be recorded ([TradingPurchase.farmAvailableQty]); goats still
+  /// at the supplier are handled by Receive Lot, and individually
+  /// registered goats have their own death flow.
+  ///
+  /// Counter maths, chosen so no existing formula changes:
+  ///   receivedAliveQty  - qty
+  ///   mortality         + qty   (receivedTotalQty, hence supplierQty, is
+  ///                              unchanged)
+  ///   farmDeathQty      + qty   (display only)
+  ///   farmQty / pendingCount fall by qty automatically / explicitly
+  ///
+  /// Because mortality rises, the lot's cost per surviving goat rises: the
+  /// loss is carried by the goats that are left. No Finance entry is
+  /// written — the money was spent at purchase; nothing is paid or received
+  /// when a goat dies.
+  ///
+  /// The loss shown on the event is qty x cost per goat BEFORE the death.
+  Future<LotDeath> recordLotFarmDeath({
+    required String farmId,
+    required String lotDocId,
+    required int qty,
+    required String reason,
+    required DateTime date,
+    String note = '',
+  }) async {
+    if (qty <= 0) {
+      throw ArgumentError('Enter at least one goat.');
+    }
+
+    final actor = await FirestoreService.instance.getCurrentActor();
+
+    final lotRef = _tradingPurchases(farmId).doc(lotDocId);
+    final deathRef = lotRef.collection('deaths').doc();
+
+    late LotDeath event;
+
+    await _db.runTransaction((transaction) async {
+      final snap = await transaction.get(lotRef);
+
+      if (!snap.exists) {
+        throw StateError('Lot $lotDocId was not found.');
+      }
+
+      final lot = TradingPurchase.fromDoc(snap);
+
+      if (!lot.isLot) {
+        throw StateError(
+          'Lot $lotDocId has not been converted to the lot format yet.',
+        );
+      }
+
+      if (qty > lot.farmAvailableQty) {
+        throw ArgumentError(
+          'Only ${lot.farmAvailableQty} goats at the farm can be recorded '
+              'as dead (goats reserved for a booking are excluded).',
+        );
+      }
+
+      final costing = lot.costing;
+      final perGoat = costing.costPerSurvivingGoat > 0
+          ? costing.costPerSurvivingGoat
+          : costing.purchaseAmountPerGoat;
+
+      event = LotDeath(
+        id: deathRef.id,
+        date: date,
+        qty: qty,
+        reason: reason.trim().isEmpty ? 'Unknown' : reason.trim(),
+        note: note,
+        costPerGoat: perGoat,
+        lossAmount: PurchaseCosting.round2(perGoat * qty),
+        actorUid: actor?.uid,
+        actorName: actor?.name,
+      );
+
+      final newFarmQty = (lot.receivedAliveQty -
+          qty -
+          lot.soldFromFarmQty -
+          lot.registeredCount)
+          .clamp(0, 1 << 30)
+          .toInt();
+
+      transaction.set(deathRef, {
+        ...event.toMap(),
+        'createdAt': FieldValue.serverTimestamp(),
+      });
+
+      transaction.update(lotRef, {
+        'receivedAliveQty': FieldValue.increment(-qty),
+        'mortality': FieldValue.increment(qty),
+        'farmDeathQty': FieldValue.increment(qty),
+        'pendingCount': newFarmQty,
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
+
+      transaction.set(
+        _summaryDoc(farmId),
+        {
+          'totalStock': FieldValue.increment(-qty),
+          'pendingRegistrations': FieldValue.increment(-qty),
+        },
+        SetOptions(merge: true),
+      );
+    }).timeout(_timeout);
+
+    return event;
   }
 
   // -----------------------------------------------------------------------

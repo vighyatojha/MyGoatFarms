@@ -25,15 +25,25 @@ class StepLotDelivery extends StatefulWidget {
   State<StepLotDelivery> createState() => _StepLotDeliveryState();
 }
 
+enum _PayMode { paid, partial, pending }
+
 class _StepLotDeliveryState extends State<StepLotDelivery> {
   late final TextEditingController _transportController;
   late final TextEditingController _receivedController;
+  late _PayMode _mode;
 
   @override
   void initState() {
     super.initState();
 
     final draft = widget.draft;
+
+    // Restore the choice when coming back to this step: not on credit =
+    // fully paid; on credit with nothing received = pending; otherwise
+    // partial.
+    _mode = !draft.onCredit
+        ? _PayMode.paid
+        : (draft.amountReceived <= 0 ? _PayMode.pending : _PayMode.partial);
 
     _transportController = TextEditingController(
       text: draft.transportCost == 0
@@ -55,19 +65,44 @@ class _StepLotDeliveryState extends State<StepLotDelivery> {
     super.dispose();
   }
 
-  void _setReceived(double amount) {
-    widget.draft.amountReceived = amount;
-    _receivedController.text = SaleDraft.formatWeight(amount);
-    _receivedController.selection = TextSelection.collapsed(
-      offset: _receivedController.text.length,
-    );
-    setState(() {});
+  /// Applies a payment choice to the draft. Fully Paid and Pending fix
+  /// the amount; Partial leaves it to the field. Anything short of the
+  /// full amount is a credit sale.
+  void _setMode(_PayMode mode) {
+    final draft = widget.draft;
+    final total = draft.customerTotalDeliverNow;
+
+    setState(() {
+      _mode = mode;
+
+      switch (mode) {
+        case _PayMode.paid:
+          draft.onCredit = false;
+          draft.amountReceived = total;
+          break;
+        case _PayMode.pending:
+          draft.onCredit = true;
+          draft.amountReceived = 0;
+          break;
+        case _PayMode.partial:
+          draft.onCredit = true;
+          draft.amountReceived = 0;
+          _receivedController.text = '';
+          break;
+      }
+    });
   }
 
   @override
   Widget build(BuildContext context) {
     final draft = widget.draft;
     final total = draft.customerTotalDeliverNow;
+
+    // Transport can change the total while Fully Paid is selected.
+    if (_mode == _PayMode.paid) {
+      draft.onCredit = false;
+      draft.amountReceived = total;
+    }
 
     return Form(
       key: widget.formKey,
@@ -115,76 +150,79 @@ class _StepLotDeliveryState extends State<StepLotDelivery> {
             title: 'Payment',
             icon: Icons.payments_outlined,
             children: [
-              wizardField(
-                controller: _receivedController,
-                label: 'Amount Received',
-                hint: '0.00',
-                icon: Icons.currency_rupee_rounded,
-                keyboardType: wizardDecimalKeyboard,
-                inputFormatters: wizardDecimalFormatters(),
-                onChanged: (v) {
-                  draft.amountReceived = double.tryParse(v.trim()) ?? 0;
-                  setState(() {});
-                },
-                validator: (value) {
-                  final n = double.tryParse(value?.trim() ?? '');
-                  if (n == null || n < 0) return 'Enter a valid amount';
-
-                  if (!draft.onCredit && n < total - 0.005) {
-                    return 'Turn on "Sell on Credit" to accept less than '
-                        '${wizardCurrency(total)}';
-                  }
-
-                  return null;
-                },
-              ),
-              const SizedBox(height: 10),
-              Wrap(
-                spacing: 8,
-                children: [
-                  ActionChip(
-                    label: const Text('Nothing yet'),
-                    backgroundColor: AppColors.lightGreen,
-                    onPressed: () => _setReceived(0),
-                  ),
-                  ActionChip(
-                    label: const Text('Full amount'),
-                    backgroundColor: AppColors.lightGreen,
-                    onPressed: () => _setReceived(total),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 14),
-              SwitchListTile.adaptive(
-                contentPadding: EdgeInsets.zero,
-                value: draft.onCredit,
-                onChanged: (v) => setState(() => draft.onCredit = v),
-                activeColor: AppColors.primaryGreen,
-                title: const Text(
-                  'Sell on Credit',
-                  style: TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
-                ),
-                subtitle: const Text(
-                  'Accept less than the full amount now',
-                  style: TextStyle(fontSize: 11),
-                ),
-              ),
-              const SizedBox(height: 8),
-              Text('Payment Method', style: AppTheme.body(size: 11)),
+              Text('Payment Status', style: AppTheme.body(size: 11)),
               const SizedBox(height: 8),
               Wrap(
                 spacing: 8,
                 runSpacing: 8,
                 children: [
-                  for (final m in const ['Cash', 'UPI', 'Bank Transfer'])
+                  for (final entry in const {
+                    _PayMode.paid: 'Fully Paid',
+                    _PayMode.partial: 'Partial',
+                    _PayMode.pending: 'Pending',
+                  }.entries)
                     ChoiceChip(
-                      label: Text(m),
-                      selected: draft.paymentMethod == m,
-                      onSelected: (_) => setState(() => draft.paymentMethod = m),
+                      label: Text(entry.value),
+                      selected: _mode == entry.key,
+                      onSelected: (_) => _setMode(entry.key),
                       selectedColor: AppColors.lightGreen,
                     ),
                 ],
               ),
+              const SizedBox(height: 12),
+              if (_mode == _PayMode.paid)
+                WizardNote(
+                  'Full amount ${wizardCurrency(total)} received now.',
+                )
+              else if (_mode == _PayMode.pending)
+                const WizardNote(
+                  'Nothing received now. The full amount is recorded as '
+                      'owed by the customer.',
+                  tone: WizardNoteTone.warning,
+                )
+              else
+                wizardField(
+                  controller: _receivedController,
+                  label: 'Amount Received Now',
+                  hint: '0.00',
+                  icon: Icons.currency_rupee_rounded,
+                  keyboardType: wizardDecimalKeyboard,
+                  inputFormatters: wizardDecimalFormatters(),
+                  onChanged: (v) {
+                    draft.amountReceived = double.tryParse(v.trim()) ?? 0;
+                    setState(() {});
+                  },
+                  validator: (value) {
+                    final n = double.tryParse(value?.trim() ?? '');
+                    if (n == null || n <= 0) {
+                      return 'Enter the amount received (choose Pending if '
+                          'nothing yet)';
+                    }
+                    if (n >= total - 0.005) {
+                      return 'That is the full amount — choose Fully Paid';
+                    }
+                    return null;
+                  },
+                ),
+              const SizedBox(height: 14),
+              if (_mode != _PayMode.pending) ...[
+                Text('Payment Method', style: AppTheme.body(size: 11)),
+                const SizedBox(height: 8),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    for (final m in const ['Cash', 'UPI', 'Bank Transfer'])
+                      ChoiceChip(
+                        label: Text(m),
+                        selected: draft.paymentMethod == m,
+                        onSelected: (_) =>
+                            setState(() => draft.paymentMethod = m),
+                        selectedColor: AppColors.lightGreen,
+                      ),
+                  ],
+                ),
+              ],
             ],
           ),
 

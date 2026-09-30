@@ -842,7 +842,7 @@ class _OwnPalaiGoatProfileScreenState extends State<OwnPalaiGoatProfileScreen>
                 ('Seller', purchase.sellerName),
                 ('Mobile', purchase.mobile),
                 ('Market', purchase.market),
-                ('Vehicle No.', purchase.vehicleNumber),
+                ('Vehicle / Transport', purchase.vehicleNumber),
               ]),
             ),
             const SizedBox(height: 12),

@@ -262,6 +262,27 @@ class LotSalesCards extends StatelessWidget {
                 ),
             ],
           ),
+          if (sale.canCollectBalance) ...[
+            const SizedBox(height: 6),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: OutlinedButton.icon(
+                onPressed: () => _receivePayment(context, sale),
+                icon: const Icon(Icons.payments_outlined, size: 16),
+                label: Text(
+                  'Receive payment • ${wizardCurrency(sale.billBalanceDue)} due',
+                ),
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: AppColors.primaryGreen,
+                  visualDensity: VisualDensity.compact,
+                  textStyle: const TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+            ),
+          ],
         ],
       ),
     );
@@ -274,6 +295,23 @@ class LotSalesCards extends StatelessWidget {
         fastRoute(SaleReceiptScreen(farmId: farmId, saleId: sale.id)),
       ),
       child: row,
+    );
+  }
+
+  /// Opens the same balance-payment form as the receipt. The sale stream on
+  /// Lot Detail refreshes the row (Paid / Partial, amount due) by itself.
+  Future<void> _receivePayment(BuildContext context, Sale sale) async {
+    final recorded = await showModalBottomSheet<bool>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (_) => SaleReceivePaymentSheet(farmId: farmId, sale: sale),
+    );
+
+    if (recorded != true || !context.mounted) return;
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Payment recorded.')),
     );
   }
 }
