@@ -11,6 +11,7 @@ import '../models/finance_scope.dart';
 import '../models/finance_summary_model.dart';
 import '../models/trading_finance_summary.dart';
 import '../models/sale_model.dart';
+import '../models/trading_purchase_model.dart';
 import '../models/supplier_ledger_entry_model.dart';
 import 'firestore_service.dart';
 
@@ -990,7 +991,69 @@ class FinanceService {
       }
     }
 
+    // ---- Lot accounting (accrual, lots only) ---------------------------
+    //
+    // Independent of the cash figures above. Every lot is read once: the
+    // purchase value of those bought in the range, the supplier balance of
+    // all of them now, and a cost fallback for a sale saved without a cost
+    // snapshot. Lot sales are filtered by date here, not in the query, so
+    // no composite index is needed.
+    final allPurchasesSnap =
+    await _tradingPurchases(farmId).get().timeout(_timeout);
+
+    final lots = <String, TradingPurchase>{};
+    double lotPurchaseValue = 0;
+    double lotSupplierPending = 0;
+
+    for (final doc in allPurchasesSnap.docs) {
+      final lot = TradingPurchase.fromDoc(doc);
+      if (!lot.isLot) continue;
+
+      lots[lot.id] = lot;
+      lotSupplierPending += lot.dueAmount;
+
+      final bought = lot.purchaseDate;
+      if (!bought.isBefore(start) && bought.isBefore(end)) {
+        lotPurchaseValue += lot.purchaseAmount;
+      }
+    }
+
+    double lotSalesValue = 0;
+    double lotCostOfSales = 0;
+    int lotGoatsSold = 0;
+
+    if (lots.isNotEmpty) {
+      final lotSalesSnap = await _sales(farmId)
+          .where('lotId', isGreaterThan: '')
+          .get()
+          .timeout(_timeout);
+
+      for (final doc in lotSalesSnap.docs) {
+        final sale = Sale.fromDoc(doc);
+        final when = sale.saleDate;
+
+        // Only goats that have actually left count as sold.
+        if (!sale.isLotSale || !sale.isDelivered || when == null) continue;
+        if (when.isBefore(start) || !when.isBefore(end)) continue;
+
+        final perGoat = sale.costPerGoatSnapshot ??
+            lots[sale.lotDocId]?.lotCostPerGoat ??
+            0;
+
+        lotGoatsSold += sale.lotQuantity;
+        lotSalesValue += sale.billGoatSale;
+        lotCostOfSales += perGoat * sale.lotQuantity;
+      }
+    }
+
+    double r2(double v) => (v * 100).roundToDouble() / 100;
+
     return TradingFinanceSummary(
+      lotPurchaseValue: r2(lotPurchaseValue),
+      lotSupplierPending: r2(lotSupplierPending),
+      lotSalesValue: r2(lotSalesValue),
+      lotCostOfSales: r2(lotCostOfSales),
+      lotGoatsSold: lotGoatsSold,
       salesRevenue: salesRevenue,
       purchaseSpend: purchaseSpend,
       otherPurchaseCosts: otherPurchaseCosts,

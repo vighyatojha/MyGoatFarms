@@ -6,6 +6,8 @@ import 'package:intl/intl.dart';
 import '../../app_theme.dart';
 import '../../goat_icons.dart';
 import '../../models/goat_model.dart';
+import '../../models/lot_sales_summary.dart';
+import '../../models/sale_model.dart';
 import '../../models/trading_lot_overview.dart';
 import '../../models/trading_purchase_model.dart';
 import '../../models/trading_summary_model.dart';
@@ -19,7 +21,9 @@ import 'goat_stock/goat_stock_list_screen.dart';
 import 'goat_stock/wait_delivery_customer_list_screen.dart';
 import 'lots/lot_management_screen.dart';
 import 'lots/lot_sales_list_screen.dart';
+import 'lots/lot_stock_screen.dart';
 import 'lots/receive_lot_screen.dart';
+import '../palai/palai_screen.dart';
 import 'own_palai/own_palai_list_screen.dart';
 import 'purchase_goats/complete_receiving_screen.dart';
 import 'purchase_goats/purchase_goats_wizard_screen.dart';
@@ -57,6 +61,9 @@ class _TradingDashboardScreenState extends State<TradingDashboardScreen> {
   // Created once per farm (not in build) so rebuilds never resubscribe.
   Stream<TradingSummary>? _summaryStream;
   Stream<TradingLotOverview>? _lotOverviewStream;
+
+  // Every lot sale, for the dashboard's Sales Revenue / Customer Pending.
+  Stream<List<Sale>>? _lotSalesStream;
 
   // "Available Stock" = registered goats whose status is Available.
   //
@@ -105,6 +112,9 @@ class _TradingDashboardScreenState extends State<TradingDashboardScreen> {
     _lotOverviewStream = next == null
         ? null
         : TradingService.instance.lotOverviewStream(next);
+    _lotSalesStream = next == null
+        ? null
+        : TradingService.instance.lotSalesStream(next);
 
     // New farm: forget the old count and use the summary doc purely as a
     // "something changed" signal. Its first emission also triggers the
@@ -527,6 +537,7 @@ class _TradingDashboardScreenState extends State<TradingDashboardScreen> {
         ),
         const SizedBox(height: 10),
         _secondaryStats(s, lotOverview),
+        _lotFigures(lotOverview),
       ],
     );
   }
@@ -658,6 +669,143 @@ class _TradingDashboardScreenState extends State<TradingDashboardScreen> {
     );
   }
 
+  /// Purchase Lot money and stock totals (PDF §2, D1 §17): goats bought and
+  /// still held, total purchase amount, paid to suppliers, sales revenue and
+  /// customer pending. Hidden until the farm has bought its first lot.
+  ///
+  /// Purchase / paid figures come from [lotOverview] (already live); sales
+  /// revenue and customer pending come from one query of the lot sales, so
+  /// they are the same numbers Lot Sales and every Lot Detail add up to.
+  /// Supplier pending is the "Supplier Payments Due" row above.
+  Widget _lotFigures(TradingLotOverview lotOverview) {
+    if (lotOverview.totalPurchasedQty == 0) return const SizedBox.shrink();
+
+    const divider = Divider(
+      height: 1,
+      indent: 12,
+      endIndent: 12,
+      color: AppColors.divider,
+    );
+
+    void openLotSales() {
+      final farmId = _farmId;
+      if (farmId == null) return;
+      _push(LotSalesListScreen(farmId: farmId));
+    }
+
+    return Padding(
+      padding: const EdgeInsets.only(top: 10),
+      child: DecoratedBox(
+        decoration: AppTheme.card(radius: 16),
+        child: Material(
+          type: MaterialType.transparency,
+          child: Column(
+            children: [
+              _StripRow(
+                icon: Icons.layers_outlined,
+                color: AppColors.primaryGreen,
+                title: 'Goats in Lots',
+                subtitle:
+                '${lotOverview.totalPurchasedQty} bought • '
+                    '${lotOverview.lotSoldQty} sold',
+                trailing: Text.rich(
+                  TextSpan(
+                    children: [
+                      TextSpan(
+                        text: '${lotOverview.remainingQty}',
+                        style: AppTheme.heading(
+                          size: 15,
+                          color: AppColors.primaryGreen,
+                        ),
+                      ),
+                      TextSpan(
+                        text: ' remaining',
+                        style: AppTheme.body(size: 10),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              divider,
+              _StripRow(
+                icon: Icons.shopping_bag_outlined,
+                color: AppColors.info,
+                title: 'Total Purchase Amount',
+                subtitle: 'Bought from suppliers',
+                trailing: Text(
+                  _inr.format(lotOverview.totalPurchaseAmount),
+                  style: AppTheme.heading(size: 14.5, color: AppColors.info),
+                ),
+              ),
+              divider,
+              _StripRow(
+                icon: Icons.account_balance_wallet_outlined,
+                color: AppColors.success,
+                title: 'Paid to Suppliers',
+                subtitle: 'All supplier payments so far',
+                trailing: Text(
+                  _inr.format(lotOverview.totalPaidToSuppliers),
+                  style: AppTheme.heading(size: 14.5, color: AppColors.success),
+                ),
+              ),
+              divider,
+              StreamBuilder<List<Sale>>(
+                stream: _lotSalesStream,
+                builder: (context, snap) {
+                  final ready = snap.hasData;
+                  final totals = ready
+                      ? LotSalesTotals.from(snap.data!)
+                      : const LotSalesTotals();
+
+                  String money(double v) => ready ? _inr.format(v) : '—';
+
+                  return Column(
+                    children: [
+                      _StripRow(
+                        icon: Icons.trending_up_rounded,
+                        color: AppColors.tradingBlue,
+                        title: 'Sales Revenue',
+                        subtitle: 'Delivered lot sales',
+                        onTap: openLotSales,
+                        trailing: Text(
+                          money(totals.revenue),
+                          style: AppTheme.heading(
+                            size: 14.5,
+                            color: AppColors.tradingBlue,
+                          ),
+                        ),
+                      ),
+                      divider,
+                      _StripRow(
+                        icon: Icons.hourglass_bottom_rounded,
+                        color: AppColors.warning,
+                        title: 'Customer Pending',
+                        subtitle: 'Still to collect from lot sales',
+                        subtitleColor: totals.customerPending >= 0.01
+                            ? AppColors.warning
+                            : null,
+                        onTap: openLotSales,
+                        trailing: ready && totals.customerPending < 0.01
+                            ? const _Pill('All collected', AppColors.success)
+                            : Text(
+                          money(totals.customerPending),
+                          style: AppTheme.heading(
+                            size: 14.5,
+                            color: AppColors.warning,
+                          ),
+                        ),
+                      ),
+                    ],
+                  );
+                },
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   // ===========================================================================
   // QUICK ACTIONS
   // ===========================================================================
@@ -702,6 +850,52 @@ class _TradingDashboardScreenState extends State<TradingDashboardScreen> {
         const SizedBox(height: 10),
         _pair(
           _ActionTile(
+            icon: Icons.folder_open_outlined,
+            title: 'Lot Management',
+            subtitle: 'Lots, payments & receiving',
+            color: AppColors.primaryGreen,
+            onTap: () {
+              final farmId = _farmId;
+              if (farmId == null) return;
+              _push(LotManagementScreen(farmId: farmId));
+            },
+          ),
+          _ActionTile(
+            icon: Icons.layers_outlined,
+            title: 'Lot Stock',
+            subtitle: 'Goats at supplier & farm',
+            color: AppColors.stockTeal,
+            onTap: () {
+              final farmId = _farmId;
+              if (farmId == null) return;
+              _push(LotStockScreen(farmId: farmId));
+            },
+          ),
+          height: 100,
+        ),
+        const SizedBox(height: 10),
+        _pair(
+          _ActionTile(
+            icon: Icons.holiday_village_outlined,
+            title: 'Own Palai',
+            subtitle: 'Boarded pen records',
+            color: AppColors.warning,
+            onTap: () => _push(const OwnPalaiListScreen()),
+          ),
+          _ActionTile(
+            icon: Icons.groups_2_outlined,
+            title: 'Customer Palai',
+            subtitle: 'Customer goats on palai',
+            color: AppColors.info,
+            onTap: () => _push(const PalaiScreen()),
+          ),
+          height: 100,
+        ),
+        const SizedBox(height: 10),
+        // Individual goats (registered goats, not lot goats). Sell Goat
+        // stays until the owner decides Q1 (handover §8).
+        _pair(
+          _ActionTile(
             icon: Icons.currency_rupee_rounded,
             title: 'Sell Goat',
             subtitle: 'Invoice & gate pass',
@@ -716,17 +910,6 @@ class _TradingDashboardScreenState extends State<TradingDashboardScreen> {
             onTap: () => _openGoatStock(),
           ),
           height: 100,
-        ),
-        const SizedBox(height: 10),
-        SizedBox(
-          height: 100,
-          child: _ActionTile(
-            icon: Icons.holiday_village_outlined,
-            title: 'Own Palai',
-            subtitle: 'Boarded pen records',
-            color: AppColors.warning,
-            onTap: () => _push(const OwnPalaiListScreen()),
-          ),
         ),
       ],
     );

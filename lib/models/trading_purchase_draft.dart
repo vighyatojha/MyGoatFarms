@@ -16,6 +16,11 @@ class PurchaseDraft {
 
   String sellerName = '';
   String mobile = '';
+
+  /// Remarks about the purchase itself (PDF §3). Kept apart from
+  /// [remarks], which is the note about the goats' ARRIVAL, so a lot saved
+  /// as "receive later" does not lose what was typed here.
+  String supplierRemarks = '';
   String market = '';
   String vehicleNumber = '';
   DateTime purchaseDate = DateTime.now();
@@ -190,6 +195,7 @@ class PurchaseDraft {
           mobile.trim().isNotEmpty ||
           market.trim().isNotEmpty ||
           vehicleNumber.trim().isNotEmpty ||
+          supplierRemarks.trim().isNotEmpty ||
           totalGoats > 0 ||
           totalWeightAtPurchase > 0 ||
           pricePerKg > 0 ||

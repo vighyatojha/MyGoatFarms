@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../../app_theme.dart';
 import '../../../models/purchase_costing.dart';
+import '../../../models/sale_model.dart';
 import '../../../models/trading_lot_payment_model.dart';
 import '../../../models/trading_lot_receiving_model.dart';
 import '../../../models/partner_permission_keys.dart';
@@ -14,6 +15,7 @@ import '../../../widgets/permission_gate.dart';
 import '../purchase_goats/purchase_wizard_widgets.dart';
 import 'add_lot_payment_sheet.dart';
 import '../sell_from_lot/sell_from_lot_wizard_screen.dart';
+import 'lot_sales_cards.dart';
 import 'lot_widgets.dart';
 import 'receive_lot_screen.dart';
 import 'transfer_to_customer_palai_wizard_screen.dart';
@@ -45,6 +47,7 @@ class _LotDetailScreenState extends State<LotDetailScreen> {
   late final Stream<TradingPurchase?> _lotStream;
   late final Stream<List<LotPayment>> _paymentsStream;
   late final Stream<List<LotReceiving>> _receivingsStream;
+  late final Stream<List<Sale>> _salesStream;
 
   @override
   void initState() {
@@ -56,6 +59,7 @@ class _LotDetailScreenState extends State<LotDetailScreen> {
     _paymentsStream = service.lotPaymentsStream(widget.farmId, widget.lotDocId);
     _receivingsStream =
         service.lotReceivingsStream(widget.farmId, widget.lotDocId);
+    _salesStream = service.salesForLotStream(widget.farmId, widget.lotDocId);
   }
 
   void _snack(String message, {bool error = false}) {
@@ -192,8 +196,43 @@ class _LotDetailScreenState extends State<LotDetailScreen> {
         const SizedBox(height: 14),
         _paymentCard(lot),
         const SizedBox(height: 14),
+        if (lot.isLot) ...[
+          _salesCards(lot),
+          const SizedBox(height: 14),
+        ],
         _actions(lot),
       ],
+    );
+  }
+
+  /// Sales & Profit + Lot history, both fed by one live query of this
+  /// lot's sales. A failed query must not blank the rest of the screen, so
+  /// errors collapse to a short note.
+  Widget _salesCards(TradingPurchase lot) {
+    return StreamBuilder<List<Sale>>(
+      stream: _salesStream,
+      builder: (context, snapshot) {
+        if (snapshot.hasError && !snapshot.hasData) {
+          return WizardNote(
+            'Sales for this lot could not be loaded. '
+                '${FirestoreService.instance.describeError(snapshot.error!)}',
+            tone: WizardNoteTone.warning,
+          );
+        }
+
+        if (!snapshot.hasData) {
+          return const Padding(
+            padding: EdgeInsets.symmetric(vertical: 16),
+            child: Center(child: CircularProgressIndicator()),
+          );
+        }
+
+        return LotSalesCards(
+          farmId: widget.farmId,
+          lot: lot,
+          sales: snapshot.data!,
+        );
+      },
     );
   }
 
@@ -322,6 +361,8 @@ class _LotDetailScreenState extends State<LotDetailScreen> {
           WizardComputedRow(label: 'Market', value: lot.market),
         if (lot.vehicleNumber.trim().isNotEmpty)
           WizardComputedRow(label: 'Vehicle', value: lot.vehicleNumber),
+        if (lot.remarks.trim().isNotEmpty)
+          WizardComputedRow(label: 'Remarks', value: lot.remarks.trim()),
         if (lot.expectedDeliveryDate != null && lot.supplierQty > 0)
           WizardComputedRow(
             label: 'Expected delivery',

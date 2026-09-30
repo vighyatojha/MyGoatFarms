@@ -58,6 +58,16 @@ class TradingLotOverview {
   /// decide whether Total Sold should offer the Lot Sales list.
   final int lotSoldQty;
 
+  /// Goats bought across every lot, ever (sum of each lot's `totalGoats`).
+  final int totalPurchasedQty;
+
+  /// Purchase amount across every lot (goats x weight x rate, before
+  /// transport / other costs). This is what the suppliers are owed in all.
+  final double totalPurchaseAmount;
+
+  /// Paid to suppliers across every lot so far (sum of `paidAmount`).
+  final double totalPaidToSuppliers;
+
   const TradingLotOverview({
     required this.activeLots,
     required this.pendingReceiving,
@@ -69,6 +79,9 @@ class TradingLotOverview {
     required this.unconvertedPurchases,
     required this.legacyPendingRegistrations,
     this.lotSoldQty = 0,
+    this.totalPurchasedQty = 0,
+    this.totalPurchaseAmount = 0,
+    this.totalPaidToSuppliers = 0,
   });
 
   /// Empty overview — used before the first snapshot arrives.
@@ -86,6 +99,9 @@ class TradingLotOverview {
 
   int get activeLotCount => activeLots.length;
 
+  /// Goats still owned by lots: at the supplier plus at the farm.
+  int get remainingQty => supplierQty + farmQty;
+
   bool get hasLegacyPurchasesToConvert => unconvertedPurchases > 0;
 
   factory TradingLotOverview.fromPurchases(List<TradingPurchase> purchases) {
@@ -98,8 +114,14 @@ class TradingLotOverview {
     var farmAvailableQty = 0;
     var supplierDue = 0.0;
     var lotSoldQty = 0;
+    var totalPurchasedQty = 0;
+    var totalPurchaseAmount = 0.0;
+    var totalPaid = 0.0;
 
     for (final lot in lots) {
+      totalPurchasedQty += lot.totalGoats;
+      totalPurchaseAmount += lot.purchaseAmount;
+      totalPaid += lot.paidAmount;
       lotSoldQty += lot.soldQty;
       supplierQty += lot.supplierQty;
       farmQty += lot.farmQty;
@@ -133,6 +155,9 @@ class TradingLotOverview {
       unconvertedPurchases: legacy.length,
       legacyPendingRegistrations: legacyPendingRegistrations,
       lotSoldQty: lotSoldQty,
+      totalPurchasedQty: totalPurchasedQty,
+      totalPurchaseAmount: PurchaseCosting.round2(totalPurchaseAmount),
+      totalPaidToSuppliers: PurchaseCosting.round2(totalPaid),
     );
   }
 }

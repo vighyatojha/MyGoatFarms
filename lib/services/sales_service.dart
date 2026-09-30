@@ -261,6 +261,11 @@ class SalesService {
     required String paymentMethod,
     required String customerName,
     required String note,
+
+    // Lot sales only (additive; empty = field not written, so every
+    // other flow's Finance rows are byte-for-byte what they were).
+    String lotId = '',
+    String customerId = '',
   }) {
     return {
       'amount': amount,
@@ -273,6 +278,8 @@ class SalesService {
       'status': 'active',
       'referenceType': 'tradingSale',
       'referenceId': saleId,
+      if (lotId.isNotEmpty) 'lotId': lotId,
+      if (customerId.isNotEmpty) 'customerId': customerId,
     };
   }
 
@@ -394,6 +401,8 @@ class SalesService {
     required int existingPaymentCount,
     required String method,
     required DateTime when,
+    String lotId = '',
+    String customerId = '',
   }) {
     if (received <= 0) return;
 
@@ -422,6 +431,8 @@ class SalesService {
           paymentMethod: method,
           customerName: customerName,
           note: 'Sold Goat Revenue — received at delivery, Sale $saleId',
+          lotId: lotId,
+          customerId: customerId,
         ),
         'createdAt': FieldValue.serverTimestamp(),
       },
@@ -462,6 +473,8 @@ class SalesService {
     required DateTime date,
     required String customerName,
     required String paymentMethod,
+    String lotId = '',
+    String customerId = '',
   }) {
     final rounded = SaleDraft.round2(
       Sale.revenueFromPaid(paid: paid, revenueTotal: revenueTotal),
@@ -479,6 +492,8 @@ class SalesService {
           paymentMethod: paymentMethod,
           customerName: customerName,
           note: 'Sold Goat Revenue — Sale $saleId',
+          lotId: lotId,
+          customerId: customerId,
         ),
         'createdAt': FieldValue.serverTimestamp(),
       },
@@ -905,6 +920,8 @@ class SalesService {
         date: DateTime.now(),
         customerName: draft.customerName,
         paymentMethod: _methodOrOther(draft.paymentMethod),
+        lotId: draft.lotDocId,
+        customerId: customerId,
       );
     }).timeout(_timeout * 2);
 
@@ -1876,6 +1893,8 @@ class SalesService {
         date: DateTime.now(),
         customerName: draft.customerName,
         paymentMethod: _methodOrOther(draft.paymentMethod),
+        lotId: lotDocId,
+        customerId: palaiCustomerId,
       );
 
       // Check every goat into the Customer Palai module in the same
@@ -2247,6 +2266,8 @@ class SalesService {
         existingPaymentCount: existingPayments.length,
         method: method,
         when: now,
+        lotId: sale.lotDocId,
+        customerId: sale.isLotSale ? sale.customerId : '',
       );
 
       // ---------------------------------------------------------------
@@ -2332,6 +2353,8 @@ class SalesService {
         date: now,
         customerName: customerName,
         paymentMethod: initialMethod,
+        lotId: sale.lotDocId,
+        customerId: sale.isLotSale ? sale.customerId : '',
       );
     }).timeout(_timeout * 2);
   }
@@ -2577,6 +2600,8 @@ class SalesService {
         existingPaymentCount: existingPayments.length,
         method: method,
         when: now,
+        lotId: sale.lotDocId,
+        customerId: sale.isLotSale ? sale.customerId : '',
       );
 
       // ---------------------------------------------------------------
@@ -2659,6 +2684,8 @@ class SalesService {
         date: now,
         customerName: customerName,
         paymentMethod: initialMethod,
+        lotId: sale.lotDocId,
+        customerId: sale.isLotSale ? sale.customerId : '',
       );
     }).timeout(_timeout * 2);
 
@@ -2835,6 +2862,8 @@ class SalesService {
             date: payment.date,
             paymentMethod: method,
             customerName: sale.customerName,
+            lotId: sale.lotDocId,
+            customerId: sale.isLotSale ? sale.customerId : '',
             note: trimmedNote.isEmpty
                 ? 'Sold Goat Revenue — balance payment, Sale $saleId'
                 : 'Sold Goat Revenue — balance payment, Sale $saleId '

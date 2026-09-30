@@ -18,6 +18,7 @@ import '../purchase_goats/purchase_wizard_widgets.dart';
 /// - Market / Location
 /// - Vehicle Number
 /// - Expected Delivery Date (when the supplier is due to deliver the lot)
+/// - Remarks (saved with the lot whether or not the goats have arrived)
 class Step1SellerDetails extends StatefulWidget {
   final GlobalKey<FormState> formKey;
   final PurchaseDraft draft;
@@ -37,6 +38,7 @@ class _Step1SellerDetailsState extends State<Step1SellerDetails> {
   late final TextEditingController _mobileController;
   late final TextEditingController _marketController;
   late final TextEditingController _vehicleController;
+  late final TextEditingController _remarksController;
 
   DateTime get _today {
     final now = DateTime.now();
@@ -53,6 +55,7 @@ class _Step1SellerDetailsState extends State<Step1SellerDetails> {
     _mobileController = TextEditingController(text: draft.mobile);
     _marketController = TextEditingController(text: draft.market);
     _vehicleController = TextEditingController(text: draft.vehicleNumber);
+    _remarksController = TextEditingController(text: draft.supplierRemarks);
   }
 
   @override
@@ -61,6 +64,7 @@ class _Step1SellerDetailsState extends State<Step1SellerDetails> {
     _mobileController.dispose();
     _marketController.dispose();
     _vehicleController.dispose();
+    _remarksController.dispose();
     super.dispose();
   }
 
@@ -274,6 +278,21 @@ class _Step1SellerDetailsState extends State<Step1SellerDetails> {
                       ),
                     ),
                 ],
+              ),
+
+              const SizedBox(height: 14),
+
+              wizardField(
+                controller: _remarksController,
+                label: 'Remarks',
+                hint: 'e.g. Bought at Sunday mandi, 5 goats look weak',
+                icon: Icons.edit_note_rounded,
+                maxLines: 3,
+                optional: true,
+                textCapitalization: TextCapitalization.sentences,
+                onChanged: (value) {
+                  draft.supplierRemarks = value;
+                },
               ),
             ],
           ),

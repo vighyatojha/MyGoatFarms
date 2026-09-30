@@ -18,6 +18,20 @@
 ///                     counted.
 ///   receivable        Goat-sale balances customers still owe. This is a
 ///                     CURRENT balance, never a period total.
+///
+/// LOT ACCOUNTING (accrual) — a second, separate view for Purchase Lots
+/// only. It counts a purchase or a sale when it HAPPENS, not when cash
+/// moves, so it can be compared with Lot Detail:
+///
+///   lotPurchaseValue   Purchase amount of lots bought in the range.
+///   lotSupplierPending Still owed to suppliers across all lots, now
+///                      (a current balance, never a period total).
+///   lotSalesValue      Goat value of lot sales delivered in the range.
+///   lotCostOfSales     Cost of those goats: each sale's cost-per-goat
+///                      snapshot x goats sold.
+///   lotProfit          lotSalesValue - lotCostOfSales.
+///
+/// The cash figures above are unchanged and still drive Net Cash Flow.
 class TradingFinanceSummary {
   final double salesRevenue;
   final double purchaseSpend;
@@ -41,6 +55,13 @@ class TradingFinanceSummary {
   final Map<String, double> revenueByCategory;
   final Map<String, double> expenseByCategory;
 
+  // Lot accounting (accrual) — see class comment.
+  final double lotPurchaseValue;
+  final double lotSupplierPending;
+  final double lotSalesValue;
+  final double lotCostOfSales;
+  final int lotGoatsSold;
+
   const TradingFinanceSummary({
     this.salesRevenue = 0,
     this.purchaseSpend = 0,
@@ -56,6 +77,11 @@ class TradingFinanceSummary {
     this.goatsPurchased = 0,
     this.revenueByCategory = const {},
     this.expenseByCategory = const {},
+    this.lotPurchaseValue = 0,
+    this.lotSupplierPending = 0,
+    this.lotSalesValue = 0,
+    this.lotCostOfSales = 0,
+    this.lotGoatsSold = 0,
   });
 
   static const TradingFinanceSummary empty = TradingFinanceSummary();
@@ -65,6 +91,17 @@ class TradingFinanceSummary {
 
   /// Cash in minus cash out for the Trading business.
   double get netCashFlow => salesRevenue - totalCost;
+
+  /// Accrual profit on lot sales in the range.
+  double get lotProfit =>
+      ((lotSalesValue - lotCostOfSales) * 100).roundToDouble() / 100;
+
+  /// True when there is anything to show in the Lot Accounting block.
+  bool get hasLotAccounting =>
+      lotPurchaseValue != 0 ||
+          lotSupplierPending != 0 ||
+          lotSalesValue != 0 ||
+          lotCostOfSales != 0;
 
   bool get isEmpty =>
       salesRevenue == 0 &&

@@ -301,6 +301,10 @@ class _TradingFinanceViewState extends State<TradingFinanceView> {
       ),
       const SizedBox(height: 14),
       _costBreakdown(s),
+      if (s.hasLotAccounting) ...[
+        const SizedBox(height: 14),
+        _lotAccounting(s),
+      ],
       const SizedBox(height: 14),
       FinanceModeCard(
         title: 'Payments Received',
@@ -315,6 +319,79 @@ class _TradingFinanceViewState extends State<TradingFinanceView> {
         online: s.onlinePaid,
       ),
     ];
+  }
+
+  /// Accrual view for Purchase Lots (see TradingFinanceSummary). Sits below
+  /// the cash figures, which it does not change.
+  Widget _lotAccounting(TradingFinanceSummary s) {
+    Widget row(String label, double value,
+        {bool bold = false, Color? color}) {
+      return Padding(
+        padding: const EdgeInsets.symmetric(vertical: 5),
+        child: Row(
+          children: [
+            Expanded(
+              child: Text(
+                label,
+                style: AppTheme.body(
+                  size: 12,
+                  color: bold ? AppColors.textDark : AppColors.textGrey,
+                  weight: bold ? FontWeight.w700 : FontWeight.w500,
+                ),
+              ),
+            ),
+            Text(
+              financeRupees(value),
+              style: AppTheme.heading(
+                size: bold ? 14 : 12.5,
+                color: color ?? AppColors.textDark,
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    final profit = s.lotProfit;
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(16),
+      decoration: AppTheme.card(radius: 18),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.inventory_2_outlined,
+                  color: AppColors.darkGreen, size: 18),
+              const SizedBox(width: 8),
+              Text('Lot Accounting', style: AppTheme.heading(size: 14)),
+            ],
+          ),
+          const SizedBox(height: 8),
+          row('Purchase value (lots bought)', s.lotPurchaseValue),
+          row('Supplier pending (now)', s.lotSupplierPending),
+          const Divider(height: 14),
+          row('Sales value (${s.lotGoatsSold} goats)', s.lotSalesValue),
+          row('Cost of goats sold', s.lotCostOfSales),
+          const Divider(height: 14),
+          row(
+            'Lot profit',
+            profit,
+            bold: true,
+            color: profit >= 0 ? AppColors.success : AppColors.error,
+          ),
+          const SizedBox(height: 6),
+          Text(
+            'Counts purchases and sales when they happen, not when cash '
+                'moves, for Purchase Lots only. Net Cash Flow above is '
+                'unchanged.',
+            style: AppTheme.body(size: 10.5),
+          ),
+        ],
+      ),
+    );
   }
 
   Widget _costBreakdown(TradingFinanceSummary s) {

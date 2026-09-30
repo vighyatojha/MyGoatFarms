@@ -143,6 +143,7 @@ class Step4SummaryState extends State<Step4Summary> {
         completed ? draft.totalWeightAfterArrival : null,
         mortality: completed ? draft.mortality : 0,
         remarks: completed ? draft.remarks : '',
+        purchaseRemarks: draft.supplierRemarks,
 
         // Transport / other expenses
         transportCost: completed ? draft.transportCost : 0,
@@ -229,6 +230,11 @@ class Step4SummaryState extends State<Step4Summary> {
               WizardComputedRow(
                 label: 'Expected Delivery',
                 value: wizardDate(draft.expectedDeliveryDate!),
+              ),
+            if (draft.supplierRemarks.trim().isNotEmpty)
+              WizardComputedRow(
+                label: 'Remarks',
+                value: draft.supplierRemarks.trim(),
               ),
           ],
         ),

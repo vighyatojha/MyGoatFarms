@@ -40,6 +40,12 @@ class ExpenseModel {
   final String? referenceType;
   final String? referenceId;
 
+  /// Purchase lot this expense belongs to (PUR-0007), for expenses that
+  /// come from a lot such as a supplier payment. Optional and additive:
+  /// old rows have none, and nothing filters on it — it lets a lot's
+  /// Finance entries be found without parsing the note text.
+  final String? lotId;
+
   /// True when this expense was bought on credit from a supplier and
   /// hasn't actually been paid for yet. Finance is cash-based (spec:
   /// money counts when it moves), so an unpaid credit purchase is a
@@ -73,6 +79,7 @@ class ExpenseModel {
     this.status = 'active',
     this.referenceType,
     this.referenceId,
+    this.lotId,
   });
 
   bool get isVoided => status == 'voided';
@@ -100,6 +107,7 @@ class ExpenseModel {
       status: (data['status'] ?? 'active').toString(),
       referenceType: data['referenceType'] as String?,
       referenceId: data['referenceId'] as String?,
+      lotId: data['lotId'] as String?,
     );
   }
 
@@ -130,6 +138,7 @@ class ExpenseModel {
       'status': 'active',
       if (referenceType != null) 'referenceType': referenceType,
       if (referenceId != null) 'referenceId': referenceId,
+      if (lotId != null && lotId!.trim().isNotEmpty) 'lotId': lotId!.trim(),
     };
   }
 

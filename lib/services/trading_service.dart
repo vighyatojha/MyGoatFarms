@@ -374,6 +374,11 @@ class TradingService {
     int mortality = 0,
     String remarks = '',
 
+    /// Remarks about the purchase itself (entered on the Supplier step).
+    /// Stored on the lot whether or not receiving is completed; when empty,
+    /// the lot keeps the arrival [remarks] as before.
+    String purchaseRemarks = '',
+
     // Transport / additional costs
     double transportCost = 0,
     double loadingCharges = 0,
@@ -592,7 +597,9 @@ class TradingService {
           // While receiving is pending nothing has arrived, so mortality
           // must stay 0 — the lot's supplierQty counts it as received.
           mortality: isCompleted ? mortality : 0,
-          remarks: remarks.trim(),
+          remarks: purchaseRemarks.trim().isNotEmpty
+              ? purchaseRemarks.trim()
+              : remarks.trim(),
 
           transportCost: transportCost,
           loadingCharges: loadingCharges,
@@ -879,6 +886,9 @@ class TradingService {
         status: 'active',
         referenceType: 'lotPayment',
         referenceId: paymentId,
+        // Structured link back to the lot (D3 §5) — additive; the
+        // note text above stays as it was.
+        lotId: lot.id,
       ),
     );
   }
@@ -912,6 +922,27 @@ class TradingService {
   Stream<List<Sale>> lotSalesStream(String farmId) {
     return _sales(farmId)
         .where('lotId', isGreaterThan: '')
+        .snapshots()
+        .map((snapshot) {
+      final sales = snapshot.docs.map(Sale.fromDoc).toList();
+
+      sales.sort(
+            (a, b) => (b.saleDate ?? DateTime(2000))
+            .compareTo(a.saleDate ?? DateTime(2000)),
+      );
+
+      return sales;
+    });
+  }
+
+  /// Every sale made from ONE lot (newest first) — the lot's sales history.
+  ///
+  /// `Sale.toMap` stores the lot's Firestore doc id (PUR-0007) in `lotId`,
+  /// so this is an equality filter on a single field: no composite index
+  /// needed. Sorted here, not in the query.
+  Stream<List<Sale>> salesForLotStream(String farmId, String lotDocId) {
+    return _sales(farmId)
+        .where('lotId', isEqualTo: lotDocId)
         .snapshots()
         .map((snapshot) {
       final sales = snapshot.docs.map(Sale.fromDoc).toList();
