@@ -1043,10 +1043,10 @@ class TradingService {
         );
       }
 
-      final costing = lot.costing;
-      final perGoat = costing.costPerSurvivingGoat > 0
-          ? costing.costPerSurvivingGoat
-          : costing.purchaseAmountPerGoat;
+      // Same basis a sale snapshots (TradingPurchase.lotCostPerGoat): after
+      // receiving is completed it is grand total / survivors; before that
+      // it is (purchase + expenses so far) / goats bought.
+      final perGoat = lot.lotCostPerGoat;
 
       event = LotDeath(
         id: deathRef.id,

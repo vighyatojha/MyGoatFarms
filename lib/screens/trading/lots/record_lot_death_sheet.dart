@@ -52,12 +52,9 @@ class _RecordLotDeathSheetState extends State<_RecordLotDeathSheet> {
 
   int get _qty => int.tryParse(_qtyController.text.trim()) ?? 0;
 
-  double get _costPerGoat {
-    final c = widget.lot.costing;
-    return c.costPerSurvivingGoat > 0
-        ? c.costPerSurvivingGoat
-        : c.purchaseAmountPerGoat;
-  }
+  /// Same cost basis a sale would snapshot right now, so the loss shown
+  /// here always matches the cost per goat on Lot Detail.
+  double get _costPerGoat => widget.lot.lotCostPerGoat;
 
   @override
   void dispose() {

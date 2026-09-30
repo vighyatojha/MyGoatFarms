@@ -25,11 +25,17 @@ class LotSalesCards extends StatelessWidget {
   final TradingPurchase lot;
   final List<Sale> sales;
 
+  /// Total "Loss at lot cost" of goats that died at the farm (Step 20
+  /// Record Death events). Informational only — it is never added to or
+  /// subtracted from [LotSalesSummary.profit].
+  final double farmDeathLoss;
+
   const LotSalesCards({
     super.key,
     required this.farmId,
     required this.lot,
     required this.sales,
+    this.farmDeathLoss = 0,
   });
 
   @override
@@ -102,10 +108,30 @@ class LotSalesCards extends StatelessWidget {
             ),
           ],
         ),
+        if (lot.farmDeathQty > 0) ...[
+          const Divider(height: 18, color: AppColors.divider),
+          WizardComputedRow(
+            label: 'Died at farm (${lot.farmDeathQty} '
+                'goat${lot.farmDeathQty == 1 ? '' : 's'})',
+            value: '≈ ${wizardCurrency(farmDeathLoss)}',
+          ),
+          const SizedBox(height: 4),
+          Text(
+            lot.remainingQty > 0
+                ? 'This loss is already carried by the ${lot.remainingQty} '
+                'goat${lot.remainingQty == 1 ? '' : 's'} still in the lot '
+                '(their cost per goat is higher). It is not deducted from '
+                'profit again.'
+                : 'No goats are left in this lot to carry this loss, so it '
+                'is not included in the profit above.',
+            style: AppTheme.body(size: 11),
+          ),
+        ],
         const SizedBox(height: 8),
         Text(
           'Profit = sales revenue − purchase cost of the goats sold. Goats '
-              'lost in transit after a sale are not deducted from that sale.',
+              'that die (in transit or at the farm) after a sale are not '
+              'deducted from that sale.',
           style: AppTheme.body(size: 11),
         ),
       ],

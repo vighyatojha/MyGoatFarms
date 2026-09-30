@@ -803,7 +803,7 @@ class _OwnPalaiGoatProfileScreenState extends State<OwnPalaiGoatProfileScreen>
                     '${_money(expensesPerGoat)}  (split across $goatsBase goats)'),
                     if (mortalityShare > 0)
                       ('Mortality Share',
-                      '${_money(mortalityShare)}  (${purchase.mortality} lost in transit)'),
+                      '${_money(mortalityShare)}  (${_mortalityNote(purchase)})'),
                     ('Total Cost', _money(costPerGoat)),
                     ('Registered Weight',
                     '${goat.weight.toStringAsFixed(1)} kg'),
@@ -930,6 +930,17 @@ final NumberFormat _inr = NumberFormat.currency(
 );
 
 String _money(double v) => _inr.format(v);
+
+/// Explains where a lot's [mortality] came from. Since Step 20 the counter
+/// also holds goats that died at the farm, so "lost in transit" alone would
+/// be wrong for those lots.
+String _mortalityNote(TradingPurchase purchase) {
+  final transit = purchase.transitDeathQty;
+  final farm = purchase.farmDeathQty;
+  if (farm <= 0) return '$transit lost in transit';
+  if (transit <= 0) return '$farm died at the farm';
+  return '$transit lost in transit, $farm died at the farm';
+}
 
 Color _healthColor(String status) {
   switch (status) {

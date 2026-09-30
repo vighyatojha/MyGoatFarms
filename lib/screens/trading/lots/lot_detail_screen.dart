@@ -241,10 +241,25 @@ class _LotDetailScreenState extends State<LotDetailScreen> {
           );
         }
 
-        return LotSalesCards(
-          farmId: widget.farmId,
-          lot: lot,
-          sales: snapshot.data!,
+        final sales = snapshot.data!;
+
+        // Farm-death events feed an informational line on the Sales &
+        // Profit card. A failed/slow deaths read must never hide the sales,
+        // so it just falls back to "no losses" until data arrives.
+        return StreamBuilder<List<LotDeath>>(
+          stream: _deathsStream,
+          builder: (context, deathSnap) {
+            final deaths = deathSnap.data ?? const <LotDeath>[];
+            final lossAmount =
+            deaths.fold<double>(0, (sum, d) => sum + d.lossAmount);
+
+            return LotSalesCards(
+              farmId: widget.farmId,
+              lot: lot,
+              sales: sales,
+              farmDeathLoss: lossAmount,
+            );
+          },
         );
       },
     );
