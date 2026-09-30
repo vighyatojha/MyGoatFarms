@@ -466,3 +466,114 @@ exports.deleteNotification = onCall(async (request) => {
   await notifRef.delete();
   return {success: true};
 });
+
+// ---------------------------------------------------------------------
+// 4. One-time backfill: mobileIndex/{mobileNumber} -> {farmId}
+//
+// Farms registered before createFarm started writing mobileIndex have no
+// index entry, so the "mobile number already registered" check misses
+// them. Admin-only, idempotent, and never overwrites an existing entry.
+//
+//   data: { dryRun: true }   (default) -> only counts, writes nothing
+//   data: { dryRun: false }             -> creates the missing entries
+//
+// Farms whose number is already indexed to a DIFFERENT farm are reported
+// as `conflicts` (real duplicate numbers) and left untouched.
+// ---------------------------------------------------------------------
+
+exports.backfillMobileIndex = onCall(
+    {
+      region: 'us-central1',
+      timeoutSeconds: 540,
+      memory: '512MiB',
+    },
+    async (request) => {
+      const uid = request.auth && request.auth.uid;
+      if (!uid) {
+        throw new HttpsError('unauthenticated', 'Admin sign-in is required.');
+      }
+
+      const adminSnap = await db.collection('admins').doc(uid).get();
+      if (!adminSnap.exists) {
+        throw new HttpsError(
+            'permission-denied',
+            'This account is not authorized as an admin.',
+        );
+      }
+
+      // Only an explicit `false` writes anything.
+      const dryRun = !(request.data && request.data.dryRun === false);
+
+      const stats = {
+        dryRun,
+        farmsScanned: 0,
+        created: 0,
+        alreadyIndexed: 0,
+        skippedNoMobile: 0,
+        conflicts: [],
+      };
+
+      const PAGE = 300;
+      let lastDoc = null;
+
+      for (;;) {
+        let q = db.collection('farms')
+            .orderBy('__name__')
+            .limit(PAGE);
+        if (lastDoc) q = q.startAfter(lastDoc);
+
+        const page = await q.get();
+        if (page.empty) break;
+
+        const batch = db.batch();
+        let batchWrites = 0;
+
+        for (const farmDoc of page.docs) {
+          stats.farmsScanned++;
+          const data = farmDoc.data() || {};
+          const mobile = String(
+              data.mobileNumber ?? data.ownerMobile ?? data.phone ?? '',
+          ).trim();
+
+          if (!mobile) {
+            stats.skippedNoMobile++;
+            continue;
+          }
+
+          const indexRef = db.collection('mobileIndex').doc(mobile);
+          const indexSnap = await indexRef.get();
+
+          if (indexSnap.exists) {
+            if (indexSnap.data()?.farmId === farmDoc.id) {
+              stats.alreadyIndexed++;
+            } else if (stats.conflicts.length < 50) {
+              stats.conflicts.push({
+                mobile,
+                farmId: farmDoc.id,
+                indexedTo: indexSnap.data()?.farmId ?? null,
+              });
+            }
+            continue;
+          }
+
+          stats.created++;
+          if (!dryRun) {
+            batch.set(indexRef, {
+              farmId: farmDoc.id,
+              authUid: data.authUid ?? null,
+              createdAt: FieldValue.serverTimestamp(),
+              backfilled: true,
+            });
+            batchWrites++;
+          }
+        }
+
+        if (batchWrites > 0) await batch.commit();
+        lastDoc = page.docs[page.docs.length - 1];
+        if (page.size < PAGE) break;
+      }
+
+      logger.info('backfillMobileIndex finished', {adminUid: uid, ...stats});
+      return stats;
+    },
+);

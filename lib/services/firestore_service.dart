@@ -1893,9 +1893,46 @@ class FirestoreService {
       logoUrl: logoUrl,
     );
 
-    await _farms.doc(farmId).set({
-      ...farm.toMap(),
-      'createdAt': FieldValue.serverTimestamp(),
+    final mobile = mobileNumber.trim();
+    final farmRef = _farms.doc(farmId);
+    final indexRef =
+    mobile.isEmpty ? null : _db.collection('mobileIndex').doc(mobile);
+
+    // The farm document and its mobileIndex entry are written together, so
+    // the "mobile number already registered" check in isMobileNumberTaken
+    // can never miss a farm, and two sign-ups racing for the same number
+    // cannot both succeed.
+    await _db.runTransaction((tx) async {
+      var writeIndex = false;
+
+      if (indexRef != null) {
+        final existing = await tx.get(indexRef);
+        if (existing.exists) {
+          // Same account retrying its own setup is fine; anyone else is not.
+          if (existing.data()?['authUid'] != authUid) {
+            throw FirebaseException(
+              plugin: 'cloud_firestore',
+              code: 'already-exists',
+              message: 'This mobile number is already registered',
+            );
+          }
+        } else {
+          writeIndex = true;
+        }
+      }
+
+      tx.set(farmRef, {
+        ...farm.toMap(),
+        'createdAt': FieldValue.serverTimestamp(),
+      });
+
+      if (writeIndex) {
+        tx.set(indexRef!, {
+          'farmId': farmId,
+          'authUid': authUid,
+          'createdAt': FieldValue.serverTimestamp(),
+        });
+      }
     }).timeout(timeout);
 
     return farm;
