@@ -245,7 +245,7 @@ class _ReceiveLotScreenState extends State<ReceiveLotScreen> {
                     Expanded(
                       child: wizardField(
                         controller: _diedController,
-                        label: 'Died in Transit',
+                        label: 'Died (at supplier / in transit)',
                         hint: '0',
                         icon: Icons.heart_broken_outlined,
                         suffix: 'goats',

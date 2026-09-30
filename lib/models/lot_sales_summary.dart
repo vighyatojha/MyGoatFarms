@@ -51,6 +51,36 @@ class LotSalesSummary {
 
   double get profit => _round2(revenue - cost);
 
+  /// DISPLAY ONLY (Step 27) — never part of [profit] or Trading Finance.
+  ///
+  /// Lot cost that no sale carried once a lot is completely empty after
+  /// goats died at the farm: grand total cost minus the cost snapshotted
+  /// on every recognised sale. Goats that die late (e.g. the last ones)
+  /// have no surviving goat to carry their cost, so it never reaches a
+  /// sale's profit.
+  ///
+  /// Returns 0 unless the lot is fully closed and the figure is reliable:
+  /// receiving completed, nothing left anywhere ([TradingPurchase.remainingQty]
+  /// 0), no open Booking / Wait sales, no goats registered individually
+  /// (their cost leaves the lot another way) and at least one farm death.
+  double unrecoveredCost(TradingPurchase lot) {
+    if (!lot.isLot ||
+        !lot.isReceivingCompleted ||
+        lot.remainingQty != 0 ||
+        openGoats != 0 ||
+        lot.registeredCount != 0 ||
+        lot.farmDeathQty <= 0) {
+      return 0;
+    }
+
+    final v = _round2(lot.grandTotal - cost);
+    return v > 0 ? v : 0;
+  }
+
+  /// [profit] minus [unrecoveredCost] — for display next to the profit.
+  double profitAfterUnrecovered(TradingPurchase lot) =>
+      _round2(profit - unrecoveredCost(lot));
+
   bool get hasSales => completedSales.isNotEmpty || openSales.isNotEmpty;
 
   /// Average price per kg actually realised (revenue / weight).

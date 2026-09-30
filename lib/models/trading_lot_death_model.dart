@@ -29,6 +29,13 @@ class LotDeath {
   final String? actorUid;
   final String? actorName;
 
+  /// True once the event has been undone (see
+  /// TradingService.undoLotFarmDeath). The doc is kept as an audit trail;
+  /// a reversed event no longer counts as a loss.
+  final bool reversed;
+  final DateTime? reversedAt;
+  final String? reversedByName;
+
   const LotDeath({
     required this.id,
     required this.date,
@@ -40,6 +47,9 @@ class LotDeath {
     this.createdAt,
     this.actorUid,
     this.actorName,
+    this.reversed = false,
+    this.reversedAt,
+    this.reversedByName,
   });
 
   factory LotDeath.fromDoc(DocumentSnapshot<Map<String, dynamic>> doc) {
@@ -63,6 +73,9 @@ class LotDeath {
       createdAt: dateOrNull('createdAt'),
       actorUid: data['actorUid'] as String?,
       actorName: data['actorName'] as String?,
+      reversed: data['reversed'] == true,
+      reversedAt: dateOrNull('reversedAt'),
+      reversedByName: data['reversedByName'] as String?,
     );
   }
 

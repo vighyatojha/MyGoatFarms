@@ -126,6 +126,42 @@ class LotSalesCards extends StatelessWidget {
                 'is not included in the profit above.',
             style: AppTheme.body(size: 11),
           ),
+          if (s.unrecoveredCost(lot) > 0) ...[
+            const SizedBox(height: 10),
+            WizardComputedRow(
+              label: 'Cost not recovered (goats died)',
+              value: '− ${wizardCurrency(s.unrecoveredCost(lot))}',
+            ),
+            Row(
+              children: [
+                Text(
+                  'Profit after death loss',
+                  style: AppTheme.body(
+                    size: 13.5,
+                    color: AppColors.textDark,
+                    weight: FontWeight.w800,
+                  ),
+                ),
+                const Spacer(),
+                Text(
+                  wizardCurrency(s.profitAfterUnrecovered(lot)),
+                  style: AppTheme.heading(
+                    size: 16,
+                    color: s.profitAfterUnrecovered(lot) >= 0
+                        ? AppColors.success
+                        : AppColors.error,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 4),
+            Text(
+              'Lot total cost minus the cost carried by the goats sold. '
+                  'For information only — Trading Finance \'Lot profit\' '
+                  'is unchanged.',
+              style: AppTheme.body(size: 11),
+            ),
+          ],
         ],
         const SizedBox(height: 8),
         Text(

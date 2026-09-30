@@ -1094,6 +1094,96 @@ class TradingService {
   }
 
   // -----------------------------------------------------------------------
+  // UNDO DEATH (reverse a Record Death event)
+  // -----------------------------------------------------------------------
+
+  /// Reverses a death recorded with [recordLotFarmDeath].
+  ///
+  /// Exact mirror of the original counter changes:
+  ///   receivedAliveQty  + qty
+  ///   mortality         - qty
+  ///   farmDeathQty      - qty
+  ///   pendingCount      recomputed (= farmQty)
+  ///   summary totalStock / pendingRegistrations + qty
+  ///
+  /// The event doc is NOT deleted: it is marked `reversed` with who / when,
+  /// so there is an audit trail. Already-reversed events are rejected, and
+  /// the reversal is refused if it would push a counter below zero (which
+  /// means the lot data was changed by hand).
+  ///
+  /// Sales made after the death keep the cost snapshot they took; only
+  /// future sales use the (now lower) cost per goat again.
+  Future<void> undoLotFarmDeath({
+    required String farmId,
+    required String lotDocId,
+    required String deathId,
+  }) async {
+    final actor = await FirestoreService.instance.getCurrentActor();
+
+    final lotRef = _tradingPurchases(farmId).doc(lotDocId);
+    final deathRef = lotRef.collection('deaths').doc(deathId);
+
+    await _db.runTransaction((transaction) async {
+      final lotSnap = await transaction.get(lotRef);
+      final deathSnap = await transaction.get(deathRef);
+
+      if (!lotSnap.exists) {
+        throw StateError('Lot $lotDocId was not found.');
+      }
+      if (!deathSnap.exists) {
+        throw StateError('This death record was not found.');
+      }
+
+      final lot = TradingPurchase.fromDoc(lotSnap);
+      final death = LotDeath.fromDoc(deathSnap);
+
+      if (death.reversed) {
+        throw StateError('This death record was already undone.');
+      }
+
+      final qty = death.qty;
+
+      if (qty <= 0 || qty > lot.farmDeathQty || qty > lot.mortality) {
+        throw StateError(
+          'This death cannot be undone because the lot counters no longer '
+              'match it. Please check the lot.',
+        );
+      }
+
+      final newFarmQty = (lot.receivedAliveQty +
+          qty -
+          lot.soldFromFarmQty -
+          lot.registeredCount)
+          .clamp(0, 1 << 30)
+          .toInt();
+
+      transaction.update(deathRef, {
+        'reversed': true,
+        'reversedAt': FieldValue.serverTimestamp(),
+        if (actor?.uid != null) 'reversedByUid': actor!.uid,
+        if (actor?.name != null) 'reversedByName': actor!.name,
+      });
+
+      transaction.update(lotRef, {
+        'receivedAliveQty': FieldValue.increment(qty),
+        'mortality': FieldValue.increment(-qty),
+        'farmDeathQty': FieldValue.increment(-qty),
+        'pendingCount': newFarmQty,
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
+
+      transaction.set(
+        _summaryDoc(farmId),
+        {
+          'totalStock': FieldValue.increment(qty),
+          'pendingRegistrations': FieldValue.increment(qty),
+        },
+        SetOptions(merge: true),
+      );
+    }).timeout(_timeout);
+  }
+
+  // -----------------------------------------------------------------------
   // ADD SUPPLIER PAYMENT
   // -----------------------------------------------------------------------
 

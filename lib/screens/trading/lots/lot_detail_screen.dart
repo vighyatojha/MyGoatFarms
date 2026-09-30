@@ -98,6 +98,46 @@ class _LotDetailScreenState extends State<LotDetailScreen> {
     if (saved == true) _snack('Death recorded.');
   }
 
+  Future<void> _undoDeath(LotDeath d) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Undo this death?'),
+        content: Text(
+          '${d.qty} goat${d.qty == 1 ? '' : 's'} will be put back in the '
+              'lot as alive at the farm, and the lot cost per goat goes back '
+              'down. The record is kept and marked as undone.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Undo death'),
+          ),
+        ],
+      ),
+    );
+
+    if (ok != true) return;
+
+    try {
+      await TradingService.instance.undoLotFarmDeath(
+        farmId: widget.farmId,
+        lotDocId: widget.lotDocId,
+        deathId: d.id,
+      );
+      if (mounted) _snack('Death undone.');
+    } catch (e) {
+      if (mounted) {
+        _snack(e.toString().replaceFirst(RegExp(r'^\w*(Error|Exception): '), ''),
+            error: true);
+      }
+    }
+  }
+
   Future<void> _addPayment(TradingPurchase lot) async {
     final saved = await showAddLotPaymentSheet(
       context: context,
@@ -250,8 +290,9 @@ class _LotDetailScreenState extends State<LotDetailScreen> {
           stream: _deathsStream,
           builder: (context, deathSnap) {
             final deaths = deathSnap.data ?? const <LotDeath>[];
-            final lossAmount =
-            deaths.fold<double>(0, (sum, d) => sum + d.lossAmount);
+            final lossAmount = deaths
+                .where((d) => !d.reversed)
+                .fold<double>(0, (sum, d) => sum + d.lossAmount);
 
             return LotSalesCards(
               farmId: widget.farmId,
@@ -541,10 +582,17 @@ class _LotDetailScreenState extends State<LotDetailScreen> {
                         Expanded(
                           child: Text(
                             '${wizardDate(d.date)} • ${d.reason}'
-                                '${d.note.trim().isEmpty ? '' : ' • ${d.note.trim()}'}',
+                                '${d.note.trim().isEmpty ? '' : ' • ${d.note.trim()}'}'
+                                '${d.reversed ? ' • Undone' : ''}',
                             style: AppTheme.body(
                               size: 12,
-                              color: AppColors.textDark,
+                              color: d.reversed
+                                  ? AppColors.textGrey
+                                  : AppColors.textDark,
+                            ).copyWith(
+                              decoration: d.reversed
+                                  ? TextDecoration.lineThrough
+                                  : null,
                             ),
                           ),
                         ),
@@ -552,10 +600,19 @@ class _LotDetailScreenState extends State<LotDetailScreen> {
                           '${d.qty} • ${wizardCurrency(d.lossAmount)}',
                           style: AppTheme.body(
                             size: 12,
-                            color: AppColors.error,
+                            color: d.reversed
+                                ? AppColors.textGrey
+                                : AppColors.error,
                             weight: FontWeight.w600,
                           ),
                         ),
+                        if (!d.reversed)
+                          IconButton(
+                            tooltip: 'Undo this death',
+                            visualDensity: VisualDensity.compact,
+                            icon: const Icon(Icons.undo_rounded, size: 18),
+                            onPressed: () => _undoDeath(d),
+                          ),
                       ],
                     ),
                   ),
