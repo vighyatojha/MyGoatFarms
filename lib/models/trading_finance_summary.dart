@@ -5,8 +5,12 @@
 /// counted when it is received / paid.
 ///
 ///   salesRevenue      Sold Goat Revenue received (one entry per receipt).
-///   purchaseSpend     Goat Purchase expenses (the purchase amount paid
-///                     to sellers).
+///   purchaseSpend     Cash / online actually paid to sellers: Goat
+///                     Purchase expenses (older purchases, paid in full
+///                     when saved) plus one Supplier Payment expense per
+///                     payment made on a Purchase Lot. Credit rows (a
+///                     lot's audit-only purchase entry) are not cash and
+///                     are left out.
 ///   otherPurchaseCosts Transport / loading / unloading / other costs of
 ///                     the purchases in the range. These live on the
 ///                     `tradingPurchases` docs, not in `expenses`, so they

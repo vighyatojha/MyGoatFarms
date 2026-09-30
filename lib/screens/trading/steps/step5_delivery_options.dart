@@ -198,6 +198,9 @@ class Step5DeliveryOptionsState extends State<Step5DeliveryOptions> {
   String _theGoats(SaleDraft draft) =>
       draft.saleGoatCount > 1 ? 'the goats' : 'the goat';
 
+  /// 'are' / 'is' to follow [_theGoats].
+  String _isAre(SaleDraft draft) => draft.saleGoatCount > 1 ? 'are' : 'is';
+
   @override
   void dispose() {
     _transportCostController.dispose();
@@ -360,6 +363,8 @@ class Step5DeliveryOptionsState extends State<Step5DeliveryOptions> {
           Text(
             _isLot
                 ? 'How are these goats leaving?'
+                : draft.saleGoatCount > 1
+                ? 'How are these goats leaving the farm?'
                 : 'How is this goat leaving the farm?',
             style: AppTheme.heading(size: 14, color: AppColors.textDark),
           ),
@@ -394,7 +399,7 @@ class Step5DeliveryOptionsState extends State<Step5DeliveryOptions> {
             const SizedBox(height: 10),
             _BranchCard(
               title: 'Transfer to Palai',
-              subtitle: 'Customer keeps boarding this goat here',
+              subtitle: 'Customer keeps boarding ${_theGoats(draft)} here',
               icon: Icons.holiday_village_outlined,
               selected: draft.deliveryType == Sale.deliveryTypePalai,
               onTap: () => _selectBranch(Sale.deliveryTypePalai),
@@ -847,7 +852,8 @@ class Step5DeliveryOptionsState extends State<Step5DeliveryOptions> {
                   icon: Icons.account_balance_wallet_outlined,
                 ),
               _SummaryNote(
-                'Holding is counted from today until the day the goat is '
+                'Holding is counted from today until the day '
+                    '${_theGoats(draft)} ${_isAre(draft)} '
                     'delivered, both days included (booked 20 Sept, '
                     'delivered 23 Sept = 4 days). The holding charges are '
                     'calculated and added when the delivery is completed.',
@@ -1030,7 +1036,8 @@ class Step5DeliveryOptionsState extends State<Step5DeliveryOptions> {
                             '${_currency(draft.totalSaleAmount)} is locked in '
                             'now. When this delivery is completed later, the '
                             'pickup weight is only recorded — the amount '
-                            'stays the same, whatever the goat weighs.'
+                            'stays the same, whatever ${_theGoats(draft)} '
+                            '${draft.saleGoatCount > 1 ? 'weigh' : 'weighs'}.'
                             : 'Price/kg is locked in at ${_currency(draft.bookingPricePerKg)} '
                             'now. When this delivery is completed later, use '
                             'this same rate with the new pickup weight — '
@@ -1144,10 +1151,12 @@ class Step5DeliveryOptionsState extends State<Step5DeliveryOptions> {
                 ),
               _SummaryNote(
                 draft.isFixedPrice
-                    ? 'The price is fixed. At pickup the goat is weighed '
+                    ? 'The price is fixed. At pickup ${_theGoats(draft)} '
+                    '${_isAre(draft)} weighed '
                     'again for the record, but the final amount is always: '
                     'fixed price − advance.'
-                    : 'Estimated at today\'s weight. At pickup the goat is '
+                    : 'Estimated at today\'s weight. At pickup ${_theGoats(draft)} '
+                    '${_isAre(draft)} '
                     'weighed again and the final amount is: pickup weight '
                     '× ${_currency(draft.bookingPricePerKg)}/kg − advance.',
                 color: AppColors.textGrey,
@@ -1181,8 +1190,9 @@ class Step5DeliveryOptionsState extends State<Step5DeliveryOptions> {
             icon: Icons.holiday_village_outlined,
             children: [
               Text(
-                'The ongoing monthly billing and health tracking for this '
-                    'goat is handled by the Customer Palai module from here on — '
+                'The ongoing monthly billing and health tracking for '
+                    '${draft.saleGoatCount > 1 ? 'these goats' : 'this goat'} '
+                    'is handled by the Customer Palai module from here on — '
                     'this just captures the handoff.',
                 style: AppTheme.body(size: 11, color: AppColors.textGrey),
               ),
@@ -1261,7 +1271,7 @@ class Step5DeliveryOptionsState extends State<Step5DeliveryOptions> {
             icon: Icons.payments_outlined,
             children: [
               Text(
-                'The goat is sold to the customer at ${_currency(draft.totalSaleAmount)} '
+                '${draft.saleGoatCount > 1 ? 'The goats are' : 'The goat is'} sold to the customer at ${_currency(draft.totalSaleAmount)} '
                     '(from the sale details). This is separate from the '
                     'monthly Palai charge above.',
                 style: AppTheme.body(size: 11, color: AppColors.textGrey),

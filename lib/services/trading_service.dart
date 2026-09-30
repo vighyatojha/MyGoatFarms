@@ -6,6 +6,7 @@ import '../models/activity_model.dart';
 import '../models/expense_categories.dart';
 import '../models/expense_model.dart';
 import '../models/goat_model.dart';
+import '../models/legacy_conversion_plan.dart';
 import '../models/purchase_costing.dart';
 import '../models/sale_model.dart';
 import '../models/trading_lot_payment_model.dart';
@@ -46,24 +47,44 @@ import 'finance_service.dart';
 /// Online
 /// Result of one convertLegacyPurchasesToLots() run.
 class LegacyConversionReport {
-  /// Ids of every purchase that was converted this run (empty if there
-  /// was nothing left to convert).
+  /// Ids of every purchase converted this run (empty if there was nothing
+  /// left to convert).
   final List<String> convertedIds;
 
-  /// One entry per purchase where farmQty did not come out equal to the
-  /// original pendingCount after conversion. Always empty in the normal
-  /// case; a non-empty report should be looked at by hand, not re-run.
-  final List<String> mismatches;
+  /// Converted purchases whose `registeredCount` / `pendingCount` had to be
+  /// corrected to match the goat records that really exist.
+  final List<String> adjustedIds;
+
+  /// Purchases NOT converted because they changed (or vanished) while the
+  /// run was in progress. Nothing was written for them — run it again.
+  final List<String> skippedIds;
+
+  /// Purchases whose conversion threw an error, as "PUR-0003: message".
+  /// Nothing was written for them (each purchase is one transaction).
+  final List<String> failures;
+
+  /// Things worth a human look, see [LegacyConversionPlan.warnings].
+  final List<String> warnings;
 
   const LegacyConversionReport({
     required this.convertedIds,
-    required this.mismatches,
+    required this.adjustedIds,
+    required this.skippedIds,
+    required this.failures,
+    required this.warnings,
   });
 
-  bool get isClean => mismatches.isEmpty;
-
   int get convertedCount => convertedIds.length;
+
+  /// Every purchase was converted and nothing needs a second look.
+  bool get isClean =>
+      skippedIds.isEmpty && failures.isEmpty && warnings.isEmpty;
+
+  /// Some purchases still need another run.
+  bool get needsRerun => skippedIds.isNotEmpty || failures.isNotEmpty;
 }
+
+enum _ConversionOutcome { converted, alreadyLot, changed, missing }
 
 class TradingService {
   TradingService._();
@@ -884,6 +905,26 @@ class TradingService {
     });
   }
 
+  /// Every sale made straight out of a Purchase Lot, newest first.
+  ///
+  /// A lot sale is any sale with a `lotId` (Sale.toMap writes `lotId`).
+  /// Sorted here, not in the query, so no composite index is needed.
+  Stream<List<Sale>> lotSalesStream(String farmId) {
+    return _sales(farmId)
+        .where('lotId', isGreaterThan: '')
+        .snapshots()
+        .map((snapshot) {
+      final sales = snapshot.docs.map(Sale.fromDoc).toList();
+
+      sales.sort(
+            (a, b) => (b.saleDate ?? DateTime(2000))
+            .compareTo(a.saleDate ?? DateTime(2000)),
+      );
+
+      return sales;
+    });
+  }
+
   /// Lots that still own goats.
   Stream<List<TradingPurchase>> activeLotsStream(String farmId) {
     return lotsStream(farmId).map(
@@ -1188,135 +1229,204 @@ class TradingService {
   // LEGACY CONVERSION
   // -----------------------------------------------------------------------
 
-  /// Converts every purchase with `lotSchema == 0` into the lot format, in
-  /// place, doc id unchanged. Idempotent — only ever touches purchases
-  /// that still have `lotSchema == 0`, so running it twice (or on a farm
-  /// with nothing to convert) is a no-op.
+  /// Builds the conversion plan for every purchase with `lotSchema == 0`.
   ///
-  /// Per-purchase rules (see TRADING_LOT_REFACTOR_HANDOVER.md §8):
-  /// - `receivingStatus == completed`: `receivedAliveQty = survivingGoats`
-  ///   and one legacy `receivings` doc is written.
-  /// - `receivingStatus == pending`: `receivedAliveQty = 0` and
-  ///   `mortality` is reset to 0 — costing ignored it while pending, so a
-  ///   stray non-zero value must not survive into the lot's supplierQty
-  ///   math. The lot starts At Supplier.
-  /// - Every purchase was paid in full at purchase time (Cash/Online
-  ///   only), so one legacy `payments` doc is written for the full
-  ///   `purchaseAmount` and `paidAmount` is set to match. No Finance
-  ///   entry is created — the original purchase expense already exists.
-  /// - `soldFromSupplierQty`, `soldFromFarmQty` and `reservedFarmQty`
-  ///   start at 0: nothing was ever sold or booked as a lot before this
-  ///   ran. Goats already registered individually keep living as goat
-  ///   docs and are still counted by `registeredCount`, so `farmQty`
-  ///   ends up equal to the purchase's existing `pendingCount`.
-  ///
-  /// Batched at 400 purchases per commit (Firestore's limit is 500 writes
-  /// per batch; each purchase here is 1 update + up to 2 subcollection
-  /// writes, so 400 keeps every batch safely under that).
-  ///
-  /// Returns a per-purchase report: converted ids, and any id where
-  /// `farmQty` did not come out equal to the original `pendingCount`
-  /// after conversion — those are reported, never silently "fixed".
-  Future<LegacyConversionReport> convertLegacyPurchasesToLots(
-      String farmId,
-      ) async {
-    final actor = await FirestoreService.instance.getCurrentActor();
+  /// Reads the purchases once and the farm's `tradingGoats` once (grouped
+  /// by `purchaseId`), so the number of goats that really exist decides
+  /// each purchase's `registeredCount` — see [LegacyConversionPlanner].
+  Future<List<LegacyConversionPlan>> _buildLegacyPlans(String farmId) async {
+    final purchaseSnap =
+    await _tradingPurchases(farmId).get().timeout(_timeout);
 
-    final snapshot = await _tradingPurchases(farmId)
-        .get()
-        .timeout(_timeout);
-
-    final legacy = snapshot.docs
+    final legacy = purchaseSnap.docs
         .map(TradingPurchase.fromDoc)
         .where((p) => !p.isLot)
-        .toList();
+        .toList()
+      ..sort((a, b) => a.id.compareTo(b.id));
+
+    if (legacy.isEmpty) return const [];
+
+    final goatSnap =
+    await _tradingGoats(farmId).get().timeout(_timeout * 2);
+
+    final goatsByPurchase = <String, int>{};
+
+    for (final doc in goatSnap.docs) {
+      final purchaseId = (doc.data()['purchaseId'] ?? '').toString();
+      if (purchaseId.isEmpty) continue;
+      goatsByPurchase[purchaseId] = (goatsByPurchase[purchaseId] ?? 0) + 1;
+    }
+
+    return [
+      for (final purchase in legacy)
+        LegacyConversionPlanner.plan(
+          purchase,
+          goatsByPurchase[purchase.id] ?? 0,
+        ),
+    ];
+  }
+
+  /// Dry run: exactly what [convertLegacyPurchasesToLots] would do right
+  /// now, without writing anything.
+  Future<LegacyConversionPreview> previewLegacyConversion(
+      String farmId,
+      ) async {
+    return LegacyConversionPreview(await _buildLegacyPlans(farmId));
+  }
+
+  /// Converts every purchase with `lotSchema == 0` into the lot format, in
+  /// place, doc id unchanged.
+  ///
+  /// Idempotent: only purchases that are still `lotSchema == 0` are
+  /// touched, so running it twice (or on a farm with nothing to convert)
+  /// is a no-op.
+  ///
+  /// Each purchase converts in its OWN transaction that first re-reads the
+  /// purchase and refuses to write if it is already a lot or if its
+  /// receiving status / counters no longer match the plan (someone
+  /// registered a goat while this ran). Those are reported in
+  /// [LegacyConversionReport.skippedIds] and picked up by the next run. A
+  /// plain batch cannot make that check, which is why this is not batched.
+  ///
+  /// Per purchase (handover §7.3):
+  /// - `receivedAliveQty`, `mortality`, `registeredCount`, `pendingCount`
+  ///   come from [LegacyConversionPlanner].
+  /// - `soldFromSupplierQty`, `soldFromFarmQty`, `reservedFarmQty` = 0:
+  ///   nothing was ever sold or booked as a lot before now. Goats sold
+  ///   earlier were individual goats and stay that way.
+  /// - One `isLegacy: true` payment for the full `purchaseAmount` (every
+  ///   old purchase was paid in full) and `paidAmount` to match.
+  /// - One `isLegacy: true` receiving when receiving was completed.
+  /// - NO Finance entry. The original cash `tradingPurchase` expense stays
+  ///   as it is.
+  ///
+  /// Afterwards call [backfillDashboardSummary] once so the dashboard
+  /// counters reflect the corrected figures.
+  Future<LegacyConversionReport> convertLegacyPurchasesToLots(
+      String farmId, {
+        void Function(int done, int total)? onProgress,
+      }) async {
+    final actor = await FirestoreService.instance.getCurrentActor();
+    final plans = await _buildLegacyPlans(farmId);
 
     final converted = <String>[];
-    final mismatches = <String>[];
+    final adjusted = <String>[];
+    final skipped = <String>[];
+    final failures = <String>[];
+    final warnings = <String>[];
 
-    const batchSize = 400;
+    onProgress?.call(0, plans.length);
 
-    for (var start = 0; start < legacy.length; start += batchSize) {
-      final chunk = legacy.skip(start).take(batchSize);
-      final batch = _db.batch();
+    for (var i = 0; i < plans.length; i++) {
+      final plan = plans[i];
+      final purchaseRef = _tradingPurchases(farmId).doc(plan.purchaseId);
 
-      for (final purchase in chunk) {
-        final purchaseRef = _tradingPurchases(farmId).doc(purchase.id);
+      try {
+        final outcome = await _db.runTransaction<_ConversionOutcome>(
+              (transaction) async {
+            final snap = await transaction.get(purchaseRef);
 
-        final completed = purchase.isReceivingCompleted;
-        final survivingGoats = purchase.survivingGoats;
+            if (!snap.exists) return _ConversionOutcome.missing;
 
-        final update = <String, dynamic>{
-          'lotSchema': 1,
-          'receivedAliveQty': completed ? survivingGoats : 0,
-          'mortality': completed ? purchase.mortality : 0,
-          'soldFromSupplierQty': 0,
-          'soldFromFarmQty': 0,
-          'reservedFarmQty': 0,
-          'paidAmount': purchase.purchaseAmount,
-          'updatedAt': FieldValue.serverTimestamp(),
-        };
+            final current = TradingPurchase.fromDoc(snap);
 
-        batch.update(purchaseRef, update);
+            if (current.isLot) return _ConversionOutcome.alreadyLot;
 
-        // One legacy payment — the purchase was always paid in full.
-        final paymentRef = purchaseRef.collection('payments').doc();
+            // Anything the plan was built from must still be true.
+            if (current.receivingStatus != plan.storedReceivingStatus ||
+                current.registeredCount != plan.storedRegisteredCount ||
+                current.pendingCount != plan.storedPendingCount ||
+                current.mortality != plan.storedMortality) {
+              return _ConversionOutcome.changed;
+            }
 
-        batch.set(paymentRef, {
-          ...LotPayment(
-            id: paymentRef.id,
-            amount: purchase.purchaseAmount,
-            date: purchase.purchaseDate,
-            method: purchase.paymentMethod,
-            isLegacy: true,
-            actorUid: actor?.uid,
-            actorName: actor?.name,
-          ).toMap(),
-          'createdAt': FieldValue.serverTimestamp(),
-        });
+            transaction.update(purchaseRef, {
+              'lotSchema': 1,
+              'receivedAliveQty': plan.receivedAliveQty,
+              'mortality': plan.mortality,
+              'registeredCount': plan.registeredCount,
+              'pendingCount': plan.pendingCount,
+              'soldFromSupplierQty': 0,
+              'soldFromFarmQty': 0,
+              'reservedFarmQty': 0,
+              'paidAmount': current.purchaseAmount,
+              'legacyConvertedAt': FieldValue.serverTimestamp(),
+              'updatedAt': FieldValue.serverTimestamp(),
+            });
 
-        // One legacy receiving, only when something was actually received.
-        if (completed) {
-          final receivingRef = purchaseRef.collection('receivings').doc();
+            // The purchase was always paid in full when it was saved.
+            if (current.purchaseAmount > 0) {
+              final paymentRef = purchaseRef.collection('payments').doc();
 
-          batch.set(receivingRef, {
-            ...LotReceiving(
-              id: receivingRef.id,
-              date: purchase.dateReceivedAtFarm ?? purchase.purchaseDate,
-              arrivedQty: survivingGoats,
-              diedQty: purchase.mortality,
-              arrivalWeight: purchase.totalWeightAfterArrival ?? 0,
-              isLegacy: true,
-              actorUid: actor?.uid,
-              actorName: actor?.name,
-            ).toMap(),
-            'createdAt': FieldValue.serverTimestamp(),
-          });
+              transaction.set(paymentRef, {
+                ...LotPayment(
+                  id: paymentRef.id,
+                  amount: current.purchaseAmount,
+                  date: current.purchaseDate,
+                  method: current.paymentMethod,
+                  note: 'Paid in full at purchase (converted)',
+                  isLegacy: true,
+                  actorUid: actor?.uid,
+                  actorName: actor?.name,
+                ).toMap(),
+                'createdAt': FieldValue.serverTimestamp(),
+              });
+            }
+
+            if (current.isReceivingCompleted) {
+              final receivingRef =
+              purchaseRef.collection('receivings').doc();
+
+              transaction.set(receivingRef, {
+                ...LotReceiving(
+                  id: receivingRef.id,
+                  date:
+                  current.dateReceivedAtFarm ?? current.purchaseDate,
+                  arrivedQty: plan.receivedAliveQty,
+                  diedQty: plan.mortality,
+                  arrivalWeight: current.totalWeightAfterArrival ?? 0,
+                  note: 'Received before Purchase Lots (converted)',
+                  isLegacy: true,
+                  actorUid: actor?.uid,
+                  actorName: actor?.name,
+                ).toMap(),
+                'createdAt': FieldValue.serverTimestamp(),
+              });
+            }
+
+            return _ConversionOutcome.converted;
+          },
+        ).timeout(_timeout);
+
+        switch (outcome) {
+          case _ConversionOutcome.converted:
+            converted.add(plan.purchaseId);
+            if (plan.countersAdjusted) adjusted.add(plan.purchaseId);
+            warnings.addAll(plan.warnings);
+            break;
+          case _ConversionOutcome.alreadyLot:
+            break;
+          case _ConversionOutcome.changed:
+          case _ConversionOutcome.missing:
+            skipped.add(plan.purchaseId);
+            break;
         }
-
-        converted.add(purchase.id);
-
-        // Verify farmQty == the purchase's original pendingCount. Built
-        // from the same fields just written, without re-reading —
-        // farmQty = receivedAliveQty - soldFromFarmQty - registeredCount,
-        // and soldFromFarmQty is 0 immediately after conversion.
-        final newReceivedAliveQty = completed ? survivingGoats : 0;
-        final newFarmQty = newReceivedAliveQty - purchase.registeredCount;
-
-        if (newFarmQty != purchase.pendingCount) {
-          mismatches.add(
-            '${purchase.id}: farmQty=$newFarmQty vs '
-                'pendingCount=${purchase.pendingCount}',
-          );
-        }
+      } catch (error) {
+        failures.add(
+          '${plan.purchaseId}: '
+              '${FirestoreService.instance.describeError(error)}',
+        );
       }
 
-      await batch.commit().timeout(_timeout);
+      onProgress?.call(i + 1, plans.length);
     }
 
     return LegacyConversionReport(
       convertedIds: converted,
-      mismatches: mismatches,
+      adjustedIds: adjusted,
+      skippedIds: skipped,
+      failures: failures,
+      warnings: warnings,
     );
   }
 

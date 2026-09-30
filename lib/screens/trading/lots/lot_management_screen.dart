@@ -1,13 +1,17 @@
 import 'package:flutter/material.dart';
 
 import '../../../app_theme.dart';
+import '../../../models/trading_lot_overview.dart';
 import '../../../models/trading_purchase_model.dart';
 import '../../../services/firestore_service.dart';
+import '../../../services/partner_access_service.dart';
 import '../../../services/trading_service.dart';
 import '../../../widgets/fast_route.dart';
 import '../../../models/partner_permission_keys.dart';
 import '../../../widgets/permission_gate.dart';
 import '../purchase_goats/purchase_wizard_widgets.dart';
+import 'legacy_conversion_sheet.dart';
+import 'lot_sales_list_screen.dart';
 import 'lot_detail_screen.dart';
 import 'lot_widgets.dart';
 
@@ -28,6 +32,9 @@ class LotManagementScreen extends StatefulWidget {
 class _LotManagementScreenState extends State<LotManagementScreen> {
   late final Stream<List<TradingPurchase>> _stream;
 
+  /// Only used to know how many older purchases are still unconverted.
+  late final Stream<TradingLotOverview> _overviewStream;
+
   bool _showCompleted = false;
 
   /// null = all locations.
@@ -39,6 +46,19 @@ class _LotManagementScreenState extends State<LotManagementScreen> {
     // Created once: recreating a stream on every rebuild makes the list
     // flash back to its loading state.
     _stream = TradingService.instance.lotsStream(widget.farmId);
+    _overviewStream =
+        TradingService.instance.lotOverviewStream(widget.farmId);
+  }
+
+  Future<void> _openConversion() async {
+    final converted = await showLegacyConversionSheet(
+      context: context,
+      farmId: widget.farmId,
+    );
+
+    if (converted == true && mounted) {
+      wizardSnack(context, 'Older purchases are now in Lot Management.');
+    }
   }
 
   List<TradingPurchase> _filter(List<TradingPurchase> all) {
@@ -60,7 +80,18 @@ class _LotManagementScreenState extends State<LotManagementScreen> {
   Widget _scaffold() {
     return Scaffold(
       backgroundColor: AppColors.paleGreen,
-      appBar: AppBar(title: const Text('Lot Management')),
+      appBar: AppBar(
+        title: const Text('Lot Management'),
+        actions: [
+          IconButton(
+            tooltip: 'Lot sales',
+            icon: const Icon(Icons.receipt_long_outlined),
+            onPressed: () => Navigator.of(context).push(
+              fastRoute(LotSalesListScreen(farmId: widget.farmId)),
+            ),
+          ),
+        ],
+      ),
       body: StreamBuilder<List<TradingPurchase>>(
         stream: _stream,
         builder: (context, snapshot) {
@@ -89,6 +120,7 @@ class _LotManagementScreenState extends State<LotManagementScreen> {
 
           return Column(
             children: [
+              _legacyBanner(),
               _statusToggle(activeCount, completedCount),
               _locationChips(),
               Expanded(
@@ -115,6 +147,77 @@ class _LotManagementScreenState extends State<LotManagementScreen> {
           );
         },
       ),
+    );
+  }
+
+  /// Shown only while older (goat-first) purchases are still unconverted.
+  /// The owner gets the Convert button; an invited partner just sees why
+  /// some purchases are missing from the list.
+  Widget _legacyBanner() {
+    return StreamBuilder<TradingLotOverview>(
+      stream: _overviewStream,
+      builder: (context, snapshot) {
+        final count = snapshot.data?.unconvertedPurchases ?? 0;
+
+        if (count == 0) return const SizedBox.shrink();
+
+        final isOwner = !PartnerAccessService.instance.isPartner;
+
+        return Padding(
+          padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+          child: Container(
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(
+              color: AppColors.warning.withOpacity(0.10),
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(
+                color: AppColors.warning.withOpacity(0.35),
+              ),
+            ),
+            child: Row(
+              children: [
+                const Icon(
+                  Icons.swap_horiz_rounded,
+                  color: AppColors.warning,
+                  size: 24,
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        '$count older purchase${count == 1 ? '' : 's'} '
+                            'not shown here',
+                        style: AppTheme.heading(size: 14),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        isOwner
+                            ? 'Convert them to lots to receive, sell and '
+                            'transfer their goats from here.'
+                            : 'The farm owner needs to convert them '
+                            'before they appear here.',
+                        style: AppTheme.body(size: 11.5),
+                      ),
+                    ],
+                  ),
+                ),
+                if (isOwner) ...[
+                  const SizedBox(width: 8),
+                  TextButton(
+                    onPressed: _openConversion,
+                    child: const Text(
+                      'Convert',
+                      style: TextStyle(fontWeight: FontWeight.w700),
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        );
+      },
     );
   }
 

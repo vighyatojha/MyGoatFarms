@@ -27,8 +27,11 @@ extension FinanceScopeX on FinanceScope {
 ///
 ///   revenue  -> `transactions` docs with referenceType = tradingSale,
 ///               or category Sold Goat Revenue / Goat Sale
-///   expenses -> `expenses` docs with referenceType = tradingPurchase,
-///               or category Goat Purchase
+///   expenses -> `expenses` docs with referenceType = tradingPurchase
+///               (a purchase paid in full when saved, or an audit-only
+///               Credit row for a Purchase Lot), referenceType =
+///               lotPayment (one row per supplier payment on a lot), or
+///               category Goat Purchase
 ///
 /// Everything else (customer payments, monthly bills, feed, medicine,
 /// office expenses, manual income, ...) belongs to the Palai side.
@@ -36,6 +39,14 @@ class FinanceScopeRules {
   FinanceScopeRules._();
 
   static const String tradingPurchaseRef = 'tradingPurchase';
+
+  /// One expense per supplier payment made against a Purchase Lot (posted
+  /// by TradingService with category Supplier Payment). Matched by
+  /// reference type ONLY, never by the Supplier Payment category:
+  /// FirestoreService.recordSupplierPayment uses that same category for
+  /// the farm's ordinary suppliers (referenceType supplierPayment), and
+  /// those must stay on the Palai side.
+  static const String tradingLotPaymentRef = 'lotPayment';
   static const String tradingSaleRef = 'tradingSale';
 
   static bool isTradingRevenue({
@@ -53,6 +64,7 @@ class FinanceScopeRules {
     required String category,
   }) {
     if (referenceType == tradingPurchaseRef) return true;
+    if (referenceType == tradingLotPaymentRef) return true;
 
     return category == ExpenseCategories.goatPurchase;
   }

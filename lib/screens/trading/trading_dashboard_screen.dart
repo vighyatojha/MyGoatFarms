@@ -18,6 +18,7 @@ import 'goat_stock/booking_delivery_customer_list_screen.dart';
 import 'goat_stock/goat_stock_list_screen.dart';
 import 'goat_stock/wait_delivery_customer_list_screen.dart';
 import 'lots/lot_management_screen.dart';
+import 'lots/lot_sales_list_screen.dart';
 import 'lots/receive_lot_screen.dart';
 import 'own_palai/own_palai_list_screen.dart';
 import 'purchase_goats/complete_receiving_screen.dart';
@@ -225,6 +226,59 @@ class _TradingDashboardScreenState extends State<TradingDashboardScreen> {
 
   Future<void> _openGoatStock({String? statusFilter}) {
     return _push(GoatStockListScreen(initialStatusFilter: statusFilter));
+  }
+
+  /// Total Sold counts individual goats AND goats sold straight from
+  /// lots, but the two live in different lists. With no lot sales it
+  /// opens the Sold goats exactly as before; otherwise it asks which list.
+  Future<void> _openTotalSold(TradingLotOverview lotOverview) async {
+    final farmId = _farmId;
+
+    if (farmId == null || lotOverview.lotSoldQty == 0) {
+      return _openGoatStock(statusFilter: Goat.statusSold);
+    }
+
+    final choice = await showModalBottomSheet<String>(
+      context: context,
+      backgroundColor: AppColors.cardWhite,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (sheetContext) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(8, 12, 8, 12),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              ListTile(
+                leading: const Icon(Icons.sell_outlined),
+                title: const Text('Sold goats'),
+                subtitle: const Text('Individually registered goats'),
+                onTap: () => Navigator.of(sheetContext).pop('goats'),
+              ),
+              ListTile(
+                leading: const Icon(Icons.receipt_long_outlined),
+                title: const Text('Lot sales'),
+                subtitle: Text(
+                  '${lotOverview.lotSoldQty} goat'
+                      '${lotOverview.lotSoldQty == 1 ? '' : 's'} sold '
+                      'straight from lots',
+                ),
+                onTap: () => Navigator.of(sheetContext).pop('lots'),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+
+    if (!mounted || choice == null) return;
+
+    if (choice == 'lots') {
+      return _push(LotSalesListScreen(farmId: farmId));
+    }
+
+    return _openGoatStock(statusFilter: Goat.statusSold);
   }
 
   /// Booking / Holding opens its own customer-grouped screen (not a flat
@@ -467,7 +521,7 @@ class _TradingDashboardScreenState extends State<TradingDashboardScreen> {
             value: '${s.totalSold}',
             color: AppColors.error,
             badge: s.totalSold > 0 ? 'Sold Out' : null,
-            onTap: () => _openGoatStock(statusFilter: Goat.statusSold),
+            onTap: () => _openTotalSold(lotOverview),
           ),
           height: 116,
         ),

@@ -852,7 +852,11 @@ class FinanceService {
   ///
   /// Reads only Trading records (see [FinanceScopeRules]):
   ///   * `transactions`     income tagged as a goat sale
-  ///   * `expenses`         Goat Purchase expenses
+  ///   * `expenses`         Goat Purchase expenses (older purchases) and
+  ///                        Supplier Payment expenses on Purchase Lots
+  ///                        (referenceType lotPayment). Credit rows are
+  ///                        skipped, so a lot counts only what has
+  ///                        really been paid, when it was paid.
   ///   * `tradingPurchases` transport / loading / unloading / other costs
   ///                        of purchases made in the range (these are not
   ///                        written to `expenses`, so nothing is counted

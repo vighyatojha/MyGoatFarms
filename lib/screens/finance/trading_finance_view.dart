@@ -358,7 +358,7 @@ class _TradingFinanceViewState extends State<TradingFinanceView> {
             ],
           ),
           const SizedBox(height: 8),
-          row('Goat purchase amount', s.purchaseSpend),
+          row('Paid to sellers', s.purchaseSpend),
           row('Transport, loading & other', s.otherPurchaseCosts),
           const Divider(height: 14),
           row('Total spent', s.totalCost, bold: true),

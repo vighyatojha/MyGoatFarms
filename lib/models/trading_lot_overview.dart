@@ -53,6 +53,11 @@ class TradingLotOverview {
   /// "Older Purchases to Register" strip without a second listener.
   final int legacyPendingRegistrations;
 
+  /// Goats sold out of lots so far (`soldFromSupplierQty +
+  /// soldFromFarmQty`, completed sales only). The dashboard uses it to
+  /// decide whether Total Sold should offer the Lot Sales list.
+  final int lotSoldQty;
+
   const TradingLotOverview({
     required this.activeLots,
     required this.pendingReceiving,
@@ -63,6 +68,7 @@ class TradingLotOverview {
     required this.supplierDue,
     required this.unconvertedPurchases,
     required this.legacyPendingRegistrations,
+    this.lotSoldQty = 0,
   });
 
   /// Empty overview — used before the first snapshot arrives.
@@ -91,8 +97,10 @@ class TradingLotOverview {
     var reservedQty = 0;
     var farmAvailableQty = 0;
     var supplierDue = 0.0;
+    var lotSoldQty = 0;
 
     for (final lot in lots) {
+      lotSoldQty += lot.soldQty;
       supplierQty += lot.supplierQty;
       farmQty += lot.farmQty;
       reservedQty += lot.reservedFarmQty;
@@ -124,6 +132,7 @@ class TradingLotOverview {
       supplierDue: PurchaseCosting.round2(supplierDue),
       unconvertedPurchases: legacy.length,
       legacyPendingRegistrations: legacyPendingRegistrations,
+      lotSoldQty: lotSoldQty,
     );
   }
 }
