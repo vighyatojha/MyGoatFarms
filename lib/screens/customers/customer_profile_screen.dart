@@ -12,6 +12,7 @@ import '../../services/firestore_service.dart';
 import '../../services/monthly_billing_service.dart';
 import '../../widgets/fast_route.dart';
 
+import '../../widgets/finance/advance_history_section.dart';
 import '../../widgets/goat_credit_cards.dart';
 import '../finance/customer_ledger_screen.dart';
 import '../palai/add_customer_screen.dart';
@@ -2120,6 +2121,14 @@ class _CustomerProfileScreenState extends State<CustomerProfileScreen> {
               ),
             );
           },
+        ),
+
+        // Why the Advance balance moved: Trading-sale excess, extra amounts
+        // paid with bills, and advance used up by bills. Hidden when the
+        // customer has no advance history.
+        AdvanceHistorySection(
+          farmId: widget.farmId,
+          customerId: _customer.id,
         ),
       ],
     );

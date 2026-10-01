@@ -49,6 +49,10 @@ class FinanceScopeRules {
   static const String tradingLotPaymentRef = 'lotPayment';
   static const String tradingSaleRef = 'tradingSale';
 
+  /// Money handed back to a customer after a Trading sale (excess payment).
+  /// A real cash outflow that belongs to the Trading side.
+  static const String customerRefundRef = 'customerRefund';
+
   static bool isTradingRevenue({
     required String referenceType,
     required String category,
@@ -65,8 +69,10 @@ class FinanceScopeRules {
   }) {
     if (referenceType == tradingPurchaseRef) return true;
     if (referenceType == tradingLotPaymentRef) return true;
+    if (referenceType == customerRefundRef) return true;
 
-    return category == ExpenseCategories.goatPurchase;
+    return category == ExpenseCategories.goatPurchase ||
+        category == ExpenseCategories.customerRefund;
   }
 
   /// [data] is a raw `transactions` document map.

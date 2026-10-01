@@ -254,6 +254,10 @@ class SalesService {
     return _farms().doc(farmId).collection('transactions');
   }
 
+  CollectionReference<Map<String, dynamic>> _expenses(String farmId) {
+    return _farms().doc(farmId).collection('expenses');
+  }
+
   String _saleRevenueDocId(String saleId, String receiptKey) =>
       'sale_${saleId}_$receiptKey';
 
@@ -469,24 +473,44 @@ class SalesService {
   // deterministic doc ids, so a retried transaction cannot add the money
   // twice.
 
-  /// READ step — call before the transaction's first write. Throws when the
-  /// extra cannot be added to an advance because the sale has no customer
-  /// record to put it on.
-  Future<void> _checkExcessInTransaction({
+  /// READ step — call before the transaction's first write.
+  ///
+  /// Works out WHERE an "add to advance" excess should be stored:
+  ///
+  ///  * a Sale-flow buyer  -> farms/{farm}/customers/{id}
+  ///  * a Palai customer   -> farms/{farm}/palaiCustomers/{id}
+  ///  * a brand-new buyer  -> created inside this same transaction, so
+  ///    there is nothing to read yet ([customerCreatedInTransaction]).
+  ///
+  /// Throws only when the sale really has no customer record anywhere to
+  /// hold the money. For a refund, or when there is no excess, nothing is
+  /// read and [_AdvanceTarget.none] is returned.
+  Future<_AdvanceTarget> _checkExcessInTransaction({
     required Transaction transaction,
     required String farmId,
     required String customerId,
     required double excess,
     required ExcessAction action,
+    bool customerCreatedInTransaction = false,
   }) async {
-    if (excess <= 0 || action != ExcessAction.carryToAdvance) return;
+    if (excess <= 0 || action != ExcessAction.carryToAdvance) {
+      return _AdvanceTarget.none;
+    }
+
+    // A new buyer is written by the same transaction, so the advance can
+    // safely be put straight onto that new document.
+    if (customerCreatedInTransaction) return _AdvanceTarget.trading;
 
     final id = customerId.trim();
 
     if (id.isNotEmpty) {
-      final snap = await transaction.get(_customers(farmId).doc(id));
+      final tradingSnap = await transaction.get(_customers(farmId).doc(id));
 
-      if (snap.exists) return;
+      if (tradingSnap.exists) return _AdvanceTarget.trading;
+
+      final palaiSnap = await transaction.get(_palaiCustomers(farmId).doc(id));
+
+      if (palaiSnap.exists) return _AdvanceTarget.palai;
     }
 
     throw StateError(
@@ -498,6 +522,17 @@ class SalesService {
 
   /// WRITE step — records the extra money as chosen. Does nothing when
   /// there is no excess.
+  ///
+  /// Advance:
+  ///   * Sale customer  -> customers/{id}.advanceBalance += excess
+  ///   * Palai customer -> palaiCustomers/{id}.advanceAmount += excess
+  ///   * both get an audit row at {customer}/advanceEntries/sale_{saleId}
+  ///
+  /// Refund:
+  ///   * a Finance outflow (Customer Refund) linked to the sale.
+  ///
+  /// The money is NEVER written as revenue. Deterministic doc ids make a
+  /// retried transaction idempotent.
   void _writeExcessInTransaction({
     required Transaction transaction,
     required String farmId,
@@ -508,24 +543,48 @@ class SalesService {
     required ExcessAction action,
     required String method,
     required DateTime when,
+    _AdvanceTarget target = _AdvanceTarget.trading,
   }) {
     if (excess <= 0) return;
 
     if (action == ExcessAction.carryToAdvance) {
-      final customerRef = _customers(farmId).doc(customerId.trim());
+      final id = customerId.trim();
 
-      transaction.update(customerRef, {
-        'advanceBalance': FieldValue.increment(excess),
-        'updatedAt': FieldValue.serverTimestamp(),
-      });
+      if (id.isEmpty || target == _AdvanceTarget.none) {
+        throw StateError(
+          'No customer record is available to hold the extra advance.',
+        );
+      }
+
+      final isPalai = target == _AdvanceTarget.palai;
+
+      final customerRef = isPalai
+          ? _palaiCustomers(farmId).doc(id)
+          : _customers(farmId).doc(id);
+
+      // set(merge) + increment works whether the document was just created
+      // earlier in this transaction (new customer) or already existed.
+      transaction.set(
+        customerRef,
+        {
+          isPalai ? 'advanceAmount' : 'advanceBalance':
+          FieldValue.increment(excess),
+          'updatedAt': FieldValue.serverTimestamp(),
+        },
+        SetOptions(merge: true),
+      );
 
       transaction.set(
         customerRef.collection('advanceEntries').doc('sale_$saleId'),
         {
           'amount': excess,
           'type': 'credit',
+          'source': 'tradingSale',
           'saleId': saleId,
-          'note': 'Extra advance left after delivery, Sale $saleId',
+          'customerId': id,
+          if (customerName.trim().isNotEmpty)
+            'customerName': customerName.trim(),
+          'note': 'Extra amount left after delivery, Sale $saleId',
           'date': Timestamp.fromDate(when),
           'createdAt': FieldValue.serverTimestamp(),
         },
@@ -533,6 +592,34 @@ class SalesService {
 
       return;
     }
+
+    // Finance reads outflows from the `expenses` collection (Expense list,
+    // totals, Recent Transactions), so the refund must exist there too —
+    // otherwise it would only be a hidden cash-flow row. Deterministic id,
+    // linked to the mirrored `transactions` doc below, so a retry or a
+    // later void finds the same two documents.
+    transaction.set(
+      _expenses(farmId).doc('refund_$saleId'),
+      {
+        'title': 'Customer Refund — Sale $saleId',
+        'category': ExpenseCategories.customerRefund,
+        'amount': excess,
+        'paymentMethod': method,
+        'note': 'Refund of extra amount at delivery, Sale $saleId',
+        if (customerName.trim().isNotEmpty)
+          'supplierName': customerName.trim(),
+        'date': Timestamp.fromDate(when),
+        'createdAt': FieldValue.serverTimestamp(),
+        'updatedAt': FieldValue.serverTimestamp(),
+        'createdBy': '',
+        'createdByName': 'System',
+        'createdByRole': '',
+        'status': 'active',
+        'referenceType': 'customerRefund',
+        'referenceId': saleId,
+        'transactionId': 'sale_${saleId}_refund',
+      },
+    );
 
     transaction.set(
       _transactions(farmId).doc('sale_${saleId}_refund'),
@@ -542,7 +629,8 @@ class SalesService {
         'category': ExpenseCategories.customerRefund,
         if (customerName.trim().isNotEmpty)
           'customerName': customerName.trim(),
-        'note': 'Refund of extra advance at delivery, Sale $saleId',
+        if (customerId.trim().isNotEmpty) 'customerId': customerId.trim(),
+        'note': 'Refund of extra amount at delivery, Sale $saleId',
         'paymentMethod': method,
         'date': Timestamp.fromDate(when),
         'createdAt': FieldValue.serverTimestamp(),
@@ -938,20 +1026,19 @@ class SalesService {
       // 1a. CUSTOMER READ / VALIDATION
       // ---------------------------------------------------------------
       //
-      // `_checkExcessInTransaction()` performs a transaction read when
-      // the selected action is "carry to advance".
+      // Decides where an "add to advance" excess will be stored. A new
+      // customer is created further down in THIS transaction, so it is
+      // accepted here (nothing to read yet). A Sale customer or a Palai
+      // customer is looked up in its own collection.
       //
-      // This MUST happen before any customer/sale/lot/summary write.
-      //
-      // For a brand-new customer, the customer document does not exist
-      // yet, so the helper correctly rejects "Add to Advance" and asks
-      // the user to choose "Return to customer".
-      await _checkExcessInTransaction(
+      // This MUST stay before any write.
+      final advanceTarget = await _checkExcessInTransaction(
         transaction: transaction,
         farmId: farmId,
         customerId: draft.customerId,
         excess: excess,
         action: draft.excessAction ?? ExcessAction.refundToCustomer,
+        customerCreatedInTransaction: draft.customerSource == null,
       );
 
       // ---------------------------------------------------------------
@@ -1195,6 +1282,7 @@ class SalesService {
           draft.paymentMethod,
         ),
         when: DateTime.now(),
+        target: advanceTarget,
       );
     }).timeout(_timeout * 2);
 
@@ -2561,7 +2649,7 @@ class SalesService {
       }
 
       // Reads must all happen before the first write below.
-      await _checkExcessInTransaction(
+      final advanceTarget = await _checkExcessInTransaction(
         transaction: transaction,
         farmId: farmId,
         customerId: sale.customerId,
@@ -2683,6 +2771,7 @@ class SalesService {
         action: excessAction,
         method: method,
         when: now,
+        target: advanceTarget,
       );
 
       // ---------------------------------------------------------------
@@ -2969,7 +3058,7 @@ class SalesService {
       final excess = settlement.excess;
 
       // Reads must all happen before the first write below.
-      await _checkExcessInTransaction(
+      final advanceTarget = await _checkExcessInTransaction(
         transaction: transaction,
         farmId: farmId,
         customerId: sale.customerId,
@@ -3060,6 +3149,7 @@ class SalesService {
         action: excessAction,
         method: method,
         when: now,
+        target: advanceTarget,
       );
 
       // ---------------------------------------------------------------
@@ -3945,6 +4035,18 @@ class CustomerHistory {
 }
 
 /// Where a [CustomerMatch] came from.
+/// Where an "extra amount -> advance" credit is stored.
+enum _AdvanceTarget {
+  /// No advance is being written (refund, or no excess).
+  none,
+
+  /// farms/{farm}/customers/{id}.advanceBalance
+  trading,
+
+  /// farms/{farm}/palaiCustomers/{id}.advanceAmount
+  palai,
+}
+
 enum CustomerMatchSource {
   /// farms/{farmId}/customers — a Sale-flow buyer.
   sale,

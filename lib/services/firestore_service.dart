@@ -1049,10 +1049,15 @@ class FirestoreService {
         // WRITE INCOME TRANSACTION
         // ------------------------------------------------------------
 
-        if (transactionRef != null) {
+        // Income is only the part of the cash that pays THIS bill. Cash that
+        // goes beyond the bill is the customer's advance — money held for
+        // them, not revenue. It becomes income later, at the moment a bill
+        // uses it (see the 'Advance Applied to Bill' entry below).
+        if (transactionRef != null && amountAppliedToBill > 0) {
           transaction.set(transactionRef, {
-            'amount': paidAmount,
+            'amount': amountAppliedToBill,
             'isIncome': true,
+            'advanceAmount': newAdvanceFromPayment,
 
             'category': 'Palai Payment',
 
@@ -1088,6 +1093,80 @@ class FirestoreService {
           'advanceAmount': advanceAfter,
           'updatedAt': FieldValue.serverTimestamp(),
         });
+
+        // ------------------------------------------------------------
+        // ADVANCE AUDIT TRAIL
+        //
+        // Existing advance used on this bill (debit) and any new advance
+        // created by an overpayment (credit). Deterministic ids, so a
+        // retried transaction cannot write them twice.
+        // ------------------------------------------------------------
+
+        // The advance used on this bill is revenue NOW: it was held as a
+        // liability when it arrived and has just paid for Palai service.
+        // Same id on a retry, so it can never be counted twice.
+        if (advanceApplied > 0) {
+          transaction.set(
+            transactionsCollection.doc('advuse_${billRef.id}'),
+            {
+              'amount': advanceApplied,
+              'isIncome': true,
+              'category': 'Advance Applied to Bill',
+              'customerId': customerId,
+              'customerName': customerName,
+              'billId': billRef.id,
+              'billNumber': billNumber,
+              'paymentMethod': 'Advance',
+              'note': 'Advance used on bill $billNumber',
+              'referenceType': 'advanceApplied',
+              'referenceId': billRef.id,
+              'status': 'active',
+              'date': FieldValue.serverTimestamp(),
+              'createdAt': FieldValue.serverTimestamp(),
+            },
+          );
+        }
+
+        if (advanceApplied > 0) {
+          transaction.set(
+            customerRef
+                .collection('advanceEntries')
+                .doc('bill_${billRef.id}'),
+            {
+              'amount': advanceApplied,
+              'type': 'debit',
+              'source': 'palaiBill',
+              'billId': billRef.id,
+              'billNumber': billNumber,
+              'customerId': customerId,
+              'customerName': customerName,
+              'note': 'Advance used on bill $billNumber',
+              'date': FieldValue.serverTimestamp(),
+              'createdAt': FieldValue.serverTimestamp(),
+            },
+          );
+        }
+
+        if (newAdvanceFromPayment > 0 && paymentRef != null) {
+          transaction.set(
+            customerRef
+                .collection('advanceEntries')
+                .doc('payment_${paymentRef.id}'),
+            {
+              'amount': newAdvanceFromPayment,
+              'type': 'credit',
+              'source': 'palaiBill',
+              'paymentId': paymentRef.id,
+              'billId': billRef.id,
+              'billNumber': billNumber,
+              'customerId': customerId,
+              'customerName': customerName,
+              'note': 'Extra amount received with bill $billNumber',
+              'date': FieldValue.serverTimestamp(),
+              'createdAt': FieldValue.serverTimestamp(),
+            },
+          );
+        }
 
         // ------------------------------------------------------------
         // ACTIVITY
@@ -1403,11 +1482,10 @@ class FirestoreService {
             .clamp(0, double.infinity)
             .toDouble();
 
-        // Money that stays on the Palai side (pending + advance).
-        final palaiIncomeAmount =
-        (paidAmount - amountAppliedToGoatSales)
-            .clamp(0, double.infinity)
-            .toDouble();
+        // Palai INCOME is only the part that cleared the customer's Palai
+        // outstanding. The part kept as advance is money held for the
+        // customer, not revenue; it turns into income when a bill uses it.
+        final palaiIncomeAmount = amountAppliedToPending;
 
         // ============================================================
         // APPLY THE SAME AMOUNT TO THE CUSTOMER'S CURRENT MONTHLY BILL
@@ -1595,6 +1673,30 @@ class FirestoreService {
           'updatedAt':
           FieldValue.serverTimestamp(),
         });
+
+        // Audit trail for the advance: WHY the balance went up. Uses a
+        // deterministic id so a retried transaction cannot add it twice.
+        // Same shape as the Trading-sale excess entries, so the Customer
+        // Profile / Ledger can read every advance credit from one place.
+        if (advanceAdded > 0) {
+          transaction.set(
+            customerRef
+                .collection('advanceEntries')
+                .doc('payment_${paymentRef.id}'),
+            {
+              'amount': advanceAdded,
+              'type': 'credit',
+              'source': 'palaiPayment',
+              'paymentId': paymentRef.id,
+              'paymentNumber': paymentNumber,
+              'customerId': customerId,
+              'customerName': customerName,
+              'note': 'Extra amount received with payment $paymentNumber',
+              'date': FieldValue.serverTimestamp(),
+              'createdAt': FieldValue.serverTimestamp(),
+            },
+          );
+        }
 
         // ============================================================
         // ACTIVITY

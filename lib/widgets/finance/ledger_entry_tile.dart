@@ -22,9 +22,36 @@ class LedgerEntryTile extends StatelessWidget {
     final isOutstandingAdded =
         entry.kind == LedgerEntryKind.outstandingAdded;
 
-    final color = entry.isDebit
+    final isRefund = entry.kind == LedgerEntryKind.refund;
+    final isAdvanceInfo = entry.kind == LedgerEntryKind.advanceAdded ||
+        entry.kind == LedgerEntryKind.advanceUsed;
+
+    // Advance rows are blue (money sitting with the farm for the customer),
+    // refunds are orange (cash handed back), bills red, payments green.
+    final color = isAdvanceInfo
+        ? AppColors.info
+        : isRefund
+        ? AppColors.warning
+        : entry.isDebit
         ? (isOutstandingAdded ? AppColors.warning : AppColors.error)
         : AppColors.success;
+
+    final icon = isAdvanceInfo
+        ? Icons.savings_outlined
+        : isRefund
+        ? Icons.undo_rounded
+        : entry.isDebit
+        ? Icons.arrow_upward_rounded
+        : Icons.arrow_downward_rounded;
+
+    // For a payment: how the cash was split between the bill and advance.
+    final applied = entry.appliedToBill;
+    final advance = entry.advanceAddedAmount;
+    final showSplit = entry.kind == LedgerEntryKind.payment &&
+        advance != null &&
+        advance > 0;
+
+    final sign = isRefund ? '' : (entry.isDebit ? '+' : '-');
 
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 10),
@@ -41,9 +68,7 @@ class LedgerEntryTile extends StatelessWidget {
                   shape: BoxShape.circle,
                 ),
                 child: Icon(
-                  entry.isDebit
-                      ? Icons.arrow_upward_rounded
-                      : Icons.arrow_downward_rounded,
+                  icon,
                   color: color,
                   size: 16,
                 ),
@@ -70,11 +95,36 @@ class LedgerEntryTile extends StatelessWidget {
                       DateFormat('dd MMM yyyy').format(entry.date),
                       style: AppTheme.body(size: 9, color: AppColors.textGrey),
                     ),
+                    if (showSplit)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 3),
+                        child: Text(
+                          'Applied to bill ₹${(applied ?? (entry.amount - advance)).toStringAsFixed(0)}'
+                              ' · Added to advance ₹${advance.toStringAsFixed(0)}',
+                          style: AppTheme.body(size: 9, color: AppColors.info),
+                        ),
+                      ),
+                    if (isRefund)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 3),
+                        child: Text(
+                          'Cash returned · balance unchanged',
+                          style: AppTheme.body(size: 9, color: AppColors.warning),
+                        ),
+                      ),
+                    if (entry.kind == LedgerEntryKind.advanceUsed)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 3),
+                        child: Text(
+                          'Taken from advance · not cash',
+                          style: AppTheme.body(size: 9, color: AppColors.info),
+                        ),
+                      ),
                   ],
                 ),
               ),
               Text(
-                '${entry.isDebit ? '+' : '-'}₹${entry.amount.toStringAsFixed(0)}',
+                '$sign₹${entry.amount.toStringAsFixed(0)}',
                 style: AppTheme.body(
                   size: 13,
                   color: color,

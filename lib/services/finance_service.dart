@@ -1,4 +1,3 @@
-
 import 'dart:async';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -1266,16 +1265,40 @@ class FinanceService {
       _bills(farmId).where('customerId', isEqualTo: customerId).get().timeout(_timeout),
       _monthlyBills(farmId).where('customerId', isEqualTo: customerId).get().timeout(_timeout),
       _payments(farmId).where('customerId', isEqualTo: customerId).get().timeout(_timeout),
+
+      // Advance history: Trading-sale excess kept as advance, and advance
+      // used up by bills. (Advance that came from a payment is already
+      // shown on that payment's row, so it is skipped when building.)
+      _customers(farmId)
+          .doc(customerId)
+          .collection('advanceEntries')
+          .get()
+          .timeout(_timeout),
+
+      // Refunds handed back to the customer. Filtered by customerId only
+      // (no composite index needed); the refund check happens per doc.
+      _transactions(farmId)
+          .where('customerId', isEqualTo: customerId)
+          .get()
+          .timeout(_timeout),
     ]);
 
     final billsSnap = results[0];
     final monthlyBillsSnap = results[1];
     final paymentsSnap = results[2];
+    final advanceSnap = results[3];
+    final transactionsSnap = results[4];
 
     final entries = <CustomerLedgerEntry>[
       ...billsSnap.docs.map(CustomerLedgerEntry.fromBillDoc),
       ...monthlyBillsSnap.docs.map(CustomerLedgerEntry.fromMonthlyBillDoc),
       ...paymentsSnap.docs.map(CustomerLedgerEntry.fromPaymentDoc),
+      ...advanceSnap.docs
+          .map(CustomerLedgerEntry.tryFromAdvanceEntryDoc)
+          .whereType<CustomerLedgerEntry>(),
+      ...transactionsSnap.docs
+          .map(CustomerLedgerEntry.tryFromRefundTransactionDoc)
+          .whereType<CustomerLedgerEntry>(),
     ];
 
     entries.sort((a, b) => b.date.compareTo(a.date));
