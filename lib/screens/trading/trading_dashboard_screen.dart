@@ -36,10 +36,11 @@ import 'sell_goat/sell_goat_wizard_screen.dart';
 ///  1. Header (back, title, recalculate)
 ///  2. 2x2 stat cards (Available Stock, Booking, Wait on Delivery,
 ///     Total Sold) + compact secondary stats list
-///  3. Secondary trading stats with direct Purchase / Sell controls.
+///  3. Sales options card (Sell Available Stock, Lot Management, Lot Sales)
+///  4. Secondary trading stats with direct Purchase / Sell controls.
 ///     Goats stay anonymous inside a lot; they are only registered when
 ///     transferred to a Palai, so there is no standalone "Register Goats" action.
-///  4. Pending receiving (empty state card or list of pending purchases)
+///  5. Pending receiving (empty state card or list of pending purchases)
 class TradingDashboardScreen extends StatefulWidget {
   const TradingDashboardScreen({super.key});
 
@@ -292,6 +293,73 @@ class _TradingDashboardScreenState extends State<TradingDashboardScreen> {
     return _push(WaitDeliveryCustomerListScreen(farmId: farmId));
   }
 
+  /// Lot Management: all purchase lots, receiving, lot selling and
+  /// supplier payments live behind this screen.
+  Future<void> _openLotManagement() {
+    final farmId = _farmId;
+    if (farmId == null) return Future.value();
+    return _push(LotManagementScreen(farmId: farmId));
+  }
+
+  /// Lot Sales: every sale made from a purchase lot.
+  Future<void> _openLotSales() {
+    final farmId = _farmId;
+    if (farmId == null) return Future.value();
+    return _push(LotSalesListScreen(farmId: farmId));
+  }
+
+  /// One "Sell" entry point. The source is chosen inside the flow:
+  ///  - From Lot             -> Sell From Lot wizard
+  ///  - From Available Stock -> Sell Goat wizard (registered goats and
+  ///                            goats in Own Palai)
+  Future<void> _openSellSheet() async {
+    final choice = await showModalBottomSheet<String>(
+      context: context,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (ctx) {
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(16, 14, 16, 16),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('Sell goats from', style: AppTheme.heading(size: 16)),
+                const SizedBox(height: 12),
+                _SellSourceTile(
+                  icon: Icons.layers_outlined,
+                  color: AppColors.tradingBlue,
+                  title: 'From Lot',
+                  subtitle: 'Goats still inside a purchase lot',
+                  onTap: () => Navigator.of(ctx).pop('lot'),
+                ),
+                const SizedBox(height: 8),
+                _SellSourceTile(
+                  icon: GoatIcons.paw,
+                  color: AppColors.primaryGreen,
+                  title: 'From Available Stock',
+                  subtitle: 'Registered goats and Own Palai',
+                  onTap: () => Navigator.of(ctx).pop('available'),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+
+    if (!mounted || choice == null) return;
+
+    if (choice == 'lot') {
+      await _push(const SellFromLotWizardScreen());
+    } else {
+      await _push(const SellGoatWizardScreen());
+    }
+  }
+
   void _snack(String message, Color color) {
     if (!mounted) return;
     ScaffoldMessenger.of(context)
@@ -527,10 +595,12 @@ class _TradingDashboardScreenState extends State<TradingDashboardScreen> {
     );
   }
 
-  /// "Sell Goats" card: one tap into either selling flow, right under the
-  /// Wait on Delivery / Total Sold cards.
-  ///  - Available Stock -> Sell Goat wizard (individually registered goats)
-  ///  - Lot Selling     -> Sell From Lot wizard (goats still inside a lot)
+  /// "Sell Goats" card: every sales entry point in one place, right under
+  /// the Wait on Delivery / Total Sold cards.
+  ///  - Sell Available Stock -> Sell Goat wizard (individually registered goats)
+  ///  - Lot Management       -> Lot Management screen (lots, receiving,
+  ///                            lot selling, supplier payments)
+  ///  - Lot Sales            -> every sale made from a purchase lot
   Widget _sellOptions(TradingLotOverview lotOverview) {
     final availableInLots = lotOverview.farmAvailableQty;
     final availableRegistered = _availableCount;
@@ -557,16 +627,16 @@ class _TradingDashboardScreenState extends State<TradingDashboardScreen> {
             _StripRow(
               icon: GoatIcons.paw,
               color: AppColors.primaryGreen,
-              title: 'Sell Available Stock',
-              subtitle: 'Sell registered goats from your farm',
-              onTap: () => _push(const SellGoatWizardScreen()),
+              title: 'Sell Goats',
+              subtitle: 'From a lot or from available stock',
+              onTap: _openSellSheet,
               trailing: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   _Pill(
                     availableRegistered == null
                         ? '—'
-                        : '$availableRegistered available',
+                        : '${availableRegistered + availableInLots} available',
                     AppColors.primaryGreen,
                   ),
                   const SizedBox(width: 4),
@@ -578,9 +648,9 @@ class _TradingDashboardScreenState extends State<TradingDashboardScreen> {
             _StripRow(
               icon: Icons.layers_outlined,
               color: AppColors.tradingBlue,
-              title: 'Lot Selling',
-              subtitle: 'Sell goats directly from a purchase lot',
-              onTap: () => _push(const SellFromLotWizardScreen()),
+              title: 'Lot Management',
+              subtitle: 'Manage lots, receive, sell and pay suppliers',
+              onTap: _openLotManagement,
               trailing: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
@@ -589,6 +659,15 @@ class _TradingDashboardScreenState extends State<TradingDashboardScreen> {
                   chevron(),
                 ],
               ),
+            ),
+            divider,
+            _StripRow(
+              icon: Icons.receipt_long_outlined,
+              color: AppColors.warning,
+              title: 'Lot Sales',
+              subtitle: 'All sales made from purchase lots',
+              onTap: _openLotSales,
+              trailing: chevron(),
             ),
           ],
         ),
@@ -641,7 +720,7 @@ class _TradingDashboardScreenState extends State<TradingDashboardScreen> {
                     label: 'Sell',
                     icon: Icons.sell_outlined,
                     color: AppColors.tradingBlue,
-                    onTap: () => _push(const SellFromLotWizardScreen()),
+                    onTap: _openSellSheet,
                   ),
                 ],
               ),
@@ -653,11 +732,7 @@ class _TradingDashboardScreenState extends State<TradingDashboardScreen> {
               title: 'Supplier Payments Due',
               subtitle: 'Owed across all lots',
               subtitleColor: AppColors.error,
-              onTap: () {
-                final farmId = _farmId;
-                if (farmId == null) return;
-                _push(LotManagementScreen(farmId: farmId));
-              },
+              onTap: _openLotManagement,
               trailing: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
@@ -748,12 +823,6 @@ class _TradingDashboardScreenState extends State<TradingDashboardScreen> {
       color: AppColors.divider,
     );
 
-    void openLotSales() {
-      final farmId = _farmId;
-      if (farmId == null) return;
-      _push(LotSalesListScreen(farmId: farmId));
-    }
-
     return Padding(
       padding: const EdgeInsets.only(top: 10),
       child: DecoratedBox(
@@ -834,7 +903,7 @@ class _TradingDashboardScreenState extends State<TradingDashboardScreen> {
                         color: AppColors.tradingBlue,
                         title: 'Sales Revenue',
                         subtitle: 'Delivered sales$waiting',
-                        onTap: openLotSales,
+                        onTap: _openLotSales,
                         trailing: Text(
                           money(totals.revenue),
                           style: AppTheme.heading(
@@ -854,7 +923,7 @@ class _TradingDashboardScreenState extends State<TradingDashboardScreen> {
                         subtitleColor: totals.customerPending >= 0.01
                             ? AppColors.warning
                             : null,
-                        onTap: openLotSales,
+                        onTap: _openLotSales,
                         trailing: ready && totals.customerPending < 0.01
                             ? const _Pill('All collected', AppColors.success)
                             : Text(
@@ -1558,6 +1627,55 @@ class _CompactActionButton extends StatelessWidget {
                 label,
                 style: AppTheme.heading(size: 9.5, color: color),
               ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+
+class _SellSourceTile extends StatelessWidget {
+  const _SellSourceTile({
+    required this.icon,
+    required this.color,
+    required this.title,
+    required this.subtitle,
+    required this.onTap,
+  });
+
+  final IconData icon;
+  final Color color;
+  final String title;
+  final String subtitle;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: color.withValues(alpha: 0.06),
+      borderRadius: BorderRadius.circular(14),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(14),
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.all(12),
+          child: Row(
+            children: [
+              _IconBox(icon: icon, color: color, size: 40),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(title, style: AppTheme.heading(size: 13.5)),
+                    const SizedBox(height: 2),
+                    Text(subtitle, style: AppTheme.body(size: 10.5)),
+                  ],
+                ),
+              ),
+              Icon(Icons.chevron_right_rounded, color: color),
             ],
           ),
         ),
