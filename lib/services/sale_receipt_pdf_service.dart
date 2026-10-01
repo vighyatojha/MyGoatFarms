@@ -31,8 +31,6 @@ class SaleReceiptPdfService {
       ),
     );
 
-    // Profile image is the primary logo.
-    // Bill Settings logo remains a fallback.
     final logo = _safeMemoryImage(
       farmLogo ?? billSettings.billLogo,
     );
@@ -96,7 +94,7 @@ class SaleReceiptPdfService {
                 number: '3',
                 title: 'Price Calculation',
                 subtitle:
-                'Goat sale, transportation and customer total',
+                'Goat sale, discount, transportation and customer total',
               ),
 
               pw.SizedBox(height: 3),
@@ -223,7 +221,6 @@ class SaleReceiptPdfService {
       child: pw.Row(
         crossAxisAlignment: pw.CrossAxisAlignment.center,
         children: [
-          // STRICTLY CIRCULAR LOGO
           _farmLogo(
             logo,
             size: 62,
@@ -246,7 +243,6 @@ class SaleReceiptPdfService {
                     color: darkGreen,
                   ),
                 ),
-
                 if (locality.isNotEmpty) ...[
                   pw.SizedBox(height: 1),
                   pw.Text(
@@ -260,9 +256,7 @@ class SaleReceiptPdfService {
                     ),
                   ),
                 ],
-
-                if (phone.isNotEmpty ||
-                    address.isNotEmpty) ...[
+                if (phone.isNotEmpty || address.isNotEmpty) ...[
                   pw.SizedBox(height: 2),
                   pw.Text(
                     [
@@ -277,7 +271,6 @@ class SaleReceiptPdfService {
                     ),
                   ),
                 ],
-
                 if (email.isNotEmpty) ...[
                   pw.SizedBox(height: 1),
                   pw.Text(
@@ -297,11 +290,6 @@ class SaleReceiptPdfService {
     );
   }
 
-  /// Creates a TRUE circular image.
-  ///
-  /// The image itself is placed inside a square and clipped with ClipOval.
-  /// BoxFit.cover ensures the image fills the circle instead of appearing
-  /// rectangular or stretched.
   pw.Widget _farmLogo(
       pw.MemoryImage? image, {
         required double size,
@@ -372,8 +360,7 @@ class SaleReceiptPdfService {
         children: [
           pw.Expanded(
             child: pw.Column(
-              crossAxisAlignment:
-              pw.CrossAxisAlignment.start,
+              crossAxisAlignment: pw.CrossAxisAlignment.start,
               children: [
                 pw.Text(
                   'SALE RECEIPT',
@@ -470,8 +457,7 @@ class SaleReceiptPdfService {
       ) {
     return pw.Expanded(
       child: pw.Column(
-        crossAxisAlignment:
-        pw.CrossAxisAlignment.center,
+        crossAxisAlignment: pw.CrossAxisAlignment.center,
         children: [
           pw.Text(
             label,
@@ -544,8 +530,7 @@ class SaleReceiptPdfService {
           pw.SizedBox(width: 6),
           pw.Expanded(
             child: pw.Column(
-              crossAxisAlignment:
-              pw.CrossAxisAlignment.start,
+              crossAxisAlignment: pw.CrossAxisAlignment.start,
               children: [
                 pw.Text(
                   title,
@@ -620,8 +605,9 @@ class SaleReceiptPdfService {
           if (sale.isFixedPrice)
             _detailRow(
               'Selling Price',
-              '${_currency(sale.fixedSalePrice ?? sale.totalSaleAmount)} '
-                  '(fixed)',
+              '${_currency(
+                sale.fixedSalePrice ?? sale.totalSaleAmount,
+              )} (fixed)',
             )
           else
             _detailRow(
@@ -644,8 +630,7 @@ class SaleReceiptPdfService {
   pw.Widget _priceCalculation(Sale sale) {
     return _card(
       child: pw.Column(
-        crossAxisAlignment:
-        pw.CrossAxisAlignment.start,
+        crossAxisAlignment: pw.CrossAxisAlignment.start,
         children: [
           if (sale.hasPickupSettlement) ...[
             _calculationRow(
@@ -700,15 +685,42 @@ class SaleReceiptPdfService {
             height: 4,
           ),
 
-          _calculationRow(
-            'Goat Sale',
-            _currency(sale.billGoatSale),
-          ),
+          if (sale.appliedDiscount > 0) ...[
+            _calculationRow(
+              'Goat Sale Before Discount',
+              _currency(
+                sale.billGoatSaleBeforeDiscount,
+              ),
+            ),
+            _calculationRow(
+              'Discount',
+              _currency(
+                sale.appliedDiscount,
+              ),
+              note:
+              'Discount applied to the goat sale amount',
+            ),
+            _calculationRow(
+              'Goat Sale After Discount',
+              _currency(
+                sale.billGoatSale,
+              ),
+              emphasized: true,
+            ),
+          ] else
+            _calculationRow(
+              'Goat Sale',
+              _currency(
+                sale.billGoatSale,
+              ),
+            ),
 
           if (sale.billHoldingCharges > 0)
             _calculationRow(
               'Holding Charges',
-              _currency(sale.billHoldingCharges),
+              _currency(
+                sale.billHoldingCharges,
+              ),
               note:
               '${sale.actualHoldingDays ?? sale.holdingDays ?? 0} days × '
                   '${_currency(sale.holdingChargePerDay ?? 0)} / day',
@@ -717,7 +729,9 @@ class SaleReceiptPdfService {
           if (sale.billTransportCharges > 0)
             _calculationRow(
               'Transportation',
-              _currency(sale.billTransportCharges),
+              _currency(
+                sale.billTransportCharges,
+              ),
             ),
 
           pw.SizedBox(height: 1),
@@ -729,7 +743,9 @@ class SaleReceiptPdfService {
 
           _calculationRow(
             'Customer Total',
-            _currency(sale.billCustomerTotal),
+            _currency(
+              sale.billCustomerTotal,
+            ),
             emphasized: true,
           ),
         ],
@@ -748,14 +764,20 @@ class SaleReceiptPdfService {
       rows.add(
         _detailRow(
           'Booking Amount',
-          _currency(sale.bookingAmount ?? 0),
+          _currency(
+            sale.bookingAmount ?? 0,
+          ),
         ),
       );
 
       rows.add(
         _detailRow(
           'Holding From',
-          DateFormat('dd MMM yyyy').format(sale.holdingStart),
+          DateFormat(
+            'dd MMM yyyy',
+          ).format(
+            sale.holdingStart,
+          ),
         ),
       );
 
@@ -763,7 +785,11 @@ class SaleReceiptPdfService {
         rows.add(
           _detailRow(
             'Holding Until',
-            DateFormat('dd MMM yyyy').format(sale.holdingEndDate!),
+            DateFormat(
+              'dd MMM yyyy',
+            ).format(
+              sale.holdingEndDate!,
+            ),
           ),
         );
       }
@@ -788,7 +814,9 @@ class SaleReceiptPdfService {
             'Delivery Completed',
             DateFormat(
               'dd MMM yyyy, hh:mm a',
-            ).format(sale.deliveryCompletedAt!),
+            ).format(
+              sale.deliveryCompletedAt!,
+            ),
           ),
         );
       }
@@ -807,7 +835,8 @@ class SaleReceiptPdfService {
             ? _detailRow(
           'Fixed Price',
           _currency(
-            sale.fixedSalePrice ?? sale.totalSaleAmount,
+            sale.fixedSalePrice ??
+                sale.totalSaleAmount,
           ),
         )
             : _detailRow(
@@ -836,7 +865,9 @@ class SaleReceiptPdfService {
               ? '-'
               : DateFormat(
             'dd MMM yyyy',
-          ).format(sale.transferDate!),
+          ).format(
+            sale.transferDate!,
+          ),
         ),
       );
 
@@ -892,35 +923,68 @@ class SaleReceiptPdfService {
   }
 
   // ---------------------------------------------------------------------------
-  // PAYMENT
+  // PAYMENT SUMMARY
   // ---------------------------------------------------------------------------
 
   pw.Widget _paymentSummary(Sale sale) {
-    final paid = sale.billAmountPaid;
     final total = sale.billCustomerTotal;
+
+    // IMPORTANT:
+    //
+    // billAmountPaid is already the amount actually applied to the bill.
+    //
+    // Sale.billAmountPaid internally subtracts:
+    //
+    //   excessToAdvance
+    //   +
+    //   excessRefunded
+    //
+    // Therefore we must NOT calculate the bill payment again from the
+    // raw amount received.
+    final paidAppliedToBill = sale.billAmountPaid;
+
     final remaining = sale.billBalanceDue;
 
-    // The receipt is ONE fixed A4 page (pw.Page, not MultiPage), so an
-    // unbounded payment list would overflow it and fail PDF generation.
-    // List only the most recent balance payments and fold anything older
-    // into a single row; the totals below stay exact either way.
+    final excessToAdvance =
+        sale.excessToAdvance ?? 0;
+
+    final excessRefunded =
+        sale.excessRefunded ?? 0;
+
+    final hasExcessToAdvance =
+        excessToAdvance > 0;
+
+    final hasExcessRefunded =
+        excessRefunded > 0;
+
+    final hasExcessHandling =
+        hasExcessToAdvance || hasExcessRefunded;
+
     const maxListedPayments = 2;
 
-    // Voided payments no longer count, so they are left off the receipt.
-    final payments = sale.payments.where((p) => !p.voided).toList();
+    final payments = sale.payments
+        .where((p) => !p.voided)
+        .toList();
+
     final hiddenCount = payments.length > maxListedPayments
         ? payments.length - maxListedPayments
         : 0;
+
     final earlier = payments.take(hiddenCount).toList();
+
     final listed = payments.skip(hiddenCount).toList();
+
     final earlierTotal = earlier.fold<double>(
       0.0,
           (sum, payment) => sum + payment.amount,
     );
 
-    final initialMethod = (sale.paymentMethod ?? '').trim();
+    final initialMethod =
+    (sale.paymentMethod ?? '').trim();
+
     final initialLabel =
-    sale.billInitialPayment > 0 && initialMethod.isNotEmpty
+    sale.billInitialPayment > 0 &&
+        initialMethod.isNotEmpty
         ? '${sale.billInitialPaymentLabel} ($initialMethod)'
         : sale.billInitialPaymentLabel;
 
@@ -928,13 +992,14 @@ class SaleReceiptPdfService {
         ? 'PAID'
         : sale.onCredit
         ? 'ON CREDIT'
-        : paid > 0
+        : paidAppliedToBill > 0
         ? 'PARTIALLY PAID'
         : 'PENDING';
 
     final statusColor = status == 'PAID'
         ? PdfColors.green800
-        : (status == 'PARTIALLY PAID' || status == 'ON CREDIT')
+        : (status == 'PARTIALLY PAID' ||
+        status == 'ON CREDIT')
         ? PdfColors.orange800
         : PdfColors.red800;
 
@@ -952,6 +1017,9 @@ class SaleReceiptPdfService {
       ),
       child: pw.Column(
         children: [
+          // -----------------------------------------------------------------
+          // HEADER
+          // -----------------------------------------------------------------
           pw.Row(
             children: [
               pw.Expanded(
@@ -994,55 +1062,249 @@ class SaleReceiptPdfService {
             height: 3,
           ),
 
+          // -----------------------------------------------------------------
+          // CUSTOMER TOTAL
+          // -----------------------------------------------------------------
           _calculationRow(
             'Customer Total',
             _currency(total),
           ),
 
-          if (payments.isEmpty)
-            _calculationRow(
-              'Amount Paid',
-              _currency(paid),
-            )
-          else ...[
-            _calculationRow(
-              initialLabel,
-              _currency(sale.billInitialPayment),
+          // -----------------------------------------------------------------
+          // INITIAL PAYMENT
+          // -----------------------------------------------------------------
+          _calculationRow(
+            initialLabel,
+            _currency(
+              sale.billInitialPayment,
             ),
-            if (earlier.isNotEmpty)
-              _calculationRow(
-                'Earlier balance payments (${earlier.length})',
-                _currency(earlierTotal),
-              ),
-            for (final payment in listed)
-              _calculationRow(
-                _balancePaymentLabel(payment),
-                _currency(payment.amount),
-              ),
-            _calculationRow(
-              'Total Paid',
-              _currency(paid),
-            ),
-          ],
+          ),
 
+          // -----------------------------------------------------------------
+          // EXCESS AMOUNT
+          // -----------------------------------------------------------------
+          if (hasExcessToAdvance)
+            _excessPaymentRow(
+              label: 'Extra Amount Added to Advance',
+              amount: excessToAdvance,
+              isAdvance: true,
+            ),
+
+          if (hasExcessRefunded)
+            _excessPaymentRow(
+              label: 'Extra Amount Returned',
+              amount: excessRefunded,
+              isAdvance: false,
+            ),
+
+          // -----------------------------------------------------------------
+          // EARLIER BALANCE PAYMENTS
+          // -----------------------------------------------------------------
+          if (earlier.isNotEmpty)
+            _calculationRow(
+              'Earlier balance payments (${earlier.length})',
+              _currency(
+                earlierTotal,
+              ),
+            ),
+
+          // -----------------------------------------------------------------
+          // RECENT BALANCE PAYMENTS
+          // -----------------------------------------------------------------
+          for (final payment in listed)
+            _calculationRow(
+              _balancePaymentLabel(payment),
+              _currency(
+                payment.amount,
+              ),
+            ),
+
+          // -----------------------------------------------------------------
+          // TOTAL APPLIED TO BILL
+          // -----------------------------------------------------------------
           pw.Divider(
             color: PdfColors.green300,
             height: 3,
           ),
 
           _calculationRow(
-            'Remaining Amount',
-            _currency(remaining),
+            'Total Applied to Bill',
+            _currency(
+              paidAppliedToBill,
+            ),
             emphasized: true,
+            note: hasExcessHandling
+                ? 'Excess amount is excluded from the bill payment.'
+                : null,
+          ),
+
+          // -----------------------------------------------------------------
+          // REMAINING AMOUNT
+          // -----------------------------------------------------------------
+          _calculationRow(
+            'Remaining Amount',
+            _currency(
+              remaining,
+            ),
+            emphasized: true,
+          ),
+
+          // -----------------------------------------------------------------
+          // CREDIT NOTE
+          // -----------------------------------------------------------------
+          if (sale.onCredit && remaining > 0) ...[
+            pw.SizedBox(height: 2),
+            pw.Container(
+              width: double.infinity,
+              padding: const pw.EdgeInsets.symmetric(
+                horizontal: 6,
+                vertical: 5,
+              ),
+              decoration: pw.BoxDecoration(
+                color: PdfColors.orange50,
+                borderRadius: const pw.BorderRadius.all(
+                  pw.Radius.circular(5),
+                ),
+                border: pw.Border.all(
+                  color: PdfColors.orange200,
+                  width: 0.6,
+                ),
+              ),
+              child: pw.Text(
+                'Sold on credit — ${_currency(remaining)} '
+                    'remains outstanding for ${sale.customerName}.',
+                style: const pw.TextStyle(
+                  fontSize: 5.6,
+                  color: PdfColors.orange900,
+                ),
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  // ---------------------------------------------------------------------------
+  // EXCESS PAYMENT ROW
+  // ---------------------------------------------------------------------------
+
+  /// Shows money received above the actual customer bill.
+  ///
+  /// Advance:
+  /// The excess amount remains with the customer as advance.
+  ///
+  /// Refund:
+  /// The excess amount was returned to the customer.
+  ///
+  /// Neither amount is added to the actual bill payment total.
+  pw.Widget _excessPaymentRow({
+    required String label,
+    required double amount,
+    required bool isAdvance,
+  }) {
+    final background =
+    isAdvance
+        ? PdfColors.green50
+        : PdfColors.orange50;
+
+    final border =
+    isAdvance
+        ? PdfColors.green200
+        : PdfColors.orange200;
+
+    final accent =
+    isAdvance
+        ? PdfColors.green800
+        : PdfColors.orange800;
+
+    final subtitle = isAdvance
+        ? 'Kept in the customer Advance balance'
+        : 'Returned to the customer and recorded as a cash outflow';
+
+    return pw.Container(
+      width: double.infinity,
+      margin: const pw.EdgeInsets.only(
+        top: 2,
+        bottom: 4,
+      ),
+      padding: const pw.EdgeInsets.symmetric(
+        horizontal: 7,
+        vertical: 5,
+      ),
+      decoration: pw.BoxDecoration(
+        color: background,
+        borderRadius: const pw.BorderRadius.all(
+          pw.Radius.circular(5),
+        ),
+        border: pw.Border.all(
+          color: border,
+          width: 0.6,
+        ),
+      ),
+      child: pw.Row(
+        crossAxisAlignment:
+        pw.CrossAxisAlignment.start,
+        children: [
+          pw.Container(
+            width: 14,
+            height: 14,
+            alignment: pw.Alignment.center,
+            decoration: pw.BoxDecoration(
+              color: accent,
+              shape: pw.BoxShape.circle,
+            ),
+            child: pw.Text(
+              isAdvance ? '+' : '↩',
+              style: const pw.TextStyle(
+                fontSize: 7,
+                color: PdfColors.white,
+                fontWeight: pw.FontWeight.bold,
+              ),
+            ),
+          ),
+          pw.SizedBox(width: 6),
+          pw.Expanded(
+            child: pw.Column(
+              crossAxisAlignment:
+              pw.CrossAxisAlignment.start,
+              children: [
+                pw.Text(
+                  label,
+                  style: pw.TextStyle(
+                    fontSize: 6.3,
+                    fontWeight: pw.FontWeight.bold,
+                    color: PdfColors.grey900,
+                  ),
+                ),
+                pw.SizedBox(height: 1),
+                pw.Text(
+                  subtitle,
+                  style: const pw.TextStyle(
+                    fontSize: 5.1,
+                    color: PdfColors.grey700,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          pw.SizedBox(width: 7),
+          pw.Text(
+            _currency(amount),
+            style: pw.TextStyle(
+              fontSize: 7,
+              fontWeight: pw.FontWeight.bold,
+              color: accent,
+            ),
           ),
         ],
       ),
     );
   }
 
-  /// One compact line per balance payment: date and method are folded
-  /// into the label so no extra note line is needed on the fixed page.
-  String _balancePaymentLabel(SalePayment payment) {
+  String _balancePaymentLabel(
+      SalePayment payment,
+      ) {
     final method = payment.method.trim();
 
     return 'Balance payment · '
@@ -1058,8 +1320,7 @@ class SaleReceiptPdfService {
       Sale sale,
       String farmName,
       ) {
-    final text =
-    sale.isBooking &&
+    final text = sale.isBooking &&
         sale.status != Sale.statusDeliveryCompleted
         ? 'This is a booking receipt. Final holding charges are based on the recorded holding period when delivery is completed.'
         : sale.isWaitForDelivery &&
@@ -1268,6 +1529,7 @@ class SaleReceiptPdfService {
     if (sale.isBooking) return 'Booking / Holding';
     if (sale.isWaitForDelivery) return 'Wait for Delivery';
     if (sale.isPalaiTransfer) return 'Transfer to Palai';
+
     return sale.deliveryType;
   }
 

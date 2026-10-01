@@ -451,9 +451,7 @@ class _SaleReceiptScreenState extends State<SaleReceiptScreen> {
           ),
           const SizedBox(height: 10),
           Text(
-            completed
-                ? 'Goat Sale Completed'
-                : 'Sale Record Created',
+            completed ? 'Goat Sale Completed' : 'Sale Record Created',
             textAlign: TextAlign.center,
             style: AppTheme.heading(
               size: 18,
@@ -623,7 +621,26 @@ class _SaleReceiptScreenState extends State<SaleReceiptScreen> {
             ),
         ],
         const Divider(height: 18),
-        _moneyRow('Goat Sale', sale.billGoatSale),
+        if (sale.appliedDiscount > 0) ...[
+          _moneyRow(
+            'Goat Sale Before Discount',
+            sale.billGoatSaleBeforeDiscount,
+          ),
+          _moneyRow(
+            'Discount',
+            sale.appliedDiscount,
+            subtitle: 'Discount applied to the goat sale amount',
+          ),
+          _moneyRow(
+            'Goat Sale After Discount',
+            sale.billGoatSale,
+            emphasized: true,
+          ),
+        ] else
+          _moneyRow(
+            'Goat Sale',
+            sale.billGoatSale,
+          ),
         if (sale.billHoldingCharges > 0)
           _moneyRow(
             'Holding Charges',
@@ -647,38 +664,86 @@ class _SaleReceiptScreenState extends State<SaleReceiptScreen> {
     );
   }
 
+  // ===========================================================================
+  // PAYMENT SUMMARY
+  // ===========================================================================
+
   Widget _paymentSection(Sale sale) {
     final initialMethod = (sale.paymentMethod ?? '').trim();
+
+    final excessToAdvance = sale.excessToAdvance ?? 0;
+    final excessRefunded = sale.excessRefunded ?? 0;
+
+    final hasExcessToAdvance = excessToAdvance > 0;
+    final hasExcessRefunded = excessRefunded > 0;
+
+    final hasExcessHandling =
+        hasExcessToAdvance || hasExcessRefunded;
 
     return _section(
       'Payment Summary',
       Icons.account_balance_wallet_outlined,
       [
+        // ------------------------------------------------------------------
+        // INITIAL PAYMENT
+        // ------------------------------------------------------------------
         _moneyRow(
           sale.billInitialPaymentLabel,
           sale.billInitialPayment,
-          subtitle: sale.billInitialPayment > 0 && initialMethod.isNotEmpty
-              ? 'Paid by $initialMethod'
+          subtitle: sale.billInitialPayment > 0 &&
+              initialMethod.isNotEmpty
+              ? 'Received by $initialMethod'
               : null,
         ),
 
-        // Balance payments collected after delivery, oldest first.
+        // ------------------------------------------------------------------
+        // EXCESS PAYMENT HANDLING
+        // ------------------------------------------------------------------
+        if (hasExcessHandling) ...[
+          const SizedBox(height: 2),
+          _excessPaymentRow(
+            label: hasExcessToAdvance
+                ? 'Extra Amount Added to Advance'
+                : 'Extra Amount Returned',
+            amount: hasExcessToAdvance
+                ? excessToAdvance
+                : excessRefunded,
+            isAdvance: hasExcessToAdvance,
+          ),
+        ],
+
+        // ------------------------------------------------------------------
+        // BALANCE PAYMENTS
+        // ------------------------------------------------------------------
         for (var i = 0; i < sale.payments.length; i++)
           _balancePaymentRow(sale, i),
 
-        if (sale.payments.isNotEmpty)
-          _moneyRow(
-            'Total Paid',
-            sale.billAmountPaid,
-          ),
+        const Divider(height: 18),
 
+        // ------------------------------------------------------------------
+        // TOTAL APPLIED TO BILL
+        // ------------------------------------------------------------------
+        _moneyRow(
+          'Total Applied to Bill',
+          sale.billAmountPaid,
+          emphasized: true,
+          subtitle: hasExcessHandling
+              ? 'Excess amount is excluded from the bill payment.'
+              : null,
+        ),
+
+        // ------------------------------------------------------------------
+        // REMAINING BALANCE
+        // ------------------------------------------------------------------
         _moneyRow(
           'Remaining Amount',
           sale.billBalanceDue,
           emphasized: true,
         ),
 
-        // A sale on credit: say so, and where the balance can be found.
+        // ------------------------------------------------------------------
+        // CREDIT INFORMATION
+        // ------------------------------------------------------------------
         if (sale.onCredit && sale.billBalanceDue > 0)
           Padding(
             padding: const EdgeInsets.only(top: 4),
@@ -706,7 +771,9 @@ class _SaleReceiptScreenState extends State<SaleReceiptScreen> {
             ),
           ),
 
-        // Only once the goat has been delivered and something is owed.
+        // ------------------------------------------------------------------
+        // RECEIVE BALANCE BUTTON
+        // ------------------------------------------------------------------
         if (sale.canCollectBalance) ...[
           const SizedBox(height: 6),
           SizedBox(
@@ -740,12 +807,96 @@ class _SaleReceiptScreenState extends State<SaleReceiptScreen> {
     );
   }
 
+  /// Displays the amount that was received above the actual bill.
+  ///
+  /// This amount is NOT treated as additional sale payment:
+  ///
+  ///   Advance:
+  ///     The amount is moved into the customer's advance balance.
+  ///
+  ///   Refund:
+  ///     The amount is returned to the customer and recorded as a
+  ///     Finance cash outflow.
+  Widget _excessPaymentRow({
+    required String label,
+    required double amount,
+    required bool isAdvance,
+  }) {
+    final icon = isAdvance
+        ? Icons.account_balance_wallet_outlined
+        : Icons.keyboard_return_rounded;
+
+    final subtitle = isAdvance
+        ? 'Kept in the customer Advance balance'
+        : 'Returned to the customer and recorded as a cash outflow';
+
+    return Container(
+      width: double.infinity,
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.symmetric(
+        horizontal: 12,
+        vertical: 10,
+      ),
+      decoration: BoxDecoration(
+        color: AppColors.paleGreen,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+          color: AppColors.primaryGreen.withValues(alpha: 0.22),
+        ),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(
+            icon,
+            size: 18,
+            color: AppColors.primaryGreen,
+          ),
+          const SizedBox(width: 9),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  label,
+                  style: AppTheme.body(
+                    size: 11,
+                    color: AppColors.textDark,
+                    weight: FontWeight.w700,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  subtitle,
+                  style: AppTheme.body(
+                    size: 9.5,
+                    color: AppColors.textGrey,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 8),
+          Text(
+            _currency(amount),
+            style: AppTheme.body(
+              size: 12,
+              color: AppColors.darkGreen,
+              weight: FontWeight.w800,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   /// One balance payment. A voided payment stays visible (struck through,
   /// with its reason). Only the newest payment that still counts gets a
   /// Void button, and only for people allowed to void revenue; the
   /// service refuses anything else with a clear message.
   Widget _balancePaymentRow(Sale sale, int index) {
     final payment = sale.payments[index];
+
     final canVoid = !payment.voided &&
         !payment.isPalaiSettlement &&
         index == sale.latestActivePaymentIndex &&
@@ -759,8 +910,13 @@ class _SaleReceiptScreenState extends State<SaleReceiptScreen> {
         payment.voidReason.trim(),
     ];
 
-    final dim = payment.voided ? AppColors.textGrey : AppColors.textDark;
-    final strike = payment.voided ? TextDecoration.lineThrough : null;
+    final dim = payment.voided
+        ? AppColors.textGrey
+        : AppColors.textDark;
+
+    final strike = payment.voided
+        ? TextDecoration.lineThrough
+        : null;
 
     return Padding(
       padding: const EdgeInsets.only(bottom: 8),
@@ -776,11 +932,15 @@ class _SaleReceiptScreenState extends State<SaleReceiptScreen> {
                   style: AppTheme.body(
                     size: 11,
                     color: AppColors.textGrey,
-                  ).copyWith(decoration: strike),
+                  ).copyWith(
+                    decoration: strike,
+                  ),
                 ),
                 const SizedBox(height: 2),
                 Text(
-                  subtitleParts.where((e) => e.isNotEmpty).join(' · '),
+                  subtitleParts
+                      .where((e) => e.isNotEmpty)
+                      .join(' · '),
                   style: AppTheme.body(
                     size: 10.5,
                     color: AppColors.textGrey,
@@ -796,13 +956,18 @@ class _SaleReceiptScreenState extends State<SaleReceiptScreen> {
               size: 12,
               color: dim,
               weight: FontWeight.w700,
-            ).copyWith(decoration: strike),
+            ).copyWith(
+              decoration: strike,
+            ),
           ),
           if (canVoid)
             IconButton(
               tooltip: 'Void this payment',
               visualDensity: VisualDensity.compact,
-              icon: const Icon(Icons.block_rounded, size: 18),
+              icon: const Icon(
+                Icons.block_rounded,
+                size: 18,
+              ),
               onPressed: () => _voidPayment(sale, index),
             ),
         ],
@@ -810,10 +975,11 @@ class _SaleReceiptScreenState extends State<SaleReceiptScreen> {
     );
   }
 
-  /// Voids a balance payment entered by mistake (to correct one: void it,
-  /// then receive the right amount). The work is done by
-  /// [SalesService.voidBalancePayment].
-  Future<void> _voidPayment(Sale sale, int index) async {
+  /// Voids a balance payment entered by mistake.
+  Future<void> _voidPayment(
+      Sale sale,
+      int index,
+      ) async {
     final payment = sale.payments[index];
     final reasonController = TextEditingController();
 
@@ -853,7 +1019,9 @@ class _SaleReceiptScreenState extends State<SaleReceiptScreen> {
             onPressed: () => Navigator.pop(ctx, true),
             child: const Text(
               'Void payment',
-              style: TextStyle(color: AppColors.error),
+              style: TextStyle(
+                color: AppColors.error,
+              ),
             ),
           ),
         ],
@@ -880,7 +1048,9 @@ class _SaleReceiptScreenState extends State<SaleReceiptScreen> {
       if (!mounted) return;
 
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Payment voided.')),
+        const SnackBar(
+          content: Text('Payment voided.'),
+        ),
       );
     } catch (e) {
       if (!mounted) return;
@@ -888,7 +1058,10 @@ class _SaleReceiptScreenState extends State<SaleReceiptScreen> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
-            e.toString().replaceFirst(RegExp(r'^\w*(Error|Exception): '), ''),
+            e.toString().replaceFirst(
+              RegExp(r'^\w*(Error|Exception): '),
+              '',
+            ),
           ),
           backgroundColor: AppColors.error,
         ),
@@ -899,17 +1072,16 @@ class _SaleReceiptScreenState extends State<SaleReceiptScreen> {
   String _paymentSubtitle(SalePayment payment) {
     final parts = <String>[
       DateFormat('dd MMM yyyy').format(payment.date),
-      if (payment.method.trim().isNotEmpty) payment.method.trim(),
-      if (payment.note.trim().isNotEmpty) payment.note.trim(),
+      if (payment.method.trim().isNotEmpty)
+        payment.method.trim(),
+      if (payment.note.trim().isNotEmpty)
+        payment.note.trim(),
     ];
 
     return parts.join(' · ');
   }
 
-  /// Opens the balance-payment form. The payment itself is recorded by
-  /// [SalesService.receiveBalancePayment] (which also writes the Finance
-  /// entry, in the same transaction); on success the receipt is reloaded
-  /// so the history, Remaining Amount and button reflect it.
+  /// Opens the balance-payment form.
   Future<void> _receivePayment() async {
     final sale = _sale;
 
@@ -946,12 +1118,16 @@ class _SaleReceiptScreenState extends State<SaleReceiptScreen> {
         if (sale.isBooking) ...[
           _row(
             'Holding From',
-            DateFormat('dd MMM yyyy').format(sale.holdingStart),
+            DateFormat('dd MMM yyyy').format(
+              sale.holdingStart,
+            ),
           ),
           if (sale.holdingEndDate != null)
             _row(
               'Holding Until',
-              DateFormat('dd MMM yyyy').format(sale.holdingEndDate!),
+              DateFormat('dd MMM yyyy').format(
+                sale.holdingEndDate!,
+              ),
             ),
           _row(
             'Holding Days',
@@ -975,7 +1151,10 @@ class _SaleReceiptScreenState extends State<SaleReceiptScreen> {
           if (sale.isFixedPrice)
             _row(
               'Fixed Price',
-              _currency(sale.fixedSalePrice ?? sale.totalSaleAmount),
+              _currency(
+                sale.fixedSalePrice ??
+                    sale.totalSaleAmount,
+              ),
             )
           else
             _row(
@@ -992,8 +1171,9 @@ class _SaleReceiptScreenState extends State<SaleReceiptScreen> {
           if (sale.transferDate != null)
             _row(
               'Transfer Date',
-              DateFormat('dd MMM yyyy')
-                  .format(sale.transferDate!),
+              DateFormat('dd MMM yyyy').format(
+                sale.transferDate!,
+              ),
             ),
           if ((sale.palaiPackage ?? '').trim().isNotEmpty)
             _row(
@@ -1010,15 +1190,20 @@ class _SaleReceiptScreenState extends State<SaleReceiptScreen> {
     );
   }
 
-  Widget _bottomNotice(Sale sale, Color color) {
-    final message =
-    sale.isBooking &&
+  Widget _bottomNotice(
+      Sale sale,
+      Color color,
+      ) {
+    final message = sale.isBooking &&
         sale.status != Sale.statusDeliveryCompleted
-        ? 'This is the booking receipt. Final holding charges are recalculated when delivery is completed.'
+        ? 'This is the booking receipt. Final holding charges are '
+        'recalculated when delivery is completed.'
         : sale.isWaitForDelivery &&
         sale.status != Sale.statusPickupCompleted
-        ? 'This sale is waiting for delivery. Final settlement uses the booking-time rate and pickup weight.'
-        : 'This receipt reflects the sale values currently saved in Firestore.';
+        ? 'This sale is waiting for delivery. Final settlement uses '
+        'the booking-time rate and pickup weight.'
+        : 'This receipt reflects the sale values currently saved '
+        'in Firestore.';
 
     return Container(
       width: double.infinity,
@@ -1062,7 +1247,12 @@ class _SaleReceiptScreenState extends State<SaleReceiptScreen> {
       ) {
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.fromLTRB(14, 14, 14, 12),
+      padding: const EdgeInsets.fromLTRB(
+        14,
+        14,
+        14,
+        12,
+      ),
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(16),
@@ -1099,7 +1289,10 @@ class _SaleReceiptScreenState extends State<SaleReceiptScreen> {
     );
   }
 
-  Widget _row(String label, String value) {
+  Widget _row(
+      String label,
+      String value,
+      ) {
     return Padding(
       padding: const EdgeInsets.only(bottom: 8),
       child: Row(
@@ -1199,6 +1392,7 @@ class _SaleReceiptScreenState extends State<SaleReceiptScreen> {
     if (sale.isBooking) return 'Booking / Holding';
     if (sale.isWaitForDelivery) return 'Wait for Delivery';
     if (sale.isPalaiTransfer) return 'Transfer to Palai';
+
     return sale.deliveryType;
   }
 }
@@ -1224,9 +1418,11 @@ class SaleReceivePaymentSheet extends StatefulWidget {
       _SaleReceivePaymentSheetState();
 }
 
-class _SaleReceivePaymentSheetState extends State<SaleReceivePaymentSheet> {
+class _SaleReceivePaymentSheetState
+    extends State<SaleReceivePaymentSheet> {
   late final TextEditingController _amountController;
-  final TextEditingController _noteController = TextEditingController();
+  final TextEditingController _noteController =
+  TextEditingController();
 
   String _method = FinancePaymentMethods.cash;
   bool _saving = false;
@@ -1238,7 +1434,9 @@ class _SaleReceivePaymentSheetState extends State<SaleReceivePaymentSheet> {
   void initState() {
     super.initState();
 
-    _amountController = TextEditingController(text: _plain(_due));
+    _amountController = TextEditingController(
+      text: _plain(_due),
+    );
   }
 
   @override
@@ -1265,7 +1463,9 @@ class _SaleReceivePaymentSheetState extends State<SaleReceivePaymentSheet> {
   Future<void> _submit() async {
     if (_saving) return;
 
-    final amount = double.tryParse(_amountController.text.trim());
+    final amount = double.tryParse(
+      _amountController.text.trim(),
+    );
 
     if (amount == null || amount <= 0) {
       setState(() {
@@ -1274,9 +1474,12 @@ class _SaleReceivePaymentSheetState extends State<SaleReceivePaymentSheet> {
       return;
     }
 
-    if ((amount * 100).round() > (_due * 100).round()) {
+    if ((amount * 100).round() >
+        (_due * 100).round()) {
       setState(() {
-        _error = 'That is more than the balance due (${_currency(_due)}).';
+        _error =
+        'That is more than the balance due '
+            '(${_currency(_due)}).';
       });
       return;
     }
@@ -1304,10 +1507,6 @@ class _SaleReceivePaymentSheetState extends State<SaleReceivePaymentSheet> {
       setState(() {
         _saving = false;
 
-        // A StateError carries a message written for the person (amount
-        // too high, nothing due, ...). Anything else is a connection
-        // problem — the write may still have gone through, so say so
-        // rather than inviting a second, duplicate payment.
         _error = e is StateError
             ? e.message
             : '${FirestoreService.instance.describeError(e)}\n'
@@ -1335,7 +1534,12 @@ class _SaleReceivePaymentSheetState extends State<SaleReceivePaymentSheet> {
         child: SafeArea(
           top: false,
           child: SingleChildScrollView(
-            padding: const EdgeInsets.fromLTRB(18, 12, 18, 18),
+            padding: const EdgeInsets.fromLTRB(
+              18,
+              12,
+              18,
+              18,
+            ),
             child: Column(
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -1404,7 +1608,8 @@ class _SaleReceivePaymentSheetState extends State<SaleReceivePaymentSheet> {
                   controller: _amountController,
                   enabled: !_saving,
                   autofocus: true,
-                  keyboardType: const TextInputType.numberWithOptions(
+                  keyboardType:
+                  const TextInputType.numberWithOptions(
                     decimal: true,
                   ),
                   inputFormatters: [
@@ -1427,7 +1632,8 @@ class _SaleReceivePaymentSheetState extends State<SaleReceivePaymentSheet> {
                           ? null
                           : () {
                         setState(() {
-                          _amountController.text = _plain(_due);
+                          _amountController.text =
+                              _plain(_due);
                           _error = null;
                         });
                       },
@@ -1451,7 +1657,8 @@ class _SaleReceivePaymentSheetState extends State<SaleReceivePaymentSheet> {
                 Wrap(
                   spacing: 8,
                   runSpacing: 8,
-                  children: FinancePaymentMethods.all.map((method) {
+                  children:
+                  FinancePaymentMethods.all.map((method) {
                     final selected = _method == method;
 
                     return ChoiceChip(
@@ -1465,7 +1672,9 @@ class _SaleReceivePaymentSheetState extends State<SaleReceivePaymentSheet> {
                         });
                       },
                       selectedColor:
-                      AppColors.primaryGreen.withValues(alpha: 0.15),
+                      AppColors.primaryGreen.withValues(
+                        alpha: 0.15,
+                      ),
                       labelStyle: TextStyle(
                         fontSize: 12,
                         fontWeight: FontWeight.w600,
@@ -1512,9 +1721,12 @@ class _SaleReceivePaymentSheetState extends State<SaleReceivePaymentSheet> {
                       child: OutlinedButton(
                         onPressed: _saving
                             ? null
-                            : () => Navigator.of(context).pop(false),
+                            : () =>
+                            Navigator.of(context).pop(false),
                         style: OutlinedButton.styleFrom(
-                          padding: const EdgeInsets.symmetric(vertical: 14),
+                          padding: const EdgeInsets.symmetric(
+                            vertical: 14,
+                          ),
                           shape: RoundedRectangleBorder(
                             borderRadius: BorderRadius.circular(12),
                           ),
@@ -1528,19 +1740,25 @@ class _SaleReceivePaymentSheetState extends State<SaleReceivePaymentSheet> {
                       child: ElevatedButton(
                         onPressed: _saving ? null : _submit,
                         style: ElevatedButton.styleFrom(
-                          backgroundColor: AppColors.primaryGreen,
+                          backgroundColor:
+                          AppColors.primaryGreen,
                           foregroundColor: Colors.white,
                           elevation: 0,
-                          padding: const EdgeInsets.symmetric(vertical: 14),
+                          padding:
+                          const EdgeInsets.symmetric(
+                            vertical: 14,
+                          ),
                           shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(12),
+                            borderRadius:
+                            BorderRadius.circular(12),
                           ),
                         ),
                         child: _saving
                             ? const SizedBox(
                           width: 18,
                           height: 18,
-                          child: CircularProgressIndicator(
+                          child:
+                          CircularProgressIndicator(
                             strokeWidth: 2,
                             color: Colors.white,
                           ),

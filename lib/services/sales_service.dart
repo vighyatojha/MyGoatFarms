@@ -861,12 +861,41 @@ class SalesService {
       throw ArgumentError('Enter the selling price.');
     }
 
+    // ---------------------------------------------------------------
+    // EXCESS VALIDATION
+    // ---------------------------------------------------------------
+    //
+    // For a Deliver Now lot sale, extra money is:
+    //
+    //   Amount Received - Customer Total
+    //
+    // When there is an excess, the UI must have already selected either:
+    //
+    //   1. Add to customer Advance
+    //   2. Return to customer
+    //
+    // No choice is required when there is no excess.
+    final excess = SaleDraft.round2(draft.extraReceivedDeliverNow);
+
+    if (excess > 0 && draft.excessAction == null) {
+      throw StateError(
+        'The customer paid ₹${excess.toStringAsFixed(2)} more than '
+            'the amount due. Choose whether to add the extra amount to '
+            'the customer Advance or return it to the customer.',
+      );
+    }
+
     // Not `late final`: Firestore may re-run the closure on contention.
     String saleId = '';
 
     await _db.runTransaction((transaction) async {
       // ---------------------------------------------------------------
       // 1. READS — lot first, then the sale counter.
+      //
+      // IMPORTANT:
+      // Every transaction read must happen before the first transaction
+      // write. This is especially important for the excess-to-advance
+      // customer check below.
       // ---------------------------------------------------------------
 
       final lotRef = _tradingPurchases(farmId).doc(draft.lotDocId);
@@ -897,12 +926,36 @@ class SalesService {
       }
 
       final costPerGoat = lot.lotCostPerGoat;
-      final costOfGoodsSold = SaleDraft.round2(costPerGoat * quantity);
+      final costOfGoodsSold =
+      SaleDraft.round2(costPerGoat * quantity);
 
-      final saleNumber = await _readNextSaleNumber(transaction, farmId);
+      final saleNumber = await _readNextSaleNumber(
+        transaction,
+        farmId,
+      );
 
       // ---------------------------------------------------------------
-      // 2. WRITES — customer.
+      // 1a. CUSTOMER READ / VALIDATION
+      // ---------------------------------------------------------------
+      //
+      // `_checkExcessInTransaction()` performs a transaction read when
+      // the selected action is "carry to advance".
+      //
+      // This MUST happen before any customer/sale/lot/summary write.
+      //
+      // For a brand-new customer, the customer document does not exist
+      // yet, so the helper correctly rejects "Add to Advance" and asks
+      // the user to choose "Return to customer".
+      await _checkExcessInTransaction(
+        transaction: transaction,
+        farmId: farmId,
+        customerId: draft.customerId,
+        excess: excess,
+        action: draft.excessAction ?? ExcessAction.refundToCustomer,
+      );
+
+      // ---------------------------------------------------------------
+      // 2. CUSTOMER
       // ---------------------------------------------------------------
 
       String customerId = draft.customerId;
@@ -926,20 +979,28 @@ class SalesService {
 
         customerId = customerRef.id;
       } else if (draft.customerSource == CustomerMatchSource.sale) {
-        transaction.update(_customers(farmId).doc(draft.customerId), {
-          'name': draft.customerName.trim(),
-          'address': draft.address.trim(),
-          'totalPurchases': FieldValue.increment(1),
-          'updatedAt': FieldValue.serverTimestamp(),
-        });
+        transaction.update(
+          _customers(farmId).doc(draft.customerId),
+          {
+            'name': draft.customerName.trim(),
+            'address': draft.address.trim(),
+            'totalPurchases': FieldValue.increment(1),
+            'updatedAt': FieldValue.serverTimestamp(),
+          },
+        );
       }
 
       // ---------------------------------------------------------------
-      // 3. Sale doc — no goat ids, a lot reference and quantity instead.
+      // 3. SALE DOCUMENT
       // ---------------------------------------------------------------
 
       saleId = _formatSaleId(saleNumber);
-      _writeSaleCounter(transaction, farmId, saleNumber);
+
+      _writeSaleCounter(
+        transaction,
+        farmId,
+        saleNumber,
+      );
 
       final sale = Sale(
         id: saleId,
@@ -954,71 +1015,135 @@ class SalesService {
         address: draft.address.trim(),
         sellingPricePerKg: draft.effectivePricePerKg,
         pricingMode: draft.pricingMode,
-        fixedSalePrice: draft.isFixedPrice ? draft.fixedSalePrice : null,
+        fixedSalePrice:
+        draft.isFixedPrice ? draft.fixedSalePrice : null,
         sellingWeight: draft.totalSellingWeight,
         totalSaleAmount: draft.totalSaleAmount,
         discount: draft.appliedDiscount,
         deliveryType: Sale.deliveryTypeDeliverNow,
         status: Sale.statusSold,
-        transportCost: draft.transportCost > 0 ? draft.transportCost : null,
+        transportCost:
+        draft.transportCost > 0 ? draft.transportCost : null,
         amountReceived: draft.amountReceived,
         paymentMethod: draft.paymentMethod,
         paymentStatus: draft.paymentStatusDeliverNow,
-        onCredit: draft.onCredit && draft.remainingBalanceDeliverNow > 0,
+
+        // Only a credit sale if something is really left unpaid.
+        onCredit:
+        draft.onCredit &&
+            draft.remainingBalanceDeliverNow > 0,
       );
 
-      transaction.set(_sales(farmId).doc(saleId), {
-        ...sale.toMap(),
-        'createdAt': FieldValue.serverTimestamp(),
-      });
+      transaction.set(
+        _sales(farmId).doc(saleId),
+        {
+          ...sale.toMap(),
+          'createdAt': FieldValue.serverTimestamp(),
+
+          // Store the chosen excess action/result directly on the sale
+          // so the receipt/history can understand what happened.
+          if (excess > 0 &&
+              draft.excessAction == ExcessAction.carryToAdvance)
+            'excessToAdvance': excess,
+
+          if (excess > 0 &&
+              draft.excessAction == ExcessAction.refundToCustomer)
+            'excessRefunded': excess,
+        },
+      );
 
       // ---------------------------------------------------------------
-      // 4. Lot quantities. `pendingCount` mirrors farmQty for lots, so a
-      //    farm sale lowers it too. When a supplier sale leaves nothing at
-      //    the supplier and something has already arrived, every goat is
-      //    accounted for and receiving is complete.
+      // 4. LOT QUANTITIES
+      // ---------------------------------------------------------------
+      //
+      // `pendingCount` mirrors farmQty for lots, so a farm sale lowers
+      // it too.
+      //
+      // Supplier sales never entered farm stock, therefore they only
+      // increase soldFromSupplierQty.
       // ---------------------------------------------------------------
 
       final supplierAfter =
-      fromSupplier ? lot.supplierQty - quantity : lot.supplierQty;
+      fromSupplier
+          ? lot.supplierQty - quantity
+          : lot.supplierQty;
 
       final lotUpdate = <String, dynamic>{
         if (fromSupplier)
-          'soldFromSupplierQty': FieldValue.increment(quantity)
-        else ...{
-          'soldFromFarmQty': FieldValue.increment(quantity),
-          'pendingCount': FieldValue.increment(-quantity),
-        },
-        if (fromSupplier && supplierAfter <= 0 && lot.receivedTotalQty > 0)
+          'soldFromSupplierQty':
+          FieldValue.increment(quantity)
+        else
+          ...{
+            'soldFromFarmQty':
+            FieldValue.increment(quantity),
+            'pendingCount':
+            FieldValue.increment(-quantity),
+          },
+
+        if (fromSupplier &&
+            supplierAfter <= 0 &&
+            lot.receivedTotalQty > 0)
           'receivingStatus': 'completed',
+
         'updatedAt': FieldValue.serverTimestamp(),
       };
 
-      transaction.update(lotRef, lotUpdate);
+      transaction.update(
+        lotRef,
+        lotUpdate,
+      );
 
       // ---------------------------------------------------------------
-      // 5. Dashboard aggregate. Goats sold at the supplier were never
-      //    counted in stock (stock is added when goats arrive), so only a
-      //    farm sale lowers totalStock / pendingRegistrations.
+      // 5. DASHBOARD AGGREGATE
+      // ---------------------------------------------------------------
+      //
+      // Supplier-sale goats were never counted in farm stock.
+      // Farm-sale goats were counted, so they reduce stock and pending
+      // registrations.
+      //
+      // Profit is based on the full goat sale value minus the lot's
+      // cost of goods sold. Transport and excess customer money are
+      // NOT included as revenue.
       // ---------------------------------------------------------------
 
       transaction.set(
         _summaryDoc(farmId),
         {
-          if (!fromSupplier) ...{
-            'totalStock': FieldValue.increment(-quantity),
-            'pendingRegistrations': FieldValue.increment(-quantity),
-          },
-          'totalSold': FieldValue.increment(quantity),
-          'totalProfit': FieldValue.increment(
-            SaleDraft.round2(draft.totalSaleAmount - costOfGoodsSold),
+          if (!fromSupplier)
+            ...{
+              'totalStock':
+              FieldValue.increment(-quantity),
+              'pendingRegistrations':
+              FieldValue.increment(-quantity),
+            },
+
+          'totalSold':
+          FieldValue.increment(quantity),
+
+          'totalProfit':
+          FieldValue.increment(
+            SaleDraft.round2(
+              draft.totalSaleAmount -
+                  costOfGoodsSold,
+            ),
           ),
         },
         SetOptions(merge: true),
       );
 
       // ---------------------------------------------------------------
-      // 6. Finance revenue for the money received now (never transport).
+      // 6. FINANCE — SOLD GOAT REVENUE
+      // ---------------------------------------------------------------
+      //
+      // Only the amount received that belongs to the actual goat sale
+      // is revenue.
+      //
+      // Transportation is deliberately excluded.
+      //
+      // IMPORTANT:
+      // The excess is NOT passed separately into revenue. Therefore,
+      // money carried to customer advance or refunded cannot be counted
+      // twice as farm revenue.
       // ---------------------------------------------------------------
 
       _writeInitialRevenueInTransaction(
@@ -1029,9 +1154,47 @@ class SalesService {
         revenueTotal: draft.totalSaleAmount,
         date: DateTime.now(),
         customerName: draft.customerName,
-        paymentMethod: _methodOrOther(draft.paymentMethod),
+        paymentMethod: _methodOrOther(
+          draft.paymentMethod,
+        ),
         lotId: draft.lotDocId,
         customerId: customerId,
+      );
+
+      // ---------------------------------------------------------------
+      // 7. EXCESS MONEY
+      // ---------------------------------------------------------------
+      //
+      // This is deliberately written AFTER all required reads and after
+      // the sale/customer/lot writes have been prepared.
+      //
+      // carryToAdvance:
+      //   customers/{customerId}.advanceBalance += excess
+      //   customers/{customerId}/advanceEntries/sale_{saleId}
+      //
+      // refundToCustomer:
+      //   transactions/sale_{saleId}_refund
+      //   isIncome = false
+      //   category = Customer Refund
+      //
+      // Both use deterministic document IDs, so a retried transaction
+      // cannot create duplicate history rows.
+      // ---------------------------------------------------------------
+
+      _writeExcessInTransaction(
+        transaction: transaction,
+        farmId: farmId,
+        saleId: saleId,
+        customerId: customerId,
+        customerName: draft.customerName,
+        excess: excess,
+        action:
+        draft.excessAction ??
+            ExcessAction.refundToCustomer,
+        method: _paymentMethodOrCash(
+          draft.paymentMethod,
+        ),
+        when: DateTime.now(),
       );
     }).timeout(_timeout * 2);
 

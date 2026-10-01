@@ -6,6 +6,7 @@ import '../../../app_theme.dart';
 import '../../../models/expense_categories.dart';
 import '../../../models/sale_draft.dart';
 import '../../../models/sale_model.dart';
+import '../../../models/sale_settlement.dart';
 import '../purchase_goats/purchase_wizard_widgets.dart';
 
 /// Step 5 — Delivery Options (the branch).
@@ -30,9 +31,18 @@ import '../purchase_goats/purchase_wizard_widgets.dart';
 ///
 /// SELL ON CREDIT: every branch has a "Sell on Credit" switch. The unpaid
 /// part of the sale becomes the customer's outstanding balance (see
-/// [SaleDraft.onCredit]). Deliver Now and Transfer to Palai require the
-/// full amount unless it is on; Booking and Wait for Delivery keep the
+/// [SaleDraft.onCredit]). Deliver Now and Transfer to Palai require
+/// the full amount unless it is on; Booking and Wait for Delivery keep the
 /// choice and the balance left after delivery is the credit.
+///
+/// LOT EXCESS PAYMENT:
+/// When a Sell From Lot delivery receives more than the final customer
+/// total, the user MUST choose exactly one action:
+///  - Add the excess to the customer's Advance
+///  - Return the excess to the customer
+///
+/// The two choices are displayed as checkboxes but behave mutually
+/// exclusively, so only one can be selected at a time.
 ///
 /// Exposes [validate] via its State (same pattern as earlier steps) so
 /// the wizard's Save action can block until the selected branch's
@@ -107,6 +117,7 @@ class Step5DeliveryOptionsState extends State<Step5DeliveryOptions> {
     _transportCostController = TextEditingController(
       text: _trimZero(draft.transportCost),
     );
+
     _amountReceivedController = TextEditingController(
       text: _trimZero(draft.amountReceived),
     );
@@ -114,6 +125,7 @@ class Step5DeliveryOptionsState extends State<Step5DeliveryOptions> {
     _bookingAmountController = TextEditingController(
       text: _trimZero(draft.bookingAmount),
     );
+
     _holdingChargePerDayController = TextEditingController(
       text: _trimZero(draft.holdingChargePerDay),
     );
@@ -125,6 +137,7 @@ class Step5DeliveryOptionsState extends State<Step5DeliveryOptions> {
     _monthlyChargeController = TextEditingController(
       text: _trimZero(draft.monthlyPalaiCharge),
     );
+
     _palaiAmountReceivedController = TextEditingController(
       text: _trimZero(draft.palaiAmountReceived),
     );
@@ -147,16 +160,6 @@ class Step5DeliveryOptionsState extends State<Step5DeliveryOptions> {
   // ===========================================================================
   // LOT SALES — which options are offered
   // ===========================================================================
-  //
-  // A sale made from a Purchase Lot uses this same step, but:
-  //  - stock still AT THE SUPPLIER can only be Deliver Now (there is
-  //    nothing at the farm to hold or to wait for), so no picker is shown
-  //    and the Deliver Now form opens directly;
-  //  - stock at the farm can be Deliver Now, Booking or Wait for Delivery;
-  //  - Transfer to Palai is not a branch of this form for a lot — goats
-  //    reach Palai through the lot's own transfer wizard, which registers
-  //    them. At the farm the card is shown and hands over to it through
-  //    [Step5DeliveryOptions.onTransferToPalai].
 
   bool get _isLot => widget.draft.isLotSale;
 
@@ -168,9 +171,7 @@ class Step5DeliveryOptionsState extends State<Step5DeliveryOptions> {
   bool get _offersPalai => !_isLot || widget.palaiOnly;
 
   /// A lot sale at the farm shows a Transfer to Palai card that hands
-  /// over to the lot's own Palai transfer wizard (see
-  /// [Step5DeliveryOptions.onTransferToPalai]). It is never a branch
-  /// of this form, so [_isAllowed] is unchanged.
+  /// over to the lot's own Palai transfer wizard.
   bool get _showsLotPalaiCard =>
       _isLot &&
           !_fromSupplier &&
@@ -180,23 +181,27 @@ class Step5DeliveryOptionsState extends State<Step5DeliveryOptions> {
   /// Whether [type] may be used for this sale.
   bool _isAllowed(String type) {
     // Palai-only (lot -> Customer Palai transfer): nothing else is valid.
-    if (widget.palaiOnly) return type == Sale.deliveryTypePalai;
+    if (widget.palaiOnly) {
+      return type == Sale.deliveryTypePalai;
+    }
 
-    if (type == Sale.deliveryTypeDeliverNow) return true;
+    if (type == Sale.deliveryTypeDeliverNow) {
+      return true;
+    }
 
     if (type == Sale.deliveryTypeBooking ||
         type == Sale.deliveryTypeWaitForDelivery) {
       return _offersHolding;
     }
 
-    if (type == Sale.deliveryTypePalai) return _offersPalai;
+    if (type == Sale.deliveryTypePalai) {
+      return _offersPalai;
+    }
 
     return false;
   }
 
-  /// Drops a choice the current lot source no longer allows (the person
-  /// went back and switched the source from farm to supplier), and
-  /// pre-selects Deliver Now when it is the only option.
+  /// Drops a choice the current lot source no longer allows.
   void _settleLotDeliveryType() {
     if (!_isLot) return;
 
@@ -210,7 +215,8 @@ class Step5DeliveryOptionsState extends State<Step5DeliveryOptions> {
       return;
     }
 
-    if (draft.deliveryType.isNotEmpty && !_isAllowed(draft.deliveryType)) {
+    if (draft.deliveryType.isNotEmpty &&
+        !_isAllowed(draft.deliveryType)) {
       draft.onCredit = false;
       draft.deliveryType = '';
     }
@@ -219,8 +225,8 @@ class Step5DeliveryOptionsState extends State<Step5DeliveryOptions> {
   String _theGoats(SaleDraft draft) =>
       draft.saleGoatCount > 1 ? 'the goats' : 'the goat';
 
-  /// 'are' / 'is' to follow [_theGoats].
-  String _isAre(SaleDraft draft) => draft.saleGoatCount > 1 ? 'are' : 'is';
+  String _isAre(SaleDraft draft) =>
+      draft.saleGoatCount > 1 ? 'are' : 'is';
 
   @override
   void dispose() {
@@ -237,10 +243,6 @@ class Step5DeliveryOptionsState extends State<Step5DeliveryOptions> {
   // ===========================================================================
   // LIVE SYNC — controllers -> draft
   // ===========================================================================
-  //
-  // The summary cards below read `draft.*` getters. The draft therefore
-  // has to be updated as the person types, not only when Save is pressed —
-  // otherwise every "live" figure stays frozen at its old value.
 
   double _money(TextEditingController controller) =>
       double.tryParse(controller.text.trim()) ?? 0;
@@ -250,6 +252,16 @@ class Step5DeliveryOptionsState extends State<Step5DeliveryOptions> {
 
     draft.transportCost = _money(_transportCostController);
     draft.amountReceived = _money(_amountReceivedController);
+
+    // An excess action only makes sense while there is actually
+    // an excess amount.
+    //
+    // If the user previously selected Advance/Refund and then reduces
+    // Amount Received so that there is no longer an excess, clear the
+    // old selection.
+    if (!_isLot || draft.extraReceivedDeliverNow <= 0) {
+      draft.clearExcessAction();
+    }
   }
 
   void _syncBooking() {
@@ -273,7 +285,7 @@ class Step5DeliveryOptionsState extends State<Step5DeliveryOptions> {
   }
 
   // ===========================================================================
-  // VALIDATE (called by the wizard's Save button)
+  // VALIDATE
   // ===========================================================================
 
   bool validate() {
@@ -302,16 +314,36 @@ class Step5DeliveryOptionsState extends State<Step5DeliveryOptions> {
     }
 
     if (draft.isDeliverNow) {
-      final valid = _deliverNowFormKey.currentState?.validate() ?? false;
+      final valid =
+          _deliverNowFormKey.currentState?.validate() ?? false;
+
       if (!valid) return false;
 
       _syncDeliverNow();
+
+      // IMPORTANT:
+      // Sell From Lot allows the customer to have paid more than
+      // the final customer total, but the user must explicitly
+      // decide what happens to that excess.
+      if (_isLot && draft.extraReceivedDeliverNow > 0) {
+        if (!draft.hasExcessActionSelected) {
+          wizardSnack(
+            context,
+            'Choose what to do with the remaining '
+                '${_currency(draft.extraReceivedDeliverNow)}.',
+            error: true,
+          );
+          return false;
+        }
+      }
 
       return true;
     }
 
     if (draft.isBooking) {
-      final valid = _bookingFormKey.currentState?.validate() ?? false;
+      final valid =
+          _bookingFormKey.currentState?.validate() ?? false;
+
       if (!valid) return false;
 
       _syncBooking();
@@ -322,6 +354,7 @@ class Step5DeliveryOptionsState extends State<Step5DeliveryOptions> {
     if (draft.isWaitForDelivery) {
       final valid =
           _waitForDeliveryFormKey.currentState?.validate() ?? false;
+
       if (!valid) return false;
 
       _syncWaitForDelivery();
@@ -330,7 +363,9 @@ class Step5DeliveryOptionsState extends State<Step5DeliveryOptions> {
     }
 
     if (draft.isPalaiTransfer) {
-      final valid = _palaiFormKey.currentState?.validate() ?? false;
+      final valid =
+          _palaiFormKey.currentState?.validate() ?? false;
+
       if (!valid) return false;
 
       _syncPalai();
@@ -366,13 +401,15 @@ class Step5DeliveryOptionsState extends State<Step5DeliveryOptions> {
 
     // The person may have gone back and switched the lot source to the
     // supplier — keep the draft on its only valid option.
-    if (_fromSupplier && draft.deliveryType != Sale.deliveryTypeDeliverNow) {
+    if (_fromSupplier &&
+        draft.deliveryType != Sale.deliveryTypeDeliverNow) {
       draft.onCredit = false;
       draft.deliveryType = Sale.deliveryTypeDeliverNow;
     }
 
     return ListView(
-      keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+      keyboardDismissBehavior:
+      ScrollViewKeyboardDismissBehavior.onDrag,
       padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
       children: [
         if (widget.palaiOnly) ...[
@@ -380,7 +417,10 @@ class Step5DeliveryOptionsState extends State<Step5DeliveryOptions> {
             draft.saleGoatCount > 1
                 ? 'Palai transfer for ${draft.saleGoatCount} goats'
                 : 'Palai transfer',
-            style: AppTheme.heading(size: 14, color: AppColors.textDark),
+            style: AppTheme.heading(
+              size: 14,
+              color: AppColors.textDark,
+            ),
           ),
           const SizedBox(height: 4),
           Text(
@@ -388,8 +428,8 @@ class Step5DeliveryOptionsState extends State<Step5DeliveryOptions> {
             style: AppTheme.body(size: 12),
           ),
         ] else if (_fromSupplier) ...[
-          // Goats still at the supplier can only be handed over now, so
-          // there is nothing to choose — go straight to the form.
+          // Goats still at the supplier can only be handed over now,
+          // so there is nothing to choose — go straight to the form.
         ] else ...[
           Text(
             _isLot
@@ -397,7 +437,10 @@ class Step5DeliveryOptionsState extends State<Step5DeliveryOptions> {
                 : draft.saleGoatCount > 1
                 ? 'How are these goats leaving the farm?'
                 : 'How is this goat leaving the farm?',
-            style: AppTheme.heading(size: 14, color: AppColors.textDark),
+            style: AppTheme.heading(
+              size: 14,
+              color: AppColors.textDark,
+            ),
           ),
           const SizedBox(height: 12),
 
@@ -405,57 +448,75 @@ class Step5DeliveryOptionsState extends State<Step5DeliveryOptions> {
             title: 'Deliver Now',
             subtitle: 'Handed over today, paid on the spot',
             icon: Icons.local_shipping_outlined,
-            selected: draft.deliveryType == Sale.deliveryTypeDeliverNow,
-            onTap: () => _selectBranch(Sale.deliveryTypeDeliverNow),
+            selected:
+            draft.deliveryType == Sale.deliveryTypeDeliverNow,
+            onTap: () =>
+                _selectBranch(Sale.deliveryTypeDeliverNow),
           ),
+
           if (_offersHolding) ...[
             const SizedBox(height: 10),
             _BranchCard(
               title: 'Booking / Holding',
-              subtitle: 'Held here after payment, picked up later',
+              subtitle:
+              'Held here after payment, picked up later',
               icon: Icons.bookmark_outline_rounded,
-              selected: draft.deliveryType == Sale.deliveryTypeBooking,
-              onTap: () => _selectBranch(Sale.deliveryTypeBooking),
+              selected:
+              draft.deliveryType == Sale.deliveryTypeBooking,
+              onTap: () =>
+                  _selectBranch(Sale.deliveryTypeBooking),
             ),
             const SizedBox(height: 10),
             _BranchCard(
               title: 'Wait for Delivery',
-              subtitle: 'Booked now at today\'s rate, weighed at pickup',
+              subtitle:
+              'Booked now at today\'s rate, weighed at pickup',
               icon: Icons.schedule_outlined,
-              selected: draft.deliveryType == Sale.deliveryTypeWaitForDelivery,
-              onTap: () => _selectBranch(Sale.deliveryTypeWaitForDelivery),
+              selected: draft.deliveryType ==
+                  Sale.deliveryTypeWaitForDelivery,
+              onTap: () => _selectBranch(
+                Sale.deliveryTypeWaitForDelivery,
+              ),
             ),
           ],
+
           if (_offersPalai || _showsLotPalaiCard) ...[
             const SizedBox(height: 10),
             _BranchCard(
               title: 'Transfer to Palai',
-              subtitle: 'Customer keeps boarding ${_theGoats(draft)} here',
+              subtitle:
+              'Customer keeps boarding ${_theGoats(draft)} here',
               icon: Icons.holiday_village_outlined,
-              selected: draft.deliveryType == Sale.deliveryTypePalai,
+              selected:
+              draft.deliveryType == Sale.deliveryTypePalai,
               onTap: _showsLotPalaiCard
                   ? widget.onTransferToPalai!
-                  : () => _selectBranch(Sale.deliveryTypePalai),
+                  : () =>
+                  _selectBranch(Sale.deliveryTypePalai),
             ),
           ],
-        ], // end of the non-palaiOnly branch picker
+        ],
+
         SizedBox(height: _fromSupplier ? 4 : 18),
 
-        if (draft.isDeliverNow) _buildDeliverNowForm(draft),
-        if (draft.isBooking) _buildBookingForm(draft),
-        if (draft.isWaitForDelivery) _buildWaitForDeliveryForm(draft),
-        if (draft.isPalaiTransfer) _buildPalaiTransferForm(draft),
+        if (draft.isDeliverNow)
+          _buildDeliverNowForm(draft),
+
+        if (draft.isBooking)
+          _buildBookingForm(draft),
+
+        if (draft.isWaitForDelivery)
+          _buildWaitForDeliveryForm(draft),
+
+        if (draft.isPalaiTransfer)
+          _buildPalaiTransferForm(draft),
       ],
     );
   }
 
-  // ---------------------------------------------------------------------------
-  // SELL ON CREDIT (shared by all four branches)
-  // ---------------------------------------------------------------------------
-  //
-  // Same look as the "Buy on Credit" switch in the stock screens. Only one
-  // branch's form is on screen at a time, so they all share
-  // [SaleDraft.onCredit].
+  // ===========================================================================
+  // SELL ON CREDIT
+  // ===========================================================================
 
   Widget _creditSwitch(
       SaleDraft draft, {
@@ -463,7 +524,10 @@ class Step5DeliveryOptionsState extends State<Step5DeliveryOptions> {
         required String offText,
       }) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+      padding: const EdgeInsets.symmetric(
+        horizontal: 12,
+        vertical: 4,
+      ),
       decoration: BoxDecoration(
         color: draft.onCredit
             ? AppColors.error.withValues(alpha: 0.06)
@@ -508,16 +572,9 @@ class Step5DeliveryOptionsState extends State<Step5DeliveryOptions> {
     );
   }
 
-  // ---------------------------------------------------------------------------
-  // PAYMENT METHOD (shared by Deliver Now, Booking, Wait for Delivery and
-  // Transfer to Palai)
-  // ---------------------------------------------------------------------------
-  //
-  // How the money taken now is being paid. It is saved on the sale and
-  // becomes the payment method of the Sold Goat Revenue entry for that
-  // money, which is what keeps the Finance Cash / Online tracker right.
-  // Only one branch's form is on screen at a time, so they all share
-  // [SaleDraft.paymentMethod].
+  // ===========================================================================
+  // PAYMENT METHOD
+  // ===========================================================================
 
   Widget _paymentMethodPicker(SaleDraft draft) {
     return Column(
@@ -546,14 +603,19 @@ class Step5DeliveryOptionsState extends State<Step5DeliveryOptions> {
                   draft.paymentMethod = method;
                 });
               },
-              selectedColor: AppColors.primaryGreen.withValues(alpha: 0.15),
+              selectedColor:
+              AppColors.primaryGreen.withValues(alpha: 0.15),
               labelStyle: TextStyle(
                 fontSize: 12,
                 fontWeight: FontWeight.w600,
-                color: selected ? AppColors.darkGreen : AppColors.textDark,
+                color: selected
+                    ? AppColors.darkGreen
+                    : AppColors.textDark,
               ),
               side: BorderSide(
-                color: selected ? AppColors.primaryGreen : AppColors.divider,
+                color: selected
+                    ? AppColors.primaryGreen
+                    : AppColors.divider,
               ),
             );
           }).toList(),
@@ -570,9 +632,176 @@ class Step5DeliveryOptionsState extends State<Step5DeliveryOptions> {
     );
   }
 
-  // ---------------------------------------------------------------------------
+  // ===========================================================================
+  // LOT EXCESS ACTION
+  // ===========================================================================
+
+  /// Shows the required choice when a Sell From Lot customer has paid
+  /// more than the final customer total.
+  ///
+  /// The controls intentionally use CheckboxListTile because the user
+  /// requested checkboxes, but the state is mutually exclusive:
+  /// selecting one automatically deselects the other.
+  Widget _buildLotExcessActionSelector(SaleDraft draft) {
+    final extra = draft.extraReceivedDeliverNow;
+
+    if (!_isLot || extra <= 0) {
+      return const SizedBox.shrink();
+    }
+
+    final selectedAction = draft.excessAction;
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.fromLTRB(
+        12,
+        12,
+        12,
+        8,
+      ),
+      decoration: BoxDecoration(
+        color: AppColors.warning.withValues(alpha: 0.07),
+        borderRadius: BorderRadius.circular(13),
+        border: Border.all(
+          color: AppColors.warning.withValues(alpha: 0.35),
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Icon(
+                Icons.account_balance_wallet_outlined,
+                size: 19,
+                color: AppColors.warning,
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment:
+                  CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Extra Amount Received',
+                      style: AppTheme.body(
+                        size: 12,
+                        color: AppColors.textDark,
+                        weight: FontWeight.w700,
+                      ),
+                    ),
+                    const SizedBox(height: 3),
+                    Text(
+                      '${_currency(extra)} was received above the '
+                          'final customer total. Select what should '
+                          'happen to this remaining amount.',
+                      style: AppTheme.body(
+                        size: 10,
+                        color: AppColors.textGrey,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+
+          const SizedBox(height: 8),
+
+          CheckboxListTile(
+            contentPadding: EdgeInsets.zero,
+            dense: true,
+            value:
+            selectedAction == ExcessAction.carryToAdvance,
+            controlAffinity:
+            ListTileControlAffinity.leading,
+            activeColor: AppColors.primaryGreen,
+            title: Text(
+              'Add remaining amount to customer Advance',
+              style: AppTheme.body(
+                size: 12,
+                color: AppColors.textDark,
+                weight: FontWeight.w600,
+              ),
+            ),
+            subtitle: Text(
+              '${_currency(extra)} will be added to '
+                  '${_buyer(draft)}\'s customer advance balance.',
+              style: AppTheme.body(
+                size: 10,
+                color: AppColors.textGrey,
+              ),
+            ),
+            onChanged: (value) {
+              if (value != true) return;
+
+              setState(() {
+                draft.excessAction =
+                    ExcessAction.carryToAdvance;
+              });
+            },
+          ),
+
+          CheckboxListTile(
+            contentPadding: EdgeInsets.zero,
+            dense: true,
+            value:
+            selectedAction == ExcessAction.refundToCustomer,
+            controlAffinity:
+            ListTileControlAffinity.leading,
+            activeColor: AppColors.primaryGreen,
+            title: Text(
+              'Return remaining amount to customer',
+              style: AppTheme.body(
+                size: 12,
+                color: AppColors.textDark,
+                weight: FontWeight.w600,
+              ),
+            ),
+            subtitle: Text(
+              '${_currency(extra)} will be recorded as money '
+                  'returned to ${_buyer(draft)}.',
+              style: AppTheme.body(
+                size: 10,
+                color: AppColors.textGrey,
+              ),
+            ),
+            onChanged: (value) {
+              if (value != true) return;
+
+              setState(() {
+                draft.excessAction =
+                    ExcessAction.refundToCustomer;
+              });
+            },
+          ),
+
+          if (selectedAction == null)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(
+                12,
+                2,
+                12,
+                4,
+              ),
+              child: Text(
+                'Please select one option before saving.',
+                style: AppTheme.body(
+                  size: 10,
+                  color: AppColors.error,
+                  weight: FontWeight.w600,
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  // ===========================================================================
   // BRANCH A — DELIVER NOW
-  // ---------------------------------------------------------------------------
+  // ===========================================================================
 
   Widget _buildDeliverNowForm(SaleDraft draft) {
     return Form(
@@ -590,7 +819,8 @@ class Step5DeliveryOptionsState extends State<Step5DeliveryOptions> {
                 icon: Icons.directions_car_outlined,
                 suffix: 'Added to bill',
                 optional: true,
-                keyboardType: const TextInputType.numberWithOptions(
+                keyboardType:
+                const TextInputType.numberWithOptions(
                   decimal: true,
                 ),
                 inputFormatters: [
@@ -598,28 +828,40 @@ class Step5DeliveryOptionsState extends State<Step5DeliveryOptions> {
                     RegExp(r'^\d*\.?\d{0,2}'),
                   ),
                 ],
-                onChanged: (_) => setState(_syncDeliverNow),
+                onChanged: (_) =>
+                    setState(_syncDeliverNow),
                 validator: (_) => null,
               ),
+
               const SizedBox(height: 14),
+
               _creditSwitch(
                 draft,
                 onText: 'Whatever is not paid now is added to '
                     '${_buyer(draft)}\'s outstanding balance.',
-                offText: 'Off — the full amount is received now.',
+                offText:
+                'Off — the full amount is received now.',
               ),
+
               const SizedBox(height: 14),
+
               wizardField(
                 controller: _amountReceivedController,
                 label: 'Amount Received',
                 optional: draft.onCredit,
                 helper: draft.onCredit
-                    ? 'Leave blank if nothing was received — the whole '
-                    'amount stays on credit'
+                    ? 'Leave blank if nothing was received — '
+                    'the whole amount stays on credit'
+                    : _isLot
+                    ? 'Enter the amount actually received. '
+                    'If it is more than the customer total, '
+                    'you will choose what happens to the '
+                    'remaining amount.'
                     : 'The full customer total must be received',
                 hint: '0.00',
                 icon: Icons.payments_outlined,
-                keyboardType: const TextInputType.numberWithOptions(
+                keyboardType:
+                const TextInputType.numberWithOptions(
                   decimal: true,
                 ),
                 inputFormatters: [
@@ -627,31 +869,46 @@ class Step5DeliveryOptionsState extends State<Step5DeliveryOptions> {
                     RegExp(r'^\d*\.?\d{0,2}'),
                   ),
                 ],
-                onChanged: (_) => setState(_syncDeliverNow),
+                onChanged: (_) =>
+                    setState(_syncDeliverNow),
                 validator: (value) {
                   final text = value?.trim() ?? '';
 
-                  // Blank counts as 0 (the draft reads it that way).
-                  final number = text.isEmpty ? 0.0 : double.tryParse(text);
+                  // Blank counts as 0.
+                  final number =
+                  text.isEmpty ? 0.0 : double.tryParse(text);
 
                   if (number == null || number < 0) {
                     return 'Enter a valid amount';
                   }
 
                   // Not on credit -> everything is paid now.
+                  //
+                  // IMPORTANT:
+                  // Do NOT reject an amount above the total.
+                  // For lot sales, an excess amount is allowed and
+                  // must be handled using the Advance/Refund choice.
                   if (!draft.onCredit &&
                       SaleDraft.round2(number) <
                           draft.customerTotalDeliverNow) {
                     return 'Enter the full '
-                        '${_currency(draft.customerTotalDeliverNow)}, or '
-                        'turn on Sell on Credit';
+                        '${_currency(draft.customerTotalDeliverNow)}, '
+                        'or turn on Sell on Credit';
                   }
 
                   return null;
                 },
               ),
+
               const SizedBox(height: 14),
+
               _paymentMethodPicker(draft),
+
+              if (_isLot &&
+                  draft.extraReceivedDeliverNow > 0) ...[
+                const SizedBox(height: 14),
+                _buildLotExcessActionSelector(draft),
+              ],
             ],
           ),
 
@@ -674,18 +931,22 @@ class Step5DeliveryOptionsState extends State<Step5DeliveryOptions> {
     }
   }
 
-  /// The customer name for messages, or "the customer" if not known.
   String _buyer(SaleDraft draft) {
     final name = draft.customerName.trim();
 
     return name.isEmpty ? 'the customer' : name;
   }
 
+  // ===========================================================================
+  // DELIVER NOW SUMMARY
+  // ===========================================================================
+
   Widget _buildDeliverNowSummary(SaleDraft draft) {
     final status = draft.paymentStatusDeliverNow;
     final extra = draft.extraReceivedDeliverNow;
     final remaining = draft.remainingBalanceDeliverNow;
-    final onCreditBalance = draft.onCredit && remaining > 0;
+    final onCreditBalance =
+        draft.onCredit && remaining > 0;
 
     return _buildSummaryCard(
       [
@@ -693,57 +954,87 @@ class Step5DeliveryOptionsState extends State<Step5DeliveryOptions> {
           'Goat Sale',
           _currency(draft.totalSaleAmount),
         ),
+
         if (draft.transportCost > 0)
           _SummaryRow(
             'Transportation',
             _currency(draft.transportCost),
           ),
+
         _SummaryRow(
           'Customer Total',
           _currency(draft.customerTotalDeliverNow),
         ),
+
         _SummaryRow(
           'Amount Received',
           _currency(draft.amountReceived),
         ),
+
         _SummaryRow(
-          onCreditBalance ? 'Outstanding (On Credit)' : 'Remaining Balance',
+          onCreditBalance
+              ? 'Outstanding (On Credit)'
+              : 'Remaining Balance',
           _currency(remaining),
           emphasized: true,
         ),
+
+        if (_isLot && extra > 0)
+          _SummaryRow(
+            'Extra Received',
+            _currency(extra),
+            emphasized: true,
+          ),
       ],
       title: 'Payment Summary',
-      statusLabel: onCreditBalance ? 'On Credit' : status,
+      statusLabel:
+      onCreditBalance ? 'On Credit' : status,
       statusColor: _statusColor(status),
       notes: [
         if (onCreditBalance)
           _SummaryNote(
-            '${_currency(remaining)} will be added to ${_buyer(draft)}\'s '
-                'outstanding balance. It shows in Finance under customers on '
-                'credit, where the payment can be received later.',
+            '${_currency(remaining)} will be added to '
+                '${_buyer(draft)}\'s outstanding balance. It shows '
+                'in Finance under customers on credit, where the '
+                'payment can be received later.',
             color: AppColors.warning,
-            icon: Icons.account_balance_wallet_outlined,
+            icon:
+            Icons.account_balance_wallet_outlined,
           ),
+
         if (!draft.onCredit && remaining > 0)
           _SummaryNote(
-            'The customer total is not fully received. Enter the full '
-                'amount, or turn on Sell on Credit to keep '
+            'The customer total is not fully received. Enter '
+                'the full amount, or turn on Sell on Credit to keep '
                 '${_currency(remaining)} as outstanding.',
             color: AppColors.warning,
             icon: Icons.warning_amber_rounded,
           ),
-        if (extra > 0)
+
+        if (extra > 0 && _isLot)
           _SummaryNote(
-            'You entered ${_currency(extra)} more than the customer '
-                'total. Check the amount received before saving.',
+            'The customer has paid ${_currency(extra)} more than '
+                'the final customer total. Select either '
+                '"Add remaining amount to customer Advance" or '
+                '"Return remaining amount to customer".',
+            color: AppColors.warning,
+            icon: Icons.info_outline_rounded,
+          ),
+
+        if (extra > 0 && !_isLot)
+          _SummaryNote(
+            'You entered ${_currency(extra)} more than the '
+                'customer total. Check the amount received before saving.',
             color: AppColors.warning,
             icon: Icons.warning_amber_rounded,
           ),
+
         if (draft.transportCost > 0)
           _SummaryNote(
-            'Transportation charge (${_currency(draft.transportCost)}) '
-                'is added to the customer\'s bill. It is not recorded as '
-                'a farm expense.',
+            'Transportation charge '
+                '(${_currency(draft.transportCost)}) is added to '
+                'the customer\'s bill. It is not recorded as a farm '
+                'expense.',
             color: AppColors.textGrey,
             icon: Icons.info_outline_rounded,
           ),
@@ -751,9 +1042,9 @@ class Step5DeliveryOptionsState extends State<Step5DeliveryOptions> {
     );
   }
 
-  // ---------------------------------------------------------------------------
+  // ===========================================================================
   // BRANCH B — BOOKING / HOLDING
-  // ---------------------------------------------------------------------------
+  // ===========================================================================
 
   Widget _buildBookingForm(SaleDraft draft) {
     return Form(
@@ -769,7 +1060,8 @@ class Step5DeliveryOptionsState extends State<Step5DeliveryOptions> {
                 label: 'Booking Amount',
                 hint: '0.00',
                 icon: Icons.payments_outlined,
-                keyboardType: const TextInputType.numberWithOptions(
+                keyboardType:
+                const TextInputType.numberWithOptions(
                   decimal: true,
                 ),
                 inputFormatters: [
@@ -777,9 +1069,11 @@ class Step5DeliveryOptionsState extends State<Step5DeliveryOptions> {
                     RegExp(r'^\d*\.?\d{0,2}'),
                   ),
                 ],
-                onChanged: (_) => setState(_syncBooking),
+                onChanged: (_) =>
+                    setState(_syncBooking),
                 validator: (value) {
-                  final number = double.tryParse(value?.trim() ?? '');
+                  final number =
+                  double.tryParse(value?.trim() ?? '');
 
                   if (number == null || number < 0) {
                     return 'Enter a valid amount';
@@ -788,25 +1082,35 @@ class Step5DeliveryOptionsState extends State<Step5DeliveryOptions> {
                   return null;
                 },
               ),
+
               const SizedBox(height: 14),
+
               _paymentMethodPicker(draft),
+
               const SizedBox(height: 14),
+
               _creditSwitch(
                 draft,
-                onText: '${_buyer(draft)} takes ${_theGoats(draft)} and pays the '
-                    'remaining balance later. What is unpaid after the '
-                    'delivery is added to their outstanding balance.',
-                offText: 'Off — the remaining balance is paid at pickup.',
+                onText: '${_buyer(draft)} takes ${_theGoats(draft)} '
+                    'and pays the remaining balance later. What is '
+                    'unpaid after the delivery is added to their '
+                    'outstanding balance.',
+                offText:
+                'Off — the remaining balance is paid at pickup.',
               ),
+
               const SizedBox(height: 14),
+
               wizardField(
-                controller: _holdingChargePerDayController,
+                controller:
+                _holdingChargePerDayController,
                 label: 'Holding Charge / Day',
                 optional: true,
                 hint: '0.00',
                 icon: Icons.currency_rupee_rounded,
                 suffix: '/ day',
-                keyboardType: const TextInputType.numberWithOptions(
+                keyboardType:
+                const TextInputType.numberWithOptions(
                   decimal: true,
                 ),
                 inputFormatters: [
@@ -814,11 +1118,11 @@ class Step5DeliveryOptionsState extends State<Step5DeliveryOptions> {
                     RegExp(r'^\d*\.?\d{0,2}'),
                   ),
                 ],
-                onChanged: (_) => setState(_syncBooking),
+                onChanged: (_) =>
+                    setState(_syncBooking),
                 validator: (value) {
                   final text = value?.trim() ?? '';
 
-                  // Blank counts as 0 (the draft reads it that way).
                   if (text.isEmpty) return null;
 
                   final number = double.tryParse(text);
@@ -858,36 +1162,43 @@ class Step5DeliveryOptionsState extends State<Step5DeliveryOptions> {
             ],
             title: 'Booking Summary',
             notes: [
-              if (draft.bookingAmount > draft.totalSaleAmount)
+              if (draft.bookingAmount >
+                  draft.totalSaleAmount)
                 _SummaryNote(
                   'The booking amount is more than the goat sale '
-                      '(${_currency(draft.totalSaleAmount)}). '
-                      'Check the amount before saving.',
+                      '(${_currency(draft.totalSaleAmount)}). Check '
+                      'the amount before saving.',
                   color: AppColors.warning,
                   icon: Icons.warning_amber_rounded,
                 ),
+
               if (draft.onCredit)
                 _SummaryNote(
-                  'On credit: the balance is worked out when the delivery '
-                      'is completed (goat sale + holding charges - booking '
-                      'amount). Whatever is unpaid then is added to '
-                      '${_buyer(draft)}\'s outstanding balance.',
+                  'On credit: the balance is worked out when the '
+                      'delivery is completed (goat sale + holding '
+                      'charges - booking amount). Whatever is unpaid '
+                      'then is added to ${_buyer(draft)}\'s outstanding '
+                      'balance.',
                   color: AppColors.warning,
-                  icon: Icons.account_balance_wallet_outlined,
+                  icon:
+                  Icons.account_balance_wallet_outlined,
                 ),
+
               _SummaryNote(
                 'Holding is counted from today until the day '
-                    '${_theGoats(draft)} ${_isAre(draft)} '
-                    'delivered, both days included (booked 20 Sept, '
-                    'delivered 23 Sept = 4 days). The holding charges are '
-                    'calculated and added when the delivery is completed.',
+                    '${_theGoats(draft)} ${_isAre(draft)} delivered, '
+                    'both days included (booked 20 Sept, delivered '
+                    '23 Sept = 4 days). The holding charges are '
+                    'calculated and added when the delivery is '
+                    'completed.',
                 color: AppColors.textGrey,
                 icon: Icons.info_outline_rounded,
               ),
+
               _SummaryNote(
-                'No receipt is generated now — this booking is only kept '
-                    'as a record. The receipt is generated when the '
-                    'delivery is completed.',
+                'No receipt is generated now — this booking is '
+                    'only kept as a record. The receipt is generated '
+                    'when the delivery is completed.',
                 color: AppColors.textGrey,
                 icon: Icons.receipt_long_outlined,
               ),
@@ -897,6 +1208,10 @@ class Step5DeliveryOptionsState extends State<Step5DeliveryOptions> {
       ),
     );
   }
+
+  // ===========================================================================
+  // SUMMARY CARD
+  // ===========================================================================
 
   Widget _buildSummaryCard(
       List<_SummaryRow> rows, {
@@ -911,10 +1226,13 @@ class Step5DeliveryOptionsState extends State<Step5DeliveryOptions> {
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: AppColors.divider),
+        border: Border.all(
+          color: AppColors.divider,
+        ),
       ),
       child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+        crossAxisAlignment:
+        CrossAxisAlignment.start,
         children: [
           if (title != null || statusLabel != null) ...[
             Row(
@@ -928,21 +1246,26 @@ class Step5DeliveryOptionsState extends State<Step5DeliveryOptions> {
                     ),
                   ),
                 ),
+
                 if (statusLabel != null)
                   Container(
-                    padding: const EdgeInsets.symmetric(
+                    padding:
+                    const EdgeInsets.symmetric(
                       horizontal: 10,
                       vertical: 5,
                     ),
                     decoration: BoxDecoration(
-                      color: (statusColor ?? AppColors.textGrey)
+                      color: (statusColor ??
+                          AppColors.textGrey)
                           .withValues(alpha: 0.10),
-                      borderRadius: BorderRadius.circular(20),
+                      borderRadius:
+                      BorderRadius.circular(20),
                     ),
                     child: Text(
                       statusLabel,
                       style: TextStyle(
-                        color: statusColor ?? AppColors.textGrey,
+                        color: statusColor ??
+                            AppColors.textGrey,
                         fontSize: 10,
                         fontWeight: FontWeight.w700,
                       ),
@@ -950,18 +1273,25 @@ class Step5DeliveryOptionsState extends State<Step5DeliveryOptions> {
                   ),
               ],
             ),
+
             const SizedBox(height: 10),
-            Divider(color: AppColors.divider, height: 1),
+
+            Divider(
+              color: AppColors.divider,
+              height: 1,
+            ),
+
             const SizedBox(height: 10),
           ],
+
           for (var i = 0; i < rows.length; i++) ...[
-            if (i > 0) const SizedBox(height: 8),
+            if (i > 0)
+              const SizedBox(height: 8),
+
             Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
+              crossAxisAlignment:
+              CrossAxisAlignment.start,
               children: [
-                // Expanded label: a long label such as
-                // "Holding Charges (5 days × ₹150.00)" wraps instead of
-                // overflowing the row.
                 Expanded(
                   child: Text(
                     rows[i].label,
@@ -976,7 +1306,9 @@ class Step5DeliveryOptionsState extends State<Step5DeliveryOptions> {
                     ),
                   ),
                 ),
+
                 const SizedBox(width: 12),
+
                 Text(
                   rows[i].value,
                   textAlign: TextAlign.right,
@@ -994,16 +1326,26 @@ class Step5DeliveryOptionsState extends State<Step5DeliveryOptions> {
               ],
             ),
           ],
+
           for (final note in notes) ...[
             const SizedBox(height: 10),
+
             Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
+              crossAxisAlignment:
+              CrossAxisAlignment.start,
               children: [
                 Padding(
-                  padding: const EdgeInsets.only(top: 1),
-                  child: Icon(note.icon, size: 14, color: note.color),
+                  padding:
+                  const EdgeInsets.only(top: 1),
+                  child: Icon(
+                    note.icon,
+                    size: 14,
+                    color: note.color,
+                  ),
                 ),
+
                 const SizedBox(width: 6),
+
                 Expanded(
                   child: Text(
                     note.text,
@@ -1021,9 +1363,9 @@ class Step5DeliveryOptionsState extends State<Step5DeliveryOptions> {
     );
   }
 
-  // ---------------------------------------------------------------------------
+  // ===========================================================================
   // BRANCH C — WAIT FOR DELIVERY
-  // ---------------------------------------------------------------------------
+  // ===========================================================================
 
   Widget _buildWaitForDeliveryForm(SaleDraft draft) {
     return Form(
@@ -1038,14 +1380,22 @@ class Step5DeliveryOptionsState extends State<Step5DeliveryOptions> {
                 width: double.infinity,
                 padding: const EdgeInsets.all(12),
                 decoration: BoxDecoration(
-                  color: AppColors.warning.withValues(alpha: 0.08),
-                  borderRadius: BorderRadius.circular(12),
+                  color:
+                  AppColors.warning.withValues(
+                    alpha: 0.08,
+                  ),
+                  borderRadius:
+                  BorderRadius.circular(12),
                   border: Border.all(
-                    color: AppColors.warning.withValues(alpha: 0.35),
+                    color:
+                    AppColors.warning.withValues(
+                      alpha: 0.35,
+                    ),
                   ),
                 ),
                 child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+                  crossAxisAlignment:
+                  CrossAxisAlignment.start,
                   children: [
                     Icon(
                       Icons.lock_clock_outlined,
@@ -1057,15 +1407,18 @@ class Step5DeliveryOptionsState extends State<Step5DeliveryOptions> {
                       child: Text(
                         draft.isFixedPrice
                             ? 'The fixed price of '
-                            '${_currency(draft.totalSaleAmount)} is locked in '
-                            'now. When this delivery is completed later, the '
-                            'pickup weight is only recorded — the amount '
-                            'stays the same, whatever ${_theGoats(draft)} '
+                            '${_currency(draft.totalSaleAmount)} '
+                            'is locked in now. When this delivery '
+                            'is completed later, the pickup weight '
+                            'is only recorded — the amount stays '
+                            'the same, whatever ${_theGoats(draft)} '
                             '${draft.saleGoatCount > 1 ? 'weigh' : 'weighs'}.'
-                            : 'Price/kg is locked in at ${_currency(draft.bookingPricePerKg)} '
-                            'now. When this delivery is completed later, use '
-                            'this same rate with the new pickup weight — '
-                            'never the market rate on that day.',
+                            : 'Price/kg is locked in at '
+                            '${_currency(draft.bookingPricePerKg)} '
+                            'now. When this delivery is completed '
+                            'later, use this same rate with the '
+                            'new pickup weight — never the market '
+                            'rate on that day.',
                         style: AppTheme.body(
                           size: 11,
                           color: AppColors.textDark,
@@ -1075,13 +1428,16 @@ class Step5DeliveryOptionsState extends State<Step5DeliveryOptions> {
                   ],
                 ),
               ),
+
               const SizedBox(height: 14),
+
               wizardField(
                 controller: _bookingAdvanceController,
                 label: 'Booking / Advance Amount',
                 hint: '0.00',
                 icon: Icons.payments_outlined,
-                keyboardType: const TextInputType.numberWithOptions(
+                keyboardType:
+                const TextInputType.numberWithOptions(
                   decimal: true,
                 ),
                 inputFormatters: [
@@ -1089,9 +1445,11 @@ class Step5DeliveryOptionsState extends State<Step5DeliveryOptions> {
                     RegExp(r'^\d*\.?\d{0,2}'),
                   ),
                 ],
-                onChanged: (_) => setState(_syncWaitForDelivery),
+                onChanged: (_) =>
+                    setState(_syncWaitForDelivery),
                 validator: (value) {
-                  final number = double.tryParse(value?.trim() ?? '');
+                  final number =
+                  double.tryParse(value?.trim() ?? '');
 
                   if (number == null || number < 0) {
                     return 'Enter a valid amount';
@@ -1100,15 +1458,21 @@ class Step5DeliveryOptionsState extends State<Step5DeliveryOptions> {
                   return null;
                 },
               ),
+
               const SizedBox(height: 14),
+
               _paymentMethodPicker(draft),
+
               const SizedBox(height: 14),
+
               _creditSwitch(
                 draft,
-                onText: '${_buyer(draft)} takes ${_theGoats(draft)} and pays the '
-                    'remaining balance later. What is unpaid after the '
-                    'pickup is added to their outstanding balance.',
-                offText: 'Off — the remaining balance is paid at pickup.',
+                onText: '${_buyer(draft)} takes ${_theGoats(draft)} '
+                    'and pays the remaining balance later. What is '
+                    'unpaid after the pickup is added to their '
+                    'outstanding balance.',
+                offText:
+                'Off — the remaining balance is paid at pickup.',
               ),
             ],
           ),
@@ -1119,8 +1483,11 @@ class Step5DeliveryOptionsState extends State<Step5DeliveryOptions> {
             [
               _SummaryRow(
                 'Booking Weight',
-                '${SaleDraft.formatWeight(draft.bookingWeightTotal)} kg',
+                '${SaleDraft.formatWeight(
+                  draft.bookingWeightTotal,
+                )} kg',
               ),
+
               if (draft.isFixedPrice)
                 _SummaryRow(
                   'Fixed Price',
@@ -1131,24 +1498,34 @@ class Step5DeliveryOptionsState extends State<Step5DeliveryOptions> {
                   'Booking Price/Kg',
                   _currency(draft.bookingPricePerKg),
                 ),
+
               if (!draft.isFixedPrice)
                 _SummaryRow(
                   'Goat Sale (Estimated)',
                   _currency(draft.totalSaleAmount),
                 ),
+
               _SummaryRow(
                 draft.isFixedPrice
                     ? 'Customer Total'
                     : 'Estimated Customer Total',
-                _currency(draft.customerTotalWaitForDelivery),
+                _currency(
+                  draft.customerTotalWaitForDelivery,
+                ),
               ),
+
               _SummaryRow(
                 'Advance Paid',
                 _currency(draft.bookingAdvanceAmount),
               ),
+
               _SummaryRow(
-                draft.isFixedPrice ? 'Remaining' : 'Estimated Remaining',
-                _currency(draft.remainingAdvanceBalanceWaitForDelivery),
+                draft.isFixedPrice
+                    ? 'Remaining'
+                    : 'Estimated Remaining',
+                _currency(
+                  draft.remainingAdvanceBalanceWaitForDelivery,
+                ),
                 emphasized: true,
               ),
             ],
@@ -1157,38 +1534,41 @@ class Step5DeliveryOptionsState extends State<Step5DeliveryOptions> {
               if (draft.bookingAdvanceAmount >
                   draft.customerTotalWaitForDelivery)
                 _SummaryNote(
-                  'The advance is more than the estimated customer total '
-                      '(${_currency(draft.customerTotalWaitForDelivery)}). '
-                      'Check the amount before saving.',
+                  'The advance is more than the estimated customer '
+                      'total (${_currency(
+                    draft.customerTotalWaitForDelivery,
+                  )}). Check the amount before saving.',
                   color: AppColors.warning,
                   icon: Icons.warning_amber_rounded,
                 ),
+
               if (draft.onCredit)
                 _SummaryNote(
                   'On credit: the final amount is worked out at pickup '
-                      '(${draft.isFixedPrice ? 'fixed price' : 'pickup weight × rate'}'
-                      ' - advance). Whatever is unpaid '
-                      'then is added to ${_buyer(draft)}\'s outstanding '
-                      'balance.',
+                      '(${draft.isFixedPrice ? 'fixed price' : 'pickup weight × rate'} '
+                      '- advance). Whatever is unpaid then is added to '
+                      '${_buyer(draft)}\'s outstanding balance.',
                   color: AppColors.warning,
-                  icon: Icons.account_balance_wallet_outlined,
+                  icon:
+                  Icons.account_balance_wallet_outlined,
                 ),
+
               _SummaryNote(
                 draft.isFixedPrice
                     ? 'The price is fixed. At pickup ${_theGoats(draft)} '
-                    '${_isAre(draft)} weighed '
-                    'again for the record, but the final amount is always: '
-                    'fixed price − advance.'
-                    : 'Estimated at today\'s weight. At pickup ${_theGoats(draft)} '
-                    '${_isAre(draft)} '
-                    'weighed again and the final amount is: pickup weight '
+                    '${_isAre(draft)} weighed again for the record, '
+                    'but the final amount is always: fixed price − advance.'
+                    : 'Estimated at today\'s weight. At pickup '
+                    '${_theGoats(draft)} ${_isAre(draft)} weighed '
+                    'again and the final amount is: pickup weight '
                     '× ${_currency(draft.bookingPricePerKg)}/kg − advance.',
                 color: AppColors.textGrey,
                 icon: Icons.info_outline_rounded,
               ),
+
               _SummaryNote(
-                'No receipt is generated now — this sale is only kept as '
-                    'a record. The receipt is generated when the delivery '
+                'No receipt is generated now — this sale is only kept '
+                    'as a record. The receipt is generated when the delivery '
                     'is completed.',
                 color: AppColors.textGrey,
                 icon: Icons.receipt_long_outlined,
@@ -1200,9 +1580,9 @@ class Step5DeliveryOptionsState extends State<Step5DeliveryOptions> {
     );
   }
 
-  // ---------------------------------------------------------------------------
+  // ===========================================================================
   // BRANCH D — TRANSFER TO PALAI
-  // ---------------------------------------------------------------------------
+  // ===========================================================================
 
   Widget _buildPalaiTransferForm(SaleDraft draft) {
     return Form(
@@ -1218,17 +1598,25 @@ class Step5DeliveryOptionsState extends State<Step5DeliveryOptions> {
                     '${draft.saleGoatCount > 1 ? 'these goats' : 'this goat'} '
                     'is handled by the Customer Palai module from here on — '
                     'this just captures the handoff.',
-                style: AppTheme.body(size: 11, color: AppColors.textGrey),
+                style: AppTheme.body(
+                  size: 11,
+                  color: AppColors.textGrey,
+                ),
               ),
+
               const SizedBox(height: 14),
 
               WizardDateField(
                 label: 'Transfer Date',
-                date: draft.transferDate ?? DateTime.now(),
+                date:
+                draft.transferDate ?? DateTime.now(),
                 onTap: () async {
-                  final picked = await showWizardDatePicker(
+                  final picked =
+                  await showWizardDatePicker(
                     context: context,
-                    initialDate: draft.transferDate ?? DateTime.now(),
+                    initialDate:
+                    draft.transferDate ??
+                        DateTime.now(),
                     firstDate: DateTime(2015),
                     lastDate: DateTime.now(),
                     helpText: 'Transfer date',
@@ -1264,7 +1652,8 @@ class Step5DeliveryOptionsState extends State<Step5DeliveryOptions> {
                 hint: '0.00',
                 icon: Icons.currency_rupee_rounded,
                 suffix: '/ month',
-                keyboardType: const TextInputType.numberWithOptions(
+                keyboardType:
+                const TextInputType.numberWithOptions(
                   decimal: true,
                 ),
                 inputFormatters: [
@@ -1274,7 +1663,8 @@ class Step5DeliveryOptionsState extends State<Step5DeliveryOptions> {
                 ],
                 onChanged: (_) => _syncPalai(),
                 validator: (value) {
-                  final number = double.tryParse(value?.trim() ?? '');
+                  final number =
+                  double.tryParse(value?.trim() ?? '');
 
                   if (number == null || number <= 0) {
                     return 'Enter a valid monthly charge';
@@ -1288,37 +1678,47 @@ class Step5DeliveryOptionsState extends State<Step5DeliveryOptions> {
 
           const SizedBox(height: 12),
 
-          // The goat itself is being sold to the customer too, at the
-          // price from Step 4, so what was paid for it is captured here.
           WizardSectionCard(
             title: 'Goat Price Payment',
             icon: Icons.payments_outlined,
             children: [
               Text(
-                '${draft.saleGoatCount > 1 ? 'The goats are' : 'The goat is'} sold to the customer at ${_currency(draft.totalSaleAmount)} '
+                '${draft.saleGoatCount > 1 ? 'The goats are' : 'The goat is'} '
+                    'sold to the customer at '
+                    '${_currency(draft.totalSaleAmount)} '
                     '(from the sale details). This is separate from the '
                     'monthly Palai charge above.',
-                style: AppTheme.body(size: 11, color: AppColors.textGrey),
+                style: AppTheme.body(
+                  size: 11,
+                  color: AppColors.textGrey,
+                ),
               ),
+
               const SizedBox(height: 14),
+
               _creditSwitch(
                 draft,
                 onText: 'Whatever is not paid now is added to '
                     '${_buyer(draft)}\'s outstanding balance.',
-                offText: 'Off — the full goat price is received now.',
+                offText:
+                'Off — the full goat price is received now.',
               ),
+
               const SizedBox(height: 14),
+
               wizardField(
-                controller: _palaiAmountReceivedController,
+                controller:
+                _palaiAmountReceivedController,
                 label: 'Amount Received',
                 optional: draft.onCredit,
                 helper: draft.onCredit
-                    ? 'Leave blank if nothing was received — the whole '
-                    'goat price stays on credit'
+                    ? 'Leave blank if nothing was received — '
+                    'the whole goat price stays on credit'
                     : 'The full goat price must be received',
                 hint: '0.00',
                 icon: Icons.payments_outlined,
-                keyboardType: const TextInputType.numberWithOptions(
+                keyboardType:
+                const TextInputType.numberWithOptions(
                   decimal: true,
                 ),
                 inputFormatters: [
@@ -1326,29 +1726,34 @@ class Step5DeliveryOptionsState extends State<Step5DeliveryOptions> {
                     RegExp(r'^\d*\.?\d{0,2}'),
                   ),
                 ],
-                onChanged: (_) => setState(_syncPalai),
+                onChanged: (_) =>
+                    setState(_syncPalai),
                 validator: (value) {
                   final text = value?.trim() ?? '';
 
-                  // Blank counts as 0 (the draft reads it that way).
-                  final number = text.isEmpty ? 0.0 : double.tryParse(text);
+                  final number =
+                  text.isEmpty
+                      ? 0.0
+                      : double.tryParse(text);
 
                   if (number == null || number < 0) {
                     return 'Enter a valid amount';
                   }
 
-                  // Not on credit -> the whole goat price is paid now.
                   if (!draft.onCredit &&
-                      SaleDraft.round2(number) < draft.customerTotalPalai) {
+                      SaleDraft.round2(number) <
+                          draft.customerTotalPalai) {
                     return 'Enter the full '
-                        '${_currency(draft.customerTotalPalai)}, or turn on '
-                        'Sell on Credit';
+                        '${_currency(draft.customerTotalPalai)}, '
+                        'or turn on Sell on Credit';
                   }
 
                   return null;
                 },
               ),
+
               const SizedBox(height: 14),
+
               _paymentMethodPicker(draft),
             ],
           ),
@@ -1365,7 +1770,8 @@ class Step5DeliveryOptionsState extends State<Step5DeliveryOptions> {
     final status = draft.paymentStatusPalai;
     final extra = draft.extraReceivedPalai;
     final remaining = draft.remainingBalancePalai;
-    final onCreditBalance = draft.onCredit && remaining > 0;
+    final onCreditBalance =
+        draft.onCredit && remaining > 0;
 
     return _buildSummaryCard(
       [
@@ -1373,40 +1779,49 @@ class Step5DeliveryOptionsState extends State<Step5DeliveryOptions> {
           'Goat Sale',
           _currency(draft.customerTotalPalai),
         ),
+
         _SummaryRow(
           'Amount Received',
           _currency(draft.palaiAmountReceived),
         ),
+
         _SummaryRow(
-          onCreditBalance ? 'Outstanding (On Credit)' : 'Remaining Balance',
+          onCreditBalance
+              ? 'Outstanding (On Credit)'
+              : 'Remaining Balance',
           _currency(remaining),
           emphasized: true,
         ),
       ],
       title: 'Goat Price Summary',
-      statusLabel: onCreditBalance ? 'On Credit' : status,
+      statusLabel:
+      onCreditBalance ? 'On Credit' : status,
       statusColor: _statusColor(status),
       notes: [
         if (extra > 0)
           _SummaryNote(
-            'You entered ${_currency(extra)} more than the goat price. '
-                'Check the amount received before saving.',
+            'You entered ${_currency(extra)} more than the goat '
+                'price. Check the amount received before saving.',
             color: AppColors.warning,
             icon: Icons.warning_amber_rounded,
           ),
+
         if (onCreditBalance)
           _SummaryNote(
-            '${_currency(remaining)} will be added to ${_buyer(draft)}\'s '
-                'outstanding balance. It shows in Finance under customers on '
-                'credit, where the payment can be received later.',
+            '${_currency(remaining)} will be added to '
+                '${_buyer(draft)}\'s outstanding balance. It shows '
+                'in Finance under customers on credit, where the '
+                'payment can be received later.',
             color: AppColors.warning,
-            icon: Icons.account_balance_wallet_outlined,
+            icon:
+            Icons.account_balance_wallet_outlined,
           ),
+
         if (!draft.onCredit && remaining > 0)
           _SummaryNote(
-            'The goat price is not fully received. Enter the full amount, '
-                'or turn on Sell on Credit to keep ${_currency(remaining)} '
-                'as outstanding.',
+            'The goat price is not fully received. Enter the full '
+                'amount, or turn on Sell on Credit to keep '
+                '${_currency(remaining)} as outstanding.',
             color: AppColors.warning,
             icon: Icons.warning_amber_rounded,
           ),
@@ -1424,7 +1839,11 @@ class _SummaryRow {
   final String value;
   final bool emphasized;
 
-  const _SummaryRow(this.label, this.value, {this.emphasized = false});
+  const _SummaryRow(
+      this.label,
+      this.value, {
+        this.emphasized = false,
+      });
 }
 
 /// Small explanatory / warning line under a summary card.
@@ -1474,7 +1893,8 @@ class _BranchCard extends StatelessWidget {
             padding: const EdgeInsets.all(13),
             decoration: BoxDecoration(
               color: Colors.white,
-              borderRadius: BorderRadius.circular(14),
+              borderRadius:
+              BorderRadius.circular(14),
               border: Border.all(
                 color: selected
                     ? AppColors.primaryGreen
@@ -1492,7 +1912,8 @@ class _BranchCard extends StatelessWidget {
                         ? AppColors.primaryGreen
                         : AppColors.textGrey)
                         .withValues(alpha: 0.10),
-                    borderRadius: BorderRadius.circular(11),
+                    borderRadius:
+                    BorderRadius.circular(11),
                   ),
                   child: Icon(
                     icon,
@@ -1502,10 +1923,13 @@ class _BranchCard extends StatelessWidget {
                     size: 21,
                   ),
                 ),
+
                 const SizedBox(width: 12),
+
                 Expanded(
                   child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
+                    crossAxisAlignment:
+                    CrossAxisAlignment.start,
                     children: [
                       Text(
                         title,
@@ -1514,7 +1938,9 @@ class _BranchCard extends StatelessWidget {
                           color: AppColors.textDark,
                         ),
                       ),
+
                       const SizedBox(height: 2),
+
                       Text(
                         subtitle,
                         style: AppTheme.body(
@@ -1525,6 +1951,7 @@ class _BranchCard extends StatelessWidget {
                     ],
                   ),
                 ),
+
                 Icon(
                   selected
                       ? Icons.radio_button_checked_rounded
