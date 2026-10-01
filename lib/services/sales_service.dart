@@ -2197,6 +2197,14 @@ class SalesService {
   /// there is one, was given when the booking was made and is already part
   /// of [Sale.totalSaleAmount].
   ///
+  /// [discount] is an EXTRA discount given at delivery, on top of any
+  /// booking discount. It comes off the goat value only (never holding
+  /// charges or transport). When it is above 0 the sale's [Sale.discount]
+  /// and [Sale.totalSaleAmount] are updated so the bill shows it, and if the
+  /// booking amount had already been counted as Sold Goat Revenue for more
+  /// than the discounted sale now allows, that revenue entry is lowered to
+  /// match (see "REVENUE CORRECTION" below).
+  ///
   /// Same reads-then-writes transaction shape as the Phase 4 branch
   /// save methods, extended to also verify the sale is still in the
   /// state this action expects before touching anything.
@@ -2209,9 +2217,14 @@ class SalesService {
     String? paymentMethod,
     bool onCredit = false,
     ExcessAction excessAction = ExcessAction.carryToAdvance,
+    double discount = 0,
   }) async {
     if (transportCharges < 0) {
       throw StateError('The transportation charge cannot be negative.');
+    }
+
+    if (discount < 0) {
+      throw StateError('The discount cannot be negative.');
     }
 
     final transport = SaleDraft.round2(transportCharges);
@@ -2360,6 +2373,7 @@ class SalesService {
       // covered beyond that is the excess.
       final settlement = SaleSettlement.fromAmount(
         goatAmount: sale.totalSaleAmount,
+        discount: discount,
         holdingCharges: actualHoldingChargesValue,
         transportCharge: transport,
         advancePaid: bookingAmount,
@@ -2367,6 +2381,21 @@ class SalesService {
       );
       final finalAmount = settlement.balanceDue;
       final excess = settlement.excess;
+
+      // Extra discount given at delivery (never more than the goat value).
+      final deliveryDiscount = settlement.appliedDiscount;
+
+      // REVENUE CORRECTION — read step. The booking money was recorded as
+      // Sold Goat Revenue on the booking date, capped at the goat sale then.
+      // A delivery discount can lower what the sale is worth below that, so
+      // the entry is read here (before any write) and lowered below.
+      final initialRevenueRef = _transactions(farmId)
+          .doc(_saleRevenueDocId(saleId, 'initial'));
+      DocumentSnapshot<Map<String, dynamic>>? initialRevenueSnap;
+
+      if (deliveryDiscount > 0) {
+        initialRevenueSnap = await transaction.get(initialRevenueRef);
+      }
 
       // Reads must all happen before the first write below.
       await _checkExcessInTransaction(
@@ -2383,7 +2412,8 @@ class SalesService {
       // balance) and the booking amount already received, which is the
       // money that becomes revenue now that the goat has left. The
       // balance is recorded as it is collected.
-      totalSaleAmount = sale.totalSaleAmount;
+      // The goat value after every discount (booking + delivery).
+      totalSaleAmount = settlement.netGoatAmount;
       actualHoldingCharges = actualHoldingChargesValue;
       // The money received right now, checked against the final amount.
       final received = _checkCompletionPayment(
@@ -2408,6 +2438,14 @@ class SalesService {
         // on the bill.
         'transportCost': transport > 0 ? transport : FieldValue.delete(),
         'finalAmountAfterHolding': finalAmount,
+        // A discount given at delivery is added to the booking discount, and
+        // the goat sale amount is lowered to match, so every reader of
+        // totalSaleAmount sees the net figure (same rule as a discount given
+        // when the sale was made).
+        if (deliveryDiscount > 0) ...{
+          'discount': SaleDraft.round2(sale.appliedDiscount + deliveryDiscount),
+          'totalSaleAmount': settlement.netGoatAmount,
+        },
         'excessToAdvance': excessAction == ExcessAction.carryToAdvance &&
             excess > 0
             ? excess
@@ -2427,6 +2465,35 @@ class SalesService {
         ),
         'deliveryCompletedAt': FieldValue.serverTimestamp(),
       });
+
+      // REVENUE CORRECTION — write step. Lowers the booking-date revenue
+      // entry when the delivery discount means that much of the booking
+      // money is no longer farm revenue (it is the customer's extra, which
+      // goes to the advance or is refunded below). Nothing changes when the
+      // discounted sale still covers the whole booking amount.
+      if (initialRevenueSnap != null && initialRevenueSnap.exists) {
+        final recorded = SaleDraft.round2(
+          ((initialRevenueSnap.data()?['amount']) as num?)?.toDouble() ?? 0,
+        );
+        final allowed = SaleDraft.round2(
+          Sale.revenueFromPaid(
+            paid: bookingAmount,
+            revenueTotal: settlement.netRevenue,
+          ),
+        );
+
+        if (recorded > allowed) {
+          if (allowed <= 0) {
+            transaction.delete(initialRevenueRef);
+          } else {
+            transaction.update(initialRevenueRef, {
+              'amount': allowed,
+              'note': 'Sold Goat Revenue — Sale $saleId '
+                  '(lowered for a delivery discount)',
+            });
+          }
+        }
+      }
 
       _writeCompletionRevenue(
         transaction: transaction,

@@ -6,8 +6,10 @@ import '../../../app_theme.dart';
 import '../../../models/expense_categories.dart';
 import '../../../models/goat_model.dart';
 import '../../../models/sale_model.dart';
+import '../../../models/sale_settlement.dart';
 import '../../../services/firestore_service.dart';
 import '../../../services/sales_service.dart';
+import '../../../widgets/excess_action_picker.dart';
 import '../purchase_goats/purchase_wizard_widgets.dart';
 
 /// Complete Delivery — Booking (Phase 5, Section 1).
@@ -62,6 +64,10 @@ class _CompleteBookingDeliveryScreenState
   bool _amountEdited = false;
 
   String _method = FinancePaymentMethods.cash;
+
+  /// What to do if the booking amount turns out to be MORE than the final
+  /// bill. Only used when there is an extra.
+  ExcessAction _excessAction = ExcessAction.carryToAdvance;
 
   static DateTime _dayOnly(DateTime d) => DateTime(d.year, d.month, d.day);
 
@@ -186,19 +192,29 @@ class _CompleteBookingDeliveryScreenState
     return number <= 0 ? 0 : Sale.roundMoney(number);
   }
 
-  /// Goat sale + holding charges + transportation - booking amount
-  /// already paid.
-  double get _finalAmount {
+  /// The delivery bill worked out by [SaleSettlement], the same maths
+  /// SalesService.completeBookingDelivery uses when it saves. The goat sale
+  /// ([Sale.totalSaleAmount]) already has any booking discount taken off.
+  SaleSettlement? get _settlement {
     final sale = _sale;
-    if (sale == null) return 0;
+    if (sale == null) return null;
 
-    final raw = sale.totalSaleAmount +
-        _actualHoldingCharges +
-        _transport -
-        (sale.bookingAmount ?? 0);
-
-    return raw <= 0 ? 0 : Sale.roundMoney(raw);
+    return SaleSettlement.fromAmount(
+      goatAmount: sale.totalSaleAmount,
+      holdingCharges: _actualHoldingCharges,
+      transportCharge: _transport,
+      advancePaid: sale.bookingAmount ?? 0,
+      excessAction: _excessAction,
+    );
   }
+
+  /// Goat sale + holding charges + transportation - booking amount
+  /// already paid (never below 0).
+  double get _finalAmount => _settlement?.balanceDue ?? 0;
+
+  /// What the booking amount covered beyond the final bill (0 when it did
+  /// not). Example: 60,000 paid against a 52,700 bill -> 7,300.
+  double get _excess => _settlement?.excess ?? 0;
 
   double get _typedAmount {
     final text = _amountReceivedController.text.trim();
@@ -292,6 +308,8 @@ class _CompleteBookingDeliveryScreenState
     final owesNothing = _finalAmount <= 0;
     final onCredit = _finalAmount > 0 && _onCredit;
     final buyer = _buyerName(sale);
+    final excess = _excess;
+    final action = _excessAction;
 
     setState(() {
       _saving = true;
@@ -306,6 +324,7 @@ class _CompleteBookingDeliveryScreenState
         amountReceivedNow: received,
         paymentMethod: _method,
         onCredit: onCredit,
+        excessAction: action,
       );
 
       if (!mounted) return;
@@ -314,13 +333,24 @@ class _CompleteBookingDeliveryScreenState
 
       Navigator.of(context).pop(true);
 
-      final message = owesNothing
-          ? 'Delivery completed — the booking amount covered everything.'
-          : remaining > 0
-          ? 'Delivery completed — ${_currency(remaining)} added to '
-          '$buyer\'s outstanding balance.'
-          : 'Delivery completed — ${_currency(received)} received, '
-          'paid in full.';
+      final String message;
+
+      if (excess > 0) {
+        message = action == ExcessAction.carryToAdvance
+            ? 'Delivery completed — extra ${_currency(excess)} added to '
+            '$buyer\'s advance.'
+            : 'Delivery completed — ${_currency(excess)} to be returned to '
+            '$buyer (recorded as a refund).';
+      } else if (owesNothing) {
+        message = 'Delivery completed — the booking amount covered '
+            'everything.';
+      } else if (remaining > 0) {
+        message = 'Delivery completed — ${_currency(remaining)} added to '
+            '$buyer\'s outstanding balance.';
+      } else {
+        message = 'Delivery completed — ${_currency(received)} received, '
+            'paid in full.';
+      }
 
       messenger.showSnackBar(
         SnackBar(
@@ -419,6 +449,11 @@ class _CompleteBookingDeliveryScreenState
                 label: 'Goat Sale Amount',
                 value: _currency(sale.totalSaleAmount),
               ),
+              if (sale.appliedDiscount > 0)
+                WizardComputedRow(
+                  label: 'Discount (already taken off)',
+                  value: _currency(sale.appliedDiscount),
+                ),
               WizardComputedRow(
                 label: 'Booking Amount Paid',
                 value: _currency(sale.bookingAmount ?? 0),
@@ -540,7 +575,23 @@ class _CompleteBookingDeliveryScreenState
     final List<Widget> children;
 
     if (_finalAmount <= 0) {
-      children = [
+      children = _excess > 0
+          ? [
+        ExcessActionPicker(
+          excess: _excess,
+          value: _excessAction,
+          customerName: sale.customerName,
+          paidLabel: 'booking amount',
+          onChanged: _saving
+              ? null
+              : (action) {
+            setState(() {
+              _excessAction = action;
+            });
+          },
+        ),
+      ]
+          : [
         _infoLine(
           icon: Icons.check_circle_outline_rounded,
           color: AppColors.success,
@@ -804,6 +855,25 @@ class _CompleteBookingDeliveryScreenState
             _currency(due),
             emphasized: true,
           ),
+          if (_excess > 0) ...[
+            const SizedBox(height: 8),
+            _summaryRow(
+              'Extra (booking amount over the bill)',
+              _currency(_excess),
+              emphasized: true,
+            ),
+            const SizedBox(height: 10),
+            _infoLine(
+              icon: Icons.savings_outlined,
+              color: AppColors.success,
+              text: _excessAction == ExcessAction.carryToAdvance
+                  ? '${_currency(_excess)} will be added to '
+                  '${_buyerName(sale)}\'s advance balance.'
+                  : '${_currency(_excess)} will be returned to '
+                  '${_buyerName(sale)} and recorded as a Customer '
+                  'Refund.',
+            ),
+          ],
           if (owes) ...[
             const SizedBox(height: 8),
             _summaryRow('Received Now', _currency(_receivedNow)),

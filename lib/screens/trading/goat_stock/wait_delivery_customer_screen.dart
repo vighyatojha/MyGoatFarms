@@ -7,8 +7,10 @@ import '../../../goat_icons.dart';
 import '../../../models/expense_categories.dart';
 import '../../../models/goat_model.dart';
 import '../../../models/sale_model.dart';
+import '../../../models/sale_settlement.dart';
 import '../../../models/wait_delivery_group.dart';
 import '../../../services/goat_service.dart';
+import '../../../widgets/excess_action_picker.dart';
 import '../../../widgets/fast_route.dart';
 import '../../palai/fullscreen_image_viewer.dart';
 import '../../../services/wait_delivery_service.dart';
@@ -120,6 +122,17 @@ class _WaitDeliveryCustomerScreenState
   /// this batch.
   String _method = FinancePaymentMethods.cash;
 
+  /// Discount on the goat value per booking, keyed by sale ID. Starts at
+  /// the discount given at booking and can be changed at pickup. Never
+  /// taken off transportation.
+  final Map<String, TextEditingController> _discounts =
+  <String, TextEditingController>{};
+
+  /// What to do with any advance that turns out to be MORE than a
+  /// booking's final bill. One choice for the whole batch; only used when
+  /// there is an extra.
+  ExcessAction _excessAction = ExcessAction.carryToAdvance;
+
   bool _submitted = false;
   bool _delivering = false;
 
@@ -134,6 +147,10 @@ class _WaitDeliveryCustomerScreenState
     }
 
     for (final controller in _transports.values) {
+      controller.dispose();
+    }
+
+    for (final controller in _discounts.values) {
       controller.dispose();
     }
 
@@ -223,13 +240,87 @@ class _WaitDeliveryCustomerScreenState
     return number <= 0 ? 0 : Sale.roundMoney(number);
   }
 
-  /// Final Amount Due for a booking: pickup weight x booking rate (or the
-  /// fixed price) + transportation - advance. Same figure the service
-  /// saves.
+  TextEditingController _discountControllerFor(WaitDeliverySale entry) {
+    return _discounts.putIfAbsent(
+      entry.id,
+          () => TextEditingController(
+        text: entry.bookingDiscount > 0
+            ? _plainMoney(entry.bookingDiscount)
+            : '',
+      ),
+    );
+  }
+
+  /// The discount typed for a booking (blank counts as 0).
+  double _discountOf(WaitDeliverySale entry) {
+    final text = _discountControllerFor(entry).text.trim();
+
+    if (text.isEmpty) return 0;
+
+    final number = double.tryParse(text) ?? 0;
+
+    return number <= 0 ? 0 : Sale.roundMoney(number);
+  }
+
+  /// A discount can never be more than the goat amount.
+  bool _discountValid(WaitDeliverySale entry) {
+    final typed = _discountOf(entry);
+
+    if (typed <= 0) return true;
+
+    final goatValue = entry.saleValueAt(_pickupWeightOf(entry));
+
+    // No weight yet -> nothing to compare against.
+    if (goatValue <= 0) return true;
+
+    return typed <= goatValue;
+  }
+
+  /// The pickup settlement for a booking, worked out by [SaleSettlement]
+  /// so the screen shows exactly what SalesService saves.
+  SaleSettlement _settlementOf(WaitDeliverySale entry) {
+    return entry.settlementAt(
+      _pickupWeightOf(entry),
+      transport: _transportOf(entry),
+      discount: _discountOf(entry),
+      excessAction: _excessAction,
+    );
+  }
+
+  /// Discount actually applied (never more than the goat value).
+  double _appliedDiscountOf(WaitDeliverySale entry) {
+    if (_pickupWeightOf(entry) <= 0) return 0;
+
+    return _settlementOf(entry).appliedDiscount;
+  }
+
+  /// Final Amount Due for a booking: goat value (pickup weight x booking
+  /// rate, or the fixed price) - discount + transportation - advance.
+  /// Same figure the service saves.
   double _remainingOf(WaitDeliverySale entry) {
     return entry.remainingAt(
       _pickupWeightOf(entry),
       transport: _transportOf(entry),
+      discount: _discountOf(entry),
+    );
+  }
+
+  /// What the advance covered beyond the booking's final bill (0 when it
+  /// did not). Example: 85 kg x 620 = 52,700 against a 60,000 advance ->
+  /// 7,300. Nothing until a pickup weight has been entered.
+  double _excessOf(WaitDeliverySale entry) {
+    if (_pickupWeightOf(entry) <= 0) return 0;
+
+    return entry.excessAt(
+      _pickupWeightOf(entry),
+      transport: _transportOf(entry),
+      discount: _discountOf(entry),
+    );
+  }
+
+  double _totalExcess(List<WaitDeliverySale> picked) {
+    return Sale.roundMoney(
+      picked.fold<double>(0, (sum, entry) => sum + _excessOf(entry)),
     );
   }
 
@@ -387,8 +478,9 @@ class _WaitDeliveryCustomerScreenState
     );
 
     final invalidAmount = picked.any((entry) => !_amountValid(entry));
+    final invalidDiscount = picked.any((entry) => !_discountValid(entry));
 
-    if (missingWeight || invalidAmount) {
+    if (missingWeight || invalidDiscount || invalidAmount) {
       setState(() {
         _submitted = true;
       });
@@ -396,6 +488,8 @@ class _WaitDeliveryCustomerScreenState
       _snack(
         missingWeight
             ? 'Enter a pickup weight for every selected goat.'
+            : invalidDiscount
+            ? 'A discount is more than the goat amount.'
             : 'Check the amount received for every selected booking.',
         error: true,
       );
@@ -411,6 +505,10 @@ class _WaitDeliveryCustomerScreenState
     final navigator = Navigator.of(context);
 
     final payments = <String, WaitDeliveryPayment>{};
+    final excessAction = _excessAction;
+    final excessById = <String, double>{
+      for (final entry in picked) entry.id: _excessOf(entry),
+    };
 
     for (final entry in picked) {
       final weight = _pickupWeightOf(entry);
@@ -422,6 +520,8 @@ class _WaitDeliveryCustomerScreenState
         expectedRemaining: due,
         amountReceivedNow: due > 0 ? _receivedNowOf(entry) : 0,
         onCredit: due > 0 && _onCredit,
+        discount: _discountOf(entry),
+        excessAction: excessAction,
       );
     }
 
@@ -447,14 +547,19 @@ class _WaitDeliveryCustomerScreenState
     } else {
       final delivered = _goatCountOf(picked);
       final left = result.totalRemainingDelivered;
+      final extra = _extraDelivered(excessById, result);
+
+      final base = left > 0
+          ? '${_goats(delivered)} delivered — '
+          '${_money.format(left)} added to outstanding balance.'
+          : '${_goats(delivered)} delivered — paid in full.';
 
       messenger.showSnackBar(
         SnackBar(
           content: Text(
-            left > 0
-                ? '${_goats(delivered)} delivered — '
-                '${_money.format(left)} added to outstanding balance.'
-                : '${_goats(delivered)} delivered — paid in full.',
+            extra > 0
+                ? '$base ${_extraText(extra, excessAction)}'
+                : base,
             style: const TextStyle(
               fontSize: 12,
               fontWeight: FontWeight.w600,
@@ -476,6 +581,26 @@ class _WaitDeliveryCustomerScreenState
         picked.length == customer.sales.length) {
       navigator.pop(true);
     }
+  }
+
+  /// Extra money on the bookings that WERE delivered.
+  double _extraDelivered(
+      Map<String, double> excessById,
+      WaitDeliveryBatchResult result,
+      ) {
+    return Sale.roundMoney(
+      result.delivered.fold<double>(
+        0,
+            (sum, outcome) => sum + (excessById[outcome.saleId] ?? 0),
+      ),
+    );
+  }
+
+  String _extraText(double extra, ExcessAction action) {
+    return action == ExcessAction.carryToAdvance
+        ? 'Extra ${_money.format(extra)} added to the customer\'s advance.'
+        : 'Extra ${_money.format(extra)} to be returned to the customer '
+        '(recorded as a refund).';
   }
 
   Future<void> _showFailures(
@@ -570,6 +695,7 @@ class _WaitDeliveryCustomerScreenState
     final receivedNow = _totalReceivedNow(picked);
     final left = _totalLeftAfterReceipt(picked);
     final goatCount = _goatCountOf(picked);
+    final excess = _totalExcess(picked);
 
     return showModalBottomSheet<bool>(
       context: context,
@@ -630,6 +756,26 @@ class _WaitDeliveryCustomerScreenState
                   _confirmTotalRow('Goat value + advance total', due),
                   const SizedBox(height: 6),
                   _confirmTotalRow('Received now', receivedNow),
+
+                  if (excess > 0) ...[
+                    const SizedBox(height: 6),
+                    _confirmTotalRow(
+                      'Extra (advance over the bill)',
+                      excess,
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      _excessAction == ExcessAction.carryToAdvance
+                          ? 'The extra is added to the customer\'s advance '
+                          'balance.'
+                          : 'The extra is returned to the customer and '
+                          'recorded as a Customer Refund.',
+                      style: AppTheme.body(
+                        size: 10,
+                        color: AppColors.darkGreen,
+                      ),
+                    ),
+                  ],
 
                   const SizedBox(height: 8),
 
@@ -735,6 +881,8 @@ class _WaitDeliveryCustomerScreenState
     final transport = _transportOf(entry);
     final due = _remainingOf(entry);
     final receivedNow = due > 0 ? _receivedNowOf(entry) : 0.0;
+    final discount = _appliedDiscountOf(entry);
+    final excess = _excessOf(entry);
 
     return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -756,12 +904,24 @@ class _WaitDeliveryCustomerScreenState
                     (transport > 0
                         ? ' + ${_money.format(transport)} transport'
                         : '') +
+                    (discount > 0
+                        ? ' − ${_money.format(discount)} discount'
+                        : '') +
                     ' − ${_money.format(entry.advancePaid)} advance',
                 style: AppTheme.body(size: 10),
               ),
               if (due > 0)
                 Text(
                   'Received now: ${_money.format(receivedNow)}',
+                  style: AppTheme.body(
+                    size: 10,
+                    color: AppColors.darkGreen,
+                    weight: FontWeight.w600,
+                  ),
+                ),
+              if (excess > 0)
+                Text(
+                  'Extra: ${_money.format(excess)}',
                   style: AppTheme.body(
                     size: 10,
                     color: AppColors.darkGreen,
@@ -1196,6 +1356,7 @@ class _WaitDeliveryCustomerScreenState
     final selected = _selected.contains(entry.id);
     final pickup = _pickupWeightOf(entry);
     final due = _remainingOf(entry);
+    final excess = _excessOf(entry);
 
     return Container(
       width: double.infinity,
@@ -1280,7 +1441,7 @@ class _WaitDeliveryCustomerScreenState
                   crossAxisAlignment: CrossAxisAlignment.end,
                   children: [
                     Text(
-                      _money.format(due),
+                      _money.format(due <= 0 && excess > 0 ? excess : due),
                       style: AppTheme.heading(
                         size: 14,
                         color: selected
@@ -1289,7 +1450,7 @@ class _WaitDeliveryCustomerScreenState
                       ),
                     ),
                     Text(
-                      'Due',
+                      due <= 0 && excess > 0 ? 'Extra' : 'Due',
                       style: AppTheme.body(size: 9.5),
                     ),
                   ],
@@ -1336,6 +1497,10 @@ class _WaitDeliveryCustomerScreenState
                 const SizedBox(height: 3),
 
                 _transportField(entry, selected),
+
+                const SizedBox(height: 10),
+
+                _discountField(entry, selected),
 
                 const SizedBox(height: 12),
 
@@ -1705,6 +1870,8 @@ class _WaitDeliveryCustomerScreenState
 
   Widget _calcBox(WaitDeliverySale entry, double pickup, double due) {
     final transport = _transportOf(entry);
+    final discount = _appliedDiscountOf(entry);
+    final excess = _excessOf(entry);
 
     return Container(
       padding: const EdgeInsets.all(11),
@@ -1723,6 +1890,13 @@ class _WaitDeliveryCustomerScreenState
                 : '${_trim(pickup)} kg × ${_money.format(entry.ratePerKg)}',
             _money.format(entry.saleValueAt(pickup)),
           ),
+          if (discount > 0) ...[
+            const SizedBox(height: 6),
+            _calcRow(
+              'Discount',
+              '− ${_money.format(discount)}',
+            ),
+          ],
           if (transport > 0) ...[
             const SizedBox(height: 6),
             _calcRow(
@@ -1744,6 +1918,14 @@ class _WaitDeliveryCustomerScreenState
             _money.format(due),
             emphasized: true,
           ),
+          if (excess > 0) ...[
+            const SizedBox(height: 6),
+            _calcRow(
+              'Extra (advance over the bill)',
+              _money.format(excess),
+              emphasized: true,
+            ),
+          ],
         ],
       ),
     );
@@ -1839,6 +2021,82 @@ class _WaitDeliveryCustomerScreenState
             color: AppColors.darkGreen,
             width: 1.4,
           ),
+        ),
+      ),
+    );
+  }
+
+  /// Optional discount for one booking, entered at pickup. It starts at
+  /// the discount given when the goats were booked. Taken off the goat
+  /// value only — never off transportation.
+  Widget _discountField(WaitDeliverySale entry, bool selected) {
+    final invalid = !_discountValid(entry);
+
+    return TextField(
+      controller: _discountControllerFor(entry),
+      enabled: selected && !_delivering,
+      keyboardType: const TextInputType.numberWithOptions(decimal: true),
+      inputFormatters: [
+        FilteringTextInputFormatter.allow(
+          RegExp(r'^\d*\.?\d{0,2}'),
+        ),
+      ],
+      onChanged: (_) => setState(() {}),
+      style: AppTheme.body(
+        size: 12.5,
+        color: AppColors.textDark,
+        weight: FontWeight.w600,
+      ),
+      decoration: InputDecoration(
+        isDense: true,
+        labelText: 'Discount (optional)',
+        labelStyle: AppTheme.body(size: 10.5),
+        helperText: 'Off the goat value only. Starts at the booking '
+            'discount.',
+        helperStyle: AppTheme.body(size: 9.5),
+        errorText: invalid ? 'More than the goat amount' : null,
+        errorStyle: const TextStyle(fontSize: 9.5),
+        prefixText: '₹ ',
+        prefixStyle: AppTheme.body(size: 12),
+        prefixIcon: const Icon(
+          Icons.local_offer_outlined,
+          size: 18,
+          color: AppColors.textGrey,
+        ),
+        filled: true,
+        fillColor: selected ? Colors.white : AppColors.paleGreen,
+        contentPadding: const EdgeInsets.symmetric(
+          horizontal: 10,
+          vertical: 10,
+        ),
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(10),
+          borderSide: const BorderSide(color: AppColors.divider),
+        ),
+        enabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(10),
+          borderSide: const BorderSide(color: AppColors.divider),
+        ),
+        disabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(10),
+          borderSide: BorderSide(
+            color: AppColors.divider.withValues(alpha: 0.6),
+          ),
+        ),
+        focusedBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(10),
+          borderSide: const BorderSide(
+            color: AppColors.darkGreen,
+            width: 1.4,
+          ),
+        ),
+        errorBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(10),
+          borderSide: const BorderSide(color: AppColors.error),
+        ),
+        focusedErrorBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(10),
+          borderSide: const BorderSide(color: AppColors.error, width: 1.4),
         ),
       ),
     );
@@ -1961,6 +2219,8 @@ class _WaitDeliveryCustomerScreenState
 
   Widget _batchPaymentCard(List<WaitDeliverySale> picked) {
     final anyDue = picked.any((entry) => _remainingOf(entry) > 0);
+    final totalExcess = _totalExcess(picked);
+    final buyer = picked.isEmpty ? '' : picked.first.sale.customerName;
 
     if (picked.isEmpty) {
       return Container(
@@ -1979,7 +2239,24 @@ class _WaitDeliveryCustomerScreenState
         width: double.infinity,
         padding: const EdgeInsets.all(14),
         decoration: AppTheme.card(radius: 16),
-        child: Row(
+        child: totalExcess > 0
+            ? ExcessActionPicker(
+          excess: totalExcess,
+          value: _excessAction,
+          customerName: buyer,
+          paidLabel: 'advance',
+          message: 'The advance is ${_money.format(totalExcess)} more '
+              'than the final bill of the selected bookings, so there '
+              'is nothing more to collect.',
+          onChanged: _delivering
+              ? null
+              : (action) {
+            setState(() {
+              _excessAction = action;
+            });
+          },
+        )
+            : Row(
           children: [
             const Icon(
               Icons.check_circle_outline_rounded,
@@ -2018,6 +2295,25 @@ class _WaitDeliveryCustomerScreenState
           if (_totalReceivedNow(picked) > 0) ...[
             const SizedBox(height: 12),
             _paymentMethodPicker(),
+          ],
+
+          if (totalExcess > 0) ...[
+            const SizedBox(height: 14),
+            ExcessActionPicker(
+              excess: totalExcess,
+              value: _excessAction,
+              customerName: buyer,
+              paidLabel: 'advance',
+              message: 'Some bookings were paid ${_money.format(totalExcess)} '
+                  'more than their final bill.',
+              onChanged: _delivering
+                  ? null
+                  : (action) {
+                setState(() {
+                  _excessAction = action;
+                });
+              },
+            ),
           ],
         ],
       ),
@@ -2153,6 +2449,8 @@ class _WaitDeliveryCustomerScreenState
     final picked = _picked(customer);
     final goatCount = _goatCountOf(picked);
     final left = _totalLeftAfterReceipt(picked);
+    final excess = _totalExcess(picked);
+    final received = _totalReceivedNow(picked);
     final all = picked.length == customer.sales.length;
     final canDeliver = picked.isNotEmpty && !_delivering;
 
@@ -2183,7 +2481,13 @@ class _WaitDeliveryCustomerScreenState
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        left > 0 ? 'Stays outstanding' : 'Total to collect',
+                        left > 0
+                            ? 'Stays outstanding'
+                            : (received <= 0 && excess > 0)
+                            ? (_excessAction == ExcessAction.carryToAdvance
+                            ? 'Extra added to advance'
+                            : 'Extra to return')
+                            : 'Total to collect',
                         style: AppTheme.body(size: 10.5),
                       ),
                       Text(
@@ -2199,7 +2503,7 @@ class _WaitDeliveryCustomerScreenState
                 ),
                 Text(
                   _money.format(
-                    left > 0 ? left : _totalReceivedNow(picked),
+                    left > 0 ? left : (received > 0 ? received : excess),
                   ),
                   style: AppTheme.heading(
                     size: 19,

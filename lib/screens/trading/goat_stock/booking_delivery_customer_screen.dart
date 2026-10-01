@@ -8,8 +8,10 @@ import '../../../models/booking_delivery_group.dart';
 import '../../../models/expense_categories.dart';
 import '../../../models/goat_model.dart';
 import '../../../models/sale_model.dart';
+import '../../../models/sale_settlement.dart';
 import '../../../services/booking_delivery_service.dart';
 import '../../../services/goat_service.dart';
+import '../../../widgets/excess_action_picker.dart';
 import '../purchase_goats/purchase_wizard_widgets.dart';
 
 /// Booking / Holding — one customer.
@@ -117,6 +119,11 @@ class _BookingDeliveryCustomerScreenState
   /// this batch.
   String _method = FinancePaymentMethods.cash;
 
+  /// What to do with any booking amount that turns out to be MORE than a
+  /// booking's final bill. One choice for the whole batch; only used when
+  /// there is an extra.
+  ExcessAction _excessAction = ExcessAction.carryToAdvance;
+
   bool _submitted = false;
   bool _delivering = false;
 
@@ -160,6 +167,21 @@ class _BookingDeliveryCustomerScreenState
     return entry.finalAmountAt(
       _deliveryDateOr(customer),
       transport: _transportOf(entry),
+    );
+  }
+
+  /// What the booking amount covered beyond this booking's final bill (0
+  /// when it did not). Same maths as SalesService.completeBookingDelivery.
+  double _excessOf(BookingDeliveryCustomer customer, BookingDeliverySale entry) {
+    return entry.excessAt(
+      _deliveryDateOr(customer),
+      transport: _transportOf(entry),
+    );
+  }
+
+  double _totalExcess(BookingDeliveryCustomer customer, List<BookingDeliverySale> picked) {
+    return Sale.roundMoney(
+      picked.fold<double>(0, (sum, entry) => sum + _excessOf(customer, entry)),
     );
   }
 
@@ -384,6 +406,10 @@ class _BookingDeliveryCustomerScreenState
     final navigator = Navigator.of(context);
 
     final payments = <String, BookingDeliveryPayment>{};
+    final excessAction = _excessAction;
+    final excessById = <String, double>{
+      for (final entry in picked) entry.id: _excessOf(customer, entry),
+    };
 
     for (final entry in picked) {
       final transport = _transportOf(entry);
@@ -394,6 +420,7 @@ class _BookingDeliveryCustomerScreenState
         expectedRemaining: due,
         amountReceivedNow: due > 0 ? _receivedNowOf(customer, entry) : 0,
         onCredit: due > 0 && _onCredit,
+        excessAction: excessAction,
       );
     }
 
@@ -420,14 +447,19 @@ class _BookingDeliveryCustomerScreenState
     } else {
       final delivered = _goatCountOf(picked);
       final left = result.totalRemainingDelivered;
+      final extra = _extraDelivered(excessById, result);
+
+      final base = left > 0
+          ? '${_goats(delivered)} delivered — '
+          '${_money.format(left)} added to outstanding balance.'
+          : '${_goats(delivered)} delivered — paid in full.';
 
       messenger.showSnackBar(
         SnackBar(
           content: Text(
-            left > 0
-                ? '${_goats(delivered)} delivered — '
-                '${_money.format(left)} added to outstanding balance.'
-                : '${_goats(delivered)} delivered — paid in full.',
+            extra > 0
+                ? '$base ${_extraText(extra, excessAction)}'
+                : base,
             style: const TextStyle(
               fontSize: 12,
               fontWeight: FontWeight.w600,
@@ -449,6 +481,26 @@ class _BookingDeliveryCustomerScreenState
         picked.length == customer.sales.length) {
       navigator.pop(true);
     }
+  }
+
+  /// Extra money on the bookings that WERE delivered.
+  double _extraDelivered(
+      Map<String, double> excessById,
+      BookingDeliveryBatchResult result,
+      ) {
+    return Sale.roundMoney(
+      result.delivered.fold<double>(
+        0,
+            (sum, outcome) => sum + (excessById[outcome.saleId] ?? 0),
+      ),
+    );
+  }
+
+  String _extraText(double extra, ExcessAction action) {
+    return action == ExcessAction.carryToAdvance
+        ? 'Extra ${_money.format(extra)} added to the customer\'s advance.'
+        : 'Extra ${_money.format(extra)} to be returned to the customer '
+        '(recorded as a refund).';
   }
 
   Future<void> _showFailures(
@@ -542,6 +594,7 @@ class _BookingDeliveryCustomerScreenState
     final receivedNow = _totalReceivedNow(customer, picked);
     final left = _totalLeftAfterReceipt(customer, picked);
     final goatCount = _goatCountOf(picked);
+    final excess = _totalExcess(customer, picked);
 
     return showModalBottomSheet<bool>(
       context: context,
@@ -589,6 +642,25 @@ class _BookingDeliveryCustomerScreenState
                   _confirmTotalRow('Goat value + holding charges total', due),
                   const SizedBox(height: 6),
                   _confirmTotalRow('Received now', receivedNow),
+                  if (excess > 0) ...[
+                    const SizedBox(height: 6),
+                    _confirmTotalRow(
+                      'Extra (booking amount over the bill)',
+                      excess,
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      _excessAction == ExcessAction.carryToAdvance
+                          ? 'The extra is added to the customer\'s advance '
+                          'balance.'
+                          : 'The extra is returned to the customer and '
+                          'recorded as a Customer Refund.',
+                      style: AppTheme.body(
+                        size: 10,
+                        color: AppColors.darkGreen,
+                      ),
+                    ),
+                  ],
                   const SizedBox(height: 8),
                   Row(
                     children: [
@@ -705,6 +777,15 @@ class _BookingDeliveryCustomerScreenState
               if (due > 0)
                 Text(
                   'Received now: ${_money.format(receivedNow)}',
+                  style: AppTheme.body(
+                    size: 10,
+                    color: AppColors.darkGreen,
+                    weight: FontWeight.w600,
+                  ),
+                ),
+              if (_excessOf(customer, entry) > 0)
+                Text(
+                  'Extra: ${_money.format(_excessOf(customer, entry))}',
                   style: AppTheme.body(
                     size: 10,
                     color: AppColors.darkGreen,
@@ -1433,6 +1514,7 @@ class _BookingDeliveryCustomerScreenState
     final days = _holdingDaysOf(customer, entry);
     final charges = _holdingChargesOf(customer, entry);
     final transport = _transportOf(entry);
+    final excess = _excessOf(customer, entry);
 
     return Container(
       padding: const EdgeInsets.all(11),
@@ -1444,6 +1526,13 @@ class _BookingDeliveryCustomerScreenState
       child: Column(
         children: [
           _calcRow('Goat Sale Amount', _money.format(entry.sale.totalSaleAmount)),
+          if (entry.bookingDiscount > 0) ...[
+            const SizedBox(height: 6),
+            _calcRow(
+              'Discount (already taken off)',
+              _money.format(entry.bookingDiscount),
+            ),
+          ],
           const SizedBox(height: 6),
           _calcRow(
             'Holding Charges ($days day${days == 1 ? '' : 's'} × '
@@ -1461,6 +1550,14 @@ class _BookingDeliveryCustomerScreenState
             child: Divider(height: 1, color: AppColors.divider),
           ),
           _calcRow('Final Amount Due', _money.format(due), emphasized: true),
+          if (excess > 0) ...[
+            const SizedBox(height: 6),
+            _calcRow(
+              'Extra (booking amount over the bill)',
+              _money.format(excess),
+              emphasized: true,
+            ),
+          ],
         ],
       ),
     );
@@ -1576,6 +1673,7 @@ class _BookingDeliveryCustomerScreenState
 
   Widget _batchPaymentCard(BookingDeliveryCustomer customer, List<BookingDeliverySale> picked) {
     final anyDue = picked.any((entry) => _finalAmountOf(customer, entry) > 0);
+    final totalExcess = _totalExcess(customer, picked);
 
     if (picked.isEmpty) {
       return Container(
@@ -1591,7 +1689,24 @@ class _BookingDeliveryCustomerScreenState
         width: double.infinity,
         padding: const EdgeInsets.all(14),
         decoration: AppTheme.card(radius: 16),
-        child: Row(
+        child: totalExcess > 0
+            ? ExcessActionPicker(
+          excess: totalExcess,
+          value: _excessAction,
+          customerName: customer.name,
+          paidLabel: 'booking amount',
+          message: 'The booking amount is ${_money.format(totalExcess)} '
+              'more than the final bill of the selected bookings, so '
+              'there is nothing more to collect.',
+          onChanged: _delivering
+              ? null
+              : (action) {
+            setState(() {
+              _excessAction = action;
+            });
+          },
+        )
+            : Row(
           children: [
             const Icon(Icons.check_circle_outline_rounded, size: 16, color: AppColors.success),
             const SizedBox(width: 8),
@@ -1620,6 +1735,24 @@ class _BookingDeliveryCustomerScreenState
           if (_totalReceivedNow(customer, picked) > 0) ...[
             const SizedBox(height: 12),
             _paymentMethodPicker(),
+          ],
+          if (totalExcess > 0) ...[
+            const SizedBox(height: 14),
+            ExcessActionPicker(
+              excess: totalExcess,
+              value: _excessAction,
+              customerName: customer.name,
+              paidLabel: 'booking amount',
+              message: 'Some bookings were paid ${_money.format(totalExcess)} '
+                  'more than their final bill.',
+              onChanged: _delivering
+                  ? null
+                  : (action) {
+                setState(() {
+                  _excessAction = action;
+                });
+              },
+            ),
           ],
         ],
       ),
@@ -1739,6 +1872,8 @@ class _BookingDeliveryCustomerScreenState
     final picked = _picked(customer);
     final goatCount = _goatCountOf(picked);
     final left = _totalLeftAfterReceipt(customer, picked);
+    final excess = _totalExcess(customer, picked);
+    final received = _totalReceivedNow(customer, picked);
     final all = picked.length == customer.sales.length;
     final canDeliver = picked.isNotEmpty && !_delivering;
 
@@ -1763,7 +1898,13 @@ class _BookingDeliveryCustomerScreenState
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        left > 0 ? 'Stays outstanding' : 'Total to collect',
+                        left > 0
+                            ? 'Stays outstanding'
+                            : (received <= 0 && excess > 0)
+                            ? (_excessAction == ExcessAction.carryToAdvance
+                            ? 'Extra added to advance'
+                            : 'Extra to return')
+                            : 'Total to collect',
                         style: AppTheme.body(size: 10.5),
                       ),
                       Text(
@@ -1777,7 +1918,9 @@ class _BookingDeliveryCustomerScreenState
                   ),
                 ),
                 Text(
-                  _money.format(left > 0 ? left : _totalReceivedNow(customer, picked)),
+                  _money.format(
+                    left > 0 ? left : (received > 0 ? received : excess),
+                  ),
                   style: AppTheme.heading(
                     size: 19,
                     color: left > 0 ? AppColors.warning : AppColors.darkGreen,

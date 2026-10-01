@@ -8,10 +8,12 @@ import '../../../app_theme.dart';
 import '../../../models/expense_categories.dart';
 import '../../../models/goat_model.dart';
 import '../../../models/sale_model.dart';
+import '../../../models/sale_settlement.dart';
 import '../../../models/trading_goat_health_record.dart';
 import '../../../services/firestore_service.dart';
 import '../../../services/goat_service.dart';
 import '../../../services/sales_service.dart';
+import '../../../widgets/excess_action_picker.dart';
 import '../purchase_goats/purchase_wizard_widgets.dart';
 
 /// Complete Delivery — Wait for Delivery (Phase 5, Section 2).
@@ -89,6 +91,10 @@ class _CompleteWaitForDeliveryScreenState
   late final TextEditingController _transportController;
   late final TextEditingController _amountReceivedController;
 
+  /// Discount on the goat value. Starts at the discount given at booking and
+  /// can be changed at pickup. Never taken off transportation.
+  late final TextEditingController _discountController;
+
   bool _loadingSale = true;
   bool _saving = false;
   String? _loadError;
@@ -103,6 +109,10 @@ class _CompleteWaitForDeliveryScreenState
 
   /// How the money received now is being paid.
   String _method = FinancePaymentMethods.cash;
+
+  /// What to do if the advance turns out to be MORE than the final bill.
+  /// Only used when there is an extra.
+  ExcessAction _excessAction = ExcessAction.carryToAdvance;
 
   /// Care due within this many days (or already overdue) is flagged in the
   /// Health Reminder card.
@@ -131,6 +141,7 @@ class _CompleteWaitForDeliveryScreenState
     _pickupWeightController = TextEditingController();
     _transportController = TextEditingController();
     _amountReceivedController = TextEditingController();
+    _discountController = TextEditingController();
     _loadSale();
   }
 
@@ -139,6 +150,7 @@ class _CompleteWaitForDeliveryScreenState
     _pickupWeightController.dispose();
     _transportController.dispose();
     _amountReceivedController.dispose();
+    _discountController.dispose();
     super.dispose();
   }
 
@@ -202,6 +214,11 @@ class _CompleteWaitForDeliveryScreenState
 
         // The credit choice made in Step 5 (Delivery Options). If it was
         // off, the full amount is expected, so the field starts filled in.
+        // The discount given at booking is the starting point; it can be
+        // changed below.
+        _discountController.text =
+        sale.appliedDiscount > 0 ? _plain(sale.appliedDiscount) : '';
+
         _onCredit = sale.onCredit;
         _amountEdited = false;
         _syncAutoAmount();
@@ -369,17 +386,43 @@ class _CompleteWaitForDeliveryScreenState
     return number <= 0 ? 0 : Sale.roundMoney(number);
   }
 
-  /// What the customer still owes at pickup: pickup weight x the
-  /// booking-time rate + transportation - the advance already paid. Same
-  /// figure SalesService stores as finalPriceAfterPickup.
-  double get _finalPrice {
-    // Nothing is due until a pickup weight has been entered.
-    if (_pickupWeight <= 0) return 0;
+  /// The discount typed in (blank counts as 0).
+  double get _discountTyped {
+    final text = _discountController.text.trim();
 
-    final raw = _goatSaleValue + _transport - _advancePaid;
+    if (text.isEmpty) return 0;
 
-    return raw <= 0 ? 0 : Sale.roundMoney(raw);
+    final number = double.tryParse(text) ?? 0;
+
+    return number <= 0 ? 0 : Sale.roundMoney(number);
   }
+
+  /// The pickup bill worked out by [SaleSettlement] — the same maths
+  /// SalesService.completeWaitForDeliveryPickup uses when it saves.
+  /// Null until a pickup weight has been entered.
+  SaleSettlement? get _settlement {
+    if (_sale == null || _pickupWeight <= 0) return null;
+
+    return SaleSettlement.fromAmount(
+      goatAmount: _goatSaleValue,
+      discount: _discountTyped,
+      transportCharge: _transport,
+      advancePaid: _advancePaid,
+      excessAction: _excessAction,
+    );
+  }
+
+  /// Discount actually applied (never more than the goat value).
+  double get _discount => _settlement?.appliedDiscount ?? 0;
+
+  /// What the customer still owes at pickup: goat value - discount +
+  /// transportation - the advance already paid (never below 0). Same
+  /// figure SalesService stores as finalPriceAfterPickup.
+  double get _finalPrice => _settlement?.balanceDue ?? 0;
+
+  /// What the advance covered beyond the final bill (0 when it did not).
+  /// Example: 85 kg x 620 = 52,700 against a 60,000 advance -> 7,300.
+  double get _excess => _settlement?.excess ?? 0;
 
   /// The amount typed in "Amount Received Now" (blank counts as 0).
   double get _typedAmount {
@@ -473,6 +516,9 @@ class _CompleteWaitForDeliveryScreenState
     final owesNothing = _finalPrice <= 0;
     final onCredit = _finalPrice > 0 && _onCredit;
     final buyer = _buyerName(sale);
+    final excess = _excess;
+    final action = _excessAction;
+    final discount = _discountTyped;
 
     setState(() {
       _saving = true;
@@ -487,6 +533,8 @@ class _CompleteWaitForDeliveryScreenState
         amountReceivedNow: received,
         paymentMethod: _method,
         onCredit: onCredit,
+        discount: discount,
+        excessAction: action,
       );
 
       if (!mounted) return;
@@ -496,13 +544,24 @@ class _CompleteWaitForDeliveryScreenState
 
       Navigator.of(context).pop(true);
 
-      final message = owesNothing
-          ? 'Delivery completed — the advance covered the full amount.'
-          : remaining > 0
-          ? 'Delivery completed — ${_currency(remaining)} added to '
-          '$buyer\'s outstanding balance.'
-          : 'Delivery completed — ${_currency(received)} received, '
-          'paid in full.';
+      final String message;
+
+      if (excess > 0) {
+        message = action == ExcessAction.carryToAdvance
+            ? 'Delivery completed — extra ${_currency(excess)} added to '
+            '$buyer\'s advance.'
+            : 'Delivery completed — ${_currency(excess)} to be returned to '
+            '$buyer (recorded as a refund).';
+      } else if (owesNothing) {
+        message = 'Delivery completed — the advance covered the full '
+            'amount.';
+      } else if (remaining > 0) {
+        message = 'Delivery completed — ${_currency(remaining)} added to '
+            '$buyer\'s outstanding balance.';
+      } else {
+        message = 'Delivery completed — ${_currency(received)} received, '
+            'paid in full.';
+      }
 
       messenger.showSnackBar(
         SnackBar(
@@ -628,6 +687,11 @@ class _CompleteWaitForDeliveryScreenState
                 label: 'Advance Paid',
                 value: _currency(sale.bookingAdvanceAmount ?? 0),
               ),
+              if (sale.appliedDiscount > 0)
+                WizardComputedRow(
+                  label: 'Discount at Booking',
+                  value: _currency(sale.appliedDiscount),
+                ),
             ],
           ),
 
@@ -689,6 +753,46 @@ class _CompleteWaitForDeliveryScreenState
 
                   if (number == null || number < 0) {
                     return 'Enter a valid amount';
+                  }
+
+                  return null;
+                },
+              ),
+              const SizedBox(height: 14),
+              wizardField(
+                controller: _discountController,
+                label: 'Discount',
+                hint: '0.00',
+                icon: Icons.local_offer_outlined,
+                suffix: 'Off goat value',
+                helper: 'Optional — starts at the discount given at '
+                    'booking. Taken off the goat value only, never off '
+                    'transportation.',
+                optional: true,
+                enabled: !_saving,
+                keyboardType:
+                const TextInputType.numberWithOptions(decimal: true),
+                inputFormatters: [
+                  FilteringTextInputFormatter.allow(
+                    RegExp(r'^\d*\.?\d{0,2}'),
+                  ),
+                ],
+                onChanged: (_) => setState(_syncAutoAmount),
+                validator: (value) {
+                  final text = value?.trim() ?? '';
+
+                  if (text.isEmpty) return null;
+
+                  final number = double.tryParse(text);
+
+                  if (number == null || number < 0) {
+                    return 'Enter a valid amount';
+                  }
+
+                  if (_goatSaleValue > 0 &&
+                      Sale.roundMoney(number) > _goatSaleValue) {
+                    return 'More than the goat amount '
+                        '(${_currency(_goatSaleValue)})';
                   }
 
                   return null;
@@ -915,7 +1019,23 @@ class _CompleteWaitForDeliveryScreenState
         ),
       ];
     } else if (_finalPrice <= 0) {
-      children = [
+      children = _excess > 0
+          ? [
+        ExcessActionPicker(
+          excess: _excess,
+          value: _excessAction,
+          customerName: sale.customerName,
+          paidLabel: 'advance',
+          onChanged: _saving
+              ? null
+              : (action) {
+            setState(() {
+              _excessAction = action;
+            });
+          },
+        ),
+      ]
+          : [
         _infoLine(
           icon: Icons.check_circle_outline_rounded,
           color: AppColors.success,
@@ -1178,6 +1298,13 @@ class _CompleteWaitForDeliveryScreenState
                 '${_currency(rate)})',
             _currency(_goatSaleValue),
           ),
+          if (_discount > 0) ...[
+            const SizedBox(height: 8),
+            _summaryRow(
+              'Discount',
+              '− ${_currency(_discount)}',
+            ),
+          ],
           if (_transport > 0) ...[
             const SizedBox(height: 8),
             _summaryRow(
@@ -1196,6 +1323,25 @@ class _CompleteWaitForDeliveryScreenState
             _currency(due),
             emphasized: true,
           ),
+          if (_excess > 0) ...[
+            const SizedBox(height: 8),
+            _summaryRow(
+              'Extra (advance over the bill)',
+              _currency(_excess),
+              emphasized: true,
+            ),
+            const SizedBox(height: 10),
+            _infoLine(
+              icon: Icons.savings_outlined,
+              color: AppColors.success,
+              text: _excessAction == ExcessAction.carryToAdvance
+                  ? '${_currency(_excess)} will be added to '
+                  '${_buyerName(sale)}\'s advance balance.'
+                  : '${_currency(_excess)} will be returned to '
+                  '${_buyerName(sale)} and recorded as a Customer '
+                  'Refund.',
+            ),
+          ],
           if (owes) ...[
             const SizedBox(height: 8),
             _summaryRow(

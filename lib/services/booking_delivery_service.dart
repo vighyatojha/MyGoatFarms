@@ -25,6 +25,10 @@ class BookingDeliveryPayment {
   /// It is added to what the customer owes but is never farm revenue.
   final double transportCharges;
 
+  /// Extra discount given at delivery, on top of the booking discount.
+  /// Comes off the goat value only. 0 when none.
+  final double discount;
+
   /// What to do with money the booking amount covered beyond the final
   /// bill.
   final ExcessAction excessAction;
@@ -34,6 +38,7 @@ class BookingDeliveryPayment {
     required this.amountReceivedNow,
     required this.onCredit,
     this.transportCharges = 0,
+    this.discount = 0,
     this.excessAction = ExcessAction.carryToAdvance,
   });
 }
@@ -152,6 +157,7 @@ class BookingDeliveryService {
           amountReceivedNow: payment.amountReceivedNow,
           paymentMethod: paymentMethod,
           onCredit: payment.onCredit,
+          discount: payment.discount,
           excessAction: payment.excessAction,
         );
 

@@ -83,13 +83,19 @@ class BookingDeliverySale {
   /// discount) + holding charges + transportation, against the booking
   /// amount already paid. Same maths as
   /// SalesService.completeBookingDelivery.
+  ///
+  /// [discount] is an EXTRA discount given at delivery, on top of the
+  /// booking discount already taken off [Sale.totalSaleAmount]. It comes off
+  /// the goat value only, never holding charges or transport.
   SaleSettlement settlementAt(
       DateTime deliveryDate, {
         double transport = 0,
+        double discount = 0,
         ExcessAction excessAction = ExcessAction.carryToAdvance,
       }) {
     return SaleSettlement.fromAmount(
       goatAmount: sale.totalSaleAmount,
+      discount: discount < 0 ? 0 : discount,
       holdingCharges: holdingChargesAt(deliveryDate),
       transportCharge: transport < 0 ? 0 : transport,
       advancePaid: bookingAmount,
@@ -104,14 +110,30 @@ class BookingDeliverySale {
   /// [transport] is the optional transportation charge entered at
   /// delivery. It is passed on to the transport team, so it is never farm
   /// revenue.
-  double finalAmountAt(DateTime deliveryDate, {double transport = 0}) {
-    return settlementAt(deliveryDate, transport: transport).balanceDue;
+  double finalAmountAt(
+      DateTime deliveryDate, {
+        double transport = 0,
+        double discount = 0,
+      }) {
+    return settlementAt(
+      deliveryDate,
+      transport: transport,
+      discount: discount,
+    ).balanceDue;
   }
 
   /// What the booking amount covered beyond the final bill (0 when it did
   /// not).
-  double excessAt(DateTime deliveryDate, {double transport = 0}) {
-    return settlementAt(deliveryDate, transport: transport).excess;
+  double excessAt(
+      DateTime deliveryDate, {
+        double transport = 0,
+        double discount = 0,
+      }) {
+    return settlementAt(
+      deliveryDate,
+      transport: transport,
+      discount: discount,
+    ).excess;
   }
 }
 
