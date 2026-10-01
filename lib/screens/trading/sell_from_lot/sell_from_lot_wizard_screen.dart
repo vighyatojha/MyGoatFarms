@@ -14,6 +14,7 @@ import '../../../widgets/farm_not_linked_state.dart';
 import '../../../widgets/fast_route.dart';
 import '../../../widgets/permission_gate.dart';
 import '../purchase_goats/purchase_wizard_widgets.dart';
+import '../lots/transfer_to_customer_palai_wizard_screen.dart';
 import '../sale_receipt_screen.dart';
 import '../steps/step2_customer_lookup.dart';
 import '../steps/step4_sale_details.dart';
@@ -28,12 +29,15 @@ import 'step_source_and_quantity.dart';
 /// Delivery -> Save. The last step is the same [Step5DeliveryOptions] the
 /// Sell Goat wizard uses, told (through the draft) that this is a lot
 /// sale:
-///  - goats still at the supplier: Deliver Now only;
+///  - goats still at the supplier: Deliver Now only (no picker shown);
 ///  - goats at the farm: Deliver Now, Booking / Holding or Wait for
 ///    Delivery (held goats are reserved in the lot, not sold, until the
 ///    delivery is completed from the Booking / Wait for Delivery lists);
-///  - Transfer to Palai is not offered — that is the lot's own transfer
-///    action.
+///  - goats at the farm also get Transfer to Palai, which hands over to the
+///    lot's own Palai transfer wizard (goats must be registered one by
+///    one);
+///  - goats at the supplier skip the option picker and go straight to
+///    the Deliver Now form.
 class SellFromLotWizardScreen extends StatefulWidget {
   /// When given (e.g. from the "Lot Created" screen) the wizard skips Select
   /// Lot and opens on Source & Quantity for this lot.
@@ -280,6 +284,22 @@ class _SellFromLotWizardScreenState extends State<SellFromLotWizardScreen> {
     return result == true;
   }
 
+  /// Transfer to Palai for goats at the farm. A lot's goats are anonymous,
+  /// so a Palai transfer needs each goat registered — that is the lot's own
+  /// Palai transfer wizard, which this hands over to.
+  void _openPalaiTransfer() {
+    final lot = _lot;
+    final farmId = _farmId;
+
+    if (lot == null || farmId == null) return;
+
+    Navigator.of(context).pushReplacement(
+      fastRoute(
+        TransferToCustomerPalaiWizardScreen(farmId: farmId, lot: lot),
+      ),
+    );
+  }
+
   Future<void> _save() async {
     if (!(_deliveryKey.currentState?.validate() ?? false)) return;
 
@@ -470,6 +490,7 @@ class _SellFromLotWizardScreenState extends State<SellFromLotWizardScreen> {
         return Step5DeliveryOptions(
           key: _deliveryKey,
           draft: _draft,
+          onTransferToPalai: _openPalaiTransfer,
         );
 
       default:

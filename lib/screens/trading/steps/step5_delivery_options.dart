@@ -46,10 +46,18 @@ class Step5DeliveryOptions extends StatefulWidget {
   /// nothing else. The draft's delivery type is set to Palai on entry.
   final bool palaiOnly;
 
+  /// Lot sales only. A lot's goats are anonymous, so a Palai transfer
+  /// cannot be saved from this form — each goat needs its own record.
+  /// When this is given, goats at the farm get a "Transfer to Palai"
+  /// card that calls it (the lot wizard opens the lot's Palai transfer
+  /// wizard) instead of selecting a branch here.
+  final VoidCallback? onTransferToPalai;
+
   const Step5DeliveryOptions({
     super.key,
     required this.draft,
     this.palaiOnly = false,
+    this.onTransferToPalai,
   });
 
   @override
@@ -142,10 +150,13 @@ class Step5DeliveryOptionsState extends State<Step5DeliveryOptions> {
   //
   // A sale made from a Purchase Lot uses this same step, but:
   //  - stock still AT THE SUPPLIER can only be Deliver Now (there is
-  //    nothing at the farm to hold or to wait for);
+  //    nothing at the farm to hold or to wait for), so no picker is shown
+  //    and the Deliver Now form opens directly;
   //  - stock at the farm can be Deliver Now, Booking or Wait for Delivery;
-  //  - Transfer to Palai is not a sale option for a lot — goats reach Palai
-  //    through the lot's own transfer actions, which register them.
+  //  - Transfer to Palai is not a branch of this form for a lot — goats
+  //    reach Palai through the lot's own transfer wizard, which registers
+  //    them. At the farm the card is shown and hands over to it through
+  //    [Step5DeliveryOptions.onTransferToPalai].
 
   bool get _isLot => widget.draft.isLotSale;
 
@@ -155,6 +166,16 @@ class Step5DeliveryOptionsState extends State<Step5DeliveryOptions> {
   bool get _offersHolding => !_fromSupplier;
 
   bool get _offersPalai => !_isLot || widget.palaiOnly;
+
+  /// A lot sale at the farm shows a Transfer to Palai card that hands
+  /// over to the lot's own Palai transfer wizard (see
+  /// [Step5DeliveryOptions.onTransferToPalai]). It is never a branch
+  /// of this form, so [_isAllowed] is unchanged.
+  bool get _showsLotPalaiCard =>
+      _isLot &&
+          !_fromSupplier &&
+          !widget.palaiOnly &&
+          widget.onTransferToPalai != null;
 
   /// Whether [type] may be used for this sale.
   bool _isAllowed(String type) {
@@ -343,6 +364,13 @@ class Step5DeliveryOptionsState extends State<Step5DeliveryOptions> {
   Widget build(BuildContext context) {
     final draft = widget.draft;
 
+    // The person may have gone back and switched the lot source to the
+    // supplier — keep the draft on its only valid option.
+    if (_fromSupplier && draft.deliveryType != Sale.deliveryTypeDeliverNow) {
+      draft.onCredit = false;
+      draft.deliveryType = Sale.deliveryTypeDeliverNow;
+    }
+
     return ListView(
       keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
       padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
@@ -359,6 +387,9 @@ class Step5DeliveryOptionsState extends State<Step5DeliveryOptions> {
             'The customer keeps boarding ${_theGoats(draft)} here.',
             style: AppTheme.body(size: 12),
           ),
+        ] else if (_fromSupplier) ...[
+          // Goats still at the supplier can only be handed over now, so
+          // there is nothing to choose — go straight to the form.
         ] else ...[
           Text(
             _isLot
@@ -395,27 +426,20 @@ class Step5DeliveryOptionsState extends State<Step5DeliveryOptions> {
               onTap: () => _selectBranch(Sale.deliveryTypeWaitForDelivery),
             ),
           ],
-          if (_offersPalai) ...[
+          if (_offersPalai || _showsLotPalaiCard) ...[
             const SizedBox(height: 10),
             _BranchCard(
               title: 'Transfer to Palai',
               subtitle: 'Customer keeps boarding ${_theGoats(draft)} here',
               icon: Icons.holiday_village_outlined,
               selected: draft.deliveryType == Sale.deliveryTypePalai,
-              onTap: () => _selectBranch(Sale.deliveryTypePalai),
+              onTap: _showsLotPalaiCard
+                  ? widget.onTransferToPalai!
+                  : () => _selectBranch(Sale.deliveryTypePalai),
             ),
           ],
         ], // end of the non-palaiOnly branch picker
-        if (_fromSupplier) ...[
-          const SizedBox(height: 12),
-          const WizardNote(
-            'These goats are still at the supplier, so they can only be '
-                'sold with Deliver Now. Booking and Wait for Delivery are '
-                'for goats already at the farm.',
-          ),
-        ],
-
-        const SizedBox(height: 18),
+        SizedBox(height: _fromSupplier ? 4 : 18),
 
         if (draft.isDeliverNow) _buildDeliverNowForm(draft),
         if (draft.isBooking) _buildBookingForm(draft),
