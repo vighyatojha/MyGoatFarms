@@ -2,10 +2,12 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../../../app_theme.dart';
+import '../../../models/partner_permission_keys.dart';
 import '../../../models/purchase_costing.dart';
 import '../../../models/trading_lot_death_model.dart';
 import '../../../models/trading_purchase_model.dart';
 import '../../../services/firestore_service.dart';
+import '../../../services/partner_access_service.dart';
 import '../../../services/trading_service.dart';
 import '../purchase_goats/purchase_wizard_widgets.dart';
 
@@ -17,7 +19,17 @@ Future<bool?> showRecordLotDeathSheet({
   required BuildContext context,
   required String farmId,
   required TradingPurchase lot,
-}) {
+}) async {
+  if (!PartnerAccessService.instance
+      .allows(PartnerPermissionKeys.tradingManageStock)) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('You don\u2019t have permission to record deaths.'),
+      ),
+    );
+    return null;
+  }
+
   return showModalBottomSheet<bool>(
     context: context,
     isScrollControlled: true,

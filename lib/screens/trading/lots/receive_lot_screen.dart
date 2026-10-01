@@ -2,10 +2,12 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../../../app_theme.dart';
+import '../../../models/partner_permission_keys.dart';
 import '../../../models/purchase_costing.dart';
 import '../../../models/trading_purchase_model.dart';
 import '../../../services/firestore_service.dart';
 import '../../../services/trading_service.dart';
+import '../../../widgets/permission_gate.dart';
 import '../purchase_goats/purchase_wizard_widgets.dart';
 
 /// Receive Lot — records a batch of the lot's goats arriving at the farm.
@@ -181,6 +183,18 @@ class _ReceiveLotScreenState extends State<ReceiveLotScreen> {
 
     final remainingAfter = lot.supplierQty - _arrived - _died;
 
+    return PermissionGate(
+      permission: PartnerPermissionKeys.tradingReceive,
+      child: _scaffold(lot, avg, looksOff, remainingAfter),
+    );
+  }
+
+  Widget _scaffold(
+      TradingPurchase lot,
+      double avg,
+      bool looksOff,
+      int remainingAfter,
+      ) {
     return Scaffold(
       backgroundColor: AppColors.paleGreen,
       appBar: AppBar(title: Text('Receive ${lot.lotId}')),

@@ -166,6 +166,13 @@ class _LotTile extends StatelessWidget {
                   ),
                 ],
               ),
+              if (lot.unsoldOutLabel.isNotEmpty) ...[
+                const SizedBox(height: 6),
+                Text(
+                  '${lot.unsoldOutLabel} (not sold)',
+                  style: AppTheme.body(size: 11),
+                ),
+              ],
               const SizedBox(height: 10),
               Row(
                 children: [

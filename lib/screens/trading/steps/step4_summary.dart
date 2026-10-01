@@ -413,7 +413,7 @@ class Step4SummaryState extends State<Step4Summary> {
             ),
             WizardComputedRow(
               label: 'Payment Status',
-              value: draft.paymentStatus,
+              value: supplierPaymentStatusLabel(draft.paymentStatus),
             ),
             if (draft.paymentNote.trim().isNotEmpty)
               WizardComputedRow(

@@ -387,6 +387,13 @@ class _LotCard extends StatelessWidget {
                   _stat('At Farm', '${lot.farmQty}'),
                 ],
               ),
+              if (lot.unsoldOutLabel.isNotEmpty) ...[
+                const SizedBox(height: 6),
+                Text(
+                  '${lot.unsoldOutLabel} (not sold)',
+                  style: AppTheme.body(size: 11),
+                ),
+              ],
               const SizedBox(height: 12),
               Row(
                 children: [
@@ -401,7 +408,10 @@ class _LotCard extends StatelessWidget {
                     ),
                   ),
                   const Spacer(),
-                  LotBadge(label: status, color: lotPaymentColor(status)),
+                  LotBadge(
+                    label: supplierPaymentStatusLabel(status),
+                    color: lotPaymentColor(status),
+                  ),
                 ],
               ),
             ],

@@ -86,6 +86,15 @@ class LotSalesCards extends StatelessWidget {
             label: 'Booked / waiting (not yet delivered)',
             value: '${s.openGoats} goat${s.openGoats == 1 ? '' : 's'}',
           ),
+        if (s.openGoats > 0)
+          Padding(
+            padding: const EdgeInsets.only(top: 2, bottom: 4),
+            child: Text(
+              'Sales revenue and customer pending count delivered sales '
+                  'only. Booked / waiting goats are added once delivered.',
+              style: AppTheme.body(size: 11),
+            ),
+          ),
         const Divider(height: 18, color: AppColors.divider),
         WizardComputedRow(
           label: 'Cost of goats sold',

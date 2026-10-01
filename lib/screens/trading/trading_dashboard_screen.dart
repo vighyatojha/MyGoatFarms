@@ -785,13 +785,20 @@ class _TradingDashboardScreenState extends State<TradingDashboardScreen> {
 
                   String money(double v) => ready ? _inr.format(v) : '—';
 
+                  // Booked / Wait-for-Delivery sales are not revenue or
+                  // pending until the goats are delivered, so say so when
+                  // some are waiting (otherwise the totals look short).
+                  final waiting = totals.openGoats > 0
+                      ? ' \u2022 ${totals.openGoats} still waiting'
+                      : '';
+
                   return Column(
                     children: [
                       _StripRow(
                         icon: Icons.trending_up_rounded,
                         color: AppColors.tradingBlue,
                         title: 'Sales Revenue',
-                        subtitle: 'Delivered lot sales',
+                        subtitle: 'Delivered sales$waiting',
                         onTap: openLotSales,
                         trailing: Text(
                           money(totals.revenue),
@@ -806,7 +813,9 @@ class _TradingDashboardScreenState extends State<TradingDashboardScreen> {
                         icon: Icons.hourglass_bottom_rounded,
                         color: AppColors.warning,
                         title: 'Customer Pending',
-                        subtitle: 'Still to collect from lot sales',
+                        subtitle: totals.openGoats > 0
+                            ? 'Delivered sales$waiting'
+                            : 'To collect on delivered sales',
                         subtitleColor: totals.customerPending >= 0.01
                             ? AppColors.warning
                             : null,
@@ -1386,7 +1395,7 @@ class _TradingDashboardScreenState extends State<TradingDashboardScreen> {
                   ],
                 ),
               ),
-              _Pill(status, statusColor),
+              _Pill(supplierPaymentStatusLabel(status), statusColor),
             ],
           ),
           const SizedBox(height: 10),

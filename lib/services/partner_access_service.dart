@@ -124,6 +124,24 @@ class PartnerAccessService {
       case 'finance.reportsView':
         return permissions.financeReportsView;
 
+      case 'trading.view':
+        return permissions.tradingView;
+
+      case 'trading.purchaseCreate':
+        return permissions.tradingPurchaseCreate;
+
+      case 'trading.sell':
+        return permissions.tradingSell;
+
+      case 'trading.supplierPayment':
+        return permissions.tradingSupplierPayment;
+
+      case 'trading.receive':
+        return permissions.tradingReceive;
+
+      case 'trading.manageStock':
+        return permissions.tradingManageStock;
+
       default:
         return false;
     }

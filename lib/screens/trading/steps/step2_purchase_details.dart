@@ -10,7 +10,8 @@ import '../purchase_goats/purchase_wizard_widgets.dart';
 ///
 /// Fields:
 /// - Total Goats
-/// - Male Goats / Female Goats (must add up to Total Goats)
+/// - Male Goats / Female Goats (optional; if entered they must add up to
+///   Total Goats)
 /// - Total Weight at Purchase
 /// - Price per KG
 /// (Payment moved to its own step — see step_lot_payment.dart.)
@@ -129,6 +130,9 @@ class _Step2PurchaseDetailsState extends State<Step2PurchaseDetails> {
       return 'Enter a valid count';
     }
 
+    // Optional (PDF §4): both blank / zero means no split is recorded.
+    if (male == 0 && female == 0) return null;
+
     if (total > 0 && (male + female) != total) {
       return 'Must add up to $total';
     }
@@ -187,7 +191,7 @@ class _Step2PurchaseDetailsState extends State<Step2PurchaseDetails> {
                   Expanded(
                     child: wizardField(
                       controller: _maleGoatsController,
-                      label: 'Male Goats',
+                      label: 'Male Goats (optional)',
                       hint: 'e.g. 12',
                       icon: Icons.male_rounded,
                       suffix: 'male',
@@ -204,7 +208,7 @@ class _Step2PurchaseDetailsState extends State<Step2PurchaseDetails> {
                   Expanded(
                     child: wizardField(
                       controller: _femaleGoatsController,
-                      label: 'Female Goats',
+                      label: 'Female Goats (optional)',
                       hint: 'e.g. 8',
                       icon: Icons.female_rounded,
                       suffix: 'female',
@@ -220,7 +224,9 @@ class _Step2PurchaseDetailsState extends State<Step2PurchaseDetails> {
                 ],
               ),
 
-              if (draft.totalGoats > 0 && !draft.genderCountIsValid) ...[
+              if (draft.totalGoats > 0 &&
+                  draft.hasGenderSplit &&
+                  !draft.genderCountIsValid) ...[
                 const SizedBox(height: 10),
                 WizardNote(
                   (draft.maleGoats + draft.femaleGoats) < draft.totalGoats

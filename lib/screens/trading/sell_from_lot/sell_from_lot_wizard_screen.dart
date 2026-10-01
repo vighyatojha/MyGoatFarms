@@ -480,12 +480,7 @@ class _SellFromLotWizardScreenState extends State<SellFromLotWizardScreen> {
   @override
   Widget build(BuildContext context) {
     return PermissionGate(
-      // Selling from a lot isn't creating a purchase, but no dedicated
-      // Trading "sell" permission exists yet — tradingPurchaseCreate is
-      // reused here for the same reason lot_detail_screen.dart reuses it
-      // for Receive Lot / Add Payment. See TRADING_LOT_REFACTOR_HANDOVER
-      // v2 for the note that this should probably become its own key.
-      permission: PartnerPermissionKeys.tradingPurchaseCreate,
+      permission: PartnerPermissionKeys.tradingSell,
       child: _body(),
     );
   }

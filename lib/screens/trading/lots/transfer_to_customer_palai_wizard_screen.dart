@@ -363,9 +363,7 @@ class _TransferToCustomerPalaiWizardScreenState
   @override
   Widget build(BuildContext context) {
     return PermissionGate(
-      // Same key the other lot actions use — no dedicated Trading
-      // transfer permission exists yet.
-      permission: PartnerPermissionKeys.tradingPurchaseCreate,
+      permission: PartnerPermissionKeys.tradingManageStock,
       child: PopScope(
         canPop: false,
         onPopInvokedWithResult: (didPop, result) async {

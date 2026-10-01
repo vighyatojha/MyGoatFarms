@@ -2,9 +2,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../../../app_theme.dart';
+import '../../../models/partner_permission_keys.dart';
 import '../../../models/purchase_costing.dart';
 import '../../../models/trading_purchase_model.dart';
 import '../../../services/firestore_service.dart';
+import '../../../services/partner_access_service.dart';
 import '../../../services/trading_service.dart';
 import '../purchase_goats/purchase_wizard_widgets.dart';
 
@@ -19,7 +21,19 @@ Future<bool?> showAddLotPaymentSheet({
   required BuildContext context,
   required String farmId,
   required TradingPurchase lot,
-}) {
+}) async {
+  // Backstop for entry points that don't gate the button themselves
+  // (e.g. the Lot Saved screen).
+  if (!PartnerAccessService.instance
+      .allows(PartnerPermissionKeys.tradingSupplierPayment)) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('You don\u2019t have permission to pay suppliers.'),
+      ),
+    );
+    return null;
+  }
+
   return showModalBottomSheet<bool>(
     context: context,
     isScrollControlled: true,

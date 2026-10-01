@@ -4,6 +4,7 @@ import 'package:flutter/services.dart';
 import '../../../app_theme.dart';
 import '../../../models/purchase_costing.dart';
 import '../../../models/trading_purchase_draft.dart';
+import '../../../models/trading_purchase_model.dart';
 import '../purchase_goats/purchase_wizard_widgets.dart';
 
 /// Step 3 — Supplier Payment.
@@ -265,7 +266,9 @@ class _StepLotPaymentState extends State<StepLotPayment> {
                       borderRadius: BorderRadius.circular(20),
                     ),
                     child: Text(
-                      draft.paidNowEntered ? draft.paymentStatus : '—',
+                      draft.paidNowEntered
+                          ? supplierPaymentStatusLabel(draft.paymentStatus)
+                          : '—',
                       style: TextStyle(
                         fontSize: 12,
                         fontWeight: FontWeight.w800,

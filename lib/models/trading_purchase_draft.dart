@@ -211,12 +211,20 @@ class PurchaseDraft {
           otherExpenses > 0 ||
           remarks.trim().isNotEmpty;
 
-  /// True once Male + Female goats add up to the Total Goats entered.
+  /// True when a Male / Female split has been entered at all. The split is
+  /// optional (PDF §4): leaving both blank is fine and the lot is saved
+  /// without one.
+  bool get hasGenderSplit => maleGoats > 0 || femaleGoats > 0;
+
+  /// True when the split is acceptable: either none was entered (optional),
+  /// or Male + Female add up to the Total Goats entered.
   ///
-  /// False (not an error) while totalGoats is still 0, so the check only
+  /// True (not an error) while totalGoats is still 0, so the check only
   /// starts to matter once there is something to check it against.
   bool get genderCountIsValid =>
-      totalGoats > 0 && (maleGoats + femaleGoats) == totalGoats;
+      !hasGenderSplit ||
+          totalGoats <= 0 ||
+          (maleGoats + femaleGoats) == totalGoats;
 
   /// Normalizes the payment method so only Cash or Online can be stored.
   void setPaymentMethod(String value) {

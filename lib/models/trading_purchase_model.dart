@@ -2,6 +2,21 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 
 import 'purchase_costing.dart';
 
+/// Display text for a supplier payment status ('Unpaid' / 'Partial' /
+/// 'Paid'). The stored / derived strings stay as they are — only what the
+/// user reads changes, to match the spec wording (Unpaid / Partially Paid /
+/// Fully Paid).
+String supplierPaymentStatusLabel(String status) {
+  switch (status) {
+    case 'Paid':
+      return 'Fully Paid';
+    case 'Partial':
+      return 'Partially Paid';
+    default:
+      return status;
+  }
+}
+
 /// Where a lot's goats physically are right now.
 enum LotLocation { atSupplier, partiallyAtFarm, atFarm }
 
@@ -297,6 +312,23 @@ class TradingPurchase {
 
   /// Goats the lot still owns (supplier + farm), reserved included.
   int get remainingQty => supplierQty + farmQty;
+
+  /// Goats that left the lot without being sold: every death (transit and
+  /// farm) plus goats moved to Own / Customer Palai as individual goats.
+  /// Display-only — it never feeds a counter. For a lot,
+  /// totalGoats = soldQty + [unsoldOutQty] + remainingQty, which is how the
+  /// "bought • sold • remaining" line reconciles.
+  int get unsoldOutQty => mortality + registeredCount;
+
+  /// "Died 2 • Moved to Palai 1" (only the non-zero parts), or '' when
+  /// nothing left the lot that way.
+  String get unsoldOutLabel {
+    final parts = <String>[
+      if (mortality > 0) 'Died $mortality',
+      if (registeredCount > 0) 'Moved to Palai $registeredCount',
+    ];
+    return parts.join(' • ');
+  }
 
   /// Goats that can be sold right now, from either location.
   int get availableForSaleQty => supplierQty + farmAvailableQty;

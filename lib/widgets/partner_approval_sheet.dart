@@ -80,6 +80,11 @@ class _PartnerApprovalSheetState extends State<PartnerApprovalSheet> {
     _PermissionGroup('Trading', Icons.swap_horiz_outlined, [
       _PermissionToggle('tradingView', 'View'),
       _PermissionToggle('tradingPurchaseCreate', 'Create purchases'),
+      _PermissionToggle('tradingSell', 'Sell from lots'),
+      _PermissionToggle('tradingSupplierPayment', 'Pay suppliers'),
+      _PermissionToggle('tradingReceive', 'Receive lots'),
+      _PermissionToggle(
+          'tradingManageStock', 'Record deaths & transfer goats'),
     ]),
     _PermissionGroup('General', Icons.tune_outlined, [
       _PermissionToggle('reportsView', 'View reports'),
@@ -123,6 +128,10 @@ class _PartnerApprovalSheetState extends State<PartnerApprovalSheet> {
       financeReportsView: _flag('financeReportsView'),
       tradingView: _flag('tradingView'),
       tradingPurchaseCreate: _flag('tradingPurchaseCreate'),
+      tradingSell: _flag('tradingSell'),
+      tradingSupplierPayment: _flag('tradingSupplierPayment'),
+      tradingReceive: _flag('tradingReceive'),
+      tradingManageStock: _flag('tradingManageStock'),
     );
   }
 

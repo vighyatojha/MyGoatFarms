@@ -39,6 +39,10 @@ class PartnerPermissionKeys {
   // Trading
   static const String tradingView = 'trading.view';
   static const String tradingPurchaseCreate = 'trading.purchaseCreate';
+  static const String tradingSell = 'trading.sell';
+  static const String tradingSupplierPayment = 'trading.supplierPayment';
+  static const String tradingReceive = 'trading.receive';
+  static const String tradingManageStock = 'trading.manageStock';
 
   static const List<String> all = [
     palaiView,
@@ -66,6 +70,10 @@ class PartnerPermissionKeys {
     financeReportsView,
     tradingView,
     tradingPurchaseCreate,
+    tradingSell,
+    tradingSupplierPayment,
+    tradingReceive,
+    tradingManageStock,
   ];
 
   static Map<String, bool> empty() {

@@ -283,7 +283,7 @@ class _PurchaseSuccessScreenState extends State<PurchaseSuccessScreen> {
                               borderRadius: BorderRadius.circular(20),
                             ),
                             child: Text(
-                              lot.paymentStatus,
+                              supplierPaymentStatusLabel(lot.paymentStatus),
                               style: TextStyle(
                                 fontSize: 12,
                                 fontWeight: FontWeight.w800,

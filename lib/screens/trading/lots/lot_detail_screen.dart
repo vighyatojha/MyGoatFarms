@@ -422,7 +422,7 @@ class _LotDetailScreenState extends State<LotDetailScreen> {
                   color: lotLocationColor(lot.location),
                 ),
               LotBadge(
-                label: 'Payment: $status',
+                label: 'Payment: ${supplierPaymentStatusLabel(status)}',
                 color: lotPaymentColor(status),
               ),
             ],
@@ -708,7 +708,10 @@ class _LotDetailScreenState extends State<LotDetailScreen> {
           children: [
             Text('Status', style: AppTheme.body(size: 13)),
             const Spacer(),
-            LotBadge(label: status, color: lotPaymentColor(status)),
+            LotBadge(
+              label: supplierPaymentStatusLabel(status),
+              color: lotPaymentColor(status),
+            ),
           ],
         ),
         WizardComputedRow(
@@ -810,15 +813,14 @@ class _LotDetailScreenState extends State<LotDetailScreen> {
   // ---------------------------------------------------------------------
 
   Widget _actions(TradingPurchase lot) {
-    // No dedicated permission exists yet for receiving/paying/selling a
-    // lot — tradingPurchaseCreate is the closest existing key (the only
-    // trading mutation permission in PartnerPermissionKeys today). The
-    // farm owner is unaffected either way (see PartnerAccessService.
-    // allows); only an invited partner without this permission is
-    // blocked here.
-    final canMutate =
-    PartnerAccessService.instance.allows(PartnerPermissionKeys.tradingPurchaseCreate);
-    final lotOk = lot.isLot && canMutate;
+    // One permission per kind of action. The farm owner is unaffected (see
+    // PartnerAccessService.allows); only an invited partner without the
+    // matching permission is blocked on that button.
+    final access = PartnerAccessService.instance;
+    final canReceive = access.allows(PartnerPermissionKeys.tradingReceive);
+    final canPay = access.allows(PartnerPermissionKeys.tradingSupplierPayment);
+    final canSell = access.allows(PartnerPermissionKeys.tradingSell);
+    final canManage = access.allows(PartnerPermissionKeys.tradingManageStock);
 
     return WizardSectionCard(
       title: 'Actions',
@@ -830,7 +832,7 @@ class _LotDetailScreenState extends State<LotDetailScreen> {
           hint: lot.supplierQty > 0
               ? '${lot.supplierQty} goats still at supplier'
               : 'Nothing left at the supplier',
-          enabled: lotOk && lot.supplierQty > 0,
+          enabled: lot.isLot && canReceive && lot.supplierQty > 0,
           onTap: () => _receive(lot),
         ),
         _ActionButton(
@@ -839,7 +841,7 @@ class _LotDetailScreenState extends State<LotDetailScreen> {
           hint: lot.dueAmount >= 0.01
               ? '${wizardCurrency(lot.dueAmount)} due'
               : 'Fully paid',
-          enabled: lotOk && lot.dueAmount >= 0.01,
+          enabled: lot.isLot && canPay && lot.dueAmount >= 0.01,
           onTap: () => _addPayment(lot),
         ),
         _ActionButton(
@@ -848,7 +850,7 @@ class _LotDetailScreenState extends State<LotDetailScreen> {
           hint: lot.availableForSaleQty > 0
               ? '${lot.availableForSaleQty} available'
               : 'No goats available to sell',
-          enabled: lotOk && lot.availableForSaleQty > 0,
+          enabled: lot.isLot && canSell && lot.availableForSaleQty > 0,
           onTap: _sellFromLot,
         ),
         _ActionButton(
@@ -857,7 +859,7 @@ class _LotDetailScreenState extends State<LotDetailScreen> {
           hint: lot.farmAvailableQty > 0
               ? '${lot.farmAvailableQty} at farm'
               : 'Needs goats at the farm',
-          enabled: lotOk && lot.farmAvailableQty > 0,
+          enabled: lot.isLot && canManage && lot.farmAvailableQty > 0,
           onTap: () => _transferToOwnPalai(lot),
         ),
         _ActionButton(
@@ -866,7 +868,7 @@ class _LotDetailScreenState extends State<LotDetailScreen> {
           hint: lot.farmAvailableQty > 0
               ? '${lot.farmAvailableQty} at farm'
               : 'Needs goats at the farm',
-          enabled: lotOk && lot.farmAvailableQty > 0,
+          enabled: lot.isLot && canManage && lot.farmAvailableQty > 0,
           onTap: () => _transferToCustomerPalai(lot),
         ),
         _ActionButton(
@@ -875,7 +877,7 @@ class _LotDetailScreenState extends State<LotDetailScreen> {
           hint: lot.farmAvailableQty > 0
               ? '${lot.farmAvailableQty} at farm'
               : 'Needs goats at the farm',
-          enabled: lotOk && lot.farmAvailableQty > 0,
+          enabled: lot.isLot && canManage && lot.farmAvailableQty > 0,
           onTap: () => _recordDeath(lot),
         ),
       ],

@@ -180,9 +180,7 @@ class _TransferToOwnPalaiScreenState extends State<TransferToOwnPalaiScreen> {
     final lot = widget.lot;
 
     return PermissionGate(
-      // Same key the other lot actions (Receive, Add Payment, Sell) use —
-      // no dedicated Trading transfer permission exists yet.
-      permission: PartnerPermissionKeys.tradingPurchaseCreate,
+      permission: PartnerPermissionKeys.tradingManageStock,
       child: PopScope(
         canPop: !_saving,
         child: Scaffold(

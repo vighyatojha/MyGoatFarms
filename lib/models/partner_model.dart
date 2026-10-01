@@ -33,6 +33,10 @@ class PartnerPermissions {
   // --- Trading ---
   final bool tradingView;
   final bool tradingPurchaseCreate;
+  final bool tradingSell;
+  final bool tradingSupplierPayment;
+  final bool tradingReceive;
+  final bool tradingManageStock;
 
   const PartnerPermissions({
     this.palaiView = false,
@@ -60,6 +64,10 @@ class PartnerPermissions {
     this.financeReportsView = false,
     this.tradingView = false,
     this.tradingPurchaseCreate = false,
+    this.tradingSell = false,
+    this.tradingSupplierPayment = false,
+    this.tradingReceive = false,
+    this.tradingManageStock = false,
   });
 
   factory PartnerPermissions.fromMap(
@@ -98,7 +106,29 @@ class PartnerPermissions {
 
       tradingView: data['tradingView'] == true,
       tradingPurchaseCreate: data['tradingPurchaseCreate'] == true,
+
+      // The four lot-action keys were added after partners already
+      // existed. A partner saved before then has no such field, so it
+      // inherits what they could already do (tradingPurchaseCreate) —
+      // nobody loses or gains access by the split alone. Once the owner
+      // saves the partner's permissions the explicit values are stored
+      // and win.
+      tradingSell: _flagOr(data, 'tradingSell', 'tradingPurchaseCreate'),
+      tradingSupplierPayment:
+      _flagOr(data, 'tradingSupplierPayment', 'tradingPurchaseCreate'),
+      tradingReceive: _flagOr(data, 'tradingReceive', 'tradingPurchaseCreate'),
+      tradingManageStock:
+      _flagOr(data, 'tradingManageStock', 'tradingPurchaseCreate'),
     );
+  }
+
+  static bool _flagOr(
+      Map<String, dynamic> data,
+      String key,
+      String fallbackKey,
+      ) {
+    if (data.containsKey(key)) return data[key] == true;
+    return data[fallbackKey] == true;
   }
 
   factory PartnerPermissions.none() {
@@ -137,6 +167,10 @@ class PartnerPermissions {
 
       'tradingView': tradingView,
       'tradingPurchaseCreate': tradingPurchaseCreate,
+      'tradingSell': tradingSell,
+      'tradingSupplierPayment': tradingSupplierPayment,
+      'tradingReceive': tradingReceive,
+      'tradingManageStock': tradingManageStock,
     };
   }
 }
