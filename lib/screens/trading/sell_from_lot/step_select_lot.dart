@@ -6,6 +6,7 @@ import '../../../models/sale_model.dart';
 import '../../../models/trading_purchase_model.dart';
 import '../../../services/firestore_service.dart';
 import '../../../services/trading_service.dart';
+import '../lots/lot_detail_screen.dart';
 import '../lots/lot_widgets.dart';
 
 /// Step 1 of Sell From Lot — pick which lot to sell from.
@@ -52,6 +53,17 @@ class _StepSelectLotState extends State<StepSelectLot> {
     widget.onSelected();
   }
 
+  void _openLotDetail(TradingPurchase lot) {
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => LotDetailScreen(
+          farmId: widget.farmId,
+          lotDocId: lot.id,
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return StreamBuilder<List<TradingPurchase>>(
@@ -91,7 +103,10 @@ class _StepSelectLotState extends State<StepSelectLot> {
                     color: AppColors.textGrey,
                   ),
                   const SizedBox(height: 12),
-                  Text('No goats available to sell', style: AppTheme.heading(size: 16)),
+                  Text(
+                    'No goats available to sell',
+                    style: AppTheme.heading(size: 16),
+                  ),
                   const SizedBox(height: 6),
                   Text(
                     'Every lot is either sold out or reserved by bookings.',
@@ -108,7 +123,11 @@ class _StepSelectLotState extends State<StepSelectLot> {
           padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
           itemCount: lots.length,
           separatorBuilder: (_, __) => const SizedBox(height: 10),
-          itemBuilder: (_, i) => _LotTile(lot: lots[i], onTap: () => _select(lots[i])),
+          itemBuilder: (_, i) => _LotTile(
+            lot: lots[i],
+            onTap: () => _select(lots[i]),
+            onViewDetails: () => _openLotDetail(lots[i]),
+          ),
         );
       },
     );
@@ -118,8 +137,13 @@ class _StepSelectLotState extends State<StepSelectLot> {
 class _LotTile extends StatelessWidget {
   final TradingPurchase lot;
   final VoidCallback onTap;
+  final VoidCallback onViewDetails;
 
-  const _LotTile({required this.lot, required this.onTap});
+  const _LotTile({
+    required this.lot,
+    required this.onTap,
+    required this.onViewDetails,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -138,7 +162,10 @@ class _LotTile extends StatelessWidget {
                 children: [
                   Text(
                     lot.lotId,
-                    style: AppTheme.heading(size: 15, color: AppColors.primaryGreen),
+                    style: AppTheme.heading(
+                      size: 15,
+                      color: AppColors.primaryGreen,
+                    ),
                   ),
                   const Spacer(),
                   LotBadge(
@@ -182,6 +209,36 @@ class _LotTile extends StatelessWidget {
                     _pill('At Farm', lot.farmAvailableQty),
                 ],
               ),
+
+              // Lot details are available from the sales flow only when
+              // goats from this lot have actually reached the farm.
+              if (lot.farmAvailableQty > 0) ...[
+                const SizedBox(height: 10),
+                Align(
+                  alignment: Alignment.centerRight,
+                  child: OutlinedButton.icon(
+                    onPressed: onViewDetails,
+                    icon: const Icon(
+                      Icons.inventory_2_outlined,
+                      size: 17,
+                    ),
+                    label: const Text('View Lot Details'),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: AppColors.primaryGreen,
+                      side: BorderSide(
+                        color: AppColors.primaryGreen.withValues(alpha: 0.35),
+                      ),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 8,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
             ],
           ),
         ),

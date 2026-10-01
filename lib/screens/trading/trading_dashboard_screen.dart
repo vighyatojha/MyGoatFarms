@@ -1,4 +1,3 @@
-
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -29,6 +28,7 @@ import 'purchase_goats/complete_receiving_screen.dart';
 import 'purchase_goats/purchase_goats_wizard_screen.dart';
 import 'register_goats/select_purchase_screen.dart';
 import 'sell_from_lot/sell_from_lot_wizard_screen.dart';
+import 'sell_goat/sell_goat_wizard_screen.dart';
 
 /// Trading Dashboard.
 ///
@@ -519,9 +519,80 @@ class _TradingDashboardScreenState extends State<TradingDashboardScreen> {
           height: 116,
         ),
         const SizedBox(height: 10),
+        _sellOptions(lotOverview),
+        const SizedBox(height: 10),
         _secondaryStats(s, lotOverview),
         _lotFigures(lotOverview),
       ],
+    );
+  }
+
+  /// "Sell Goats" card: one tap into either selling flow, right under the
+  /// Wait on Delivery / Total Sold cards.
+  ///  - Available Stock -> Sell Goat wizard (individually registered goats)
+  ///  - Lot Selling     -> Sell From Lot wizard (goats still inside a lot)
+  Widget _sellOptions(TradingLotOverview lotOverview) {
+    final availableInLots = lotOverview.farmAvailableQty;
+    final availableRegistered = _availableCount;
+
+    const divider = Divider(
+      height: 1,
+      indent: 12,
+      endIndent: 12,
+      color: AppColors.divider,
+    );
+
+    Widget chevron() => Icon(
+      Icons.chevron_right_rounded,
+      size: 18,
+      color: AppColors.textGrey,
+    );
+
+    return DecoratedBox(
+      decoration: AppTheme.card(radius: 16),
+      child: Material(
+        type: MaterialType.transparency,
+        child: Column(
+          children: [
+            _StripRow(
+              icon: GoatIcons.paw,
+              color: AppColors.primaryGreen,
+              title: 'Sell Available Stock',
+              subtitle: 'Sell registered goats from your farm',
+              onTap: () => _push(const SellGoatWizardScreen()),
+              trailing: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  _Pill(
+                    availableRegistered == null
+                        ? '—'
+                        : '$availableRegistered available',
+                    AppColors.primaryGreen,
+                  ),
+                  const SizedBox(width: 4),
+                  chevron(),
+                ],
+              ),
+            ),
+            divider,
+            _StripRow(
+              icon: Icons.layers_outlined,
+              color: AppColors.tradingBlue,
+              title: 'Lot Selling',
+              subtitle: 'Sell goats directly from a purchase lot',
+              onTap: () => _push(const SellFromLotWizardScreen()),
+              trailing: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  _Pill('$availableInLots in lots', AppColors.tradingBlue),
+                  const SizedBox(width: 4),
+                  chevron(),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 

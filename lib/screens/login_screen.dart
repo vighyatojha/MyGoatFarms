@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart' show FirebaseException;
 import 'package:animate_do/animate_do.dart';
@@ -9,9 +10,11 @@ import '../app_theme.dart';
 import '../services/firestore_service.dart';
 import 'register_screen.dart';
 
-/// Login screen. Accepts either an email or a 10-digit mobile number.
-/// If a mobile number is entered, we look up the linked email in the
-/// `farms` Firestore collection, then sign in with Firebase Auth.
+/// Login screen for farm owners and partners. Signs in with a password and
+/// either a 10-digit mobile number or an email (toggle at the top of the
+/// form). A mobile number is resolved to its linked email through
+/// [FirestoreService.findEmailByMobile] (owners first, then partners), then
+/// Firebase Auth signs in with email + password.
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
 
@@ -23,6 +26,9 @@ class _LoginScreenState extends State<LoginScreen> {
   final _formKey = GlobalKey<FormState>();
   final _identifierController = TextEditingController();
   final _passwordController = TextEditingController();
+
+  /// true = log in with mobile number, false = with email.
+  bool _useMobile = true;
 
   bool _obscurePassword = true;
   bool _rememberMe = false;
@@ -36,16 +42,28 @@ class _LoginScreenState extends State<LoginScreen> {
   }
 
   String? _validateIdentifier(String? value) {
-    if (value == null || value.trim().isEmpty) {
-      return 'Enter your mobile number or email';
+    final v = value?.trim() ?? '';
+    if (_useMobile) {
+      if (v.isEmpty) return 'Enter your mobile number';
+      if (!RegExp(r'^[0-9]{10}$').hasMatch(v)) {
+        return 'Enter a valid 10-digit mobile number';
+      }
+      return null;
     }
-    final v = value.trim();
-    final emailRegex = RegExp(r'^[\w\.\-]+@[\w\-]+\.[\w\-\.]+$');
-    final mobileRegex = RegExp(r'^[0-9]{10}$');
-    if (!emailRegex.hasMatch(v) && !mobileRegex.hasMatch(v)) {
-      return 'Enter a valid email or 10-digit mobile number';
+    if (v.isEmpty) return 'Enter your email';
+    if (!RegExp(r'^[\w\.\-]+@[\w\-]+\.[\w\-\.]+$').hasMatch(v)) {
+      return 'Enter a valid email address';
     }
     return null;
+  }
+
+  void _setMode(bool useMobile) {
+    if (_useMobile == useMobile || _isLoading) return;
+    setState(() {
+      _useMobile = useMobile;
+      _identifierController.clear();
+    });
+    _formKey.currentState?.reset();
   }
 
   String? _validatePassword(String? value) {
@@ -65,13 +83,11 @@ class _LoginScreenState extends State<LoginScreen> {
     try {
       String email = input;
 
-      // If it's not an email, treat it as a mobile number and resolve
-      // the linked email address from Firestore.
-      if (!input.contains('@')) {
+      // Mobile mode: resolve the linked email address from Firestore.
+      if (_useMobile) {
         final linkedEmail = await firestore.findEmailByMobile(input);
         if (linkedEmail == null) {
-          _showSnack('No farm account found with this mobile number');
-          setState(() => _isLoading = false);
+          _showSnack('No account found with this mobile number');
           return;
         }
         email = linkedEmail;
@@ -156,6 +172,53 @@ class _LoginScreenState extends State<LoginScreen> {
     );
   }
 
+  Widget _buildModeToggle() {
+    Widget segment(String label, IconData icon, bool selected, VoidCallback onTap) {
+      return Expanded(
+        child: GestureDetector(
+          onTap: onTap,
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 180),
+            padding: const EdgeInsets.symmetric(vertical: 11),
+            decoration: BoxDecoration(
+              color: selected ? AppColors.primaryGreen : Colors.transparent,
+              borderRadius: BorderRadius.circular(26),
+            ),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(icon, size: 18, color: selected ? Colors.white : AppColors.textGrey),
+                const SizedBox(width: 6),
+                Text(
+                  label,
+                  style: AppTheme.body(
+                    size: 14,
+                    color: selected ? Colors.white : AppColors.textGrey,
+                    weight: FontWeight.w600,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+    }
+
+    return Container(
+      padding: const EdgeInsets.all(4),
+      decoration: BoxDecoration(
+        color: AppColors.primaryGreen.withValues(alpha: 0.10),
+        borderRadius: BorderRadius.circular(30),
+      ),
+      child: Row(
+        children: [
+          segment('Mobile', Icons.phone_outlined, _useMobile, () => _setMode(true)),
+          segment('Email', Icons.email_outlined, !_useMobile, () => _setMode(false)),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -216,14 +279,31 @@ class _LoginScreenState extends State<LoginScreen> {
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
                     FadeInUp(
+                      duration: const Duration(milliseconds: 250),
+                      child: _buildModeToggle(),
+                    ),
+                    const SizedBox(height: 16),
+                    FadeInUp(
                       delay: const Duration(milliseconds: 60),
                       duration: const Duration(milliseconds: 250),
                       child: TextFormField(
                         controller: _identifierController,
                         validator: _validateIdentifier,
-                        decoration: const InputDecoration(
-                          hintText: 'Mobile Number / Email',
-                          prefixIcon: Icon(Icons.person_outline, color: AppColors.primaryGreen),
+                        keyboardType: _useMobile
+                            ? TextInputType.phone
+                            : TextInputType.emailAddress,
+                        maxLength: _useMobile ? 10 : null,
+                        inputFormatters: _useMobile
+                            ? [FilteringTextInputFormatter.digitsOnly]
+                            : null,
+                        decoration: InputDecoration(
+                          hintText: _useMobile ? 'Mobile Number' : 'Email',
+                          counterText: '',
+                          prefixText: _useMobile ? '+91  ' : null,
+                          prefixIcon: Icon(
+                            _useMobile ? Icons.phone_outlined : Icons.email_outlined,
+                            color: AppColors.primaryGreen,
+                          ),
                         ),
                       ),
                     ),
@@ -295,22 +375,6 @@ class _LoginScreenState extends State<LoginScreen> {
                             child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2.5),
                           )
                               : Text('Login', style: AppTheme.heading(size: 16, color: Colors.white)),
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 14),
-                    FadeInUp(
-                      delay: const Duration(milliseconds: 190),
-                      duration: const Duration(milliseconds: 250),
-                      child: SizedBox(
-                        height: 54,
-                        child: OutlinedButton(
-                          onPressed: () => _showSnack('OTP login is coming soon'),
-                          style: OutlinedButton.styleFrom(
-                            side: const BorderSide(color: AppColors.primaryGreen, width: 1.5),
-                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(30)),
-                          ),
-                          child: Text('Login with OTP', style: AppTheme.heading(size: 16, color: AppColors.darkGreen)),
                         ),
                       ),
                     ),

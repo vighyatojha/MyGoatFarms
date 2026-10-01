@@ -1658,33 +1658,38 @@ class FirestoreService {
   /// Resolves the email linked to a mobile number, used for mobile-number
   /// login (Firebase Auth itself only signs in with email + password).
   ///
-  /// Checks farm OWNER accounts first, then falls back to PARTNER
-  /// accounts (`farms/{farmId}/partners`) — previously this only looked
-  /// at farm owners, so a partner logging in with their mobile number
-  /// always got "No farm account found", never their email resolved.
+  /// Checks farm OWNER accounts first, then PARTNER accounts
+  /// (`farms/{farmId}/partners`). Returns null only when no account with a
+  /// usable email uses this number. Lookup failures (missing index,
+  /// security rules, network) are rethrown so the login screen can show
+  /// the real reason instead of a misleading "no account found".
   Future<String?> findEmailByMobile(String mobileNumber) async {
-    final query = await _farms
-        .where('mobileNumber', isEqualTo: mobileNumber)
+    final mobile = mobileNumber.trim();
+    if (mobile.isEmpty) return null;
+
+    final ownerQuery = await _farms
+        .where('mobileNumber', isEqualTo: mobile)
         .limit(1)
         .get()
         .timeout(timeout);
-    if (query.docs.isNotEmpty) {
-      return query.docs.first.data()['email'] as String?;
+    if (ownerQuery.docs.isNotEmpty) {
+      final email =
+      (ownerQuery.docs.first.data()['email'] as String?)?.trim();
+      if (email != null && email.isNotEmpty) return email;
     }
 
-    try {
-      final partnerQuery = await FirebaseFirestore.instance
-          .collectionGroup('partners')
-          .where('mobileNumber', isEqualTo: mobileNumber)
-          .limit(1)
-          .get()
-          .timeout(timeout);
-      if (partnerQuery.docs.isEmpty) return null;
-      return partnerQuery.docs.first.data()['email'] as String?;
-    } catch (e) {
-      debugPrint('FirestoreService.findEmailByMobile partner lookup error: $e');
-      return null;
-    }
+    // Needs the partners.mobileNumber COLLECTION_GROUP index declared in
+    // firestore.indexes.json (fieldOverrides).
+    final partnerQuery = await FirebaseFirestore.instance
+        .collectionGroup('partners')
+        .where('mobileNumber', isEqualTo: mobile)
+        .limit(1)
+        .get()
+        .timeout(timeout);
+    if (partnerQuery.docs.isEmpty) return null;
+    final email =
+    (partnerQuery.docs.first.data()['email'] as String?)?.trim();
+    return (email == null || email.isEmpty) ? null : email;
   }
 
   Future<FarmModel?> getFarmByAuthUid(String uid) async {
@@ -1954,6 +1959,9 @@ class FirestoreService {
     }
     if (message.contains('PERMISSION_DENIED')) {
       return 'Firestore security rules are blocking this request.';
+    }
+    if (e is FirebaseException && e.code == 'already-exists') {
+      return e.message ?? 'This record already exists';
     }
     if (e is FirebaseException) {
       // Surface the actual plugin error code (unavailable, deadline-exceeded,
@@ -3769,6 +3777,33 @@ class FirestoreService {
     required String email,
     required String authUid,
   }) async {
+    // Mobile-number login resolves the FIRST account that uses a number, so
+    // two accounts sharing one would make the second unable to log in with
+    // it. Reject a number that already belongs to a farm owner or to
+    // another partner of this farm.
+    final mobile = mobileNumber.trim();
+    if (mobile.isNotEmpty) {
+      final owner = await _db
+          .collection('mobileIndex')
+          .doc(mobile)
+          .get()
+          .timeout(timeout);
+      final samePartner = await _farms
+          .doc(farmId)
+          .collection('partners')
+          .where('mobileNumber', isEqualTo: mobile)
+          .limit(1)
+          .get()
+          .timeout(timeout);
+      if (owner.exists || samePartner.docs.isNotEmpty) {
+        throw FirebaseException(
+          plugin: 'cloud_firestore',
+          code: 'already-exists',
+          message: 'This mobile number is already registered',
+        );
+      }
+    }
+
     final ref = _farms
         .doc(farmId)
         .collection('partners')
