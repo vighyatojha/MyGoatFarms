@@ -7,8 +7,10 @@ import '../../goat_icons.dart';
 import '../../models/bill_settings_model.dart';
 import '../../models/expense_categories.dart';
 import '../../models/farm_model.dart';
+import '../../models/partner_permission_keys.dart';
 import '../../models/sale_model.dart';
 import '../../services/firestore_service.dart';
+import '../../services/partner_access_service.dart';
 import '../../services/sale_receipt_pdf_service.dart';
 import '../../services/sales_service.dart';
 
@@ -661,12 +663,8 @@ class _SaleReceiptScreenState extends State<SaleReceiptScreen> {
         ),
 
         // Balance payments collected after delivery, oldest first.
-        for (final payment in sale.payments)
-          _moneyRow(
-            'Balance Payment',
-            payment.amount,
-            subtitle: _paymentSubtitle(payment),
-          ),
+        for (var i = 0; i < sale.payments.length; i++)
+          _balancePaymentRow(sale, i),
 
         if (sale.payments.isNotEmpty)
           _moneyRow(
@@ -740,6 +738,162 @@ class _SaleReceiptScreenState extends State<SaleReceiptScreen> {
         ],
       ],
     );
+  }
+
+  /// One balance payment. A voided payment stays visible (struck through,
+  /// with its reason). Only the newest payment that still counts gets a
+  /// Void button, and only for people allowed to void revenue; the
+  /// service refuses anything else with a clear message.
+  Widget _balancePaymentRow(Sale sale, int index) {
+    final payment = sale.payments[index];
+    final canVoid = !payment.voided &&
+        !payment.isPalaiSettlement &&
+        index == sale.latestActivePaymentIndex &&
+        PartnerAccessService.instance
+            .allows(PartnerPermissionKeys.financeRevenueVoid);
+
+    final subtitleParts = <String>[
+      _paymentSubtitle(payment),
+      if (payment.voided) 'Voided',
+      if (payment.voided && payment.voidReason.trim().isNotEmpty)
+        payment.voidReason.trim(),
+    ];
+
+    final dim = payment.voided ? AppColors.textGrey : AppColors.textDark;
+    final strike = payment.voided ? TextDecoration.lineThrough : null;
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Balance Payment',
+                  style: AppTheme.body(
+                    size: 11,
+                    color: AppColors.textGrey,
+                  ).copyWith(decoration: strike),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  subtitleParts.where((e) => e.isNotEmpty).join(' · '),
+                  style: AppTheme.body(
+                    size: 10.5,
+                    color: AppColors.textGrey,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 10),
+          Text(
+            _currency(payment.amount),
+            style: AppTheme.body(
+              size: 12,
+              color: dim,
+              weight: FontWeight.w700,
+            ).copyWith(decoration: strike),
+          ),
+          if (canVoid)
+            IconButton(
+              tooltip: 'Void this payment',
+              visualDensity: VisualDensity.compact,
+              icon: const Icon(Icons.block_rounded, size: 18),
+              onPressed: () => _voidPayment(sale, index),
+            ),
+        ],
+      ),
+    );
+  }
+
+  /// Voids a balance payment entered by mistake (to correct one: void it,
+  /// then receive the right amount). The work is done by
+  /// [SalesService.voidBalancePayment].
+  Future<void> _voidPayment(Sale sale, int index) async {
+    final payment = sale.payments[index];
+    final reasonController = TextEditingController();
+
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Void this payment?'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              '${_currency(payment.amount)} received on '
+                  '${DateFormat('dd MMM yyyy').format(payment.date)} will '
+                  'stop counting: the customer\'s balance due goes up and '
+                  'the matching Sold Goat Revenue in Finance is voided. '
+                  'The record is kept and marked as voided.',
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: reasonController,
+              textCapitalization: TextCapitalization.sentences,
+              maxLength: 120,
+              decoration: const InputDecoration(
+                labelText: 'Reason (optional)',
+                hintText: 'e.g. Typed wrong amount',
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text(
+              'Void payment',
+              style: TextStyle(color: AppColors.error),
+            ),
+          ),
+        ],
+      ),
+    );
+
+    final reason = reasonController.text;
+    reasonController.dispose();
+
+    if (ok != true) return;
+
+    try {
+      await SalesService.instance.voidBalancePayment(
+        farmId: widget.farmId,
+        saleId: widget.saleId,
+        paymentIndex: index,
+        reason: reason,
+      );
+
+      if (!mounted) return;
+
+      await _load();
+
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Payment voided.')),
+      );
+    } catch (e) {
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            e.toString().replaceFirst(RegExp(r'^\w*(Error|Exception): '), ''),
+          ),
+          backgroundColor: AppColors.error,
+        ),
+      );
+    }
   }
 
   String _paymentSubtitle(SalePayment payment) {

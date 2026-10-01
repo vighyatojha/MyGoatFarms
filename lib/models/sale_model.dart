@@ -15,16 +15,36 @@ class SalePayment {
   final DateTime date;
   final String note;
 
+  /// True once the payment was voided (entered by mistake). A voided
+  /// payment stays in the list so the history and the numbering of the
+  /// Finance entries (`sale_<id>_pay<N>`) never shift, but it no longer
+  /// counts anywhere: see [Sale.billBalancePayments].
+  final bool voided;
+  final DateTime? voidedAt;
+  final String voidReason;
+  final String voidedByName;
+
   const SalePayment({
     required this.amount,
     required this.method,
     required this.date,
     this.note = '',
+    this.voided = false,
+    this.voidedAt,
+    this.voidReason = '',
+    this.voidedByName = '',
   });
+
+  /// A payment taken through Customer Palai "Receive Payment" and applied
+  /// to this sale. Its money also lives in the Palai payment, so it can
+  /// only be corrected from there.
+  bool get isPalaiSettlement =>
+      note.trim().startsWith('Received with Customer Palai payment');
 
   factory SalePayment.fromMap(Map<String, dynamic> data) {
     final rawAmount = data['amount'];
     final rawDate = data['date'];
+    final rawVoidedAt = data['voidedAt'];
 
     return SalePayment(
       amount: rawAmount is num
@@ -37,6 +57,10 @@ class SalePayment {
           ? rawDate
           : DateTime.fromMillisecondsSinceEpoch(0),
       note: (data['note'] ?? '').toString(),
+      voided: data['voided'] == true,
+      voidedAt: rawVoidedAt is Timestamp ? rawVoidedAt.toDate() : null,
+      voidReason: (data['voidReason'] ?? '').toString(),
+      voidedByName: (data['voidedByName'] ?? '').toString(),
     );
   }
 
@@ -46,6 +70,13 @@ class SalePayment {
       'method': method,
       'date': Timestamp.fromDate(date),
       if (note.trim().isNotEmpty) 'note': note.trim(),
+      if (voided) 'voided': true,
+      if (voided && voidedAt != null)
+        'voidedAt': Timestamp.fromDate(voidedAt!),
+      if (voided && voidReason.trim().isNotEmpty)
+        'voidReason': voidReason.trim(),
+      if (voided && voidedByName.trim().isNotEmpty)
+        'voidedByName': voidedByName.trim(),
     };
   }
 }
@@ -551,10 +582,27 @@ class Sale {
     return 'Amount Received';
   }
 
-  /// Sum of the balance payments collected after delivery.
+  /// Sum of the balance payments collected after delivery. Voided
+  /// payments are skipped, so every figure built on this (amount paid,
+  /// balance due, revenue received, customer credit, lot totals) drops
+  /// back when a payment is voided.
   double get billBalancePayments => _nonNegative(
-    payments.fold<double>(0.0, (sum, p) => sum + p.amount),
+    payments.fold<double>(
+      0.0,
+          (sum, p) => p.voided ? sum : sum + p.amount,
+    ),
   );
+
+  /// Position (in [payments]) of the newest payment that is not voided,
+  /// or -1 when there is none. Only this one can be voided, so the
+  /// revenue split of earlier payments is never disturbed.
+  int get latestActivePaymentIndex {
+    for (var i = payments.length - 1; i >= 0; i--) {
+      if (!payments[i].voided) return i;
+    }
+
+    return -1;
+  }
 
   /// Everything received so far: the initial payment plus any balance
   /// payments collected after delivery.

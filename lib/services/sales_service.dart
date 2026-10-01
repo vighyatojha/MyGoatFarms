@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_core/firebase_core.dart' show FirebaseException;
 
+import '../models/activity_model.dart';
 import '../models/customer_credit.dart';
 import '../models/customer_model.dart';
 import '../models/expense_categories.dart';
@@ -12,6 +13,7 @@ import '../models/palai_models.dart';
 import '../models/sale_draft.dart';
 import '../models/sale_model.dart';
 import '../models/trading_purchase_model.dart';
+import 'firestore_service.dart';
 import 'goat_service.dart';
 import 'health_reminder_scheduler.dart';
 
@@ -2794,6 +2796,154 @@ class SalesService {
         when: DateTime.now(),
       );
     }).timeout(_timeout * 2);
+  }
+
+  /// Voids ONE balance payment of a sale (entered by mistake). To correct
+  /// it: void it, then receive the right amount.
+  ///
+  /// In ONE transaction (re-reading the sale first) it:
+  ///  * marks the entry in the sale's `payments` list as voided (the entry
+  ///    is kept, so the history and the `sale_<id>_pay<N>` numbering never
+  ///    change),
+  ///  * refreshes `paymentStatus` from the money that still counts (a
+  ///    voided payment is ignored by [Sale.billBalancePayments], so the
+  ///    balance due, revenue received and customer credit all follow),
+  ///  * voids the matching Sold Goat Revenue entry in Finance, if that
+  ///    payment wrote one (a payment that only paid transportation wrote
+  ///    none), and
+  ///  * logs a "Revenue Voided" activity.
+  ///
+  /// [paymentIndex] is the position of the payment in [Sale.payments].
+  ///
+  /// Refused (with a message fit to show) for: an already voided payment;
+  /// any payment except the newest one that still counts (void the newest
+  /// first, otherwise the revenue split of the later payments would be
+  /// wrong); a payment received through Customer Palai "Receive Payment"
+  /// (its money also sits in the Palai payment). The first payment taken
+  /// when the sale was made is not part of this list and cannot be voided
+  /// here.
+  Future<void> voidBalancePayment({
+    required String farmId,
+    required String saleId,
+    required int paymentIndex,
+    String reason = '',
+  }) async {
+    final actor = await FirestoreService.instance.getCurrentActor();
+
+    final saleRef = _sales(farmId).doc(saleId);
+    final revenueRef = _transactions(farmId).doc(
+      _saleRevenueDocId(saleId, 'pay${paymentIndex + 1}'),
+    );
+
+    late double voidedAmount;
+
+    await _db.runTransaction((transaction) async {
+      // All reads first.
+      final saleSnap = await transaction.get(saleRef);
+      final revenueSnap = await transaction.get(revenueRef);
+
+      if (!saleSnap.exists) {
+        throw StateError('This sale could not be found.');
+      }
+
+      final sale = Sale.fromDoc(saleSnap);
+      final raw = [
+        ...((saleSnap.data()?['payments'] as List?) ?? const []),
+      ];
+
+      if (paymentIndex < 0 || paymentIndex >= raw.length) {
+        throw StateError('This payment could not be found.');
+      }
+
+      final payment = sale.payments[paymentIndex];
+
+      if (payment.voided) {
+        throw StateError('This payment was already voided.');
+      }
+
+      if (payment.isPalaiSettlement) {
+        throw StateError(
+          'This payment was received through a Customer Palai payment, so '
+              'it cannot be voided here.',
+        );
+      }
+
+      if (paymentIndex != sale.latestActivePaymentIndex) {
+        throw StateError(
+          'Only the most recent payment can be voided. Void the newer '
+              'payment first.',
+        );
+      }
+
+      voidedAmount = payment.amount;
+
+      final voidedEntry = SalePayment(
+        amount: payment.amount,
+        method: payment.method,
+        date: payment.date,
+        note: payment.note,
+        voided: true,
+        voidedAt: DateTime.now(),
+        voidReason: reason,
+        voidedByName: actor?.name ?? '',
+      ).toMap();
+
+      // Keep any other fields already stored on the entry.
+      final original = raw[paymentIndex];
+      raw[paymentIndex] = {
+        if (original is Map) ...Map<String, dynamic>.from(original),
+        ...voidedEntry,
+      };
+
+      final paidAfter = SaleDraft.round2(
+        sale.billInitialPayment +
+            sale.payments
+                .asMap()
+                .entries
+                .where((e) => !e.value.voided && e.key != paymentIndex)
+                .fold<double>(0.0, (sum, e) => sum + e.value.amount),
+      );
+      final dueAfter = SaleDraft.round2(sale.billCustomerTotal - paidAfter);
+
+      transaction.update(saleRef, {
+        'payments': raw,
+        'paymentStatus': _paymentStatusFor(
+          balanceDue: dueAfter < 0 ? 0.0 : dueAfter,
+          paid: paidAfter,
+        ),
+      });
+
+      if (revenueSnap.exists && revenueSnap.data()?['status'] != 'voided') {
+        transaction.update(revenueRef, {
+          'status': 'voided',
+          'voidedAt': FieldValue.serverTimestamp(),
+        });
+      }
+
+      transaction.set(_farms().doc(farmId).collection('activities').doc(), {
+        'type': ActivityType.revenueVoided.name,
+        'title': 'Revenue Voided',
+        'subtitle':
+        'Sale $saleId · customer payment · ₹${payment.amount.toStringAsFixed(0)}',
+        'module': 'finance',
+        'timestamp': FieldValue.serverTimestamp(),
+        if (actor != null) 'actorUid': actor.uid,
+        if (actor != null) 'actorName': actor.name,
+        if (actor != null) 'actorRole': actor.role,
+      });
+    }).timeout(_timeout * 2);
+
+    unawaited(
+      FirestoreService.instance.notifyPartnerActivity(
+        farmId: farmId,
+        type: ActivityType.revenueVoided,
+        title: 'Revenue Voided',
+        subtitle:
+        'Sale $saleId · customer payment · ₹${voidedAmount.toStringAsFixed(0)}',
+        module: 'finance',
+        actor: actor,
+      ),
+    );
   }
 
   /// The writes for ONE balance payment against ONE sale, inside a

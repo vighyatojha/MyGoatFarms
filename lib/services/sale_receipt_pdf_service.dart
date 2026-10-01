@@ -906,7 +906,8 @@ class SaleReceiptPdfService {
     // into a single row; the totals below stay exact either way.
     const maxListedPayments = 2;
 
-    final payments = sale.payments;
+    // Voided payments no longer count, so they are left off the receipt.
+    final payments = sale.payments.where((p) => !p.voided).toList();
     final hiddenCount = payments.length > maxListedPayments
         ? payments.length - maxListedPayments
         : 0;
