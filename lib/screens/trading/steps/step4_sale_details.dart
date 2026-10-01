@@ -18,9 +18,13 @@ import '../purchase_goats/purchase_wizard_widgets.dart';
 ///  * **Fixed Price** — one agreed price for the whole lot. It does not
 ///    change with the weight.
 ///
+/// An optional **Discount** (in rupees) comes off the goat amount. It can
+/// never be more than the goat amount.
+///
 /// Either way the Total Sale Amount is auto-calculated live and never
 /// manually overridden — Task 2.4. Same "derived field" rule as the
-/// Purchase wizard's Purchase Amount.
+/// Purchase wizard's Purchase Amount. It is the amount AFTER the discount
+/// (see [SaleDraft.totalSaleAmount]).
 class Step4SaleDetails extends StatefulWidget {
   final GlobalKey<FormState> formKey;
   final SaleDraft draft;
@@ -38,6 +42,7 @@ class Step4SaleDetails extends StatefulWidget {
 class _Step4SaleDetailsState extends State<Step4SaleDetails> {
   late final TextEditingController _priceController;
   late final TextEditingController _fixedPriceController;
+  late final TextEditingController _discountController;
 
   String _currency(num value) {
     return NumberFormat.currency(
@@ -68,12 +73,19 @@ class _Step4SaleDetailsState extends State<Step4SaleDetails> {
           ? ''
           : _priceText(widget.draft.fixedSalePrice),
     );
+
+    _discountController = TextEditingController(
+      text: widget.draft.discount == 0
+          ? ''
+          : _priceText(widget.draft.discount),
+    );
   }
 
   @override
   void dispose() {
     _priceController.dispose();
     _fixedPriceController.dispose();
+    _discountController.dispose();
     super.dispose();
   }
 
@@ -83,6 +95,9 @@ class _Step4SaleDetailsState extends State<Step4SaleDetails> {
 
     widget.draft.fixedSalePrice =
         double.tryParse(_fixedPriceController.text.trim()) ?? 0;
+
+    widget.draft.discount =
+        double.tryParse(_discountController.text.trim()) ?? 0;
 
     setState(() {});
   }
@@ -144,6 +159,10 @@ class _Step4SaleDetailsState extends State<Step4SaleDetails> {
                     ? _buildFixedPriceField(draft)
                     : _buildPerKgField(),
               ),
+
+              const SizedBox(height: 14),
+
+              _buildDiscountField(draft),
             ],
           ),
 
@@ -201,6 +220,44 @@ class _Step4SaleDetailsState extends State<Step4SaleDetails> {
     );
   }
 
+  Widget _buildDiscountField(SaleDraft draft) {
+    return wizardField(
+      controller: _discountController,
+      label: 'Discount',
+      hint: '0.00',
+      icon: Icons.local_offer_outlined,
+      suffix: '₹ off',
+      helper: 'Optional. Comes off the goat amount, not transport.',
+      optional: true,
+      keyboardType: const TextInputType.numberWithOptions(
+        decimal: true,
+      ),
+      inputFormatters: _priceFormatters,
+      onChanged: (_) => _recalculate(),
+      validator: _validateDiscount,
+    );
+  }
+
+  /// Blank is fine (no discount). Otherwise it cannot be more than the goat
+  /// amount.
+  String? _validateDiscount(String? value) {
+    final text = value?.trim() ?? '';
+
+    if (text.isEmpty) return null;
+
+    final number = double.tryParse(text);
+
+    if (number == null || number < 0) {
+      return 'Enter a valid discount';
+    }
+
+    if (number > widget.draft.grossSaleAmount) {
+      return 'Discount cannot be more than the goat amount';
+    }
+
+    return null;
+  }
+
   /// Up to 2 decimals, digits only — same rule for both price fields.
   static final List<TextInputFormatter> _priceFormatters = [
     FilteringTextInputFormatter.allow(RegExp(r'^\d*\.?\d{0,2}')),
@@ -237,6 +294,12 @@ class _Step4SaleDetailsState extends State<Step4SaleDetails> {
           '${_currency(draft.sellingPricePerKg)} / kg'
           : 'Selling Weight × Price per KG';
     }
+
+    // With a discount, show the working: goat amount - discount.
+    final discounted = draft.appliedDiscount > 0
+        ? '${_currency(draft.grossSaleAmount)} − '
+        '${_currency(draft.appliedDiscount)} discount\n$formula'
+        : formula;
 
     return Container(
       width: double.infinity,
@@ -280,8 +343,8 @@ class _Step4SaleDetailsState extends State<Step4SaleDetails> {
                 ),
                 const SizedBox(height: 4),
                 Text(
-                  formula,
-                  maxLines: 2,
+                  discounted,
+                  maxLines: 3,
                   overflow: TextOverflow.ellipsis,
                   style: AppTheme.body(
                     size: 10,

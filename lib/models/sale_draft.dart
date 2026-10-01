@@ -2,6 +2,7 @@ import '../models/goat_model.dart';
 import '../services/sales_service.dart';
 import 'expense_categories.dart';
 import 'sale_model.dart';
+import 'sale_settlement.dart';
 
 /// Shared in-memory state for the Sell Goat wizard.
 ///
@@ -206,13 +207,30 @@ class SaleDraft {
   /// Fixed Price. Same keep-what-was-typed rule as [sellingPricePerKg].
   double fixedSalePrice = 0;
 
-  /// Derived, never manually overridden (same rule as the Purchase
-  /// wizard's Purchase Amount):
+  /// Goat value BEFORE any discount (never manually overridden — same rule
+  /// as the Purchase wizard's Purchase Amount):
   ///  - per KG: total selling weight x price per KG
   ///  - fixed:  the agreed price, whatever the weight is
-  double get totalSaleAmount => isFixedPrice
+  double get grossSaleAmount => isFixedPrice
       ? round2(fixedSalePrice)
       : round2(totalSellingWeight * sellingPricePerKg);
+
+  /// Discount typed on Step 4, in rupees. Kept as typed; read the figure
+  /// that is actually used through [appliedDiscount].
+  double discount = 0;
+
+  /// The discount that applies: never negative and never more than the
+  /// goat amount (see [SaleSettlement.appliedDiscount]).
+  double get appliedDiscount => SaleSettlement.fromAmount(
+    goatAmount: grossSaleAmount,
+    discount: discount,
+  ).appliedDiscount;
+
+  /// What the goats are sold for AFTER the discount. This is the figure
+  /// everything downstream uses — revenue, profit, what the customer owes —
+  /// so a discount reaches every branch without each one knowing about it.
+  /// Example: 32,500 sale - 500 discount = 32,000.
+  double get totalSaleAmount => round2(grossSaleAmount - appliedDiscount);
 
   /// The per-KG rate that goes with the chosen mode. For Fixed Price it
   /// is the fixed price divided by the total selling weight — a

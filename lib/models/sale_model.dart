@@ -322,6 +322,29 @@ class Sale {
   /// out of step with them.
   final bool onCredit;
 
+  // ---------------------------------------------------------------------
+  // DISCOUNT AND EXCESS ADVANCE
+  // ---------------------------------------------------------------------
+
+  /// Discount given on the goat amount (never on holding charges or
+  /// transport). For a sale made now (Deliver Now, Booking, Palai, and a
+  /// Wait for Delivery booking) [totalSaleAmount] is ALREADY the amount
+  /// after this discount, so every reader of [totalSaleAmount] sees the net
+  /// figure. For a completed Wait for Delivery pickup the goat value is
+  /// worked out again from the pickup weight, so [billGoatSale] takes this
+  /// discount off that figure instead. 0 when there is none.
+  final double discount;
+
+  /// Money received beyond what the customer owed that was kept as the
+  /// customer's advance balance at delivery (see
+  /// SalesService.completeBookingDelivery /
+  /// completeWaitForDeliveryPickup). Null when there was none.
+  final double? excessToAdvance;
+
+  /// Money received beyond what the customer owed that was handed back at
+  /// delivery (recorded as a Finance outflow). Null when there was none.
+  final double? excessRefunded;
+
   const Sale({
     required this.id,
     required this.goatIds,
@@ -361,6 +384,9 @@ class Sale {
     this.payments = const [],
     this.paymentMethod,
     this.onCredit = false,
+    this.discount = 0,
+    this.excessToAdvance,
+    this.excessRefunded,
     this.lotDocId = '',
     this.lotQuantity = 0,
     this.sourceLocation = '',
@@ -514,8 +540,21 @@ class Sale {
   /// the same figure SalesService records as revenue at pickup. Note that
   /// [totalSaleAmount] itself keeps the booking-weight value.
   double get billGoatSale => hasPickupSettlement
-      ? goatValueAtWeight(pickupWeight!)
+      ? _nonNegative(goatValueAtWeight(pickupWeight!) - appliedDiscount)
       : _round2(totalSaleAmount);
+
+  /// Discount on the bill, never negative.
+  double get appliedDiscount => _nonNegative(discount);
+
+  /// Goat value before the discount: what the receipt shows as the goat
+  /// amount, with the discount listed under it.
+  double get billGoatSaleBeforeDiscount =>
+      _round2(billGoatSale + appliedDiscount);
+
+  /// Money kept as advance or handed back because the customer had paid
+  /// more than the final bill (see [excessToAdvance], [excessRefunded]).
+  double get billExcessAdjusted =>
+      _nonNegative((excessToAdvance ?? 0) + (excessRefunded ?? 0));
 
   /// True when the goats were sold for one agreed price instead of a
   /// price per KG.
@@ -606,8 +645,13 @@ class Sale {
 
   /// Everything received so far: the initial payment plus any balance
   /// payments collected after delivery.
-  double get billAmountPaid =>
-      _round2(billInitialPayment + billBalancePayments);
+  ///
+  /// Anything received beyond the final bill that was then kept as the
+  /// customer's advance or refunded is taken off, so the paid amount never
+  /// goes above what the bill came to.
+  double get billAmountPaid => _nonNegative(
+    billInitialPayment + billBalancePayments - billExcessAdjusted,
+  );
 
   /// Customer Total - Amount Paid. Never negative.
   double get billBalanceDue =>
@@ -830,6 +874,10 @@ class Sale {
 
       onCredit: data['onCredit'] == true,
 
+      discount: numFrom('discount'),
+      excessToAdvance: nullableNumFrom('excessToAdvance'),
+      excessRefunded: nullableNumFrom('excessRefunded'),
+
       lotDocId: (data['lotId'] ?? '').toString(),
       lotQuantity: nullableIntFrom('lotQuantity') ?? 0,
       sourceLocation: (data['sourceLocation'] ?? '').toString(),
@@ -916,6 +964,13 @@ class Sale {
     if (onCredit) {
       map['onCredit'] = true;
     }
+
+    if (discount > 0) {
+      map['discount'] = discount;
+    }
+
+    putIfNotNull('excessToAdvance', excessToAdvance);
+    putIfNotNull('excessRefunded', excessRefunded);
 
     if (isLotSale) {
       map['lotId'] = lotDocId;

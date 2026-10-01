@@ -2,6 +2,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 
 import '../models/expense_categories.dart';
 import '../models/sale_model.dart';
+import '../models/sale_settlement.dart';
 import 'firestore_service.dart';
 import 'sales_service.dart';
 
@@ -26,12 +27,21 @@ class WaitDeliveryPayment {
   /// outstanding balance instead of blocking the delivery.
   final bool onCredit;
 
+  /// Discount on the goat value at pickup. Null keeps the discount given
+  /// at booking time.
+  final double? discount;
+
+  /// What to do with money the advance covered beyond the final bill.
+  final ExcessAction excessAction;
+
   const WaitDeliveryPayment({
     required this.pickupWeight,
     this.transportCharges = 0,
     required this.expectedRemaining,
     required this.amountReceivedNow,
     required this.onCredit,
+    this.discount,
+    this.excessAction = ExcessAction.carryToAdvance,
   });
 }
 
@@ -146,6 +156,8 @@ class WaitDeliveryService {
           amountReceivedNow: payment.amountReceivedNow,
           paymentMethod: paymentMethod,
           onCredit: payment.onCredit,
+          discount: payment.discount,
+          excessAction: payment.excessAction,
         );
 
         outcomes.add(

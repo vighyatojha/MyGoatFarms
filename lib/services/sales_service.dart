@@ -12,6 +12,7 @@ import '../models/lot_transfer_models.dart';
 import '../models/palai_models.dart';
 import '../models/sale_draft.dart';
 import '../models/sale_model.dart';
+import '../models/sale_settlement.dart';
 import '../models/trading_purchase_model.dart';
 import 'firestore_service.dart';
 import 'goat_service.dart';
@@ -447,6 +448,111 @@ class SalesService {
     return trimmed.isEmpty ? FinancePaymentMethods.cash : trimmed;
   }
 
+  // -----------------------------------------------------------------------
+  // EXCESS ADVANCE AT DELIVERY
+  // -----------------------------------------------------------------------
+  //
+  // When the customer paid more up front than the final bill comes to
+  // (for example 85 kg x 620 = 52,700 against a 60,000 advance), the extra
+  // 7,300 must not just vanish. The person chooses at delivery:
+  //
+  //  * Add to advance -> the amount goes onto the customer's profile as an
+  //    advance balance (customers/{id}.advanceBalance, with an entry in
+  //    customers/{id}/advanceEntries so it can be traced back to the sale).
+  //  * Return to customer -> the refund is a Finance outflow
+  //    (category Customer Refund, linked to the sale).
+  //
+  // Either way it is NEVER farm revenue: Sold Goat Revenue stays capped at
+  // the discounted goat value (+ holding charges).
+  //
+  // Both are written inside the delivery's own transaction, with
+  // deterministic doc ids, so a retried transaction cannot add the money
+  // twice.
+
+  /// READ step — call before the transaction's first write. Throws when the
+  /// extra cannot be added to an advance because the sale has no customer
+  /// record to put it on.
+  Future<void> _checkExcessInTransaction({
+    required Transaction transaction,
+    required String farmId,
+    required String customerId,
+    required double excess,
+    required ExcessAction action,
+  }) async {
+    if (excess <= 0 || action != ExcessAction.carryToAdvance) return;
+
+    final id = customerId.trim();
+
+    if (id.isNotEmpty) {
+      final snap = await transaction.get(_customers(farmId).doc(id));
+
+      if (snap.exists) return;
+    }
+
+    throw StateError(
+      'This sale has no customer record to hold the extra '
+          '₹${excess.toStringAsFixed(2)} as an advance. Choose Return to '
+          'customer instead.',
+    );
+  }
+
+  /// WRITE step — records the extra money as chosen. Does nothing when
+  /// there is no excess.
+  void _writeExcessInTransaction({
+    required Transaction transaction,
+    required String farmId,
+    required String saleId,
+    required String customerId,
+    required String customerName,
+    required double excess,
+    required ExcessAction action,
+    required String method,
+    required DateTime when,
+  }) {
+    if (excess <= 0) return;
+
+    if (action == ExcessAction.carryToAdvance) {
+      final customerRef = _customers(farmId).doc(customerId.trim());
+
+      transaction.update(customerRef, {
+        'advanceBalance': FieldValue.increment(excess),
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
+
+      transaction.set(
+        customerRef.collection('advanceEntries').doc('sale_$saleId'),
+        {
+          'amount': excess,
+          'type': 'credit',
+          'saleId': saleId,
+          'note': 'Extra advance left after delivery, Sale $saleId',
+          'date': Timestamp.fromDate(when),
+          'createdAt': FieldValue.serverTimestamp(),
+        },
+      );
+
+      return;
+    }
+
+    transaction.set(
+      _transactions(farmId).doc('sale_${saleId}_refund'),
+      {
+        'amount': excess,
+        'isIncome': false,
+        'category': ExpenseCategories.customerRefund,
+        if (customerName.trim().isNotEmpty)
+          'customerName': customerName.trim(),
+        'note': 'Refund of extra advance at delivery, Sale $saleId',
+        'paymentMethod': method,
+        'date': Timestamp.fromDate(when),
+        'createdAt': FieldValue.serverTimestamp(),
+        'status': 'active',
+        'referenceType': 'customerRefund',
+        'referenceId': saleId,
+      },
+    );
+  }
+
   /// The initial Sold Goat Revenue entry for a sale — whatever was
   /// already received toward the goat's price by the time the sale (or,
   /// for Booking/Wait for Delivery, its completed delivery) is written.
@@ -630,6 +736,7 @@ class SalesService {
         draft.isFixedPrice ? draft.fixedSalePrice : null,
         sellingWeight: draft.totalSellingWeight,
         totalSaleAmount: draft.totalSaleAmount,
+        discount: draft.appliedDiscount,
         deliveryType: Sale.deliveryTypeDeliverNow,
         status: Sale.statusSold,
         transportCost:
@@ -850,6 +957,7 @@ class SalesService {
         fixedSalePrice: draft.isFixedPrice ? draft.fixedSalePrice : null,
         sellingWeight: draft.totalSellingWeight,
         totalSaleAmount: draft.totalSaleAmount,
+        discount: draft.appliedDiscount,
         deliveryType: Sale.deliveryTypeDeliverNow,
         status: Sale.statusSold,
         transportCost: draft.transportCost > 0 ? draft.transportCost : null,
@@ -1071,6 +1179,7 @@ class SalesService {
         fixedSalePrice: draft.isFixedPrice ? draft.fixedSalePrice : null,
         sellingWeight: draft.totalSellingWeight,
         totalSaleAmount: draft.totalSaleAmount,
+        discount: draft.appliedDiscount,
         paymentMethod: draft.paymentMethod,
         onCredit: draft.onCredit,
         deliveryType: waitForDelivery
@@ -1268,6 +1377,7 @@ class SalesService {
         draft.isFixedPrice ? draft.fixedSalePrice : null,
         sellingWeight: draft.totalSellingWeight,
         totalSaleAmount: draft.totalSaleAmount,
+        discount: draft.appliedDiscount,
         deliveryType: Sale.deliveryTypeBooking,
         status: Sale.statusBooked,
         bookingAmount: draft.bookingAmount,
@@ -1458,6 +1568,7 @@ class SalesService {
         draft.isFixedPrice ? draft.fixedSalePrice : null,
         sellingWeight: draft.totalSellingWeight,
         totalSaleAmount: draft.totalSaleAmount,
+        discount: draft.appliedDiscount,
         deliveryType: Sale.deliveryTypeWaitForDelivery,
         status: Sale.statusWaitForDelivery,
         bookingPricePerKg: draft.bookingPricePerKg,
@@ -1648,6 +1759,7 @@ class SalesService {
         draft.isFixedPrice ? draft.fixedSalePrice : null,
         sellingWeight: draft.totalSellingWeight,
         totalSaleAmount: draft.totalSaleAmount,
+        discount: draft.appliedDiscount,
         deliveryType: Sale.deliveryTypePalai,
         status: Sale.statusTransferredToPalai,
         transferDate: draft.transferDate,
@@ -1890,6 +2002,7 @@ class SalesService {
         fixedSalePrice: draft.isFixedPrice ? draft.fixedSalePrice : null,
         sellingWeight: draft.totalSellingWeight,
         totalSaleAmount: draft.totalSaleAmount,
+        discount: draft.appliedDiscount,
         deliveryType: Sale.deliveryTypePalai,
         status: Sale.statusTransferredToPalai,
         transferDate: draft.transferDate,
@@ -2078,6 +2191,12 @@ class SalesService {
   /// [Sale.finalAmountAfterHolding] is what the customer still owes at
   /// pickup.
   ///
+  /// If the booking amount already paid is MORE than the final bill, the
+  /// extra is kept as the customer's advance or refunded, as chosen with
+  /// [excessAction] (see EXCESS ADVANCE AT DELIVERY above). A discount, if
+  /// there is one, was given when the booking was made and is already part
+  /// of [Sale.totalSaleAmount].
+  ///
   /// Same reads-then-writes transaction shape as the Phase 4 branch
   /// save methods, extended to also verify the sale is still in the
   /// state this action expects before touching anything.
@@ -2089,6 +2208,7 @@ class SalesService {
     double amountReceivedNow = 0,
     String? paymentMethod,
     bool onCredit = false,
+    ExcessAction excessAction = ExcessAction.carryToAdvance,
   }) async {
     if (transportCharges < 0) {
       throw StateError('The transportation charge cannot be negative.');
@@ -2235,13 +2355,27 @@ class SalesService {
         actualHoldingDays * holdingChargePerDay,
       );
 
-      final rawFinalAmount = SaleDraft.round2(
-        sale.totalSaleAmount +
-            actualHoldingChargesValue +
-            transport -
-            bookingAmount,
+      // Goat Sale (already after any discount) + Holding Charges +
+      // Transportation - Booking Amount. Anything the booking amount
+      // covered beyond that is the excess.
+      final settlement = SaleSettlement.fromAmount(
+        goatAmount: sale.totalSaleAmount,
+        holdingCharges: actualHoldingChargesValue,
+        transportCharge: transport,
+        advancePaid: bookingAmount,
+        excessAction: excessAction,
       );
-      final finalAmount = rawFinalAmount < 0 ? 0.0 : rawFinalAmount;
+      final finalAmount = settlement.balanceDue;
+      final excess = settlement.excess;
+
+      // Reads must all happen before the first write below.
+      await _checkExcessInTransaction(
+        transaction: transaction,
+        farmId: farmId,
+        customerId: sale.customerId,
+        excess: excess,
+        action: excessAction,
+      );
 
       // Captured for the Finance revenue write later in this same
       // transaction (see _writeInitialRevenueInTransaction below): the
@@ -2274,6 +2408,14 @@ class SalesService {
         // on the bill.
         'transportCost': transport > 0 ? transport : FieldValue.delete(),
         'finalAmountAfterHolding': finalAmount,
+        'excessToAdvance': excessAction == ExcessAction.carryToAdvance &&
+            excess > 0
+            ? excess
+            : FieldValue.delete(),
+        'excessRefunded': excessAction == ExcessAction.refundToCustomer &&
+            excess > 0
+            ? excess
+            : FieldValue.delete(),
         ..._completionPaymentFields(
           existingPayments: existingPayments,
           received: received,
@@ -2293,12 +2435,24 @@ class SalesService {
         customerName: sale.customerName,
         received: received,
         paidBefore: bookingAmount,
-        revenueTotal: sale.totalSaleAmount + actualHoldingChargesValue,
+        revenueTotal: settlement.netRevenue,
         existingPaymentCount: existingPayments.length,
         method: method,
         when: now,
         lotId: sale.lotDocId,
         customerId: sale.isLotSale ? sale.customerId : '',
+      );
+
+      _writeExcessInTransaction(
+        transaction: transaction,
+        farmId: farmId,
+        saleId: saleId,
+        customerId: sale.customerId,
+        customerName: sale.customerName,
+        excess: excess,
+        action: excessAction,
+        method: method,
+        when: now,
       );
 
       // ---------------------------------------------------------------
@@ -2410,6 +2564,15 @@ class SalesService {
   /// The stored [Sale.finalPriceAfterPickup] is what the customer still
   /// owes at pickup.
   ///
+  /// [discount] is taken off the goat value (never off transport). When it
+  /// is null the discount given at booking time ([Sale.discount]) stands.
+  /// Revenue and profit use the discounted goat value.
+  ///
+  /// If the advance already paid is MORE than the final bill, the extra is
+  /// kept as the customer's advance or refunded, as chosen with
+  /// [excessAction] (see EXCESS ADVANCE AT DELIVERY above). Example: 85 kg
+  /// x 620 = 52,700 against a 60,000 advance leaves 7,300 extra.
+  ///
   /// Worked example from the plan (Section 2, Task 2.2): 34kg booked,
   /// 38kg at delivery, ₹520/kg fixed, ₹5,000 advance -> ₹14,760
   /// remaining. 38 x 520 = 19,760; 19,760 - 5,000 = 14,760. ✓
@@ -2421,9 +2584,15 @@ class SalesService {
     double amountReceivedNow = 0,
     String? paymentMethod,
     bool onCredit = false,
+    double? discount,
+    ExcessAction excessAction = ExcessAction.carryToAdvance,
   }) async {
     if (pickupWeight <= 0) {
       throw StateError('Pickup weight must be greater than zero.');
+    }
+
+    if (discount != null && discount < 0) {
+      throw StateError('The discount cannot be negative.');
     }
 
     if (transportCharges < 0) {
@@ -2550,15 +2719,33 @@ class SalesService {
       final bookingAdvanceAmount = sale.bookingAdvanceAmount ?? 0;
 
       // Per KG: pickup weight x the booking-time rate. Fixed price: the
-      // agreed price, unchanged by the pickup weight.
-      final goatValue = sale.goatValueAtWeight(pickupWeight);
+      // agreed price, unchanged by the pickup weight. The discount comes
+      // off this goat value, never off transport.
+      final settlement = SaleSettlement.fromAmount(
+        goatAmount: sale.goatValueAtWeight(pickupWeight),
+        discount: discount ?? sale.appliedDiscount,
+        transportCharge: transport,
+        advancePaid: bookingAdvanceAmount,
+        excessAction: excessAction,
+      );
+
+      // Revenue and profit are based on the goat value AFTER the discount.
+      final goatValue = settlement.netGoatAmount;
+      final appliedDiscount = settlement.appliedDiscount;
 
       // Transportation is collected on top of the goat value; the advance
       // already paid is then taken off the whole.
-      final rawFinalPrice = SaleDraft.round2(
-        goatValue + transport - bookingAdvanceAmount,
+      final finalPrice = settlement.balanceDue;
+      final excess = settlement.excess;
+
+      // Reads must all happen before the first write below.
+      await _checkExcessInTransaction(
+        transaction: transaction,
+        farmId: farmId,
+        customerId: sale.customerId,
+        excess: excess,
+        action: excessAction,
       );
-      final finalPrice = rawFinalPrice < 0 ? 0.0 : rawFinalPrice;
 
       // The money received right now, checked against the final amount.
       final received = _checkCompletionPayment(
@@ -2594,6 +2781,18 @@ class SalesService {
         'transportCost':
         transport > 0 ? transport : FieldValue.delete(),
         'finalPriceAfterPickup': finalPrice,
+        // Cleared when there is none, so a stale value can never linger
+        // on the bill.
+        'discount':
+        appliedDiscount > 0 ? appliedDiscount : FieldValue.delete(),
+        'excessToAdvance': excessAction == ExcessAction.carryToAdvance &&
+            excess > 0
+            ? excess
+            : FieldValue.delete(),
+        'excessRefunded': excessAction == ExcessAction.refundToCustomer &&
+            excess > 0
+            ? excess
+            : FieldValue.delete(),
         ..._completionPaymentFields(
           existingPayments: existingPayments,
           received: received,
@@ -2619,6 +2818,18 @@ class SalesService {
         when: now,
         lotId: sale.lotDocId,
         customerId: sale.isLotSale ? sale.customerId : '',
+      );
+
+      _writeExcessInTransaction(
+        transaction: transaction,
+        farmId: farmId,
+        saleId: saleId,
+        customerId: sale.customerId,
+        customerName: sale.customerName,
+        excess: excess,
+        action: excessAction,
+        method: method,
+        when: now,
       );
 
       // ---------------------------------------------------------------

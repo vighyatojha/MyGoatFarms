@@ -2,6 +2,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 
 import '../models/expense_categories.dart';
 import '../models/sale_model.dart';
+import '../models/sale_settlement.dart';
 import 'firestore_service.dart';
 import 'sales_service.dart';
 
@@ -24,11 +25,16 @@ class BookingDeliveryPayment {
   /// It is added to what the customer owes but is never farm revenue.
   final double transportCharges;
 
+  /// What to do with money the booking amount covered beyond the final
+  /// bill.
+  final ExcessAction excessAction;
+
   const BookingDeliveryPayment({
     required this.expectedRemaining,
     required this.amountReceivedNow,
     required this.onCredit,
     this.transportCharges = 0,
+    this.excessAction = ExcessAction.carryToAdvance,
   });
 }
 
@@ -146,6 +152,7 @@ class BookingDeliveryService {
           amountReceivedNow: payment.amountReceivedNow,
           paymentMethod: paymentMethod,
           onCredit: payment.onCredit,
+          excessAction: payment.excessAction,
         );
 
         outcomes.add(

@@ -34,6 +34,16 @@ class Customer {
   /// Step 2's lookup (Task 2.2) can show purchase history at a glance.
   final int totalPurchases;
 
+  /// Money this customer has paid us in advance that has not been used
+  /// yet — for example the extra left over when a delivery came to less
+  /// than the advance they had paid (see SalesService
+  /// completeWaitForDeliveryPickup / completeBookingDelivery).
+  ///
+  /// Only ever changed with Firestore increments (see
+  /// SalesService.creditCustomerAdvance), so it is deliberately NOT part of
+  /// [toMap]: saving a customer's name or address can never overwrite it.
+  final double advanceBalance;
+
   final DateTime? createdAt;
   final DateTime? updatedAt;
 
@@ -44,6 +54,7 @@ class Customer {
     this.address = '',
     this.notes = '',
     this.totalPurchases = 0,
+    this.advanceBalance = 0,
     this.createdAt,
     this.updatedAt,
   });
@@ -81,6 +92,16 @@ class Customer {
       return int.tryParse(value?.toString() ?? '') ?? 0;
     }
 
+    double doubleFrom(String key) {
+      final value = data[key];
+
+      if (value is num) {
+        return value.toDouble();
+      }
+
+      return double.tryParse(value?.toString() ?? '') ?? 0.0;
+    }
+
     return Customer(
       id: doc.id,
 
@@ -98,6 +119,9 @@ class Customer {
 
       totalPurchases:
       intFrom('totalPurchases'),
+
+      advanceBalance:
+      doubleFrom('advanceBalance'),
 
       createdAt:
       dateFrom('createdAt'),
@@ -123,6 +147,7 @@ class Customer {
     String? address,
     String? notes,
     int? totalPurchases,
+    double? advanceBalance,
   }) {
     return Customer(
       id: id,
@@ -131,6 +156,7 @@ class Customer {
       address: address ?? this.address,
       notes: notes ?? this.notes,
       totalPurchases: totalPurchases ?? this.totalPurchases,
+      advanceBalance: advanceBalance ?? this.advanceBalance,
       createdAt: createdAt,
       updatedAt: updatedAt,
     );

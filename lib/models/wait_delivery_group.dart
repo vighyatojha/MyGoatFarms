@@ -1,5 +1,6 @@
 import 'goat_model.dart';
 import 'sale_model.dart';
+import 'sale_settlement.dart';
 
 /// One booking (a Wait for Delivery sale) that is still waiting to be
 /// picked up, together with the goats that belong to it.
@@ -52,24 +53,66 @@ class WaitDeliverySale {
     return sale.goatValueAtWeight(pickupWeight);
   }
 
+  /// Discount given when the goats were booked. It is the starting value
+  /// of the discount field at pickup, where it can be changed.
+  double get bookingDiscount => sale.appliedDiscount;
+
+  /// The pickup settlement at [pickupWeight]: goat value (before discount),
+  /// the discount, transportation and the advance already paid, worked out
+  /// by [SaleSettlement] so the figures here are exactly the ones
+  /// SalesService.completeWaitForDeliveryPickup saves.
+  ///
+  /// [discount] null means "the discount given at booking". [transport] is
+  /// the optional transportation charge entered at pickup. It is collected
+  /// on top of the goat value and passed on to the transport team, so it
+  /// is never farm revenue.
+  SaleSettlement settlementAt(
+      double pickupWeight, {
+        double transport = 0,
+        double? discount,
+        ExcessAction excessAction = ExcessAction.carryToAdvance,
+      }) {
+    return SaleSettlement.fromAmount(
+      goatAmount: saleValueAt(pickupWeight),
+      discount: discount ?? bookingDiscount,
+      transportCharge: transport < 0 ? 0 : transport,
+      advancePaid: advancePaid,
+      excessAction: excessAction,
+    );
+  }
+
   /// What the customer still owes at pickup:
   ///
-  ///   sale value at pickup weight + transportation - advance paid
+  ///   sale value at pickup weight - discount + transportation - advance
   ///                                                   (never below 0)
-  ///
-  /// [transport] is the optional transportation charge entered at pickup.
-  /// It is collected on top of the goat value and passed on to the
-  /// transport team, so it is never farm revenue.
   ///
   /// This is the same formula SalesService.completeWaitForDeliveryPickup
   /// stores as `finalPriceAfterPickup`, so the figure shown here is the
   /// figure that gets saved.
-  double remainingAt(double pickupWeight, {double transport = 0}) {
-    final raw = saleValueAt(pickupWeight) +
-        (transport < 0 ? 0 : transport) -
-        advancePaid;
+  double remainingAt(
+      double pickupWeight, {
+        double transport = 0,
+        double? discount,
+      }) {
+    return settlementAt(
+      pickupWeight,
+      transport: transport,
+      discount: discount,
+    ).balanceDue;
+  }
 
-    return Sale.roundMoney(raw < 0 ? 0 : raw);
+  /// What the advance covered beyond the final bill (0 when it did not).
+  /// Example: 85 kg x 620 = 52,700 against a 60,000 advance -> 7,300.
+  double excessAt(
+      double pickupWeight, {
+        double transport = 0,
+        double? discount,
+      }) {
+    return settlementAt(
+      pickupWeight,
+      transport: transport,
+      discount: discount,
+    ).excess;
   }
 
   /// Estimate at the weight recorded when the goats were booked.

@@ -1,5 +1,6 @@
 import 'goat_model.dart';
 import 'sale_model.dart';
+import 'sale_settlement.dart';
 
 /// One booking (a Booking / Holding sale) still open, together with the
 /// goats being held for it.
@@ -74,6 +75,28 @@ class BookingDeliverySale {
     return Sale.roundMoney(holdingDaysAt(deliveryDate) * holdingChargePerDay);
   }
 
+  /// Discount given when the booking was made. [Sale.totalSaleAmount]
+  /// already has it taken off.
+  double get bookingDiscount => sale.appliedDiscount;
+
+  /// The delivery settlement for [deliveryDate]: goat sale (after any
+  /// discount) + holding charges + transportation, against the booking
+  /// amount already paid. Same maths as
+  /// SalesService.completeBookingDelivery.
+  SaleSettlement settlementAt(
+      DateTime deliveryDate, {
+        double transport = 0,
+        ExcessAction excessAction = ExcessAction.carryToAdvance,
+      }) {
+    return SaleSettlement.fromAmount(
+      goatAmount: sale.totalSaleAmount,
+      holdingCharges: holdingChargesAt(deliveryDate),
+      transportCharge: transport < 0 ? 0 : transport,
+      advancePaid: bookingAmount,
+      excessAction: excessAction,
+    );
+  }
+
   /// Goat Sale Amount + Holding Charges + Transportation − Booking
   /// Amount, never below 0 — the same figure `completeBookingDelivery`
   /// saves as `finalAmountAfterHolding`.
@@ -82,14 +105,13 @@ class BookingDeliverySale {
   /// delivery. It is passed on to the transport team, so it is never farm
   /// revenue.
   double finalAmountAt(DateTime deliveryDate, {double transport = 0}) {
-    final raw = Sale.roundMoney(
-      sale.totalSaleAmount +
-          holdingChargesAt(deliveryDate) +
-          (transport < 0 ? 0 : transport) -
-          bookingAmount,
-    );
+    return settlementAt(deliveryDate, transport: transport).balanceDue;
+  }
 
-    return raw < 0 ? 0 : raw;
+  /// What the booking amount covered beyond the final bill (0 when it did
+  /// not).
+  double excessAt(DateTime deliveryDate, {double transport = 0}) {
+    return settlementAt(deliveryDate, transport: transport).excess;
   }
 }
 

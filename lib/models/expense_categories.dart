@@ -37,6 +37,12 @@ class ExpenseCategories {
   /// reasoning as [supplierPayment]).
   static const String goatDeathLoss = 'Goat Death Loss';
 
+  /// The refund recorded when money a customer paid beyond what they owed
+  /// is handed back at delivery — see SalesService (excess advance, "Return
+  /// to customer"). A Finance outflow linked to the sale. Not a
+  /// manual-entry category (deliberately excluded from [all]).
+  static const String customerRefund = 'Customer Refund';
+
   static const List<String> all = [
     feed,
     medicine,
