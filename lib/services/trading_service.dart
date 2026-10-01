@@ -619,12 +619,40 @@ class TradingService {
               date: advanceDate ?? purchaseDate,
               method: normalizedAdvanceMethod,
               note: advanceNote,
+              expenseId: _lotPaymentExpenseDocId(paymentRef.id),
               actorUid: actor?.uid,
               actorName: actor?.name,
             ).toMap(),
             'createdAt': FieldValue.serverTimestamp(),
           });
+
+          // Finance cash entry for this payment — same transaction, so a
+          // payment can never exist without its Finance row.
+          FinanceService.instance.writeExpenseInTransaction(
+            transaction,
+            farmId,
+            _lotPaymentExpense(
+              lot: purchase,
+              amount: paidNow,
+              method: normalizedAdvanceMethod,
+              date: advanceDate ?? purchaseDate,
+              note: advanceNote,
+              paymentId: paymentRef.id,
+            ),
+            expenseDocId: _lotPaymentExpenseDocId(paymentRef.id),
+            actor: actor,
+          );
         }
+
+        // Audit-only Credit row for the full purchase amount (no cash
+        // moves), also inside the same transaction.
+        FinanceService.instance.writeExpenseInTransaction(
+          transaction,
+          farmId,
+          _lotPurchaseExpense(purchase),
+          expenseDocId: _lotPurchaseExpenseDocId(id),
+          actor: actor,
+        );
 
         // First receiving event, when the goats arrived with the purchase.
         if (isCompleted) {
@@ -701,35 +729,26 @@ class TradingService {
       );
     }
 
-    // ---------------------------------------------------------------------
-    // FINANCE EXPENSE
-    // ---------------------------------------------------------------------
-    //
-    // Only the actual goat purchase amount is recorded as:
-    //
-    // Expense Category = Goat Purchase
-    //
-    // Transport/loading/unloading/other expenses remain part of the
-    // Trading purchase totals and can be separately handled later if
-    // the Finance design requires that.
-    //
-    // The referenceType/referenceId pair prevents the same purchase
-    // from creating duplicate Finance expenses.
-
-    await _ensurePurchaseFinanceExpense(
-      farmId: farmId,
-      purchase: saved,
+    // Finance rows were written inside the transaction above. Only the
+    // fire-and-forget partner notifications happen after commit.
+    FinanceService.instance.notifyExpenseAdded(
+      farmId,
+      _lotPurchaseExpense(saved),
+      actor,
     );
 
     if (paymentDocId != null) {
-      await _ensureLotPaymentExpense(
-        farmId: farmId,
-        lot: saved,
-        paymentId: paymentDocId!,
-        amount: paidNow,
-        method: normalizedAdvanceMethod,
-        date: advanceDate ?? purchaseDate,
-        note: advanceNote,
+      FinanceService.instance.notifyExpenseAdded(
+        farmId,
+        _lotPaymentExpense(
+          lot: saved,
+          amount: paidNow,
+          method: normalizedAdvanceMethod,
+          date: advanceDate ?? purchaseDate,
+          note: advanceNote,
+          paymentId: paymentDocId!,
+        ),
+        actor,
       );
     }
 
@@ -740,55 +759,29 @@ class TradingService {
   // FINANCE INTEGRATION
   // -----------------------------------------------------------------------
 
-  /// Creates the Finance expense associated with a Trading purchase.
-  ///
-  /// A purchase is linked through:
-  ///
-  /// referenceType = tradingPurchase
-  /// referenceId   = PUR-0001
-  ///
-  /// Before creating a new expense, existing expenses are checked so
-  /// repeated calls can never create duplicate goat-purchase expenses.
-  Future<void> _ensurePurchaseFinanceExpense({
-    required String farmId,
-    required TradingPurchase purchase,
-  }) async {
-    final existingSnapshot = await _db
-        .collection('farms')
-        .doc(farmId)
-        .collection('expenses')
-        .where(
-      'referenceType',
-      isEqualTo: 'tradingPurchase',
-    )
-        .where(
-      'referenceId',
-      isEqualTo: purchase.id,
-    )
-        .limit(1)
-        .get()
-        .timeout(_timeout);
+  /// Deterministic Finance document ids: writing the same purchase or payment
+  /// twice overwrites the same expense, never adds a second one.
+  String _lotPurchaseExpenseDocId(String lotDocId) =>
+      'lotpurchase_$lotDocId';
 
-    if (existingSnapshot.docs.isNotEmpty) {
-      return;
-    }
+  String _lotPaymentExpenseDocId(String paymentId) => 'lotpay_$paymentId';
 
+  /// The audit-only Credit expense for a lot's full purchase amount.
+  ExpenseModel _lotPurchaseExpense(TradingPurchase purchase) {
     final now = DateTime.now();
 
-    final expense = ExpenseModel(
+    return ExpenseModel(
       id: '',
       title: 'Goat Purchase',
       category: ExpenseCategories.goatPurchase,
       amount: purchase.purchaseAmount,
       supplierName: purchase.sellerName,
       // Lots: the purchase itself is an audit-only Credit row (no cash
-      // moved yet). Real cash is posted per supplier payment, see
-      // _ensureLotPaymentExpense. Old purchases keep their cash row.
+      // moved yet). Real cash is posted per supplier payment.
       paymentMethod: purchase.isLot
           ? 'Credit'
           : _normalizePaymentMethod(purchase.paymentMethod),
-      note:
-      'Trading purchase ${purchase.lotId}',
+      note: 'Trading purchase ${purchase.lotId}',
       date: purchase.purchaseDate,
       createdAt: now,
       updatedAt: now,
@@ -796,64 +789,132 @@ class TradingService {
       referenceType: 'tradingPurchase',
       referenceId: purchase.id,
     );
-
-    await FinanceService.instance.addExpense(
-      farmId,
-      expense,
-    );
   }
 
-  /// Posts one cash / online Finance expense for a supplier payment.
-  ///
-  /// Idempotent through referenceType 'lotPayment' + referenceId
-  /// (the payment doc id).
-  Future<void> _ensureLotPaymentExpense({
-    required String farmId,
+  /// The cash / online Finance expense for ONE supplier payment.
+  ExpenseModel _lotPaymentExpense({
     required TradingPurchase lot,
-    required String paymentId,
     required double amount,
     required String method,
     required DateTime date,
+    required String paymentId,
     String note = '',
-  }) async {
-    final existing = await _db
-        .collection('farms')
-        .doc(farmId)
-        .collection('expenses')
-        .where('referenceType', isEqualTo: 'lotPayment')
-        .where('referenceId', isEqualTo: paymentId)
-        .limit(1)
-        .get()
-        .timeout(_timeout);
-
-    if (existing.docs.isNotEmpty) return;
-
+  }) {
     final now = DateTime.now();
     final trimmed = note.trim();
 
-    await FinanceService.instance.addExpense(
-      farmId,
-      ExpenseModel(
-        id: '',
-        title: 'Supplier Payment',
-        category: ExpenseCategories.supplierPayment,
-        amount: amount,
-        supplierName: lot.sellerName,
-        paymentMethod: _normalizePaymentMethod(method),
-        note: trimmed.isEmpty
-            ? 'Payment for ${lot.lotId}'
-            : 'Payment for ${lot.lotId} — $trimmed',
-        date: date,
-        createdAt: now,
-        updatedAt: now,
-        status: 'active',
-        referenceType: 'lotPayment',
-        referenceId: paymentId,
-        // Structured link back to the lot (D3 §5) — additive; the
-        // note text above stays as it was.
-        lotId: lot.id,
-      ),
+    return ExpenseModel(
+      id: '',
+      title: 'Supplier Payment',
+      category: ExpenseCategories.supplierPayment,
+      amount: amount,
+      supplierName: lot.sellerName,
+      paymentMethod: _normalizePaymentMethod(method),
+      note: trimmed.isEmpty
+          ? 'Payment for ${lot.lotId}'
+          : 'Payment for ${lot.lotId} — $trimmed',
+      date: date,
+      createdAt: now,
+      updatedAt: now,
+      status: 'active',
+      referenceType: 'lotPayment',
+      referenceId: paymentId,
+      lotId: lot.id,
     );
+  }
+
+  /// Repairs Finance rows that older, non-atomic saves may have missed.
+  ///
+  /// Before payments and their Finance rows were written in one
+  /// transaction, a dropped connection could leave a lot (or a supplier
+  /// payment) with no Finance entry. This looks for exactly those gaps and
+  /// writes the missing row, with the same deterministic id the live code
+  /// uses — so it is safe to run any number of times and never duplicates.
+  /// Voided expenses still have their referenceId, so they stay voided.
+  ///
+  /// Returns how many Finance rows were created.
+  Future<int> reconcileLotFinance(String farmId) async {
+    final expensesSnap = await _db
+        .collection('farms')
+        .doc(farmId)
+        .collection('expenses')
+        .where('referenceType', whereIn: ['tradingPurchase', 'lotPayment'])
+        .get()
+        .timeout(_timeout);
+
+    final purchaseRefs = <String>{};
+    final paymentRefs = <String>{};
+
+    for (final doc in expensesSnap.docs) {
+      final data = doc.data();
+      final ref = (data['referenceId'] ?? '').toString();
+
+      if (data['referenceType'] == 'tradingPurchase') {
+        purchaseRefs.add(ref);
+      } else {
+        paymentRefs.add(ref);
+      }
+    }
+
+    final lotsSnap = await _tradingPurchases(farmId).get().timeout(_timeout);
+    final actor = await FirestoreService.instance.getCurrentActor();
+
+    var created = 0;
+
+    for (final doc in lotsSnap.docs) {
+      final lot = TradingPurchase.fromDoc(doc);
+
+      if (!lot.isLot) continue;
+
+      if (!purchaseRefs.contains(lot.id)) {
+        await _db.runTransaction((transaction) async {
+          FinanceService.instance.writeExpenseInTransaction(
+            transaction,
+            farmId,
+            _lotPurchaseExpense(lot),
+            expenseDocId: _lotPurchaseExpenseDocId(lot.id),
+            actor: actor,
+          );
+        }).timeout(_timeout);
+        created++;
+      }
+
+      if (lot.paidAmount <= 0) continue;
+
+      final paymentsSnap =
+      await doc.reference.collection('payments').get().timeout(_timeout);
+
+      for (final paymentDoc in paymentsSnap.docs) {
+        final payment = LotPayment.fromDoc(paymentDoc);
+
+        // Legacy payments already have their original purchase expense.
+        if (payment.isLegacy || payment.amount <= 0) continue;
+        if (paymentRefs.contains(payment.id)) continue;
+
+        await _db.runTransaction((transaction) async {
+          FinanceService.instance.writeExpenseInTransaction(
+            transaction,
+            farmId,
+            _lotPaymentExpense(
+              lot: lot,
+              amount: payment.amount,
+              method: payment.method,
+              date: payment.date,
+              note: payment.note,
+              paymentId: payment.id,
+            ),
+            expenseDocId: _lotPaymentExpenseDocId(payment.id),
+            actor: actor,
+          );
+          transaction.update(paymentDoc.reference, {
+            'expenseId': _lotPaymentExpenseDocId(payment.id),
+          });
+        }).timeout(_timeout);
+        created++;
+      }
+    }
+
+    return created;
   }
 
   // -----------------------------------------------------------------------
@@ -1242,6 +1303,7 @@ class TradingService {
           date: date,
           method: normalizedMethod,
           note: note,
+          expenseId: _lotPaymentExpenseDocId(paymentRef.id),
           actorUid: actor?.uid,
           actorName: actor?.name,
         ).toMap(),
@@ -1252,16 +1314,36 @@ class TradingService {
         'paidAmount': FieldValue.increment(rounded),
         'updatedAt': FieldValue.serverTimestamp(),
       });
+
+      // Finance cash entry in the SAME transaction: the payment and its
+      // Finance row commit together or not at all.
+      FinanceService.instance.writeExpenseInTransaction(
+        transaction,
+        farmId,
+        _lotPaymentExpense(
+          lot: lot,
+          amount: rounded,
+          method: normalizedMethod,
+          date: date,
+          note: note,
+          paymentId: paymentRef.id,
+        ),
+        expenseDocId: _lotPaymentExpenseDocId(paymentRef.id),
+        actor: actor,
+      );
     }).timeout(_timeout);
 
-    await _ensureLotPaymentExpense(
-      farmId: farmId,
-      lot: lot,
-      paymentId: paymentRef.id,
-      amount: rounded,
-      method: normalizedMethod,
-      date: date,
-      note: note,
+    FinanceService.instance.notifyExpenseAdded(
+      farmId,
+      _lotPaymentExpense(
+        lot: lot,
+        amount: rounded,
+        method: normalizedMethod,
+        date: date,
+        note: note,
+        paymentId: paymentRef.id,
+      ),
+      actor,
     );
 
     final saved = await paymentRef.get().timeout(_timeout);

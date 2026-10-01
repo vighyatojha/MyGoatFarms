@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../../app_theme.dart';
 import '../../../models/sale_draft.dart';
+import '../../../models/sale_model.dart';
 import '../../../models/trading_purchase_model.dart';
 import '../../../services/firestore_service.dart';
 import '../../../services/trading_service.dart';
@@ -41,13 +42,12 @@ class _StepSelectLotState extends State<StepSelectLot> {
 
     draft.lotDocId = lot.id;
     draft.lotDisplayId = lot.lotId;
-    // Only a single-location lot picks its source automatically; a
-    // partially-received lot leaves the choice to the next step.
-    draft.sourceLocation = lot.location == LotLocation.atSupplier
-        ? 'supplier'
-        : lot.location == LotLocation.atFarm
-        ? 'farm'
-        : '';
+    // Always pick a valid source so the screen never says "At Farm" while
+    // the draft is still empty. Farm goats that are free to sell win;
+    // otherwise the goats still at the supplier are the only option. The
+    // owner can still switch on the next step when a lot has both.
+    draft.sourceLocation =
+    lot.farmAvailableQty > 0 ? Sale.sourceFarm : Sale.sourceSupplier;
 
     widget.onSelected();
   }
@@ -150,6 +150,23 @@ class _LotTile extends StatelessWidget {
               const SizedBox(height: 4),
               Text(lot.sellerName, style: AppTheme.body(size: 12)),
               const SizedBox(height: 10),
+
+              // Lot | Total | Sold | Remaining | Status (PDF §8).
+              Row(
+                children: [
+                  _figure('Total', '${lot.totalGoats}'),
+                  _figure('Sold', '${lot.soldQty}'),
+                  _figure('Remaining', '${lot.remainingQty}'),
+                  _figure(
+                    'Status',
+                    lot.isActive ? 'Active' : 'Completed',
+                    color: lot.isActive
+                        ? AppColors.success
+                        : AppColors.textGrey,
+                  ),
+                ],
+              ),
+              const SizedBox(height: 10),
               Row(
                 children: [
                   if (lot.supplierQty > 0)
@@ -161,6 +178,25 @@ class _LotTile extends StatelessWidget {
             ],
           ),
         ),
+      ),
+    );
+  }
+
+  Widget _figure(String label, String value, {Color? color}) {
+    return Expanded(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            value,
+            style: AppTheme.heading(
+              size: 13.5,
+              color: color ?? AppColors.textDark,
+            ),
+          ),
+          const SizedBox(height: 1),
+          Text(label, style: AppTheme.body(size: 10)),
+        ],
       ),
     );
   }

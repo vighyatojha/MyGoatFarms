@@ -1,16 +1,24 @@
 import 'package:flutter/material.dart';
 
 import '../../../app_theme.dart';
+import '../../../models/purchase_costing.dart';
 import '../../../models/trading_purchase_model.dart';
+import '../../../services/firestore_service.dart';
+import '../../../services/trading_service.dart';
+import '../../../widgets/fast_route.dart';
+import '../lots/add_lot_payment_sheet.dart';
+import '../lots/lot_detail_screen.dart';
+import '../sell_from_lot/sell_from_lot_wizard_screen.dart';
 import 'purchase_wizard_widgets.dart';
 
 /// Shown after a Purchase Lot is saved.
 ///
 /// Shows the LOT-#### id, where the goats are (At Supplier / At Farm) and
-/// the supplier payment status. There is deliberately no "register goats"
-/// action: goats stay anonymous inside the lot and are only registered
-/// when transferred to a Palai.
-class PurchaseSuccessScreen extends StatelessWidget {
+/// the supplier payment status, plus the three next steps from the spec
+/// (Sell From Lot, View Lot, Add Payment). There is deliberately no
+/// "register goats" action: goats stay anonymous inside the lot and are
+/// only registered when transferred to a Palai.
+class PurchaseSuccessScreen extends StatefulWidget {
   final TradingPurchase lot;
 
   const PurchaseSuccessScreen({
@@ -19,8 +27,70 @@ class PurchaseSuccessScreen extends StatelessWidget {
   });
 
   @override
+  State<PurchaseSuccessScreen> createState() => _PurchaseSuccessScreenState();
+}
+
+class _PurchaseSuccessScreenState extends State<PurchaseSuccessScreen> {
+  late TradingPurchase _lot = widget.lot;
+
+  Future<String?> _farmId() async {
+    final id = await FirestoreService.instance.currentFarmId();
+
+    return id == null || id.trim().isEmpty ? null : id.trim();
+  }
+
+  /// Re-reads the lot so Paid / Balance Due / Status are current after a
+  /// payment or sale made from this screen.
+  Future<void> _refresh() async {
+    final farmId = await _farmId();
+
+    if (farmId == null) return;
+
+    final fresh = await TradingService.instance.getPurchase(farmId, _lot.id);
+
+    if (!mounted || fresh == null) return;
+
+    setState(() => _lot = fresh);
+  }
+
+  Future<void> _sellFromLot() async {
+    await Navigator.of(context).push(
+      fastRoute(SellFromLotWizardScreen(initialLot: _lot)),
+    );
+
+    await _refresh();
+  }
+
+  Future<void> _viewLot() async {
+    final farmId = await _farmId();
+
+    if (farmId == null || !mounted) return;
+
+    await Navigator.of(context).push(
+      fastRoute(LotDetailScreen(farmId: farmId, lotDocId: _lot.id)),
+    );
+
+    await _refresh();
+  }
+
+  Future<void> _addPayment() async {
+    final farmId = await _farmId();
+
+    if (farmId == null || !mounted) return;
+
+    final saved = await showAddLotPaymentSheet(
+      context: context,
+      farmId: farmId,
+      lot: _lot,
+    );
+
+    if (saved == true) await _refresh();
+  }
+
+  @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final lot = _lot;
 
     final atSupplier = lot.location == LotLocation.atSupplier;
 
@@ -140,8 +210,33 @@ class PurchaseSuccessScreen extends StatelessWidget {
                 child: Column(
                   children: [
                     WizardComputedRow(
+                      label: 'Supplier',
+                      value: lot.sellerName,
+                    ),
+                    WizardComputedRow(
+                      label: 'Purchase Date',
+                      value: wizardDate(lot.purchaseDate),
+                    ),
+                    WizardComputedRow(
                       label: 'Goats in Lot',
                       value: '${lot.totalGoats}',
+                    ),
+                    WizardComputedRow(
+                      label: 'Total Weight',
+                      value:
+                      '${PurchaseCosting.formatNumber(lot.totalWeightAtPurchase)} kg',
+                    ),
+                    WizardComputedRow(
+                      label: 'Purchase Price / KG',
+                      value: wizardCurrency(lot.pricePerKg),
+                    ),
+                    WizardComputedRow(
+                      label: 'Remaining Goats',
+                      value: '${lot.remainingQty}',
+                    ),
+                    WizardComputedRow(
+                      label: 'Lot Status',
+                      value: lot.isActive ? 'Active' : 'Completed',
                     ),
                     WizardComputedRow(
                       label: 'Location',
@@ -203,7 +298,86 @@ class PurchaseSuccessScreen extends StatelessWidget {
                 ),
               ),
 
-              const SizedBox(height: 32),
+              const SizedBox(height: 24),
+
+              if (lot.availableForSaleQty > 0) ...[
+                SizedBox(
+                  width: double.infinity,
+                  height: 52,
+                  child: ElevatedButton.icon(
+                    onPressed: _sellFromLot,
+                    icon: const Icon(Icons.sell_outlined),
+                    label: const Text(
+                      'Sell From Lot',
+                      style: TextStyle(fontWeight: FontWeight.w700),
+                    ),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: AppColors.tradingBlue,
+                      foregroundColor: Colors.white,
+                      elevation: 0,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(15),
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 12),
+              ],
+
+              Row(
+                children: [
+                  Expanded(
+                    child: SizedBox(
+                      height: 50,
+                      child: OutlinedButton.icon(
+                        onPressed: _viewLot,
+                        icon: const Icon(Icons.visibility_outlined, size: 18),
+                        label: const Text(
+                          'View Lot',
+                          style: TextStyle(fontWeight: FontWeight.w700),
+                        ),
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: AppColors.primaryGreen,
+                          side: const BorderSide(color: AppColors.primaryGreen),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(15),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                  if (lot.dueAmount >= 0.01) ...[
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: SizedBox(
+                        height: 50,
+                        child: OutlinedButton.icon(
+                          onPressed: _addPayment,
+                          icon: const Icon(
+                            Icons.payments_outlined,
+                            size: 18,
+                          ),
+                          label: const Text(
+                            'Add Payment',
+                            style: TextStyle(fontWeight: FontWeight.w700),
+                          ),
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: AppColors.primaryGreen,
+                            side: const BorderSide(
+                              color: AppColors.primaryGreen,
+                            ),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(15),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+
+              const SizedBox(height: 20),
 
               SizedBox(
                 width: double.infinity,

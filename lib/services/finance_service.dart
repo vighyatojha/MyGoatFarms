@@ -199,6 +199,96 @@ class FinanceService {
     ));
   }
 
+  /// Writes an expense (and, unless it is an unpaid Credit row, its mirrored
+  /// cash `transactions` doc) INSIDE a Firestore transaction the caller
+  /// already owns — so the Finance entry commits or fails together with the
+  /// record that caused it (a lot purchase, a supplier payment).
+  ///
+  /// Both documents use deterministic ids ([expenseDocId] and
+  /// `tx_<expenseDocId>`), so repeating the same write — a transaction retry,
+  /// or the reconcile pass — can only overwrite the same two documents and
+  /// never create a duplicate.
+  ///
+  /// Call [notifyExpenseAdded] AFTER the transaction commits.
+  void writeExpenseInTransaction(
+      Transaction transaction,
+      String farmId,
+      ExpenseModel expense, {
+        required String expenseDocId,
+        required ({String uid, String name, String role})? actor,
+      }) {
+    if (expense.amount <= 0) {
+      throw ArgumentError('Expense amount must be greater than zero.');
+    }
+
+    final expenseRef = _expenses(farmId).doc(expenseDocId);
+
+    final isUnpaidCredit =
+        expense.paymentMethod.trim().toLowerCase() == 'credit';
+
+    final transactionRef =
+    isUnpaidCredit ? null : _transactions(farmId).doc('tx_$expenseDocId');
+
+    transaction.set(
+      expenseRef,
+      expense.toCreateMap(
+        createdBy: actor?.uid ?? '',
+        createdByName: actor?.name ?? 'Unknown',
+        createdByRole: actor?.role ?? '',
+      )
+        ..addAll({
+          if (transactionRef != null) 'transactionId': transactionRef.id,
+        }),
+    );
+
+    if (transactionRef != null) {
+      transaction.set(transactionRef, {
+        'amount': expense.amount,
+        'isIncome': false,
+        'category': expense.category,
+        'note': expense.title.trim(),
+        'paymentMethod': expense.paymentMethod,
+        'date': Timestamp.fromDate(expense.date),
+        'createdAt': FieldValue.serverTimestamp(),
+        'status': 'active',
+        'referenceType': 'expense',
+        'referenceId': expenseRef.id,
+      });
+    }
+
+    transaction.set(_activities(farmId).doc(), {
+      'type': ActivityType.expenseAdded.name,
+      'title': 'Expense Added',
+      'subtitle': _expenseActivitySubtitle(expense),
+      'module': 'finance',
+      'timestamp': FieldValue.serverTimestamp(),
+      if (actor != null) 'actorUid': actor.uid,
+      if (actor != null) 'actorName': actor.name,
+      if (actor != null) 'actorRole': actor.role,
+    });
+  }
+
+  /// Partner -> owner notification for an expense written with
+  /// [writeExpenseInTransaction]. Fire-and-forget, like [addExpense].
+  void notifyExpenseAdded(
+      String farmId,
+      ExpenseModel expense,
+      ({String uid, String name, String role})? actor,
+      ) {
+    unawaited(FirestoreService.instance.notifyPartnerActivity(
+      farmId: farmId,
+      type: ActivityType.expenseAdded,
+      title: 'Expense Added',
+      subtitle: _expenseActivitySubtitle(expense),
+      module: 'finance',
+      actor: actor,
+    ));
+  }
+
+  String _expenseActivitySubtitle(ExpenseModel expense) =>
+      '${expense.category} · ₹${expense.amount.toStringAsFixed(0)}'
+          '${expense.supplierName != null && expense.supplierName!.trim().isNotEmpty ? ' · ${expense.supplierName}' : ''}';
+
   /// Updates an expense in place. The mirrored `transactions` doc is
   /// updated to match so aggregation stays correct — this does not
   /// create a second transaction.
@@ -955,11 +1045,13 @@ class FinanceService {
 
     // ---- Purchase extras (transport etc.) ------------------------------
     double otherPurchaseCosts = 0;
+    double purchasedValue = 0;
     int goatsPurchased = 0;
 
     for (final doc in purchasesSnap.docs) {
       final data = doc.data();
       otherPurchaseCosts += _num(data['totalTransportExpenses']);
+      purchasedValue += _num(data['purchaseAmount']);
       goatsPurchased += _num(data['totalGoats']).toInt();
     }
 
@@ -1057,6 +1149,7 @@ class FinanceService {
       salesRevenue: salesRevenue,
       purchaseSpend: purchaseSpend,
       otherPurchaseCosts: otherPurchaseCosts,
+      purchasedValue: r2(purchasedValue),
       receivable: receivable,
       receivableCount: receivableCount,
       cashReceived: cashReceived,

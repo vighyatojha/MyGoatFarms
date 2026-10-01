@@ -42,6 +42,17 @@ class _StepSourceAndQuantityState extends State<StepSourceAndQuantity> {
 
     final draft = widget.draft;
 
+    // Safety net: never start with an empty / impossible source.
+    final lot = widget.lot;
+    final validSource = draft.sourceLocation == Sale.sourceSupplier
+        ? lot.supplierQty > 0
+        : draft.sourceLocation == Sale.sourceFarm && lot.farmAvailableQty > 0;
+
+    if (!validSource) {
+      draft.sourceLocation =
+      lot.farmAvailableQty > 0 ? Sale.sourceFarm : Sale.sourceSupplier;
+    }
+
     _quantityController = TextEditingController(
       text: draft.lotQuantity == 0 ? '' : draft.lotQuantity.toString(),
     );

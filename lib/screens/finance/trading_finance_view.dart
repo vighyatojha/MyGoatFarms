@@ -237,8 +237,7 @@ class _TradingFinanceViewState extends State<TradingFinanceView> {
 
   List<Widget> _summaryWidgets() {
     final s = _summary;
-    final avgCostPerGoat =
-    s.goatsPurchased > 0 ? s.totalCost / s.goatsPurchased : 0.0;
+    final avgCostPerGoat = s.avgCostPerGoat;
 
     return [
       Row(

@@ -208,10 +208,11 @@ class Step4SummaryState extends State<Step4Summary> {
               label: 'Seller',
               value: draft.sellerName.trim(),
             ),
-            WizardComputedRow(
-              label: 'Mobile',
-              value: draft.mobile.trim(),
-            ),
+            if (draft.mobile.trim().isNotEmpty)
+              WizardComputedRow(
+                label: 'Mobile',
+                value: draft.mobile.trim(),
+              ),
             if (draft.market.trim().isNotEmpty)
               WizardComputedRow(
                 label: 'Market',

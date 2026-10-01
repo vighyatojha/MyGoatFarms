@@ -197,6 +197,9 @@ class _TradingDashboardScreenState extends State<TradingDashboardScreen> {
 
     try {
       await TradingService.instance.backfillDashboardSummary(farmId);
+      // Repairs any lot payment / purchase that is missing its Finance row
+      // (idempotent — see TradingService.reconcileLotFinance).
+      await TradingService.instance.reconcileLotFinance(farmId);
       if (!quiet) {
         _snack('Dashboard numbers recalculated.', AppColors.darkGreen);
       }

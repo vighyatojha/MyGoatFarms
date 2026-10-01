@@ -11,10 +11,10 @@ import '../purchase_goats/purchase_wizard_widgets.dart';
 ///
 /// Required:
 /// - Seller Name
-/// - Mobile Number
 /// - Purchase Date
 ///
 /// Optional:
+/// - Mobile Number (10 digits when given)
 /// - Market / Location
 /// - Vehicle / Transport Details (free text: vehicle number, driver, tempo…)
 /// - Expected Delivery Date (when the supplier is due to deliver the lot)
@@ -164,6 +164,7 @@ class _Step1SellerDetailsState extends State<Step1SellerDetails> {
                 label: 'Mobile Number',
                 hint: '10-digit mobile number',
                 icon: Icons.phone_outlined,
+                optional: true,
                 keyboardType: TextInputType.phone,
                 inputFormatters: [
                   FilteringTextInputFormatter.digitsOnly,
@@ -175,7 +176,9 @@ class _Step1SellerDetailsState extends State<Step1SellerDetails> {
                 validator: (value) {
                   final v = value?.trim() ?? '';
 
-                  if (v.isEmpty) return 'Enter mobile number';
+                  // Optional (PDF §3) — but when something is typed it
+                  // must be a real 10-digit number.
+                  if (v.isEmpty) return null;
 
                   if (!RegExp(r'^[0-9]{10}$').hasMatch(v)) {
                     return 'Enter a valid 10-digit number';

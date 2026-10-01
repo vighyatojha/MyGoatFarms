@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../../app_theme.dart';
 import '../../../models/sale_draft.dart';
+import '../../../models/sale_model.dart';
 import '../../../models/partner_permission_keys.dart';
 import '../../../models/trading_purchase_model.dart';
 import '../../../services/firestore_service.dart';
@@ -32,7 +33,11 @@ import 'step_source_and_quantity.dart';
 ///  - Transfer to Palai is not offered — that is the lot's own transfer
 ///    action.
 class SellFromLotWizardScreen extends StatefulWidget {
-  const SellFromLotWizardScreen({super.key});
+  /// When given (e.g. from the "Lot Created" screen) the wizard skips Select
+  /// Lot and opens on Source & Quantity for this lot.
+  final TradingPurchase? initialLot;
+
+  const SellFromLotWizardScreen({super.key, this.initialLot});
 
   @override
   State<SellFromLotWizardScreen> createState() =>
@@ -46,7 +51,9 @@ class _SellFromLotWizardScreenState extends State<SellFromLotWizardScreen> {
   static const int _detailsPage = 3;
   static const int _paymentPage = 4;
 
-  final PageController _pageController = PageController();
+  late final PageController _pageController = PageController(
+    initialPage: widget.initialLot == null ? _lotPage : _sourcePage,
+  );
 
   final GlobalKey<Step2CustomerLookupState> _customerKey =
   GlobalKey<Step2CustomerLookupState>();
@@ -64,7 +71,8 @@ class _SellFromLotWizardScreenState extends State<SellFromLotWizardScreen> {
   /// on Step 2 — TradingService re-checks everything live at save time.
   TradingPurchase? _lot;
 
-  int _currentStep = _lotPage;
+  late int _currentStep =
+  widget.initialLot == null ? _lotPage : _sourcePage;
   bool _moving = false;
   bool _saving = false;
 
@@ -79,6 +87,17 @@ class _SellFromLotWizardScreenState extends State<SellFromLotWizardScreen> {
   @override
   void initState() {
     super.initState();
+
+    final lot = widget.initialLot;
+
+    if (lot != null) {
+      _lot = lot;
+      _draft.lotDocId = lot.id;
+      _draft.lotDisplayId = lot.lotId;
+      _draft.sourceLocation =
+      lot.farmAvailableQty > 0 ? Sale.sourceFarm : Sale.sourceSupplier;
+    }
+
     _loadFarm();
   }
 
@@ -153,8 +172,117 @@ class _SellFromLotWizardScreenState extends State<SellFromLotWizardScreen> {
     }
   }
 
+  /// Sale Summary shown before the sale is saved (PDF §13): lot, customer,
+  /// goats, weight, rate, total, received and pending. Returns true when the
+  /// owner taps Confirm Lot Sale.
+  Future<bool> _confirmSummary() async {
+    final d = _draft;
+
+    final received = d.isDeliverNow
+        ? d.amountReceived
+        : d.isBooking
+        ? d.bookingAmount
+        : d.bookingAdvanceAmount;
+
+    final pending = d.isDeliverNow
+        ? d.remainingBalanceDeliverNow
+        : SaleDraft.round2(
+      (d.totalSaleAmount - received) < 0 ? 0 : d.totalSaleAmount - received,
+    );
+
+    final result = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        backgroundColor: Colors.white,
+        surfaceTintColor: Colors.transparent,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(22),
+        ),
+        title: Text('Sale Summary', style: AppTheme.heading(size: 17)),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              WizardComputedRow(label: 'Lot ID', value: d.lotDisplayId),
+              WizardComputedRow(
+                label: 'Customer',
+                value: d.customerName.trim(),
+              ),
+              WizardComputedRow(
+                label: 'Number of Goats',
+                value: '${d.lotQuantity}',
+              ),
+              WizardComputedRow(
+                label: 'Weight',
+                value: '${SaleDraft.formatWeight(d.totalSellingWeight)} KG',
+              ),
+              WizardComputedRow(
+                label: 'Selling Price / KG',
+                value: wizardCurrency(d.effectivePricePerKg),
+              ),
+              const Divider(height: 18, color: AppColors.divider),
+              WizardComputedRow(
+                label: 'Total Sale',
+                value: wizardCurrency(d.totalSaleAmount),
+                emphasize: true,
+              ),
+              if (d.isDeliverNow && d.transportCost > 0)
+                WizardComputedRow(
+                  label: 'Transport (billed to customer)',
+                  value: wizardCurrency(d.transportCost),
+                ),
+              WizardComputedRow(
+                label: 'Received',
+                value: wizardCurrency(received),
+              ),
+              WizardComputedRow(
+                label: 'Pending',
+                value: wizardCurrency(pending),
+              ),
+              if (d.isBooking || d.isWaitForDelivery) ...[
+                const SizedBox(height: 8),
+                Text(
+                  'These goats are reserved in ${d.lotDisplayId} until the '
+                      'delivery is completed.',
+                  style: AppTheme.body(size: 11),
+                ),
+              ],
+            ],
+          ),
+        ),
+        actionsPadding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text('Back'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppColors.primaryGreen,
+              foregroundColor: Colors.white,
+              elevation: 0,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12),
+              ),
+            ),
+            child: const Text(
+              'Confirm Lot Sale',
+              style: TextStyle(fontWeight: FontWeight.w700),
+            ),
+          ),
+        ],
+      ),
+    );
+
+    return result == true;
+  }
+
   Future<void> _save() async {
     if (!(_deliveryKey.currentState?.validate() ?? false)) return;
+
+    if (!await _confirmSummary()) return;
+    if (!mounted) return;
 
     setState(() => _saving = true);
 
@@ -482,7 +610,7 @@ class _SellFromLotWizardScreenState extends State<SellFromLotWizardScreen> {
                       height: 19,
                       child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
                     )
-                        : const Text('Save Sale', style: TextStyle(fontWeight: FontWeight.w700)))
+                        : const Text('Confirm Lot Sale', style: TextStyle(fontWeight: FontWeight.w700)))
                         : const Text('Next', style: TextStyle(fontWeight: FontWeight.w700)),
                   ),
                 ),

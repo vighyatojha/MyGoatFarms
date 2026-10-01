@@ -37,6 +37,11 @@ class TradingFinanceSummary {
   final double purchaseSpend;
   final double otherPurchaseCosts;
 
+  /// Purchase amount of the purchases made in the range (what the goats
+  /// were bought for, paid or not). Only used for [avgCostPerGoat], so the
+  /// goats and the money in that figure come from the same purchases.
+  final double purchasedValue;
+
   final double receivable;
   final int receivableCount;
 
@@ -66,6 +71,7 @@ class TradingFinanceSummary {
     this.salesRevenue = 0,
     this.purchaseSpend = 0,
     this.otherPurchaseCosts = 0,
+    this.purchasedValue = 0,
     this.receivable = 0,
     this.receivableCount = 0,
     this.cashReceived = 0,
@@ -88,6 +94,16 @@ class TradingFinanceSummary {
 
   /// Everything spent on buying and bringing goats in.
   double get totalCost => purchaseSpend + otherPurchaseCosts;
+
+  /// Average cost of one goat bought in the range: what those purchases
+  /// cost (purchase amount + their transport / other costs) over the goats
+  /// in them. Deliberately NOT based on cash paid in the range — a lot paid
+  /// for in a later month would otherwise show cost with no goats.
+  double get avgCostPerGoat => goatsPurchased > 0
+      ? ((purchasedValue + otherPurchaseCosts) / goatsPurchased * 100)
+      .roundToDouble() /
+      100
+      : 0;
 
   /// Cash in minus cash out for the Trading business.
   double get netCashFlow => salesRevenue - totalCost;
