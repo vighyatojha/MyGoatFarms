@@ -1122,6 +1122,26 @@ class SalesService {
         },
         SetOptions(merge: true),
       );
+
+      // Booking money is actually received on the booking day, so record
+      // that receipt in Finance now. Wait for Delivery is deliberately left
+      // alone here because its final goat value is not known until pickup.
+      // Recording its advance as goat revenue before pickup could overstate
+      // revenue if the pickup weight changes the final goat value.
+      if (!waitForDelivery) {
+        _writeInitialRevenueInTransaction(
+          transaction: transaction,
+          farmId: farmId,
+          saleId: saleId,
+          paid: draft.bookingAmount ?? 0,
+          revenueTotal: draft.totalSaleAmount,
+          date: DateTime.now(),
+          customerName: draft.customerName,
+          paymentMethod: _methodOrOther(draft.paymentMethod),
+          lotId: draft.lotDocId,
+          customerId: customerId,
+        );
+      }
     }).timeout(_timeout * 2);
 
     return saleId;
@@ -1138,8 +1158,9 @@ class SalesService {
   ///
   /// No transportation charge is taken, and no holding days or holding
   /// charges are stored now: the start day is recorded, and the days are
-  /// counted up to the delivery day when the delivery is completed. No
-  /// receipt is generated here either — it comes with the delivery.
+  /// counted up to the delivery day when the delivery is completed. Any
+  /// booking money received now is recorded in Finance on the booking date;
+  /// the later delivery payment is recorded when the delivery is completed.
   ///
   /// Same re-check-then-write-in-one-transaction shape as
   /// [saveDeliverNow], for the same status-consistency reason.
@@ -1294,6 +1315,21 @@ class SalesService {
           'booking': FieldValue.increment(draft.selectedGoats.length),
         },
         SetOptions(merge: true),
+      );
+
+      // The booking payment is real money received today. Record it in
+      // Finance on the booking date rather than waiting for pickup.
+      // Holding charges are not included here because they are only known
+      // when the booking is completed.
+      _writeInitialRevenueInTransaction(
+        transaction: transaction,
+        farmId: farmId,
+        saleId: saleId,
+        paid: draft.bookingAmount ?? 0,
+        revenueTotal: draft.totalSaleAmount,
+        date: DateTime.now(),
+        customerName: draft.customerName,
+        paymentMethod: _methodOrOther(draft.paymentMethod),
       );
     }).timeout(_timeout * 2);
 
@@ -2072,9 +2108,6 @@ class SalesService {
     // contention, which would assign these more than once.
     double totalSaleAmount = 0;
     double actualHoldingCharges = 0;
-    double bookingAmountPaid = 0;
-    String customerName = '';
-    String initialMethod = FinancePaymentMethods.other;
 
     await _db.runTransaction((transaction) async {
       // ---------------------------------------------------------------
@@ -2218,10 +2251,6 @@ class SalesService {
       // balance is recorded as it is collected.
       totalSaleAmount = sale.totalSaleAmount;
       actualHoldingCharges = actualHoldingChargesValue;
-      bookingAmountPaid = bookingAmount;
-      customerName = sale.customerName;
-      initialMethod = _methodOrOther(sale.paymentMethod);
-
       // The money received right now, checked against the final amount.
       final received = _checkCompletionPayment(
         finalAmount: finalAmount,
@@ -2338,26 +2367,12 @@ class SalesService {
       );
 
       // -----------------------------------------------------------------
-      // FINANCE REVENUE — the goat has now actually left the farm, so
-      // this is where the booking amount already received becomes Sold
-      // Goat Revenue (not at saveBooking, when it was only a
-      // reservation), written in this same transaction. The remaining
-      // balance is recorded as it is collected — see the FINANCE
-      // INTEGRATION note above.
+      // FINANCE REVENUE — the booking payment was already recorded on the
+      // booking date. Only the money received NOW is added here, through
+      // _writeCompletionRevenue above. That keeps the original receipt
+      // date intact and prevents the booking payment from being counted
+      // twice.
       // -----------------------------------------------------------------
-
-      _writeInitialRevenueInTransaction(
-        transaction: transaction,
-        farmId: farmId,
-        saleId: saleId,
-        paid: bookingAmountPaid,
-        revenueTotal: totalSaleAmount + actualHoldingCharges,
-        date: now,
-        customerName: customerName,
-        paymentMethod: initialMethod,
-        lotId: sale.lotDocId,
-        customerId: sale.isLotSale ? sale.customerId : '',
-      );
     }).timeout(_timeout * 2);
   }
 

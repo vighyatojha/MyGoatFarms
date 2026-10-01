@@ -1,3 +1,4 @@
+
 import 'dart:async';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -1130,6 +1131,18 @@ class FinanceService {
 
     if (otherPurchaseCosts > 0) {
       expenseByCategory['Transport & Other'] = otherPurchaseCosts;
+
+      // PurchaseCosting stores transport/loading/unloading/other costs
+      // directly on the trading purchase. Unlike supplier payments, these
+      // costs have no separate payment-method field, so they cannot be
+      // split between Cash and Online. They are nevertheless real cash
+      // outflows and must be included in the Cash/Online tracker rather
+      // than appearing only in totalCost.
+      //
+      // Keep this out of purchaseSpend: purchaseSpend already represents
+      // supplier/purchase payments, while otherPurchaseCosts is the
+      // separate cost bucket used by TradingFinanceSummary.totalCost.
+      cashPaid += otherPurchaseCosts;
     }
 
     // ---- Goat-sale credit (current balance, not a period total) --------

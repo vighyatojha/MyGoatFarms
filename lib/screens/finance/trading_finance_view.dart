@@ -312,10 +312,23 @@ class _TradingFinanceViewState extends State<TradingFinanceView> {
       ),
       const SizedBox(height: 10),
       FinanceModeCard(
-        title: 'Paid to Sellers',
+        // cashPaid now includes purchase-related cash outflows such as
+        // transport/loading/other costs, so "Paid to Sellers" is no longer
+        // an accurate label for the complete figure.
+        title: 'Cash Paid',
         titleIcon: Icons.outbox_outlined,
         cash: s.cashPaid,
         online: s.onlinePaid,
+      ),
+      const SizedBox(height: 6),
+      Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 4),
+        child: Text(
+          'Cash Paid includes supplier payments and purchase-related '
+              'transport/loading/other costs. Online Paid reflects recorded '
+              'online supplier payments.',
+          style: AppTheme.body(size: 10.5, color: AppColors.textGrey),
+        ),
       ),
     ];
   }

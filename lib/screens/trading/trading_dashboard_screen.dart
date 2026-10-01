@@ -1,3 +1,4 @@
+
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -23,13 +24,10 @@ import 'lots/lot_management_screen.dart';
 import 'lots/lot_sales_list_screen.dart';
 import 'lots/lot_stock_screen.dart';
 import 'lots/receive_lot_screen.dart';
-import '../palai/palai_screen.dart';
-import 'own_palai/own_palai_list_screen.dart';
 import 'purchase_goats/complete_receiving_screen.dart';
 import 'purchase_goats/purchase_goats_wizard_screen.dart';
 import 'register_goats/select_purchase_screen.dart';
 import 'sell_from_lot/sell_from_lot_wizard_screen.dart';
-import 'sell_goat/sell_goat_wizard_screen.dart';
 
 /// Trading Dashboard.
 ///
@@ -37,9 +35,9 @@ import 'sell_goat/sell_goat_wizard_screen.dart';
 ///  1. Header (back, title, recalculate)
 ///  2. 2x2 stat cards (Available Stock, Booking, Wait on Delivery,
 ///     Total Sold) + compact secondary stats list
-///  3. Quick actions (Purchase Lots hero + 2x2 action tiles). Goats stay
-///     anonymous inside a lot; they are only registered when transferred
-///     to a Palai, so there is no standalone "Register Goats" action.
+///  3. Secondary trading stats with direct Purchase / Sell controls.
+///     Goats stay anonymous inside a lot; they are only registered when
+///     transferred to a Palai, so there is no standalone "Register Goats" action.
 ///  4. Pending receiving (empty state card or list of pending purchases)
 class TradingDashboardScreen extends StatefulWidget {
   const TradingDashboardScreen({super.key});
@@ -443,7 +441,6 @@ class _TradingDashboardScreenState extends State<TradingDashboardScreen> {
                         children: [
                           _overview(snap, summary, lotOverview),
                           const SizedBox(height: 18),
-                          _quickActions(summary, lotOverview),
                         ],
                       );
                     },
@@ -598,17 +595,24 @@ class _TradingDashboardScreenState extends State<TradingDashboardScreen> {
               icon: Icons.shopping_cart_outlined,
               color: AppColors.info,
               title: 'Wholesale Purchased',
-              subtitle: 'Inbound batch goats',
-              trailing: Text.rich(
-                TextSpan(
-                  children: [
-                    TextSpan(
-                      text: '${s.wholesalePurchased}',
-                      style: AppTheme.heading(size: 15, color: AppColors.info),
-                    ),
-                    TextSpan(text: ' head', style: AppTheme.body(size: 10)),
-                  ],
-                ),
+              subtitle: '${s.wholesalePurchased} head • Purchase or sell from lots',
+              trailing: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  _CompactActionButton(
+                    label: 'Purchase',
+                    icon: Icons.add_shopping_cart_rounded,
+                    color: AppColors.primaryGreen,
+                    onTap: () => _push(const PurchaseGoatsWizardScreen()),
+                  ),
+                  const SizedBox(width: 6),
+                  _CompactActionButton(
+                    label: 'Sell',
+                    icon: Icons.sell_outlined,
+                    color: AppColors.tradingBlue,
+                    onTap: () => _push(const SellFromLotWizardScreen()),
+                  ),
+                ],
               ),
             ),
             divider,
@@ -675,8 +679,8 @@ class _TradingDashboardScreenState extends State<TradingDashboardScreen> {
             _StripRow(
               icon: Icons.trending_up_rounded,
               color: AppColors.success,
-              title: 'Total Realized Profit',
-              subtitle: 'Current Q${_quarter(DateTime.now())} cycle margin',
+              title: 'Total Trading Profit',
+              subtitle: 'Current realized trading margin',
               trailing: Column(
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.end,
@@ -837,279 +841,6 @@ class _TradingDashboardScreenState extends State<TradingDashboardScreen> {
             ],
           ),
         ),
-      ),
-    );
-  }
-
-  // ===========================================================================
-  // QUICK ACTIONS
-  // ===========================================================================
-
-  Widget _quickActions(TradingSummary s, TradingLotOverview lotOverview) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(
-          children: [
-            const _IconBox(
-              icon: Icons.bolt_rounded,
-              color: AppColors.primaryGreen,
-              size: 28,
-            ),
-            const SizedBox(width: 8),
-            Text('Quick Actions', style: AppTheme.heading(size: 14)),
-            const Spacer(),
-            Text('Trading operations', style: AppTheme.body(size: 10)),
-          ],
-        ),
-        const SizedBox(height: 10),
-        _purchaseLotsHero(lotOverview),
-        const SizedBox(height: 10),
-        _pair(
-          _ActionTile(
-            icon: Icons.shopping_cart_outlined,
-            title: 'Purchase Lot',
-            subtitle: 'Buy a lot from a supplier',
-            color: AppColors.primaryGreen,
-            onTap: () => _push(const PurchaseGoatsWizardScreen()),
-          ),
-          _ActionTile(
-            icon: Icons.sell_outlined,
-            title: 'Sell From Lot',
-            subtitle: 'Supplier or farm stock',
-            color: AppColors.tradingBlue,
-            onTap: () => _push(const SellFromLotWizardScreen()),
-          ),
-          height: 100,
-        ),
-        const SizedBox(height: 10),
-        _pair(
-          _ActionTile(
-            icon: Icons.folder_open_outlined,
-            title: 'Lot Management',
-            subtitle: 'Lots, payments & receiving',
-            color: AppColors.primaryGreen,
-            onTap: () {
-              final farmId = _farmId;
-              if (farmId == null) return;
-              _push(LotManagementScreen(farmId: farmId));
-            },
-          ),
-          _ActionTile(
-            icon: Icons.layers_outlined,
-            title: 'Lot Stock',
-            subtitle: 'Goats at supplier & farm',
-            color: AppColors.stockTeal,
-            onTap: () {
-              final farmId = _farmId;
-              if (farmId == null) return;
-              _push(LotStockScreen(farmId: farmId));
-            },
-          ),
-          height: 100,
-        ),
-        const SizedBox(height: 10),
-        _pair(
-          _ActionTile(
-            icon: Icons.holiday_village_outlined,
-            title: 'Own Palai',
-            subtitle: 'Boarded pen records',
-            color: AppColors.warning,
-            onTap: () => _push(const OwnPalaiListScreen()),
-          ),
-          _ActionTile(
-            icon: Icons.groups_2_outlined,
-            title: 'Customer Palai',
-            subtitle: 'Customer goats on palai',
-            color: AppColors.info,
-            onTap: () => _push(const PalaiScreen()),
-          ),
-          height: 100,
-        ),
-        const SizedBox(height: 10),
-        // Individual goats (registered goats, not lot goats). Lot goats
-        // are sold with Sell From Lot above.
-        _pair(
-          _ActionTile(
-            icon: Icons.currency_rupee_rounded,
-            title: 'Sell Goat',
-            subtitle: 'Registered goats only',
-            color: AppColors.error,
-            onTap: () => _push(const SellGoatWizardScreen()),
-          ),
-          _ActionTile(
-            icon: Icons.inventory_2_outlined,
-            title: 'Goat Stock',
-            subtitle: 'Browse & filter herd',
-            color: Colors.deepPurple,
-            onTap: () => _openGoatStock(),
-          ),
-          height: 100,
-        ),
-      ],
-    );
-  }
-
-  Widget _purchaseLotsHero(TradingLotOverview lotOverview) {
-    final due = lotOverview.supplierDue;
-
-    return _CardTap(
-      radius: 18,
-      decoration: BoxDecoration(
-        color: AppColors.darkGreen,
-        borderRadius: BorderRadius.circular(18),
-      ),
-      onTap: () {
-        final farmId = _farmId;
-        if (farmId == null) return;
-        _push(LotManagementScreen(farmId: farmId));
-      },
-      child: Padding(
-        padding: const EdgeInsets.all(12),
-        child: Column(
-          children: [
-            Row(
-              children: [
-                Container(
-                  width: 38,
-                  height: 38,
-                  decoration: BoxDecoration(
-                    color: Colors.white.withValues(alpha: 0.14),
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: const Icon(
-                    Icons.layers_outlined,
-                    color: Colors.white,
-                    size: 21,
-                  ),
-                ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
-                        children: [
-                          Flexible(
-                            child: Text(
-                              'Purchase Lots',
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: AppTheme.heading(
-                                size: 14,
-                                color: Colors.white,
-                              ),
-                            ),
-                          ),
-                          const SizedBox(width: 8),
-                          _Pill(
-                            '${lotOverview.activeLotCount} active',
-                            AppColors.warning,
-                            solid: true,
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 2),
-                      Text(
-                        'Receive, pay & track every lot',
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: AppTheme.body(
-                          size: 10.5,
-                          color: Colors.white70,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 10),
-            Divider(height: 1, color: Colors.white.withValues(alpha: 0.15)),
-            const SizedBox(height: 10),
-            Row(
-              children: [
-                _heroStat('At Supplier', '${lotOverview.supplierQty}'),
-                _heroStat('At Farm', '${lotOverview.farmQty}'),
-                _heroStat('Reserved', '${lotOverview.reservedQty}'),
-              ],
-            ),
-            const SizedBox(height: 10),
-            Row(
-              children: [
-                Container(
-                  width: 6,
-                  height: 6,
-                  decoration: BoxDecoration(
-                    color: due >= 0.01 ? AppColors.warning : AppColors.success,
-                    shape: BoxShape.circle,
-                  ),
-                ),
-                const SizedBox(width: 7),
-                Expanded(
-                  child: Text(
-                    due >= 0.01
-                        ? '${_inr.format(due)} due to suppliers'
-                        : 'No supplier balance due',
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: AppTheme.body(size: 10.5, color: Colors.white70),
-                  ),
-                ),
-                const SizedBox(width: 8),
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 12,
-                    vertical: 7,
-                  ),
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.circular(20),
-                  ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      const Text(
-                        'Open',
-                        style: TextStyle(
-                          color: AppColors.darkGreen,
-                          fontSize: 11,
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                      const SizedBox(width: 2),
-                      const Icon(
-                        Icons.chevron_right_rounded,
-                        size: 16,
-                        color: AppColors.darkGreen,
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _heroStat(String label, String value) {
-    return Expanded(
-      child: Column(
-        children: [
-          Text(
-            value,
-            style: AppTheme.heading(size: 15, color: Colors.white),
-          ),
-          const SizedBox(height: 1),
-          Text(
-            label,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: AppTheme.body(size: 9.5, color: Colors.white70),
-          ),
-        ],
       ),
     );
   }
@@ -1499,7 +1230,6 @@ class _TradingDashboardScreenState extends State<TradingDashboardScreen> {
 // SHARED HELPERS
 // ============================================================================
 
-int _quarter(DateTime d) => (d.month - 1) ~/ 3 + 1;
 
 /// Two equal-width cells with a fixed height (lighter than a shrink-wrapped
 /// GridView and immune to aspect-ratio drift).
@@ -1765,65 +1495,40 @@ class _StripRow extends StatelessWidget {
   }
 }
 
-class _ActionTile extends StatelessWidget {
-  const _ActionTile({
+class _CompactActionButton extends StatelessWidget {
+  const _CompactActionButton({
+    required this.label,
     required this.icon,
-    required this.title,
-    required this.subtitle,
     required this.color,
     required this.onTap,
   });
 
+  final String label;
   final IconData icon;
-  final String title;
-  final String subtitle;
   final Color color;
   final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
-    return _CardTap(
-      radius: 16,
-      onTap: onTap,
-      child: Padding(
-        padding: const EdgeInsets.all(12),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                _IconBox(icon: icon, color: color),
-                Container(
-                  width: 24,
-                  height: 24,
-                  decoration: BoxDecoration(
-                    color: AppColors.paleGreen,
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: Icon(
-                    Icons.chevron_right_rounded,
-                    size: 16,
-                    color: AppColors.textGrey,
-                  ),
-                ),
-              ],
-            ),
-            const Spacer(),
-            Text(
-              title,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: AppTheme.heading(size: 12.5),
-            ),
-            const SizedBox(height: 2),
-            Text(
-              subtitle,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: AppTheme.body(size: 10),
-            ),
-          ],
+    return Material(
+      color: color.withValues(alpha: 0.08),
+      borderRadius: BorderRadius.circular(10),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(10),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 7),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(icon, size: 13, color: color),
+              const SizedBox(width: 4),
+              Text(
+                label,
+                style: AppTheme.heading(size: 9.5, color: color),
+              ),
+            ],
+          ),
         ),
       ),
     );

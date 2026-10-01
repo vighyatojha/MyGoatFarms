@@ -1540,9 +1540,21 @@ class TradingService {
           lot.soldFromSupplierQty -
           newReceivedTotal;
 
+      final previousArrivalWeight = lot.totalWeightAfterArrival ?? 0;
       final newArrivalWeight = PurchaseCosting.round2(
-        (lot.totalWeightAfterArrival ?? 0) + arrivalWeight,
+        previousArrivalWeight + arrivalWeight,
       );
+
+      // Receiving can happen in multiple batches. Never allow the cumulative
+      // received weight to exceed the original purchase weight; otherwise a
+      // partial receiving entry could create negative weight loss and corrupt
+      // the lot's effective cost calculations.
+      if (newArrivalWeight > lot.totalWeightAtPurchase + 0.005) {
+        throw ArgumentError(
+          'Cumulative arrival weight cannot be greater than the purchase '
+              'weight (${lot.totalWeightAtPurchase.toStringAsFixed(2)}).',
+        );
+      }
 
       // Pro-rated: goats sold at the supplier never travelled, so their
       // share of the purchase weight is not "lost".
