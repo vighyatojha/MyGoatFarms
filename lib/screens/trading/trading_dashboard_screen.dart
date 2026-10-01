@@ -37,7 +37,9 @@ import 'sell_goat/sell_goat_wizard_screen.dart';
 ///  1. Header (back, title, recalculate)
 ///  2. 2x2 stat cards (Available Stock, Booking, Wait on Delivery,
 ///     Total Sold) + compact secondary stats list
-///  3. Quick actions (Register Goats hero + 2x2 action tiles)
+///  3. Quick actions (Purchase Lots hero + 2x2 action tiles). Goats stay
+///     anonymous inside a lot; they are only registered when transferred
+///     to a Palai, so there is no standalone "Register Goats" action.
 ///  4. Pending receiving (empty state card or list of pending purchases)
 class TradingDashboardScreen extends StatefulWidget {
   const TradingDashboardScreen({super.key});
@@ -47,6 +49,13 @@ class TradingDashboardScreen extends StatefulWidget {
 }
 
 class _TradingDashboardScreenState extends State<TradingDashboardScreen> {
+  /// Farms whose dashboard counters were already re-derived in this app
+  /// session. The stored counters (Total Sold, stock, profit) are kept
+  /// with increments, so they can drift if a write was ever interrupted;
+  /// re-deriving them once per launch heals that without re-reading every
+  /// goat each time the dashboard is opened.
+  static final Set<String> _syncedFarms = <String>{};
+
   static final NumberFormat _inr = NumberFormat.currency(
     locale: 'en_IN',
     symbol: '₹',
@@ -100,6 +109,9 @@ class _TradingDashboardScreenState extends State<TradingDashboardScreen> {
     if (next == _farmId) return;
 
     _farmId = next;
+    if (next != null && _syncedFarms.add(next)) {
+      unawaited(_autoSync());
+    }
     _summaryStream = next == null
         ? null
         : TradingService.instance.dashboardSummaryStream(next);
@@ -210,6 +222,21 @@ class _TradingDashboardScreenState extends State<TradingDashboardScreen> {
       );
     } finally {
       _recalculating = false;
+    }
+  }
+
+  /// First open of the session: same recalculation as pull-to-refresh, but
+  /// invisible. A failure is ignored (the next pull-to-refresh retries) and
+  /// the farm is forgotten so the next open tries again.
+  Future<void> _autoSync() async {
+    final farmId = _farmId;
+    if (farmId == null) return;
+
+    try {
+      await TradingService.instance.backfillDashboardSummary(farmId);
+      await TradingService.instance.reconcileLotFinance(farmId);
+    } catch (_) {
+      _syncedFarms.remove(farmId);
     }
   }
 
@@ -589,7 +616,7 @@ class _TradingDashboardScreenState extends State<TradingDashboardScreen> {
               icon: Icons.currency_rupee_rounded,
               color: AppColors.error,
               title: 'Supplier Payments Due',
-              subtitle: 'Owed across every active lot',
+              subtitle: 'Owed across all lots',
               subtitleColor: AppColors.error,
               onTap: () {
                 final farmId = _farmId;
@@ -891,13 +918,13 @@ class _TradingDashboardScreenState extends State<TradingDashboardScreen> {
           height: 100,
         ),
         const SizedBox(height: 10),
-        // Individual goats (registered goats, not lot goats). Sell Goat
-        // stays until the owner decides Q1 (handover §8).
+        // Individual goats (registered goats, not lot goats). Lot goats
+        // are sold with Sell From Lot above.
         _pair(
           _ActionTile(
             icon: Icons.currency_rupee_rounded,
             title: 'Sell Goat',
-            subtitle: 'Invoice & gate pass',
+            subtitle: 'Registered goats only',
             color: AppColors.error,
             onTap: () => _push(const SellGoatWizardScreen()),
           ),

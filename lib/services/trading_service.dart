@@ -889,6 +889,8 @@ class TradingService {
 
         // Legacy payments already have their original purchase expense.
         if (payment.isLegacy || payment.amount <= 0) continue;
+        // A voided payment is deliberately not counted — never re-post it.
+        if (payment.voided) continue;
         if (paymentRefs.contains(payment.id)) continue;
 
         await _db.runTransaction((transaction) async {
@@ -1349,6 +1351,111 @@ class TradingService {
     final saved = await paymentRef.get().timeout(_timeout);
 
     return LotPayment.fromDoc(saved);
+  }
+
+  // -----------------------------------------------------------------------
+  // VOID SUPPLIER PAYMENT
+  // -----------------------------------------------------------------------
+
+  /// Voids one supplier payment that was entered by mistake.
+  ///
+  /// In ONE transaction:
+  ///  * the payment doc is kept for audit and marked `voided` (who, when,
+  ///    why), never deleted;
+  ///  * the lot's `paidAmount` goes down by the payment amount, so Paid /
+  ///    Balance Due / Status are correct again;
+  ///  * the payment's Finance expense and its cash-flow transaction are
+  ///    voided, so Trading Finance stops counting it.
+  ///
+  /// To CORRECT a payment, void it and add the right one.
+  ///
+  /// Refused for: an already voided payment, a payment synthesized from an
+  /// old goat-first purchase (its original purchase expense is not tied to
+  /// this record), and a lot whose paid amount is lower than the payment
+  /// (counters no longer match — check the lot).
+  Future<void> voidSupplierPayment({
+    required String farmId,
+    required String lotDocId,
+    required String paymentId,
+    String reason = '',
+  }) async {
+    final actor = await FirestoreService.instance.getCurrentActor();
+
+    final lotRef = _tradingPurchases(farmId).doc(lotDocId);
+    final paymentRef = lotRef.collection('payments').doc(paymentId);
+    final expenseRef = FinanceService.instance
+        .expenseDocRef(farmId, _lotPaymentExpenseDocId(paymentId));
+
+    late String lotLabel;
+    late double voidedAmount;
+
+    await _db.runTransaction((transaction) async {
+      // All reads first.
+      final lotSnap = await transaction.get(lotRef);
+      final paymentSnap = await transaction.get(paymentRef);
+      final expenseSnap = await transaction.get(expenseRef);
+
+      if (!lotSnap.exists) {
+        throw StateError('Lot $lotDocId was not found.');
+      }
+      if (!paymentSnap.exists) {
+        throw StateError('This payment was not found.');
+      }
+
+      final lot = TradingPurchase.fromDoc(lotSnap);
+      final payment = LotPayment.fromDoc(paymentSnap);
+
+      if (payment.voided) {
+        throw StateError('This payment was already voided.');
+      }
+      if (payment.isLegacy) {
+        throw StateError(
+          'This payment comes from the original goat purchase and cannot '
+              'be voided here. Void the purchase expense in Finance instead.',
+        );
+      }
+      if (payment.amount <= 0 || payment.amount > lot.paidAmount + 0.005) {
+        throw StateError(
+          'This payment cannot be voided because the lot totals no longer '
+              'match it. Please check the lot.',
+        );
+      }
+
+      lotLabel = lot.lotId;
+      voidedAmount = payment.amount;
+
+      transaction.update(paymentRef, {
+        'voided': true,
+        'voidedAt': FieldValue.serverTimestamp(),
+        if (actor?.uid != null) 'voidedByUid': actor!.uid,
+        if (actor?.name != null) 'voidedByName': actor!.name,
+        'voidReason': reason.trim(),
+      });
+
+      final newPaid = PurchaseCosting.round2(lot.paidAmount - payment.amount);
+
+      transaction.update(lotRef, {
+        // Set (not increment) so rounding drift can never leave dust.
+        'paidAmount': newPaid < 0 ? 0 : newPaid,
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
+
+      FinanceService.instance.voidExpenseInTransaction(
+        transaction,
+        farmId,
+        expenseSnap: expenseSnap,
+        title: 'Supplier Payment ($lotLabel)',
+        amount: payment.amount,
+        actor: actor,
+      );
+    }).timeout(_timeout);
+
+    FinanceService.instance.notifyExpenseVoided(
+      farmId,
+      title: 'Supplier Payment ($lotLabel)',
+      amount: voidedAmount,
+      actor: actor,
+    );
   }
 
   // -----------------------------------------------------------------------

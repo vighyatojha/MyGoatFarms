@@ -54,6 +54,23 @@ class Step2CustomerLookupState extends State<Step2CustomerLookup> {
   /// editable detail form should show instead of the search list.
   bool _detailsMode = false;
 
+  /// Earlier sales of the picked customer (null for a brand-new customer).
+  Future<CustomerHistory>? _history;
+
+  /// Palai account balance of a picked Palai customer (0 otherwise). Only
+  /// known when the customer was picked in this visit to the step.
+  double _palaiPending = 0;
+
+  void _loadHistory() {
+    final draft = widget.draft;
+
+    _history = draft.isExistingCustomer
+        ? SalesService.instance
+        .getCustomerHistory(widget.farmId, draft.customerId)
+        .catchError((_) => CustomerHistory.empty)
+        : null;
+  }
+
   @override
   void initState() {
     super.initState();
@@ -67,6 +84,7 @@ class Step2CustomerLookupState extends State<Step2CustomerLookup> {
       _nameController.text = draft.customerName;
       _mobileController.text = draft.mobile;
       _addressController.text = draft.address;
+      _loadHistory();
     }
   }
 
@@ -124,6 +142,11 @@ class Step2CustomerLookupState extends State<Step2CustomerLookup> {
     _mobileController.text = match.mobile;
     _addressController.text = match.address;
 
+    _palaiPending = match.source == CustomerMatchSource.palai
+        ? match.palaiPendingAmount
+        : 0;
+    _loadHistory();
+
     setState(() {
       _detailsMode = true;
     });
@@ -142,6 +165,9 @@ class Step2CustomerLookupState extends State<Step2CustomerLookup> {
     _mobileController.text = looksLikeMobile ? typed : '';
     _addressController.text = '';
 
+    _history = null;
+    _palaiPending = 0;
+
     setState(() {
       _detailsMode = true;
     });
@@ -149,6 +175,9 @@ class Step2CustomerLookupState extends State<Step2CustomerLookup> {
 
   void _searchDifferentCustomer() {
     widget.draft.clearCustomerMatch();
+
+    _history = null;
+    _palaiPending = 0;
 
     setState(() {
       _detailsMode = false;
@@ -311,6 +340,64 @@ class Step2CustomerLookupState extends State<Step2CustomerLookup> {
   }
 
   // ---------------------------------------------------------------------------
+  // PREVIOUS ACTIVITY (PDF §10)
+  // ---------------------------------------------------------------------------
+
+  Widget _historyCard() {
+    return FutureBuilder<CustomerHistory>(
+      future: _history,
+      builder: (context, snapshot) {
+        if (snapshot.connectionState != ConnectionState.done) {
+          return const Padding(
+            padding: EdgeInsets.only(bottom: 10),
+            child: LinearProgressIndicator(
+              minHeight: 2,
+              color: AppColors.primaryGreen,
+            ),
+          );
+        }
+
+        final h = snapshot.data ?? CustomerHistory.empty;
+        final isPalai = widget.draft.isExistingPalaiCustomer;
+
+        // Nothing to say about a customer with no history at all.
+        if (h.saleCount == 0 && _palaiPending <= 0 && !isPalai) {
+          return const SizedBox.shrink();
+        }
+
+        return Padding(
+          padding: const EdgeInsets.only(bottom: 10),
+          child: WizardSectionCard(
+            title: 'Previous Activity',
+            icon: Icons.history_rounded,
+            children: [
+              WizardComputedRow(
+                label: 'Earlier goat sales',
+                value: h.saleCount == 0 ? 'None yet' : '${h.saleCount}',
+              ),
+              if (h.lastSaleDate != null)
+                WizardComputedRow(
+                  label: 'Last purchase',
+                  value: wizardDate(h.lastSaleDate!),
+                ),
+              WizardComputedRow(
+                label: 'Pending on goat sales',
+                value: wizardCurrency(h.pendingDue),
+                emphasize: h.pendingDue >= 0.01,
+              ),
+              if (isPalai && _palaiPending > 0)
+                WizardComputedRow(
+                  label: 'Pending on Palai account',
+                  value: wizardCurrency(_palaiPending),
+                ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  // ---------------------------------------------------------------------------
   // DETAIL FORM VIEW
   // ---------------------------------------------------------------------------
 
@@ -368,6 +455,8 @@ class Step2CustomerLookupState extends State<Step2CustomerLookup> {
                 ),
               ),
             ),
+
+          if (_history != null) _historyCard(),
 
           WizardSectionCard(
             title: 'Customer Details',

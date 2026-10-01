@@ -3180,6 +3180,85 @@ class SalesService {
     return merged;
   }
 
+  /// What this customer has bought before, for the "previous activity"
+  /// card on the customer step (PDF §10). One single-field query on the
+  /// sales collection, so no composite index is needed. Works for a Sale
+  /// customer and for a Palai customer alike, because every sale stores
+  /// the id of whichever record the customer was picked from.
+  ///
+  /// Pending is the same figure the Credit screen uses: the balance of
+  /// delivered sales that still have something to collect.
+  Future<CustomerHistory> getCustomerHistory(
+      String farmId,
+      String customerId,
+      ) async {
+    final id = customerId.trim();
+
+    if (id.isEmpty) return CustomerHistory.empty;
+
+    final snap = await _sales(farmId)
+        .where('customerId', isEqualTo: id)
+        .get()
+        .timeout(_timeout);
+
+    var pending = 0.0;
+    DateTime? last;
+
+    for (final doc in snap.docs) {
+      final sale = Sale.fromDoc(doc);
+
+      if (sale.canCollectBalance) pending += sale.billBalanceDue;
+
+      final date = sale.saleDate;
+      if (date != null && (last == null || date.isAfter(last))) last = date;
+    }
+
+    return CustomerHistory(
+      saleCount: snap.docs.length,
+      lastSaleDate: last,
+      pendingDue: SaleDraft.round2(pending),
+    );
+  }
+
+  /// Saves an address edited on the customer step back to the customer's
+  /// own Palai record.
+  ///
+  /// A sale already stores the edited details on the sale itself, and for a
+  /// Sale customer the sale transaction updates the `customers` doc. A Palai
+  /// customer's doc belongs to the Palai module, so it is left alone while
+  /// the sale is saved and only the ADDRESS is written here afterwards —
+  /// never the name or mobile (those identify the customer) and never a
+  /// blank (an empty field means "not filled in", not "delete").
+  ///
+  /// Best effort and never throws: the sale is already saved, and a failed
+  /// address update must not look like a failed sale.
+  Future<void> syncPalaiCustomerAddress(
+      String farmId,
+      SaleDraft draft,
+      ) async {
+    if (draft.customerSource != CustomerMatchSource.palai) return;
+
+    final id = draft.customerId.trim();
+    final address = draft.address.trim();
+
+    if (id.isEmpty || address.isEmpty) return;
+
+    try {
+      final ref = _palaiCustomers(farmId).doc(id);
+      final snap = await ref.get().timeout(_timeout);
+
+      if (!snap.exists) return;
+
+      final current = (snap.data()?['address'] ?? '').toString().trim();
+
+      if (current == address) return;
+
+      await ref.update({'address': address}).timeout(_timeout);
+    } catch (_) {
+      // Ignored on purpose — see above.
+    }
+  }
+
   /// Live merged stream of every known name across both collections, for
   /// an as-you-type suggestions list in Step 2. Hand-rolled combineLatest
   /// (no rxdart dependency in this project): re-emits the merged list
@@ -3242,6 +3321,23 @@ class SalesService {
   }
 }
 
+/// A customer's earlier goat sales, shown on the customer step.
+class CustomerHistory {
+  final int saleCount;
+  final DateTime? lastSaleDate;
+
+  /// Goat-sale balance still owed (delivered sales only).
+  final double pendingDue;
+
+  const CustomerHistory({
+    this.saleCount = 0,
+    this.lastSaleDate,
+    this.pendingDue = 0,
+  });
+
+  static const CustomerHistory empty = CustomerHistory();
+}
+
 /// Where a [CustomerMatch] came from.
 enum CustomerMatchSource {
   /// farms/{farmId}/customers — a Sale-flow buyer.
@@ -3269,6 +3365,10 @@ class CustomerMatch {
   /// this isn't a plain first-time buyer.
   final String? palaiPackageName;
 
+  /// Only set for a Palai customer: what they currently owe on their
+  /// Palai account (separate from any goat-sale balance).
+  final double palaiPendingAmount;
+
   const CustomerMatch({
     required this.source,
     required this.id,
@@ -3276,6 +3376,7 @@ class CustomerMatch {
     required this.mobile,
     required this.address,
     this.palaiPackageName,
+    this.palaiPendingAmount = 0,
   });
 
   factory CustomerMatch.fromCustomer(Customer customer) {
@@ -3296,6 +3397,7 @@ class CustomerMatch {
       mobile: customer.mobileNumber,
       address: customer.address,
       palaiPackageName: customer.package,
+      palaiPendingAmount: customer.pendingAmount,
     );
   }
 

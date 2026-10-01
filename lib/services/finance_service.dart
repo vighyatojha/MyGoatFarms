@@ -388,6 +388,79 @@ class FinanceService {
     ));
   }
 
+  /// Reference to one expense doc, so other services can read it inside
+  /// their own transaction (see [voidExpenseInTransaction]).
+  DocumentReference<Map<String, dynamic>> expenseDocRef(
+      String farmId,
+      String expenseDocId,
+      ) =>
+      _expenses(farmId).doc(expenseDocId);
+
+  /// Voids an expense INSIDE an existing transaction (used when a Trading
+  /// supplier payment is voided, so the payment and its Finance row are
+  /// reversed together or not at all).
+  ///
+  /// [expenseSnap] must have been read with `transaction.get` BEFORE any
+  /// write in that transaction (Firestore requires reads first). A missing
+  /// or already-voided expense is left alone. The mirrored `transactions`
+  /// doc is voided too, so the amount stops counting everywhere.
+  ///
+  /// Call [notifyExpenseVoided] AFTER the transaction commits.
+  void voidExpenseInTransaction(
+      Transaction transaction,
+      String farmId, {
+        required DocumentSnapshot<Map<String, dynamic>> expenseSnap,
+        required String title,
+        required double amount,
+        required ({String uid, String name, String role})? actor,
+      }) {
+    if (!expenseSnap.exists) return;
+
+    final data = expenseSnap.data() ?? {};
+    if (data['status'] == 'voided') return;
+
+    transaction.update(expenseSnap.reference, {
+      'status': 'voided',
+      'updatedAt': FieldValue.serverTimestamp(),
+    });
+
+    final transactionId = (data['transactionId'] ?? '').toString();
+    if (transactionId.isNotEmpty) {
+      transaction.update(_transactions(farmId).doc(transactionId), {
+        'status': 'voided',
+      });
+    }
+
+    transaction.set(_activities(farmId).doc(), {
+      'type': ActivityType.expenseVoided.name,
+      'title': 'Expense Voided',
+      'subtitle': '$title · ₹${amount.toStringAsFixed(0)}',
+      'module': 'finance',
+      'timestamp': FieldValue.serverTimestamp(),
+      if (actor != null) 'actorUid': actor.uid,
+      if (actor != null) 'actorName': actor.name,
+      if (actor != null) 'actorRole': actor.role,
+    });
+  }
+
+  /// Partner -> owner notification for an expense voided with
+  /// [voidExpenseInTransaction]. Fire-and-forget.
+  void notifyExpenseVoided(
+      String farmId, {
+        required String title,
+        required double amount,
+        required ({String uid, String name, String role})? actor,
+      }) {
+    unawaited(FirestoreService.instance.notifyPartnerActivity(
+      farmId: farmId,
+      type: ActivityType.expenseVoided,
+      title: 'Expense Voided',
+      subtitle: '$title · ₹${amount.toStringAsFixed(0)}',
+      module: 'finance',
+      actor: actor,
+    ));
+  }
+
   /// Soft-deletes (voids) an expense rather than removing it — per spec
   /// §29/§38, financial records stay auditable. A voided expense and
   /// its mirrored transaction are both excluded from every calculation.

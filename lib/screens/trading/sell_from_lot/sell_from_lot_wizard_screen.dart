@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../../../app_theme.dart';
@@ -315,6 +317,13 @@ class _SellFromLotWizardScreenState extends State<SellFromLotWizardScreen> {
         );
         return;
       }
+
+      // The sale is saved. If the customer is an existing Palai customer
+      // and the address was edited, carry it over to their Palai record
+      // (best effort, never throws).
+      unawaited(
+        SalesService.instance.syncPalaiCustomerAddress(_farmId!, _draft),
+      );
 
       if (!mounted) return;
 

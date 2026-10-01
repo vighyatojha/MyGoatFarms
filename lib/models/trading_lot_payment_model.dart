@@ -32,6 +32,13 @@ class LotPayment {
   final String? actorUid;
   final String? actorName;
 
+  /// True once the payment was voided (entered by mistake). The record is
+  /// kept for audit and no longer counts toward the lot's paid amount.
+  final bool voided;
+  final DateTime? voidedAt;
+  final String? voidedByName;
+  final String voidReason;
+
   const LotPayment({
     required this.id,
     required this.amount,
@@ -43,6 +50,10 @@ class LotPayment {
     this.createdAt,
     this.actorUid,
     this.actorName,
+    this.voided = false,
+    this.voidedAt,
+    this.voidedByName,
+    this.voidReason = '',
   });
 
   factory LotPayment.fromDoc(DocumentSnapshot<Map<String, dynamic>> doc) {
@@ -66,6 +77,10 @@ class LotPayment {
       createdAt: dateOrNull('createdAt'),
       actorUid: data['actorUid'] as String?,
       actorName: data['actorName'] as String?,
+      voided: data['voided'] == true,
+      voidedAt: dateOrNull('voidedAt'),
+      voidedByName: data['voidedByName'] as String?,
+      voidReason: (data['voidReason'] ?? '').toString(),
     );
   }
 

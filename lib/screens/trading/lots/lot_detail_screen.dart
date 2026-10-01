@@ -148,6 +148,75 @@ class _LotDetailScreenState extends State<LotDetailScreen> {
     if (saved == true) _snack('Payment saved.');
   }
 
+  /// Voids a supplier payment entered by mistake (to correct one: void it,
+  /// then add the right payment). Needs the same permission as voiding an
+  /// expense in Finance, because it voids that expense too.
+  Future<void> _voidPayment(LotPayment p) async {
+    final reasonController = TextEditingController();
+
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Void this payment?'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              '${wizardCurrency(p.amount)} paid on ${wizardDate(p.date)} '
+                  'will stop counting: the lot\'s Paid amount goes down, the '
+                  'balance due goes up, and the matching Finance expense is '
+                  'voided. The record is kept and marked as voided.',
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: reasonController,
+              textCapitalization: TextCapitalization.sentences,
+              maxLength: 120,
+              decoration: const InputDecoration(
+                labelText: 'Reason (optional)',
+                hintText: 'e.g. Typed wrong amount',
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text(
+              'Void payment',
+              style: TextStyle(color: AppColors.error),
+            ),
+          ),
+        ],
+      ),
+    );
+
+    final reason = reasonController.text;
+    reasonController.dispose();
+
+    if (ok != true) return;
+
+    try {
+      await TradingService.instance.voidSupplierPayment(
+        farmId: widget.farmId,
+        lotDocId: widget.lotDocId,
+        paymentId: p.id,
+        reason: reason,
+      );
+      if (mounted) _snack('Payment voided.');
+    } catch (e) {
+      if (mounted) {
+        _snack(e.toString().replaceFirst(RegExp(r'^\w*(Error|Exception): '), ''),
+            error: true);
+      }
+    }
+  }
+
   Future<void> _sellFromLot() async {
     // SellFromLotWizardScreen replaces itself with the sale receipt on
     // success, so there is no return value to check here — the lot's
@@ -680,6 +749,13 @@ class _LotDetailScreenState extends State<LotDetailScreen> {
   }
 
   Widget _paymentRow(LotPayment p) {
+    final canVoid = !p.voided &&
+        !p.isLegacy &&
+        PartnerAccessService.instance
+            .allows(PartnerPermissionKeys.financeExpenseVoid);
+
+    final dim = p.voided ? AppColors.textGrey : AppColors.textDark;
+
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 5),
       child: Row(
@@ -691,11 +767,19 @@ class _LotDetailScreenState extends State<LotDetailScreen> {
               children: [
                 Text(
                   '${wizardDate(p.date)} • ${p.method}'
-                      '${p.isLegacy ? ' (earlier purchase)' : ''}',
-                  style: AppTheme.body(size: 12, color: AppColors.textDark),
+                      '${p.isLegacy ? ' (earlier purchase)' : ''}'
+                      '${p.voided ? ' • Voided' : ''}',
+                  style: AppTheme.body(size: 12, color: dim).copyWith(
+                    decoration: p.voided ? TextDecoration.lineThrough : null,
+                  ),
                 ),
                 if (p.note.trim().isNotEmpty)
                   Text(p.note, style: AppTheme.body(size: 11)),
+                if (p.voided && p.voidReason.trim().isNotEmpty)
+                  Text(
+                    'Voided: ${p.voidReason.trim()}',
+                    style: AppTheme.body(size: 11),
+                  ),
               ],
             ),
           ),
@@ -703,10 +787,19 @@ class _LotDetailScreenState extends State<LotDetailScreen> {
             wizardCurrency(p.amount),
             style: AppTheme.body(
               size: 12.5,
-              color: AppColors.textDark,
+              color: dim,
               weight: FontWeight.w700,
+            ).copyWith(
+              decoration: p.voided ? TextDecoration.lineThrough : null,
             ),
           ),
+          if (canVoid)
+            IconButton(
+              tooltip: 'Void this payment',
+              visualDensity: VisualDensity.compact,
+              icon: const Icon(Icons.block_rounded, size: 18),
+              onPressed: () => _voidPayment(p),
+            ),
         ],
       ),
     );
