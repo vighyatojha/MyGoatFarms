@@ -1,25 +1,26 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 
-import '../../../app_theme.dart';
-import '../../../goat_icons.dart';
-import '../../../models/farm_model.dart';
-import '../../../models/goat_model.dart';
-import '../../../models/trading_purchase_model.dart';
-import '../../../services/firestore_service.dart';
-import '../../../services/goat_service.dart';
-import '../../../services/trading_service.dart';
-import '../../../widgets/fast_route.dart';
-import '../../palai/fullscreen_image_viewer.dart';
-import '../../../widgets/farm_not_linked_state.dart';
-import '../own_palai/own_palai_goat_profile_screen.dart';
-import '../register_goats/goat_registration_form_screen.dart';
-import 'booking_delivery_customer_list_screen.dart';
-import 'complete_booking_delivery_screen.dart';
-import 'complete_wait_for_delivery_screen.dart';
-import 'goat_stock_detail_screen.dart';
-import 'wait_delivery_customer_list_screen.dart';
-import '../purchase_goats/individual_goat_purchase_screen.dart';
+import 'package:mygoatfarms/app_theme.dart';
+import 'package:mygoatfarms/goat_icons.dart';
+import 'package:mygoatfarms/models/farm_model.dart';
+import 'package:mygoatfarms/models/goat_model.dart';
+import 'package:mygoatfarms/models/trading_purchase_model.dart';
+import 'package:mygoatfarms/services/firestore_service.dart';
+import 'package:mygoatfarms/services/goat_service.dart';
+import 'package:mygoatfarms/services/trading_service.dart';
+import 'package:mygoatfarms/widgets/fast_route.dart';
+import 'package:mygoatfarms/screens/palai/fullscreen_image_viewer.dart';
+import 'package:mygoatfarms/widgets/farm_not_linked_state.dart';
+import 'package:mygoatfarms/screens/trading/lots/lot_detail_screen.dart';
+import 'package:mygoatfarms/screens/trading/own_palai/own_palai_goat_profile_screen.dart';
+import 'package:mygoatfarms/screens/trading/register_goats/goat_registration_form_screen.dart';
+import 'package:mygoatfarms/screens/trading/goat_stock/booking_delivery_customer_list_screen.dart';
+import 'package:mygoatfarms/screens/trading/goat_stock/complete_booking_delivery_screen.dart';
+import 'package:mygoatfarms/screens/trading/goat_stock/complete_wait_for_delivery_screen.dart';
+import 'package:mygoatfarms/screens/trading/goat_stock/goat_stock_detail_screen.dart';
+import 'package:mygoatfarms/screens/trading/goat_stock/wait_delivery_customer_list_screen.dart';
+import 'package:mygoatfarms/screens/trading/purchase_goats/individual_goat_purchase_screen.dart';
 
 // ============================================================================
 // SHARED STATUS HELPERS
@@ -30,10 +31,22 @@ import '../purchase_goats/individual_goat_purchase_screen.dart';
 /// stored on a [Goat] — it only drives the tab / filter.
 const String _kUnregistered = GoatStockListScreen.statusUnregistered;
 
+/// Pseudo-statuses for goats that live inside a purchase lot. Lot goats are
+/// anonymous (a quantity on the lot, no goat record), so these are never
+/// stored on a [Goat] — they only drive the tabs. A lot that is partly at
+/// the supplier and partly at the farm shows under both tabs.
+const String _kLotFarm = 'Lot at Farm';
+const String _kLotSupplier = 'Lot at Supplier';
+
+bool _isLotTab(String? status) =>
+    status == _kLotFarm || status == _kLotSupplier;
+
 /// Tabs shown after "All", in display order.
 const List<String> _stockTabs = [
   Goat.statusAvailable,
   _kUnregistered,
+  _kLotFarm,
+  _kLotSupplier,
   Goat.statusBooked,
   Goat.statusWaitOnDelivery,
   Goat.statusOwnPalai,
@@ -91,6 +104,12 @@ Color _statusColor(String status) {
 
     case _kUnregistered:
       return AppColors.warning;
+
+    case _kLotFarm:
+      return AppColors.success;
+
+    case _kLotSupplier:
+      return AppColors.info;
 
     default:
       return AppColors.textGrey;
@@ -213,6 +232,14 @@ class _GoatStockListScreenState
   /// Purchases (receiving completed) that still have goats to register.
   Stream<List<TradingPurchase>>? _unregisteredStream;
 
+  /// Every purchase lot (lotSchema >= 1). Lot goats have no goat records,
+  /// so without this stream they never appeared in Stock at all.
+  Stream<List<TradingPurchase>>? _lotsStream;
+
+  /// Lots that still own goats, refreshed by the stream builder on every
+  /// update so the count / filter helpers below can read it.
+  List<TradingPurchase> _lots = const <TradingPurchase>[];
+
   final TextEditingController _searchController =
   TextEditingController();
 
@@ -320,6 +347,10 @@ class _GoatStockListScreenState
       _unregisteredStream = farmId == null
           ? null
           : TradingService.instance.pendingRegistrationStream(farmId);
+
+      _lotsStream = farmId == null
+          ? null
+          : TradingService.instance.lotsStream(farmId);
 
       _loadingFarm = false;
     });
@@ -924,7 +955,25 @@ class _GoatStockListScreenState
             final batches =
                 batchSnapshot.data ?? const <TradingPurchase>[];
 
-            return _buildContent(allGoats, batches);
+            // Third source: purchase lots that still own goats, at the
+            // supplier and / or at the farm. Same rule: a failing stream
+            // never hides the registered goats.
+            return StreamBuilder<List<TradingPurchase>>(
+              stream: _lotsStream,
+              builder: (context, lotSnapshot) {
+                if (lotSnapshot.connectionState ==
+                    ConnectionState.waiting &&
+                    !lotSnapshot.hasData) {
+                  return const _GoatStockSkeleton();
+                }
+
+                _lots = (lotSnapshot.data ?? const <TradingPurchase>[])
+                    .where((lot) => lot.remainingQty > 0)
+                    .toList();
+
+                return _buildContent(allGoats, batches);
+              },
+            );
           },
         );
       },
@@ -948,11 +997,20 @@ class _GoatStockListScreenState
       ) {
     if (status == null) {
       return goats.where(_showInAll).length +
-          _unregisteredTotal(batches);
+          _unregisteredTotal(batches) +
+          _lots.fold<int>(0, (sum, l) => sum + l.supplierQty + l.farmQty);
     }
 
     if (status == _kUnregistered) {
       return _unregisteredTotal(batches);
+    }
+
+    if (status == _kLotFarm) {
+      return _lots.fold<int>(0, (sum, l) => sum + l.farmQty);
+    }
+
+    if (status == _kLotSupplier) {
+      return _lots.fold<int>(0, (sum, l) => sum + l.supplierQty);
     }
 
     return goats.where((goat) => _matchesTab(goat, status)).length;
@@ -966,7 +1024,7 @@ class _GoatStockListScreenState
     // The Unregistered tab has no registered goats at all.
     var goats = status == null
         ? allGoats.where(_showInAll).toList()
-        : status == _kUnregistered
+        : (status == _kUnregistered || _isLotTab(status))
         ? <Goat>[]
         : allGoats.where((g) => _matchesTab(g, status)).toList();
 
@@ -1048,13 +1106,65 @@ class _GoatStockListScreenState
     return result;
   }
 
+  /// Lots that pass the current tab / search / sort. Lots belong to "All"
+  /// and to the two lot tabs only.
+  List<TradingPurchase> _visibleLots() {
+    final status = _statusFilter;
+
+    if (status != null && !_isLotTab(status)) {
+      return const <TradingPurchase>[];
+    }
+
+    // No gender is recorded for goats inside a lot.
+    if (_genderFilter != null) {
+      return const <TradingPurchase>[];
+    }
+
+    var result = _lots.where((lot) {
+      if (status == _kLotFarm) return lot.farmQty > 0;
+      if (status == _kLotSupplier) return lot.supplierQty > 0;
+      return true;
+    }).toList();
+
+    if (_search.isNotEmpty) {
+      result = result
+          .where(
+            (lot) =>
+        lot.id.toLowerCase().contains(_search) ||
+            lot.lotId.toLowerCase().contains(_search) ||
+            lot.sellerName.toLowerCase().contains(_search),
+      )
+          .toList();
+    }
+
+    if (_sort == _StockSort.oldest) {
+      result = result.reversed.toList();
+    }
+
+    return result;
+  }
+
+  void _openLot(TradingPurchase lot) {
+    final farmId = _farmId;
+
+    if (farmId == null) return;
+
+    Navigator.of(context).push(
+      fastRoute(
+        LotDetailScreen(farmId: farmId, lotDocId: lot.id),
+      ),
+    );
+  }
+
   Widget _buildContent(
       List<Goat> allGoats,
       List<TradingPurchase> batches,
       ) {
     final goats = _visibleGoats(allGoats);
     final visibleBatches = _visibleBatches(batches);
-    final itemCount = goats.length + visibleBatches.length;
+    final visibleLots = _visibleLots();
+    final itemCount =
+        goats.length + visibleBatches.length + visibleLots.length;
 
     return CustomScrollView(
       keyboardDismissBehavior:
@@ -1087,7 +1197,9 @@ class _GoatStockListScreenState
             hasScrollBody: false,
             child: _emptyState(
               hasAnyGoats:
-              allGoats.isNotEmpty || batches.isNotEmpty,
+              allGoats.isNotEmpty ||
+                  batches.isNotEmpty ||
+                  _lots.isNotEmpty,
             ),
           )
         else
@@ -1098,7 +1210,18 @@ class _GoatStockListScreenState
               separatorBuilder: (_, __) =>
               const SizedBox(height: 9),
               itemBuilder: (context, index) {
-                // Registered goats first, unregistered batches after.
+                // Registered goats first, then unregistered batches, then
+                // purchase lots (at the supplier and / or at the farm).
+                if (index >= goats.length + visibleBatches.length) {
+                  final lot = visibleLots[
+                  index - goats.length - visibleBatches.length];
+
+                  return _LotStockCard(
+                    lot: lot,
+                    onTap: () => _openLot(lot),
+                  );
+                }
+
                 if (index >= goats.length) {
                   final purchase =
                   visibleBatches[index - goats.length];
@@ -1528,6 +1651,12 @@ class _GoatStockListScreenState
           ? 'There are no goats marked as '
           '"${_statusLabel(status)}" with that gender.'
           : 'No goats have the selected gender recorded.';
+    } else if (status == _kLotFarm) {
+      title = 'No lot goats at the farm';
+      subtitle = 'Goats from a purchase lot appear here once they arrive.';
+    } else if (status == _kLotSupplier) {
+      title = 'No lot goats at the supplier';
+      subtitle = 'Every goat of every lot has reached the farm or been sold.';
     } else if (status == _kUnregistered) {
       title = 'No unregistered goats';
       subtitle = 'Every received goat has been registered.';
@@ -1537,7 +1666,7 @@ class _GoatStockListScreenState
           '"${_statusLabel(status)}".';
     } else if (hasAnyGoats) {
       // "All" only lists Available Stock + Unregistered goats.
-      title = 'No available or unregistered goats';
+      title = 'No goats in stock';
       subtitle =
       'Booked, wait on delivery and sold goats are under their own tabs.';
     } else {
@@ -2589,6 +2718,149 @@ class _UnregisteredBatchCard extends StatelessWidget {
 // ============================================================================
 // SKELETON LOADING
 // ============================================================================
+
+// ============================================================================
+// PURCHASE LOT CARD
+// ============================================================================
+
+/// One purchase lot in Stock: how many of its goats are still at the
+/// supplier and how many are at the farm. Tapping opens the lot.
+class _LotStockCard extends StatelessWidget {
+  final TradingPurchase lot;
+  final VoidCallback onTap;
+
+  const _LotStockCard({required this.lot, required this.onTap});
+
+  static final DateFormat _dateFormat = DateFormat('d MMM yyyy');
+
+  Widget _chip(IconData icon, String text, Color color) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 4),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.10),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: color.withValues(alpha: 0.28)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 12, color: _statusTextColor(color)),
+          const SizedBox(width: 4),
+          Text(
+            text,
+            maxLines: 1,
+            style: TextStyle(
+              color: _statusTextColor(color),
+              fontSize: 10,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final seller = lot.sellerName.trim();
+    final total = lot.supplierQty + lot.farmQty;
+    final atFarm = lot.farmQty;
+    final atSupplier = lot.supplierQty;
+
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(18),
+        child: Container(
+          padding: const EdgeInsets.all(11),
+          decoration: AppTheme.card(radius: 18).copyWith(
+            border: Border.all(
+              color: AppColors.divider.withValues(alpha: 0.6),
+            ),
+          ),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Container(
+                width: 62,
+                height: 62,
+                decoration: BoxDecoration(
+                  color: AppColors.tradingBlue.withValues(alpha: 0.12),
+                  borderRadius: BorderRadius.circular(15),
+                ),
+                child: const Icon(
+                  Icons.inventory_2_outlined,
+                  size: 26,
+                  color: AppColors.tradingBlue,
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      '${lot.lotId} · ${total == 1 ? '1 goat' : '$total goats'}',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: AppTheme.heading(
+                        size: 15.5,
+                        color: AppColors.textDark,
+                      ),
+                    ),
+                    const SizedBox(height: 1),
+                    Text(
+                      seller.isEmpty ? 'Purchase lot' : seller,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: AppTheme.body(
+                        size: 11.5,
+                        color: AppColors.textGrey,
+                      ),
+                    ),
+                    const SizedBox(height: 7),
+                    Wrap(
+                      spacing: 5,
+                      runSpacing: 5,
+                      children: [
+                        if (atSupplier > 0)
+                          _chip(
+                            Icons.local_shipping_outlined,
+                            '$atSupplier at supplier',
+                            _statusColor(_kLotSupplier),
+                          ),
+                        if (atFarm > 0)
+                          _chip(
+                            Icons.home_work_outlined,
+                            lot.reservedFarmQty > 0
+                                ? '$atFarm at farm '
+                                '(${lot.reservedFarmQty} booked)'
+                                : '$atFarm at farm',
+                            _statusColor(_kLotFarm),
+                          ),
+                        _chip(
+                          Icons.calendar_month_outlined,
+                          'Bought ${_dateFormat.format(lot.purchaseDate)}',
+                          AppColors.textGrey,
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+              const Icon(
+                Icons.chevron_right_rounded,
+                color: AppColors.textGrey,
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 
 class _GoatStockSkeleton extends StatefulWidget {
   const _GoatStockSkeleton();

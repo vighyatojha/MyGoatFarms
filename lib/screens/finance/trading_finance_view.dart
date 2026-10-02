@@ -1,20 +1,23 @@
 import 'package:flutter/material.dart';
 
-import '../../app_theme.dart';
-import '../../models/expense_categories.dart';
-import '../../models/finance_scope.dart';
-import '../../models/finance_summary_model.dart';
-import '../../models/trading_finance_summary.dart';
-import '../../services/finance_service.dart';
-import '../../services/firestore_service.dart';
-import '../../services/sales_service.dart';
-import '../../widgets/fast_route.dart';
-import '../../widgets/finance/finance_widgets.dart';
-import '../../widgets/finance/payment_reminder_service.dart';
-import 'credit_customers_screen.dart';
-import 'expense_list_screen.dart';
-import 'finance_range.dart';
-import 'revenue_list_screen.dart';
+import 'package:mygoatfarms/app_theme.dart';
+import 'package:mygoatfarms/models/expense_categories.dart';
+import 'package:mygoatfarms/models/finance_scope.dart';
+import 'package:mygoatfarms/models/finance_summary_model.dart';
+import 'package:mygoatfarms/models/trading_finance_summary.dart';
+import 'package:mygoatfarms/services/finance_service.dart';
+import 'package:mygoatfarms/services/firestore_service.dart';
+import 'package:mygoatfarms/services/sales_service.dart';
+import 'package:mygoatfarms/services/trading_service.dart';
+import 'package:mygoatfarms/models/trading_purchase_model.dart';
+import 'package:mygoatfarms/widgets/fast_route.dart';
+import 'package:mygoatfarms/widgets/finance/finance_widgets.dart';
+import 'package:mygoatfarms/widgets/finance/payment_reminder_service.dart';
+import 'package:mygoatfarms/screens/finance/credit_customers_screen.dart';
+import 'package:mygoatfarms/screens/finance/expense_list_screen.dart';
+import 'package:mygoatfarms/screens/finance/finance_range.dart';
+import 'package:mygoatfarms/screens/finance/revenue_list_screen.dart';
+import 'package:mygoatfarms/screens/finance/supplier_pending_payments_screen.dart';
 
 /// TRADING side of the Finance tab.
 ///
@@ -47,6 +50,11 @@ class _TradingFinanceViewState extends State<TradingFinanceView> {
   bool _sendingReminders = false;
   TradingFinanceSummary _summary = TradingFinanceSummary.empty;
   List<FinanceTransactionRow> _recent = [];
+
+  // What the farm still owes goat suppliers (purchase lots not paid in
+  // full). Current balance, not affected by the date range.
+  double _supplierDue = 0;
+  int _supplierLotCount = 0;
 
   // Used in the WhatsApp reminder text ("...reminder from <farm name>").
   String _farmName = '';
@@ -89,12 +97,19 @@ class _TradingFinanceViewState extends State<TradingFinanceView> {
           limit: 8,
           scope: FinanceScope.trading,
         ),
+        TradingService.instance.purchasesStream(widget.farmId).first,
       ]);
+
+      final lotsOwed = (results[2] as List<TradingPurchase>)
+          .where((p) => p.isLot && p.dueAmount >= 0.01)
+          .toList();
 
       if (!mounted) return;
       setState(() {
         _summary = results[0] as TradingFinanceSummary;
         _recent = results[1] as List<FinanceTransactionRow>;
+        _supplierDue = lotsOwed.fold<double>(0, (sum, p) => sum + p.dueAmount);
+        _supplierLotCount = lotsOwed.length;
         _loading = false;
       });
     } catch (e) {
@@ -114,6 +129,15 @@ class _TradingFinanceViewState extends State<TradingFinanceView> {
   }
 
   void _openCredit() => _push(CreditCustomersScreen(farmId: widget.farmId));
+
+  Future<void> _openSupplierDues() async {
+    await Navigator.of(context).push(
+      fastRoute(SupplierPendingPaymentsScreen(farmId: widget.farmId)),
+    );
+
+    // A supplier may have been paid there; refresh the totals.
+    if (mounted) _load();
+  }
 
   /// One-tap WhatsApp reminders for every goat-sale customer who still
   /// owes money — without leaving the Trading tab. Pulls the current
@@ -200,6 +224,12 @@ class _TradingFinanceViewState extends State<TradingFinanceView> {
                 ),
               ),
             ],
+          ),
+          const SizedBox(height: 8),
+          FinanceNavChip(
+            label: 'Supplier Pending Payments',
+            icon: Icons.outbox_outlined,
+            onTap: _openSupplierDues,
           ),
           const SizedBox(height: 8),
           FinanceNavChip(
@@ -297,6 +327,18 @@ class _TradingFinanceViewState extends State<TradingFinanceView> {
             ),
           ),
         ],
+      ),
+      const SizedBox(height: 10),
+      FinanceStatTile(
+        label: 'Supplier Pending Payments',
+        value: _supplierDue,
+        color: AppColors.error,
+        icon: Icons.outbox_outlined,
+        caption: _supplierLotCount == 0
+            ? 'Every supplier is paid'
+            : '$_supplierLotCount lot${_supplierLotCount == 1 ? '' : 's'} '
+            'not paid in full',
+        onTap: _openSupplierDues,
       ),
       const SizedBox(height: 14),
       _costBreakdown(s),

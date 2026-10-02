@@ -2,17 +2,18 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
 
-import '../../../app_theme.dart';
-import '../../../goat_icons.dart';
-import '../../../models/booking_delivery_group.dart';
-import '../../../models/expense_categories.dart';
-import '../../../models/goat_model.dart';
-import '../../../models/sale_model.dart';
-import '../../../models/sale_settlement.dart';
-import '../../../services/booking_delivery_service.dart';
-import '../../../services/goat_service.dart';
-import '../../../widgets/excess_action_picker.dart';
-import '../purchase_goats/purchase_wizard_widgets.dart';
+import 'package:mygoatfarms/app_theme.dart';
+import 'package:mygoatfarms/goat_icons.dart';
+import 'package:mygoatfarms/models/booking_delivery_group.dart';
+import 'package:mygoatfarms/models/expense_categories.dart';
+import 'package:mygoatfarms/models/goat_model.dart';
+import 'package:mygoatfarms/models/sale_model.dart';
+import 'package:mygoatfarms/models/sale_settlement.dart';
+import 'package:mygoatfarms/services/booking_delivery_service.dart';
+import 'package:mygoatfarms/services/goat_service.dart';
+import 'package:mygoatfarms/widgets/sale_actions.dart';
+import 'package:mygoatfarms/widgets/excess_action_picker.dart';
+import 'package:mygoatfarms/screens/trading/purchase_goats/purchase_wizard_widgets.dart';
 
 /// Booking / Holding — one customer.
 ///
@@ -1369,6 +1370,17 @@ class _BookingDeliveryCustomerScreenState
                     ),
                     Text('Due', style: AppTheme.body(size: 9.5)),
                   ],
+                ),
+                SaleActionsMenu(
+                  farmId: widget.farmId,
+                  sale: entry.sale,
+                  // The open-bookings stream refreshes this list by itself
+                  // after an edit, a cancel or a delete.
+                  onResult: (_) {
+                    if (mounted) {
+                      setState(() => _selected.remove(entry.id));
+                    }
+                  },
                 ),
               ],
             ),

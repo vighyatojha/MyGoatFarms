@@ -2,17 +2,18 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
 
-import '../../app_theme.dart';
-import '../../goat_icons.dart';
-import '../../models/bill_settings_model.dart';
-import '../../models/expense_categories.dart';
-import '../../models/farm_model.dart';
-import '../../models/partner_permission_keys.dart';
-import '../../models/sale_model.dart';
-import '../../services/firestore_service.dart';
-import '../../services/partner_access_service.dart';
-import '../../services/sale_receipt_pdf_service.dart';
-import '../../services/sales_service.dart';
+import 'package:mygoatfarms/app_theme.dart';
+import 'package:mygoatfarms/goat_icons.dart';
+import 'package:mygoatfarms/models/bill_settings_model.dart';
+import 'package:mygoatfarms/models/expense_categories.dart';
+import 'package:mygoatfarms/models/farm_model.dart';
+import 'package:mygoatfarms/models/partner_permission_keys.dart';
+import 'package:mygoatfarms/models/sale_model.dart';
+import 'package:mygoatfarms/services/firestore_service.dart';
+import 'package:mygoatfarms/services/partner_access_service.dart';
+import 'package:mygoatfarms/services/sale_receipt_pdf_service.dart';
+import 'package:mygoatfarms/services/sales_service.dart';
+import 'package:mygoatfarms/widgets/sale_actions.dart';
 
 class SaleReceiptScreen extends StatefulWidget {
   final String farmId;
@@ -259,6 +260,21 @@ class _SaleReceiptScreenState extends State<SaleReceiptScreen> {
           'Sale Receipt',
           style: AppTheme.heading(size: 18),
         ),
+        actions: [
+          if (_sale != null && !_loading)
+            SaleActionsMenu(
+              farmId: widget.farmId,
+              sale: _sale!,
+              onResult: (result) {
+                if (result == SaleActionResult.edited) {
+                  _load();
+                } else if (mounted) {
+                  // Cancelled or deleted: this sale no longer exists.
+                  Navigator.of(context).pop();
+                }
+              },
+            ),
+        ],
       ),
       body: SafeArea(
         child: _loading

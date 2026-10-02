@@ -2,19 +2,20 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
 
-import '../../../app_theme.dart';
-import '../../../goat_icons.dart';
-import '../../../models/expense_categories.dart';
-import '../../../models/goat_model.dart';
-import '../../../models/sale_model.dart';
-import '../../../models/sale_settlement.dart';
-import '../../../models/wait_delivery_group.dart';
-import '../../../services/goat_service.dart';
-import '../../../widgets/excess_action_picker.dart';
-import '../../../widgets/fast_route.dart';
-import '../../palai/fullscreen_image_viewer.dart';
-import '../../../services/wait_delivery_service.dart';
-import '../own_palai/own_palai_goat_profile_screen.dart';
+import 'package:mygoatfarms/app_theme.dart';
+import 'package:mygoatfarms/goat_icons.dart';
+import 'package:mygoatfarms/models/expense_categories.dart';
+import 'package:mygoatfarms/models/goat_model.dart';
+import 'package:mygoatfarms/models/sale_model.dart';
+import 'package:mygoatfarms/models/sale_settlement.dart';
+import 'package:mygoatfarms/models/wait_delivery_group.dart';
+import 'package:mygoatfarms/services/goat_service.dart';
+import 'package:mygoatfarms/widgets/excess_action_picker.dart';
+import 'package:mygoatfarms/widgets/fast_route.dart';
+import 'package:mygoatfarms/widgets/sale_actions.dart';
+import 'package:mygoatfarms/screens/palai/fullscreen_image_viewer.dart';
+import 'package:mygoatfarms/services/wait_delivery_service.dart';
+import 'package:mygoatfarms/screens/trading/own_palai/own_palai_goat_profile_screen.dart';
 
 /// Wait on Delivery — one customer.
 ///
@@ -1454,6 +1455,17 @@ class _WaitDeliveryCustomerScreenState
                       style: AppTheme.body(size: 9.5),
                     ),
                   ],
+                ),
+                SaleActionsMenu(
+                  farmId: widget.farmId,
+                  sale: entry.sale,
+                  // The open-bookings stream refreshes this list by itself
+                  // after an edit, a cancel or a delete.
+                  onResult: (_) {
+                    if (mounted) {
+                      setState(() => _selected.remove(entry.id));
+                    }
+                  },
                 ),
               ],
             ),

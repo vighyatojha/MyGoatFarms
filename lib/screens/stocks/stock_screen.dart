@@ -3,18 +3,19 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 
-import '../../app_theme.dart';
-import '../../models/stock_model.dart';
-import '../../services/firestore_service.dart';
-import '../../widgets/fast_route.dart';
+import 'package:mygoatfarms/app_theme.dart';
+import 'package:mygoatfarms/models/stock_model.dart';
+import 'package:mygoatfarms/services/firestore_service.dart';
+import 'package:mygoatfarms/widgets/fast_route.dart';
 
-import 'add_feed_stock_screen.dart';
-import 'add_medicine_screen.dart';
-import 'feed_used_screen.dart';
-import 'medicine_used_screen.dart';
+import 'package:mygoatfarms/screens/stocks/add_feed_stock_screen.dart';
+import 'package:mygoatfarms/screens/stocks/add_medicine_screen.dart';
+import 'package:mygoatfarms/screens/stocks/feed_used_screen.dart';
+import 'package:mygoatfarms/screens/stocks/medicine_used_screen.dart';
 
-import '../../widgets/farm_not_linked_state.dart';
-import '../../widgets/photo_viewer_screen.dart';
+import 'package:mygoatfarms/widgets/farm_not_linked_state.dart';
+import 'package:mygoatfarms/widgets/photo_viewer_screen.dart';
+import 'package:mygoatfarms/screens/stocks/edit_stock_item_sheet.dart';
 
 class StockScreen extends StatefulWidget {
   const StockScreen({super.key});
@@ -1948,6 +1949,39 @@ class _StockScreenState extends State<StockScreen> {
                             ),
                           ),
                         ],
+                      ),
+                    ),
+                    TextButton.icon(
+                      onPressed: () async {
+                        Navigator.of(sheetContext).pop();
+
+                        final farmId = _farmId;
+
+                        if (farmId == null) return;
+
+                        final saved = await showEditStockItemSheet(
+                          context,
+                          farmId: farmId,
+                          item: item,
+                        );
+
+                        if (saved && mounted) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(
+                              content: Text('${item.name} updated'),
+                              backgroundColor: AppColors.darkGreen,
+                              behavior: SnackBarBehavior.floating,
+                            ),
+                          );
+                        }
+                      },
+                      icon: Icon(Icons.edit_outlined, size: 17, color: color),
+                      label: Text(
+                        'Edit',
+                        style: TextStyle(
+                          color: color,
+                          fontWeight: FontWeight.w700,
+                        ),
                       ),
                     ),
                   ],
