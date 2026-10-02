@@ -15,7 +15,18 @@ import 'package:mygoatfarms/widgets/fast_route.dart';
 import 'package:mygoatfarms/widgets/sale_actions.dart';
 import 'package:mygoatfarms/screens/palai/fullscreen_image_viewer.dart';
 import 'package:mygoatfarms/services/wait_delivery_service.dart';
+import 'package:mygoatfarms/widgets/edit_wait_booking_sheet.dart';
 import 'package:mygoatfarms/screens/trading/own_palai/own_palai_goat_profile_screen.dart';
+
+/// The figures of a booking that other fields on this screen are filled in
+/// from (see [_WaitDeliveryCustomerScreenState._syncBookingFields]).
+typedef _BookingSignature = ({
+int goats,
+double weight,
+double discount,
+double advance,
+double fixed,
+});
 
 /// Wait on Delivery — one customer.
 ///
@@ -133,6 +144,13 @@ class _WaitDeliveryCustomerScreenState
   /// booking's final bill. One choice for the whole batch; only used when
   /// there is an extra.
   ExcessAction _excessAction = ExcessAction.carryToAdvance;
+
+  /// What each booking looked like the last time it was drawn, so the
+  /// fields that depend on it (total pickup weight, discount, amount
+  /// received) can be reset when the booking is edited — here after Edit
+  /// booking, or from another device.
+  final Map<String, _BookingSignature> _signatures =
+  <String, _BookingSignature>{};
 
   bool _submitted = false;
   bool _delivering = false;
@@ -386,10 +404,96 @@ class _WaitDeliveryCustomerScreenState
     _selected.removeWhere((id) => !ids.contains(id));
 
     for (final entry in customer.sales) {
+      _syncBookingFields(entry);
+
       if (_selected.contains(entry.id)) {
         _syncAutoAmount(entry);
       }
     }
+  }
+
+  /// Resets the fields that were filled in from a booking's figures when
+  /// those figures change (the booking was edited). Nothing happens the
+  /// first time a booking is seen, so typed values are never wiped by a
+  /// normal rebuild.
+  void _syncBookingFields(WaitDeliverySale entry) {
+    final now = (
+    goats: entry.goatCount,
+    weight: entry.bookedWeight,
+    discount: entry.bookingDiscount,
+    advance: entry.advancePaid,
+    fixed: entry.sale.fixedSalePrice ?? 0.0,
+    );
+
+    final before = _signatures[entry.id];
+
+    _signatures[entry.id] = now;
+
+    if (before == null || before == now) return;
+
+    // A lot booking has ONE total pickup weight for all its goats; with a
+    // different number of goats the old total no longer makes sense.
+    if (entry.isLotSale &&
+        (before.goats != now.goats || before.weight != now.weight)) {
+      final controller = _weights['lot:${entry.id}'];
+
+      if (controller != null) {
+        controller.text = entry.bookedWeight <= 0 ? '' : _trim(entry.bookedWeight);
+      }
+    }
+
+    if (before.discount != now.discount) {
+      final controller = _discounts[entry.id];
+
+      if (controller != null) {
+        controller.text = entry.bookingDiscount > 0
+            ? _plainMoney(entry.bookingDiscount)
+            : '';
+      }
+    }
+
+    // Let the amount received follow the new remaining amount again.
+    _amountEdited.remove(entry.id);
+  }
+
+  /// Edit booking: pick how many (or which) goats go out now and what
+  /// happens to the rest. The booking is trimmed to the goats being
+  /// delivered; the person then delivers it as usual.
+  Future<void> _openEditBooking(WaitDeliverySale entry) async {
+    if (_delivering) return;
+
+    final result = await showEditWaitBookingSheet(
+      context,
+      farmId: widget.farmId,
+      entry: entry,
+    );
+
+    if (result == null || !mounted) return;
+
+    setState(() {
+      // The goats to deliver stay on this booking, so tick it. A kept
+      // booking is marked as seen WITHOUT being ticked, otherwise it would
+      // be selected for delivery automatically as a "new" booking.
+      _selected.add(result.deliverSaleId);
+
+      final kept = result.keptSaleId;
+
+      if (kept != null) {
+        _seen.add(kept);
+        _selected.remove(kept);
+      }
+    });
+
+    final deliver = _goats(result.deliverCount);
+    final left = _goats(result.leftoverCount);
+
+    _snack(
+      result.keptSaleId != null
+          ? 'Booking ${result.deliverSaleId} now has $deliver to deliver. '
+          '$left kept on booking ${result.keptSaleId}.'
+          : 'Booking ${result.deliverSaleId} now has $deliver to deliver. '
+          '$left went back to stock.',
+    );
   }
 
   List<WaitDeliverySale> _picked(WaitDeliveryCustomer customer) {
@@ -1501,6 +1605,9 @@ class _WaitDeliveryCustomerScreenState
 
                 const Divider(height: 18, color: AppColors.divider),
 
+                // Deliver only some of the goats, and keep or remove the rest.
+                if (entry.goatCount > 1) _editBookingButton(entry),
+
                 if (entry.isLotSale)
                   _lotRow(entry, selected)
                 else
@@ -1526,6 +1633,63 @@ class _WaitDeliveryCustomerScreenState
             ),
           ),
         ],
+      ),
+    );
+  }
+
+  /// Opens Edit booking — deliver one or any number of the booking's goats
+  /// and keep or remove the rest.
+  Widget _editBookingButton(WaitDeliverySale entry) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 9),
+      child: InkWell(
+        onTap: _delivering ? null : () => _openEditBooking(entry),
+        borderRadius: BorderRadius.circular(12),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+          decoration: BoxDecoration(
+            color: AppColors.stockTeal.withValues(alpha: 0.08),
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(
+              color: AppColors.stockTeal.withValues(alpha: 0.4),
+            ),
+          ),
+          child: Row(
+            children: [
+              const Icon(
+                Icons.edit_outlined,
+                size: 16,
+                color: AppColors.stockTeal,
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Edit booking',
+                      style: AppTheme.heading(
+                        size: 12,
+                        color: AppColors.darkGreen,
+                      ),
+                    ),
+                    Text(
+                      'Deliver some goats now · keep or remove the rest',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: AppTheme.body(size: 10),
+                    ),
+                  ],
+                ),
+              ),
+              const Icon(
+                Icons.chevron_right,
+                size: 18,
+                color: AppColors.stockTeal,
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }
