@@ -29,6 +29,10 @@ class BookingDeliveryPayment {
   /// Comes off the goat value only. 0 when none.
   final double discount;
 
+  /// Holding charge per day edited at delivery. Null keeps the rate agreed
+  /// at booking.
+  final double? holdingChargePerDay;
+
   /// What to do with money the booking amount covered beyond the final
   /// bill.
   final ExcessAction excessAction;
@@ -39,6 +43,7 @@ class BookingDeliveryPayment {
     required this.onCredit,
     this.transportCharges = 0,
     this.discount = 0,
+    this.holdingChargePerDay,
     this.excessAction = ExcessAction.carryToAdvance,
   });
 }
@@ -158,6 +163,7 @@ class BookingDeliveryService {
           paymentMethod: paymentMethod,
           onCredit: payment.onCredit,
           discount: payment.discount,
+          holdingChargePerDay: payment.holdingChargePerDay,
           excessAction: payment.excessAction,
         );
 

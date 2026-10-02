@@ -4399,6 +4399,8 @@ class FirestoreService {
         'nextDueDate': due != null ? Timestamp.fromDate(due) : null,
         'auto': true,
         'seededFor': key,
+        // Re-armed for a (new) farm setting → no longer "completed".
+        'completedAt': FieldValue.delete(),
         if (!autoSnap.exists) 'createdAt': FieldValue.serverTimestamp(),
       },
       SetOptions(merge: true),
@@ -4449,7 +4451,13 @@ class FirestoreService {
       ) async {
     await _tradingHealthRecords(farmId, goatId)
         .doc(recordId)
-        .update({'nextDueDate': null}).timeout(timeout);
+        .update({
+      'nextDueDate': null,
+      // Remembered so the record lists under "Already Completed" — this
+      // matters most for the farm-schedule record (`farm_<type>`), which
+      // otherwise looks identical to a schedule that was switched off.
+      'completedAt': FieldValue.serverTimestamp(),
+    }).timeout(timeout);
   }
 
   /// Every Available, Own Palai (and Wait on Delivery) vaccination / hoof-cutting /
@@ -4487,17 +4495,26 @@ class FirestoreService {
         final record = GoatHealthRecord.fromDoc(doc);
         if (!GoatHealthRecord.followsFarmSettings(record.type)) continue;
 
-        // A farm-schedule record with no due date is just an inactive
-        // placeholder (completed / switched off), not something that was
-        // ever performed — don't list it under "Already Completed".
-        if (record.isAuto && record.nextDueDate == null) continue;
+        // A farm-schedule record with no due date is either an inactive
+        // placeholder (the farm switched the reminder off) or one the
+        // owner marked as completed. Only the latter belongs under
+        // "Already Completed" — told apart by `completedAt`.
+        if (record.isAuto &&
+            record.nextDueDate == null &&
+            record.completedAt == null) {
+          continue;
+        }
 
         out.add(HealthRecordSummary.ownPalai(
           goat: goat,
           recordType: record.type.name,
           recordId: record.id,
           label: record.type.label,
-          recordDate: record.date,
+          // A schedule record's `date` is only the day it was counted
+          // from, so a completed one shows the day it was completed.
+          recordDate: (record.isAuto && record.completedAt != null)
+              ? record.completedAt!
+              : record.date,
           dueDate: record.nextDueDate,
           status: _classifyHealthRecordStatus(record.nextDueDate, now),
         ));

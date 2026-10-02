@@ -100,6 +100,17 @@ class _BookingDeliveryCustomerScreenState
   final Map<String, TextEditingController> _transports =
   <String, TextEditingController>{};
 
+  /// Holding charge per day per booking, keyed by sale ID. Starts at the
+  /// rate agreed at booking and can be edited here at delivery (type 0 to
+  /// waive it). Blank falls back to the booked rate.
+  final Map<String, TextEditingController> _holdingRates =
+  <String, TextEditingController>{};
+
+  /// Optional extra discount per booking, given at delivery. Comes off the
+  /// goat amount only — never holding charges or transport.
+  final Map<String, TextEditingController> _discounts =
+  <String, TextEditingController>{};
+
   /// Bookings whose amount field the person has typed in themselves.
   /// Until then it follows the final amount as the delivery date
   /// changes, same as the single-goat screen.
@@ -137,6 +148,14 @@ class _BookingDeliveryCustomerScreenState
       controller.dispose();
     }
 
+    for (final controller in _holdingRates.values) {
+      controller.dispose();
+    }
+
+    for (final controller in _discounts.values) {
+      controller.dispose();
+    }
+
     super.dispose();
   }
 
@@ -167,6 +186,8 @@ class _BookingDeliveryCustomerScreenState
     return entry.finalAmountAt(
       _deliveryDateOr(customer),
       transport: _transportOf(entry),
+      discount: _discountOf(entry),
+      holdingRate: _holdingRateOf(entry),
     );
   }
 
@@ -176,6 +197,8 @@ class _BookingDeliveryCustomerScreenState
     return entry.excessAt(
       _deliveryDateOr(customer),
       transport: _transportOf(entry),
+      discount: _discountOf(entry),
+      holdingRate: _holdingRateOf(entry),
     );
   }
 
@@ -203,12 +226,68 @@ class _BookingDeliveryCustomerScreenState
     return number <= 0 ? 0 : Sale.roundMoney(number);
   }
 
+  TextEditingController _holdingRateControllerFor(BookingDeliverySale entry) {
+    return _holdingRates.putIfAbsent(
+      entry.id,
+          () => TextEditingController(
+        text: entry.holdingChargePerDay > 0
+            ? _plainMoney(entry.holdingChargePerDay)
+            : '',
+      ),
+    );
+  }
+
+  /// The holding charge per day to use for this booking: what was typed,
+  /// or the booked rate when the box is blank (so clearing it can never
+  /// waive the charge by accident — type 0 to waive it on purpose).
+  double _holdingRateOf(BookingDeliverySale entry) {
+    final text = _holdingRateControllerFor(entry).text.trim();
+
+    if (text.isEmpty) return entry.holdingChargePerDay;
+
+    final number = double.tryParse(text) ?? 0;
+
+    return number <= 0 ? 0 : Sale.roundMoney(number);
+  }
+
+  bool _holdingRateChanged(BookingDeliverySale entry) {
+    return Sale.roundMoney(_holdingRateOf(entry)) !=
+        Sale.roundMoney(entry.holdingChargePerDay);
+  }
+
+  TextEditingController _discountControllerFor(BookingDeliverySale entry) {
+    return _discounts.putIfAbsent(
+      entry.id,
+          () => TextEditingController(),
+    );
+  }
+
+  /// The extra discount typed for a booking (blank counts as 0), never more
+  /// than the booking's goat amount.
+  double _discountOf(BookingDeliverySale entry) {
+    final text = _discountControllerFor(entry).text.trim();
+
+    if (text.isEmpty) return 0;
+
+    final number = double.tryParse(text) ?? 0;
+
+    if (number <= 0) return 0;
+
+    final value = Sale.roundMoney(number);
+    final goatAmount = entry.sale.totalSaleAmount;
+
+    return value > goatAmount ? goatAmount : value;
+  }
+
   int _holdingDaysOf(BookingDeliveryCustomer customer, BookingDeliverySale entry) {
     return entry.holdingDaysAt(_deliveryDateOr(customer));
   }
 
   double _holdingChargesOf(BookingDeliveryCustomer customer, BookingDeliverySale entry) {
-    return entry.holdingChargesAt(_deliveryDateOr(customer));
+    return entry.holdingChargesAt(
+      _deliveryDateOr(customer),
+      ratePerDay: _holdingRateOf(entry),
+    );
   }
 
   TextEditingController _amountControllerFor(BookingDeliverySale entry) {
@@ -413,10 +492,19 @@ class _BookingDeliveryCustomerScreenState
 
     for (final entry in picked) {
       final transport = _transportOf(entry);
-      final due = entry.finalAmountAt(deliveryDate, transport: transport);
+      final discount = _discountOf(entry);
+      final holdingRate = _holdingRateOf(entry);
+      final due = entry.finalAmountAt(
+        deliveryDate,
+        transport: transport,
+        discount: discount,
+        holdingRate: holdingRate,
+      );
 
       payments[entry.id] = BookingDeliveryPayment(
         transportCharges: transport,
+        discount: discount,
+        holdingChargePerDay: holdingRate,
         expectedRemaining: due,
         amountReceivedNow: due > 0 ? _receivedNowOf(customer, entry) : 0,
         onCredit: due > 0 && _onCredit,
@@ -769,8 +857,9 @@ class _BookingDeliveryCustomerScreenState
               const SizedBox(height: 1),
               Text(
                 '$days holding day${days == 1 ? '' : 's'} × '
-                    '${_money.format(entry.holdingChargePerDay)} − '
+                    '${_money.format(_holdingRateOf(entry))} − '
                     '${_money.format(entry.bookingAmount)} booking amount'
+                    '${_discountOf(entry) > 0 ? ' − ${_money.format(_discountOf(entry))} discount' : ''}'
                     '${_transportOf(entry) > 0 ? ' + ${_money.format(_transportOf(entry))} transport' : ''}',
                 style: AppTheme.body(size: 10),
               ),
@@ -1310,6 +1399,10 @@ class _BookingDeliveryCustomerScreenState
                 else
                   for (final goat in entry.goats) _goatRow(goat),
                 const SizedBox(height: 3),
+                _holdingRateField(customer, entry, selected),
+                const SizedBox(height: 10),
+                _discountField(customer, entry, selected),
+                const SizedBox(height: 10),
                 _transportField(customer, entry, selected),
                 const SizedBox(height: 12),
                 _calcBox(customer, entry, due),
@@ -1454,6 +1547,116 @@ class _BookingDeliveryCustomerScreenState
     );
   }
 
+  InputDecoration _deliveryFieldDecoration({
+    required String label,
+    required String helper,
+    required IconData icon,
+    required bool selected,
+  }) {
+    OutlineInputBorder border(Color color, [double width = 1]) {
+      return OutlineInputBorder(
+        borderRadius: BorderRadius.circular(10),
+        borderSide: BorderSide(color: color, width: width),
+      );
+    }
+
+    return InputDecoration(
+      isDense: true,
+      labelText: label,
+      labelStyle: AppTheme.body(size: 10.5),
+      helperText: helper,
+      helperMaxLines: 2,
+      helperStyle: AppTheme.body(size: 9.5),
+      prefixText: '₹ ',
+      prefixStyle: AppTheme.body(size: 12),
+      prefixIcon: Icon(icon, size: 18, color: AppColors.textGrey),
+      filled: true,
+      fillColor: selected ? Colors.white : AppColors.paleGreen,
+      contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+      border: border(AppColors.divider),
+      enabledBorder: border(AppColors.divider),
+      disabledBorder: border(AppColors.divider.withValues(alpha: 0.6)),
+      focusedBorder: border(AppColors.darkGreen, 1.4),
+    );
+  }
+
+  /// Holding charge per day for one booking, editable at delivery. Starts
+  /// at the rate agreed at booking; type 0 to waive holding charges.
+  Widget _holdingRateField(
+      BookingDeliveryCustomer customer,
+      BookingDeliverySale entry,
+      bool selected,
+      ) {
+    return TextField(
+      controller: _holdingRateControllerFor(entry),
+      enabled: selected && !_delivering,
+      keyboardType: const TextInputType.numberWithOptions(decimal: true),
+      inputFormatters: [
+        FilteringTextInputFormatter.allow(RegExp(r'^\d*\.?\d{0,2}')),
+      ],
+      onChanged: (_) {
+        setState(() {
+          _syncAutoAmount(customer, entry);
+        });
+      },
+      style: AppTheme.body(
+        size: 12.5,
+        color: AppColors.textDark,
+        weight: FontWeight.w600,
+      ),
+      decoration: _deliveryFieldDecoration(
+        label: 'Holding Charge / Day',
+        helper: _holdingRateChanged(entry)
+            ? 'Changed from the booked '
+            '${_money.format(entry.holdingChargePerDay)} / day. '
+            'Type 0 to waive.'
+            : 'Booked rate. Edit to change the holding charge, or 0 to '
+            'waive it.',
+        icon: Icons.hotel_outlined,
+        selected: selected,
+      ),
+    );
+  }
+
+  /// Optional extra discount for one booking, given at delivery. Comes off
+  /// the goat amount only — never holding charges or transport.
+  Widget _discountField(
+      BookingDeliveryCustomer customer,
+      BookingDeliverySale entry,
+      bool selected,
+      ) {
+    final typed = double.tryParse(_discountControllerFor(entry).text.trim()) ?? 0;
+    final tooMuch = typed > entry.sale.totalSaleAmount;
+
+    return TextField(
+      controller: _discountControllerFor(entry),
+      enabled: selected && !_delivering,
+      keyboardType: const TextInputType.numberWithOptions(decimal: true),
+      inputFormatters: [
+        FilteringTextInputFormatter.allow(RegExp(r'^\d*\.?\d{0,2}')),
+      ],
+      onChanged: (_) {
+        setState(() {
+          _syncAutoAmount(customer, entry);
+        });
+      },
+      style: AppTheme.body(
+        size: 12.5,
+        color: AppColors.textDark,
+        weight: FontWeight.w600,
+      ),
+      decoration: _deliveryFieldDecoration(
+        label: 'Discount (optional)',
+        helper: tooMuch
+            ? 'Capped at the goat amount '
+            '(${_money.format(entry.sale.totalSaleAmount)}).'
+            : 'Comes off the goat amount, not holding or transport.',
+        icon: Icons.local_offer_outlined,
+        selected: selected,
+      ),
+    );
+  }
+
   /// Optional transportation charge for one booking, entered at delivery.
   /// It is added to the amount due and shown on the bill, but it is not
   /// farm revenue (it is passed on to the transport team).
@@ -1515,6 +1718,7 @@ class _BookingDeliveryCustomerScreenState
     final charges = _holdingChargesOf(customer, entry);
     final transport = _transportOf(entry);
     final excess = _excessOf(customer, entry);
+    final deliveryDiscount = _discountOf(entry);
 
     return Container(
       padding: const EdgeInsets.all(11),
@@ -1533,10 +1737,17 @@ class _BookingDeliveryCustomerScreenState
               _money.format(entry.bookingDiscount),
             ),
           ],
+          if (deliveryDiscount > 0) ...[
+            const SizedBox(height: 6),
+            _calcRow(
+              'Discount at Delivery',
+              '− ${_money.format(deliveryDiscount)}',
+            ),
+          ],
           const SizedBox(height: 6),
           _calcRow(
             'Holding Charges ($days day${days == 1 ? '' : 's'} × '
-                '${_money.format(entry.holdingChargePerDay)})',
+                '${_money.format(_holdingRateOf(entry))})',
             _money.format(charges),
           ),
           if (transport > 0) ...[

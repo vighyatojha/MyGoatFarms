@@ -17,6 +17,12 @@ import '../purchase_goats/purchase_wizard_widgets.dart';
 /// Holding days run from the day holding started to the delivery date,
 /// both days counted.
 ///
+/// HOLDING CHARGE & DISCOUNT AT DELIVERY — the daily holding charge agreed
+/// at booking can be edited here (a cheaper rate, or 0 to waive it), and an
+/// extra discount can be given. The discount comes off the goat amount only,
+/// never holding charges or transport. Both feed the live bill below and are
+/// re-checked by [SalesService.completeBookingDelivery].
+///
 /// TRANSPORTATION — an optional charge entered at delivery. It is added
 /// to what the customer owes and shows on the bill
 /// ([Sale.billTransportCharges]), but it is passed on to the transport
@@ -49,6 +55,8 @@ class _CompleteBookingDeliveryScreenState
   final GlobalKey<FormState> _formKey = GlobalKey<FormState>();
   late final TextEditingController _amountReceivedController;
   late final TextEditingController _transportController;
+  late final TextEditingController _holdingRateController;
+  late final TextEditingController _discountController;
 
   DateTime _deliveryDate = _dayOnly(DateTime.now());
 
@@ -90,6 +98,8 @@ class _CompleteBookingDeliveryScreenState
     super.initState();
     _amountReceivedController = TextEditingController();
     _transportController = TextEditingController();
+    _holdingRateController = TextEditingController();
+    _discountController = TextEditingController();
     _loadSale();
   }
 
@@ -97,6 +107,8 @@ class _CompleteBookingDeliveryScreenState
   void dispose() {
     _amountReceivedController.dispose();
     _transportController.dispose();
+    _holdingRateController.dispose();
+    _discountController.dispose();
     super.dispose();
   }
 
@@ -150,6 +162,13 @@ class _CompleteBookingDeliveryScreenState
         final today = _dayOnly(DateTime.now());
         _deliveryDate = today.isBefore(start) ? start : today;
 
+        // The holding rate starts at what was agreed at booking; the owner
+        // can change it before delivering.
+        _holdingRateController.text =
+        (sale.holdingChargePerDay ?? 0) > 0
+            ? _plain(sale.holdingChargePerDay!)
+            : '';
+
         _onCredit = sale.onCredit;
         _amountEdited = false;
         _syncAutoAmount();
@@ -175,10 +194,42 @@ class _CompleteBookingDeliveryScreenState
     return Sale.holdingDaysBetween(sale.holdingStart, _deliveryDate);
   }
 
-  double get _actualHoldingCharges {
+  /// The holding charge per day typed in. Blank falls back to the rate
+  /// agreed at booking, so clearing the box can never waive the charge by
+  /// accident — type 0 to waive it on purpose.
+  double get _holdingRate {
     final sale = _sale;
     if (sale == null) return 0;
-    return Sale.roundMoney(_actualHoldingDays * (sale.holdingChargePerDay ?? 0));
+
+    final text = _holdingRateController.text.trim();
+    if (text.isEmpty) return sale.holdingChargePerDay ?? 0;
+
+    final number = double.tryParse(text) ?? 0;
+    return number <= 0 ? 0 : Sale.roundMoney(number);
+  }
+
+  /// True when the rate being charged differs from the booking's.
+  bool get _holdingRateChanged {
+    final sale = _sale;
+    if (sale == null) return false;
+
+    return Sale.roundMoney(_holdingRate) !=
+        Sale.roundMoney(sale.holdingChargePerDay ?? 0);
+  }
+
+  double get _actualHoldingCharges {
+    if (_sale == null) return 0;
+    return Sale.roundMoney(_actualHoldingDays * _holdingRate);
+  }
+
+  /// Extra discount typed in at delivery (blank counts as 0). It comes off
+  /// the goat amount only.
+  double get _discountTyped {
+    final text = _discountController.text.trim();
+    if (text.isEmpty) return 0;
+
+    final number = double.tryParse(text) ?? 0;
+    return number <= 0 ? 0 : Sale.roundMoney(number);
   }
 
   /// The transportation charge typed in (blank counts as 0). Collected
@@ -201,12 +252,16 @@ class _CompleteBookingDeliveryScreenState
 
     return SaleSettlement.fromAmount(
       goatAmount: sale.totalSaleAmount,
+      discount: _discountTyped,
       holdingCharges: _actualHoldingCharges,
       transportCharge: _transport,
       advancePaid: sale.bookingAmount ?? 0,
       excessAction: _excessAction,
     );
   }
+
+  /// Discount actually applied at delivery (never more than the goat value).
+  double get _appliedDeliveryDiscount => _settlement?.appliedDiscount ?? 0;
 
   /// Goat sale + holding charges + transportation - booking amount
   /// already paid (never below 0).
@@ -325,6 +380,8 @@ class _CompleteBookingDeliveryScreenState
         paymentMethod: _method,
         onCredit: onCredit,
         excessAction: action,
+        discount: _appliedDeliveryDiscount,
+        holdingChargePerDay: _holdingRate,
       );
 
       if (!mounted) return;
@@ -459,7 +516,7 @@ class _CompleteBookingDeliveryScreenState
                 value: _currency(sale.bookingAmount ?? 0),
               ),
               WizardComputedRow(
-                label: 'Holding Charge / Day',
+                label: 'Holding Charge / Day (booked)',
                 value: _currency(sale.holdingChargePerDay ?? 0),
               ),
               WizardComputedRow(
@@ -490,6 +547,82 @@ class _CompleteBookingDeliveryScreenState
                     '${DateFormat('dd MMM').format(_deliveryDate)}, '
                     'both days counted.',
                 style: AppTheme.body(size: 10, color: AppColors.textGrey),
+              ),
+              const SizedBox(height: 14),
+              wizardField(
+                controller: _holdingRateController,
+                label: 'Holding Charge / Day',
+                hint: _plain(sale.holdingChargePerDay ?? 0),
+                icon: Icons.hotel_outlined,
+                suffix: '/ day',
+                helper: _holdingRateChanged
+                    ? 'Changed from the booked '
+                    '${_currency(sale.holdingChargePerDay ?? 0)} / day. '
+                    'Type 0 to waive holding charges.'
+                    : 'Starts at the booked rate. Edit it to change the '
+                    'holding charge, or type 0 to waive it.',
+                optional: true,
+                enabled: !_saving,
+                keyboardType:
+                const TextInputType.numberWithOptions(decimal: true),
+                inputFormatters: [
+                  FilteringTextInputFormatter.allow(
+                    RegExp(r'^\d*\.?\d{0,2}'),
+                  ),
+                ],
+                onChanged: (_) => setState(_syncAutoAmount),
+                validator: (value) {
+                  final text = value?.trim() ?? '';
+
+                  if (text.isEmpty) return null;
+
+                  final number = double.tryParse(text);
+
+                  if (number == null || number < 0) {
+                    return 'Enter a valid amount';
+                  }
+
+                  return null;
+                },
+              ),
+              const SizedBox(height: 14),
+              wizardField(
+                controller: _discountController,
+                label: 'Discount',
+                hint: '0.00',
+                icon: Icons.local_offer_outlined,
+                suffix: 'Off goat amount',
+                helper: 'Optional. Comes off the goat amount '
+                    '(${_currency(sale.totalSaleAmount)}), not holding '
+                    'charges or transport.',
+                optional: true,
+                enabled: !_saving,
+                keyboardType:
+                const TextInputType.numberWithOptions(decimal: true),
+                inputFormatters: [
+                  FilteringTextInputFormatter.allow(
+                    RegExp(r'^\d*\.?\d{0,2}'),
+                  ),
+                ],
+                onChanged: (_) => setState(_syncAutoAmount),
+                validator: (value) {
+                  final text = value?.trim() ?? '';
+
+                  if (text.isEmpty) return null;
+
+                  final number = double.tryParse(text);
+
+                  if (number == null || number < 0) {
+                    return 'Enter a valid amount';
+                  }
+
+                  if (Sale.roundMoney(number) > sale.totalSaleAmount) {
+                    return 'More than the goat amount '
+                        '(${_currency(sale.totalSaleAmount)})';
+                  }
+
+                  return null;
+                },
               ),
               const SizedBox(height: 14),
               wizardField(
@@ -831,10 +964,17 @@ class _CompleteBookingDeliveryScreenState
           Divider(color: AppColors.divider, height: 1),
           const SizedBox(height: 10),
           _summaryRow('Goat Sale', _currency(sale.totalSaleAmount)),
+          if (_appliedDeliveryDiscount > 0) ...[
+            const SizedBox(height: 8),
+            _summaryRow(
+              'Discount at Delivery',
+              '− ${_currency(_appliedDeliveryDiscount)}',
+            ),
+          ],
           const SizedBox(height: 8),
           _summaryRow(
             'Holding Charges ($_actualHoldingDays × '
-                '${_currency(sale.holdingChargePerDay ?? 0)})',
+                '${_currency(_holdingRate)})',
             _currency(_actualHoldingCharges),
           ),
           if (_transport > 0) ...[

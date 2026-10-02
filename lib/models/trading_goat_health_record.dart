@@ -71,6 +71,14 @@ class GoatHealthRecord {
   /// re-armed with the new date. Only set when [isAuto].
   final String? seededFor;
 
+  /// When the owner pressed "Mark as Completed" on this record. Set for
+  /// BOTH logged records and farm-schedule records; it is what lets a
+  /// completed farm-schedule record ([isAuto] with no [nextDueDate]) be
+  /// told apart from a schedule that was simply switched off — only the
+  /// former belongs under "Already Completed". Cleared whenever the sync
+  /// re-arms the schedule for a new farm setting.
+  final DateTime? completedAt;
+
   const GoatHealthRecord({
     required this.id,
     required this.type,
@@ -80,6 +88,7 @@ class GoatHealthRecord {
     this.createdAt,
     this.isAuto = false,
     this.seededFor,
+    this.completedAt,
   });
 
   /// Deterministic doc id of the farm-schedule record for [type], so the
@@ -136,6 +145,9 @@ class GoatHealthRecord {
           : null,
       isAuto: data['auto'] == true,
       seededFor: data['seededFor']?.toString(),
+      completedAt: data['completedAt'] is Timestamp
+          ? (data['completedAt'] as Timestamp).toDate()
+          : null,
     );
   }
 

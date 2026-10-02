@@ -2456,6 +2456,13 @@ class SalesService {
   /// than the discounted sale now allows, that revenue entry is lowered to
   /// match (see "REVENUE CORRECTION" below).
   ///
+  /// [holdingChargePerDay] lets the owner EDIT the daily holding charge at
+  /// delivery (for example to give a customer a cheaper rate, or to waive
+  /// it with 0). When null, the rate agreed at booking
+  /// ([Sale.holdingChargePerDay]) is used. When given, it replaces the
+  /// booking rate for the whole holding period and is saved on the sale so
+  /// the bill shows the rate that was actually charged.
+  ///
   /// Same reads-then-writes transaction shape as the Phase 4 branch
   /// save methods, extended to also verify the sale is still in the
   /// state this action expects before touching anything.
@@ -2469,9 +2476,14 @@ class SalesService {
     bool onCredit = false,
     ExcessAction excessAction = ExcessAction.carryToAdvance,
     double discount = 0,
+    double? holdingChargePerDay,
   }) async {
     if (transportCharges < 0) {
       throw StateError('The transportation charge cannot be negative.');
+    }
+
+    if (holdingChargePerDay != null && holdingChargePerDay < 0) {
+      throw StateError('The holding charge per day cannot be negative.');
     }
 
     if (discount < 0) {
@@ -2613,10 +2625,13 @@ class SalesService {
       final actualHoldingDays =
       Sale.holdingDaysBetween(startDay, deliveryDay);
 
-      final holdingChargePerDay = sale.holdingChargePerDay ?? 0;
+      // The rate edited at delivery wins; otherwise the booking's rate.
+      final effectiveHoldingRate = SaleDraft.round2(
+        holdingChargePerDay ?? sale.holdingChargePerDay ?? 0,
+      );
       final bookingAmount = sale.bookingAmount ?? 0;
       final actualHoldingChargesValue = SaleDraft.round2(
-        actualHoldingDays * holdingChargePerDay,
+        actualHoldingDays * effectiveHoldingRate,
       );
 
       // Goat Sale (already after any discount) + Holding Charges +
@@ -2685,6 +2700,9 @@ class SalesService {
         'holdingEndDate': Timestamp.fromDate(deliveryDay),
         'actualHoldingDays': actualHoldingDays,
         'totalHoldingCharges': actualHoldingCharges,
+        // The daily rate actually charged (it may have been edited at
+        // delivery), so the bill and the numbers always agree.
+        'holdingChargePerDay': effectiveHoldingRate,
         // Cleared when there is none, so a stale value can never linger
         // on the bill.
         'transportCost': transport > 0 ? transport : FieldValue.delete(),

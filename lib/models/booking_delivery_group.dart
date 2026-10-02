@@ -71,8 +71,11 @@ class BookingDeliverySale {
     return Sale.holdingDaysBetween(start, end);
   }
 
-  double holdingChargesAt(DateTime deliveryDate) {
-    return Sale.roundMoney(holdingDaysAt(deliveryDate) * holdingChargePerDay);
+  /// Holding charges up to [deliveryDate]. [ratePerDay] is the daily rate
+  /// edited at delivery; when null the rate agreed at booking is used.
+  double holdingChargesAt(DateTime deliveryDate, {double? ratePerDay}) {
+    final rate = (ratePerDay ?? holdingChargePerDay);
+    return Sale.roundMoney(holdingDaysAt(deliveryDate) * (rate < 0 ? 0 : rate));
   }
 
   /// Discount given when the booking was made. [Sale.totalSaleAmount]
@@ -91,12 +94,13 @@ class BookingDeliverySale {
       DateTime deliveryDate, {
         double transport = 0,
         double discount = 0,
+        double? holdingRate,
         ExcessAction excessAction = ExcessAction.carryToAdvance,
       }) {
     return SaleSettlement.fromAmount(
       goatAmount: sale.totalSaleAmount,
       discount: discount < 0 ? 0 : discount,
-      holdingCharges: holdingChargesAt(deliveryDate),
+      holdingCharges: holdingChargesAt(deliveryDate, ratePerDay: holdingRate),
       transportCharge: transport < 0 ? 0 : transport,
       advancePaid: bookingAmount,
       excessAction: excessAction,
@@ -114,11 +118,13 @@ class BookingDeliverySale {
       DateTime deliveryDate, {
         double transport = 0,
         double discount = 0,
+        double? holdingRate,
       }) {
     return settlementAt(
       deliveryDate,
       transport: transport,
       discount: discount,
+      holdingRate: holdingRate,
     ).balanceDue;
   }
 
@@ -128,11 +134,13 @@ class BookingDeliverySale {
       DateTime deliveryDate, {
         double transport = 0,
         double discount = 0,
+        double? holdingRate,
       }) {
     return settlementAt(
       deliveryDate,
       transport: transport,
       discount: discount,
+      holdingRate: holdingRate,
     ).excess;
   }
 }
