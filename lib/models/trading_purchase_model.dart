@@ -206,6 +206,31 @@ class TradingPurchase {
   /// Sum of all supplier payments recorded for this lot.
   final double paidAmount;
 
+  // -----------------------------------------------------------------------
+  // DEAL CANCELLED (goats never left the supplier)
+  // -----------------------------------------------------------------------
+
+  /// True once the deal was cancelled while every goat was still at the
+  /// supplier. A cancelled lot owns no goats, owes the supplier nothing and
+  /// is shown under Completed. Written only by
+  /// TradingService.cancelLotDeal().
+  final bool dealCancelled;
+
+  /// Date the deal was cancelled.
+  final DateTime? cancelledAt;
+
+  /// What had been paid to the supplier when the deal was cancelled.
+  final double cancelPaidAmount;
+
+  /// What the supplier handed back.
+  final double cancelRefundAmount;
+
+  /// Paid minus refunded: the money the farm lost because of the
+  /// cancellation.
+  final double cancelLossAmount;
+
+  final String cancelNote;
+
   final DateTime? createdAt;
 
   const TradingPurchase({
@@ -255,6 +280,13 @@ class TradingPurchase {
     this.reservedFarmQty = 0,
     this.paidAmount = 0,
 
+    this.dealCancelled = false,
+    this.cancelledAt,
+    this.cancelPaidAmount = 0,
+    this.cancelRefundAmount = 0,
+    this.cancelLossAmount = 0,
+    this.cancelNote = '',
+
     this.createdAt,
   });
 
@@ -291,7 +323,10 @@ class TradingPurchase {
   }
 
   /// Goats still at the supplier and available to sell from there.
+  /// A cancelled deal has none: the goats were never taken.
   int get supplierQty {
+    if (dealCancelled) return 0;
+
     final v = totalGoats - soldFromSupplierQty - receivedTotalQty;
     return v < 0 ? 0 : v;
   }
@@ -333,7 +368,7 @@ class TradingPurchase {
   /// Goats that can be sold right now, from either location.
   int get availableForSaleQty => supplierQty + farmAvailableQty;
 
-  bool get isActive => remainingQty > 0;
+  bool get isActive => !dealCancelled && remainingQty > 0;
 
   LotLocation get location {
     if (receivedTotalQty == 0) return LotLocation.atSupplier;
@@ -344,6 +379,9 @@ class TradingPurchase {
   // Supplier payment ------------------------------------------------------
 
   double get dueAmount {
+    // A cancelled deal owes the supplier nothing, whatever was paid.
+    if (dealCancelled) return 0;
+
     final v = purchaseAmount - paidAmount;
     return v < 0 ? 0 : v;
   }
@@ -351,10 +389,27 @@ class TradingPurchase {
   /// 'Unpaid' / 'Partial' / 'Paid' — always derived from [paidAmount],
   /// never typed in.
   String get paymentStatus {
+    if (dealCancelled) return 'Cancelled';
     if (paidAmount <= 0) return 'Unpaid';
     if (dueAmount < 0.01) return 'Paid';
     return 'Partial';
   }
+
+  // Edit / cancel ----------------------------------------------------------
+
+  /// A deal can only be cancelled while every goat is still at the supplier:
+  /// nothing received, nothing sold, nothing moved or reserved.
+  bool get canCancelDeal =>
+      isLot &&
+          !dealCancelled &&
+          receivedTotalQty == 0 &&
+          soldQty == 0 &&
+          registeredCount == 0 &&
+          reservedFarmQty == 0;
+
+  /// Fewest goats the lot can be edited down to: the goats that already
+  /// left the supplier (sold from it, or received at the farm).
+  int get minEditableTotalGoats => soldFromSupplierQty + receivedTotalQty;
 
   // Weights ---------------------------------------------------------------
 
@@ -538,6 +593,13 @@ class TradingPurchase {
       soldFromFarmQty: intFrom('soldFromFarmQty'),
       reservedFarmQty: intFrom('reservedFarmQty'),
       paidAmount: numFrom('paidAmount'),
+
+      dealCancelled: data['dealCancelled'] == true,
+      cancelledAt: nullableDateFrom('cancelledAt'),
+      cancelPaidAmount: numFrom('cancelPaidAmount'),
+      cancelRefundAmount: numFrom('cancelRefundAmount'),
+      cancelLossAmount: numFrom('cancelLossAmount'),
+      cancelNote: (data['cancelNote'] ?? '').toString(),
 
       createdAt: nullableDateFrom('createdAt'),
     );

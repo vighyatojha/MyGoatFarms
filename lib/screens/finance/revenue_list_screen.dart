@@ -521,6 +521,7 @@ class _RevenueListScreenState extends State<RevenueListScreen> {
       FinanceScope.trading => [
         RevenueCategories.soldGoatRevenue,
         RevenueCategories.goatSale,
+        RevenueCategories.supplierRefund,
       ],
       FinanceScope.palai => RevenueCategories.all
           .where(
@@ -868,6 +869,8 @@ class _RevenueListScreenState extends State<RevenueListScreen> {
                   Text(
                     isManual
                         ? 'Manual Revenue'
+                        : row.category == RevenueCategories.supplierRefund
+                        ? 'Supplier refund · deal cancelled'
                         : 'Customer Payment · tap for details',
                     style: AppTheme.body(
                       size: 10,

@@ -47,6 +47,8 @@ Color lotPaymentColor(String status) {
       return AppColors.success;
     case 'Partial':
       return const Color(0xFFB26A00);
+    case 'Cancelled':
+      return AppColors.textGrey;
     default:
       return AppColors.error;
   }

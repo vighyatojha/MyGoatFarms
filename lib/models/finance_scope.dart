@@ -25,8 +25,9 @@ extension FinanceScopeX on FinanceScope {
 ///
 /// Trading records are the ones the Trading module writes itself:
 ///
-///   revenue  -> `transactions` docs with referenceType = tradingSale,
-///               or category Sold Goat Revenue / Goat Sale
+///   revenue  -> `transactions` docs with referenceType = tradingSale or
+///               lotRefund (a supplier refund on a cancelled lot), or
+///               category Sold Goat Revenue / Goat Sale
 ///   expenses -> `expenses` docs with referenceType = tradingPurchase
 ///               (a purchase paid in full when saved, or an audit-only
 ///               Credit row for a Purchase Lot), referenceType =
@@ -49,6 +50,10 @@ class FinanceScopeRules {
   static const String tradingLotPaymentRef = 'lotPayment';
   static const String tradingSaleRef = 'tradingSale';
 
+  /// Refund received from a supplier when a lot's deal is cancelled
+  /// (income, posted by TradingService.cancelLotDeal).
+  static const String tradingLotRefundRef = 'lotRefund';
+
   /// Money handed back to a customer after a Trading sale (excess payment).
   /// A real cash outflow that belongs to the Trading side.
   static const String customerRefundRef = 'customerRefund';
@@ -58,6 +63,7 @@ class FinanceScopeRules {
     required String category,
   }) {
     if (referenceType == tradingSaleRef) return true;
+    if (referenceType == tradingLotRefundRef) return true;
 
     return category == RevenueCategories.soldGoatRevenue ||
         category == RevenueCategories.goatSale;

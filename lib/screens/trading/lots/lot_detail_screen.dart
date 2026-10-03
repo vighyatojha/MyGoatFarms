@@ -16,6 +16,8 @@ import '../../../widgets/permission_gate.dart';
 import '../purchase_goats/purchase_wizard_widgets.dart';
 import '../register_goats/goat_registration_form_screen.dart';
 import 'add_lot_payment_sheet.dart';
+import 'cancel_lot_deal_screen.dart';
+import 'edit_lot_screen.dart';
 import '../sell_from_lot/sell_from_lot_wizard_screen.dart';
 import 'lot_sales_cards.dart';
 import 'lot_widgets.dart';
@@ -79,6 +81,26 @@ class _LotDetailScreenState extends State<LotDetailScreen> {
           behavior: SnackBarBehavior.floating,
         ),
       );
+  }
+
+  Future<void> _editLot(TradingPurchase lot) async {
+    final saved = await openEditLotScreen(
+      context: context,
+      farmId: widget.farmId,
+      lot: lot,
+    );
+
+    if (saved == true) _snack('Lot updated.');
+  }
+
+  Future<void> _cancelDeal(TradingPurchase lot) async {
+    final cancelled = await openCancelLotDealScreen(
+      context: context,
+      farmId: widget.farmId,
+      lot: lot,
+    );
+
+    if (cancelled == true) _snack('Deal cancelled and settled.');
   }
 
   Future<void> _receive(TradingPurchase lot) async {
@@ -278,6 +300,18 @@ class _LotDetailScreenState extends State<LotDetailScreen> {
             backgroundColor: AppColors.paleGreen,
             appBar: AppBar(
               title: Text(lot?.lotId ?? 'Lot'),
+              actions: [
+                if (lot != null &&
+                    lot.isLot &&
+                    !lot.dealCancelled &&
+                    PartnerAccessService.instance
+                        .allows(PartnerPermissionKeys.tradingManageStock))
+                  IconButton(
+                    tooltip: 'Edit lot',
+                    icon: const Icon(Icons.edit_outlined),
+                    onPressed: () => _editLot(lot),
+                  ),
+              ],
             ),
             body: _body(snapshot, lot),
           );
@@ -315,6 +349,11 @@ class _LotDetailScreenState extends State<LotDetailScreen> {
       children: [
         _header(lot),
         const SizedBox(height: 14),
+
+        if (lot.dealCancelled) ...[
+          _cancelledCard(lot),
+          const SizedBox(height: 14),
+        ],
 
         if (!lot.isLot) ...[
           const WizardNote(
@@ -415,8 +454,16 @@ class _LotDetailScreenState extends State<LotDetailScreen> {
               ),
               const Spacer(),
               LotBadge(
-                label: lot.isActive ? 'Active' : 'Completed',
-                color: lot.isActive ? AppColors.info : AppColors.textGrey,
+                label: lot.dealCancelled
+                    ? 'Deal Cancelled'
+                    : lot.isActive
+                    ? 'Active'
+                    : 'Completed',
+                color: lot.dealCancelled
+                    ? AppColors.error
+                    : lot.isActive
+                    ? AppColors.info
+                    : AppColors.textGrey,
               ),
             ],
           ),
@@ -430,7 +477,7 @@ class _LotDetailScreenState extends State<LotDetailScreen> {
             spacing: 8,
             runSpacing: 6,
             children: [
-              if (lot.isLot)
+              if (lot.isLot && !lot.dealCancelled)
                 LotBadge(
                   label: lotLocationLabel(lot.location),
                   color: lotLocationColor(lot.location),
@@ -443,6 +490,61 @@ class _LotDetailScreenState extends State<LotDetailScreen> {
           ),
         ],
       ),
+    );
+  }
+
+  // ---------------------------------------------------------------------
+  // DEAL CANCELLED
+  // ---------------------------------------------------------------------
+
+  Widget _cancelledCard(TradingPurchase lot) {
+    final lossed = lot.cancelLossAmount >= 0.01;
+
+    return WizardSectionCard(
+      title: 'Deal Cancelled',
+      icon: Icons.cancel_outlined,
+      children: [
+        if (lot.cancelledAt != null)
+          WizardComputedRow(
+            label: 'Cancelled on',
+            value: wizardDate(lot.cancelledAt!),
+          ),
+        WizardComputedRow(
+          label: 'Paid to supplier',
+          value: wizardCurrency(lot.cancelPaidAmount),
+        ),
+        WizardComputedRow(
+          label: 'Refund received',
+          value: wizardCurrency(lot.cancelRefundAmount),
+        ),
+        const Divider(height: 18, color: AppColors.divider),
+        Padding(
+          padding: const EdgeInsets.symmetric(vertical: 6),
+          child: Row(
+            children: [
+              Expanded(
+                child: Text(
+                  'Loss due to deal cancel',
+                  style: AppTheme.body(
+                    size: 14,
+                    color: AppColors.textDark,
+                    weight: FontWeight.w600,
+                  ),
+                ),
+              ),
+              Text(
+                wizardCurrency(lot.cancelLossAmount),
+                style: AppTheme.heading(
+                  size: 16,
+                  color: lossed ? AppColors.error : AppColors.success,
+                ),
+              ),
+            ],
+          ),
+        ),
+        if (lot.cancelNote.trim().isNotEmpty)
+          WizardComputedRow(label: 'Note', value: lot.cancelNote.trim()),
+      ],
     );
   }
 
@@ -756,7 +858,7 @@ class _LotDetailScreenState extends State<LotDetailScreen> {
                 const Divider(height: 22, color: AppColors.divider),
                 Text('Payment history', style: AppTheme.body(size: 11)),
                 const SizedBox(height: 6),
-                for (final p in payments) _paymentRow(p),
+                for (final p in payments) _paymentRow(p, lot),
               ],
             );
           },
@@ -765,8 +867,9 @@ class _LotDetailScreenState extends State<LotDetailScreen> {
     );
   }
 
-  Widget _paymentRow(LotPayment p) {
+  Widget _paymentRow(LotPayment p, TradingPurchase lot) {
     final canVoid = !p.voided &&
+        !lot.dealCancelled &&
         !p.isLegacy &&
         PartnerAccessService.instance
             .allows(PartnerPermissionKeys.financeExpenseVoid);
@@ -841,6 +944,17 @@ class _LotDetailScreenState extends State<LotDetailScreen> {
       icon: Icons.bolt_rounded,
       children: [
         _ActionButton(
+          icon: Icons.edit_outlined,
+          label: 'Edit Lot',
+          hint: lot.dealCancelled
+              ? 'This deal was cancelled'
+              : lot.location == LotLocation.atSupplier
+              ? 'Change supplier, goats, weight, price or costs'
+              : 'Edit details — lot cost is recalculated',
+          enabled: lot.isLot && canManage && !lot.dealCancelled,
+          onTap: () => _editLot(lot),
+        ),
+        _ActionButton(
           icon: Icons.inventory_2_outlined,
           label: 'Receive Lot',
           hint: lot.supplierQty > 0
@@ -894,6 +1008,17 @@ class _LotDetailScreenState extends State<LotDetailScreen> {
               : 'Needs goats at the farm',
           enabled: lot.isLot && canManage && lot.farmAvailableQty > 0,
           onTap: () => _transferToCustomerPalai(lot),
+        ),
+        _ActionButton(
+          icon: Icons.cancel_outlined,
+          label: 'Cancel Deal',
+          hint: lot.dealCancelled
+              ? 'Already cancelled'
+              : lot.canCancelDeal
+              ? 'Settle the paid amount: refund and loss'
+              : 'Only while all goats are still at the supplier',
+          enabled: lot.canCancelDeal && canPay,
+          onTap: () => _cancelDeal(lot),
         ),
         _ActionButton(
           icon: Icons.warning_amber_rounded,

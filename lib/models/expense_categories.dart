@@ -83,6 +83,12 @@ class RevenueCategories {
   /// this in by hand."
   static const String soldGoatRevenue = 'Sold Goat Revenue';
 
+  /// Money a supplier hands back when a Purchase Lot deal is cancelled —
+  /// posted automatically by TradingService.cancelLotDeal(). Deliberately
+  /// NOT in [all]: it is never typed in by hand, so it must not appear in
+  /// the manual revenue form or be editable / voidable from the list.
+  static const String supplierRefund = 'Supplier Refund';
+
   static const List<String> all = [
     goatSale,
     soldGoatRevenue,

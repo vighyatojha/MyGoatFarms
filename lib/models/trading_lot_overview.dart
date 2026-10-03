@@ -111,6 +111,14 @@ class TradingLotOverview {
     var totalPaid = 0.0;
 
     for (final lot in lots) {
+      // A cancelled deal bought nothing: its goats and purchase amount do
+      // not count. What the farm actually lost to the supplier (paid minus
+      // refunded) is the only money that stays in "paid to suppliers".
+      if (lot.dealCancelled) {
+        totalPaid += lot.cancelLossAmount;
+        continue;
+      }
+
       totalPurchasedQty += lot.totalGoats;
       totalPurchaseAmount += lot.purchaseAmount;
       totalPaid += lot.paidAmount;

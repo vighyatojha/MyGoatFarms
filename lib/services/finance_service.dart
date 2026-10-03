@@ -461,6 +461,84 @@ class FinanceService {
     ));
   }
 
+  /// Posts the refund a supplier hands back for a cancelled lot deal as
+  /// income (a `transactions` doc, isIncome: true) INSIDE the caller's
+  /// transaction, so the refund commits or fails together with the lot
+  /// being marked cancelled.
+  ///
+  /// The doc id is deterministic ([docId]) so a retry overwrites instead of
+  /// duplicating. It is tagged referenceType = lotRefund, which
+  /// FinanceScopeRules counts on the Trading side only. Nothing is written
+  /// when [amount] is zero (no refund, the whole payment is the loss).
+  ///
+  /// Call [notifyLotRefundRecorded] AFTER the transaction commits.
+  void writeLotRefundIncomeInTransaction(
+      Transaction transaction,
+      String farmId, {
+        required String docId,
+        required double amount,
+        required String paymentMethod,
+        required DateTime date,
+        required String lotId,
+        required String lotLabel,
+        required String supplierName,
+        String note = '',
+        required ({String uid, String name, String role})? actor,
+      }) {
+    if (amount <= 0) return;
+
+    final trimmed = note.trim();
+
+    transaction.set(_transactions(farmId).doc(docId), {
+      'amount': amount,
+      'isIncome': true,
+      'category': RevenueCategories.supplierRefund,
+      'note': trimmed.isEmpty
+          ? 'Refund from $supplierName — $lotLabel deal cancelled'
+          : 'Refund from $supplierName — $lotLabel deal cancelled — $trimmed',
+      'paymentMethod': paymentMethod,
+      'date': Timestamp.fromDate(date),
+      'createdAt': FieldValue.serverTimestamp(),
+      'status': 'active',
+      'referenceType': FinanceScopeRules.tradingLotRefundRef,
+      'referenceId': lotId,
+      if (actor != null) 'createdBy': actor.uid,
+      if (actor != null) 'createdByName': actor.name,
+      if (actor != null) 'createdByRole': actor.role,
+    });
+
+    transaction.set(_activities(farmId).doc(), {
+      'type': ActivityType.revenueAdded.name,
+      'title': 'Supplier Refund Received',
+      'subtitle': '$lotLabel · ₹${amount.toStringAsFixed(0)} · $supplierName',
+      'module': 'finance',
+      'timestamp': FieldValue.serverTimestamp(),
+      if (actor != null) 'actorUid': actor.uid,
+      if (actor != null) 'actorName': actor.name,
+      if (actor != null) 'actorRole': actor.role,
+    });
+  }
+
+  /// Partner -> owner notification for a refund written with
+  /// [writeLotRefundIncomeInTransaction]. Fire-and-forget.
+  void notifyLotRefundRecorded(
+      String farmId, {
+        required String lotLabel,
+        required double amount,
+        required ({String uid, String name, String role})? actor,
+      }) {
+    if (amount <= 0) return;
+
+    unawaited(FirestoreService.instance.notifyPartnerActivity(
+      farmId: farmId,
+      type: ActivityType.revenueAdded,
+      title: 'Supplier Refund Received',
+      subtitle: '$lotLabel · ₹${amount.toStringAsFixed(0)}',
+      module: 'finance',
+      actor: actor,
+    ));
+  }
+
   /// Soft-deletes (voids) an expense rather than removing it — per spec
   /// §29/§38, financial records stay auditable. A voided expense and
   /// its mirrored transaction are both excluded from every calculation.
@@ -1073,8 +1151,13 @@ class FinanceService {
       final category = (data['category'] ?? 'Other').toString();
       revenueByCategory[category] = (revenueByCategory[category] ?? 0) + amount;
 
+      // A supplier refund is income but not a sale: its referenceId is a
+      // lot, so it must not inflate the sales count.
       final saleId = (data['referenceId'] ?? '').toString();
-      if (saleId.isNotEmpty) saleIds.add(saleId);
+      if (saleId.isNotEmpty &&
+          data['referenceType'] != FinanceScopeRules.tradingLotRefundRef) {
+        saleIds.add(saleId);
+      }
 
       final method = (data['paymentMethod'] ?? '').toString();
       if (FinancePaymentMethods.isCash(method)) {
@@ -1124,6 +1207,11 @@ class FinanceService {
     for (final doc in purchasesSnap.docs) {
       final data = doc.data();
       otherPurchaseCosts += _num(data['totalTransportExpenses']);
+
+      // A cancelled deal bought no goats, so they stay out of the
+      // purchased goats / value (and the average cost per goat).
+      if (data['dealCancelled'] == true) continue;
+
       purchasedValue += _num(data['purchaseAmount']);
       goatsPurchased += _num(data['totalGoats']).toInt();
     }
@@ -1190,7 +1278,9 @@ class FinanceService {
       lotSupplierPending += lot.dueAmount;
 
       final bought = lot.purchaseDate;
-      if (!bought.isBefore(start) && bought.isBefore(end)) {
+      if (!lot.dealCancelled &&
+          !bought.isBefore(start) &&
+          bought.isBefore(end)) {
         lotPurchaseValue += lot.purchaseAmount;
       }
     }

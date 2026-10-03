@@ -10,6 +10,8 @@ import '../../../widgets/fast_route.dart';
 import '../../../models/partner_permission_keys.dart';
 import '../../../widgets/permission_gate.dart';
 import '../purchase_goats/purchase_wizard_widgets.dart';
+import 'cancel_lot_deal_screen.dart';
+import 'edit_lot_screen.dart';
 import 'legacy_conversion_sheet.dart';
 import 'lot_sales_list_screen.dart';
 import 'lot_detail_screen.dart';
@@ -58,6 +60,39 @@ class _LotManagementScreenState extends State<LotManagementScreen> {
 
     if (converted == true && mounted) {
       wizardSnack(context, 'Older purchases are now in Lot Management.');
+    }
+  }
+
+  bool _canEdit(TradingPurchase lot) =>
+      lot.isLot &&
+          !lot.dealCancelled &&
+          PartnerAccessService.instance
+              .allows(PartnerPermissionKeys.tradingManageStock);
+
+  bool _canCancelDeal(TradingPurchase lot) =>
+      lot.canCancelDeal &&
+          PartnerAccessService.instance
+              .allows(PartnerPermissionKeys.tradingSupplierPayment);
+
+  Future<void> _editLot(TradingPurchase lot) async {
+    final saved = await openEditLotScreen(
+      context: context,
+      farmId: widget.farmId,
+      lot: lot,
+    );
+
+    if (saved == true && mounted) wizardSnack(context, 'Lot updated.');
+  }
+
+  Future<void> _cancelDeal(TradingPurchase lot) async {
+    final cancelled = await openCancelLotDealScreen(
+      context: context,
+      farmId: widget.farmId,
+      lot: lot,
+    );
+
+    if (cancelled == true && mounted) {
+      wizardSnack(context, 'Deal cancelled and settled.');
     }
   }
 
@@ -132,6 +167,10 @@ class _LotManagementScreenState extends State<LotManagementScreen> {
                   separatorBuilder: (_, __) => const SizedBox(height: 10),
                   itemBuilder: (_, i) => _LotCard(
                     lot: lots[i],
+                    onEdit: _canEdit(lots[i]) ? () => _editLot(lots[i]) : null,
+                    onCancelDeal: _canCancelDeal(lots[i])
+                        ? () => _cancelDeal(lots[i])
+                        : null,
                     onTap: () => Navigator.of(context).push(
                       fastRoute(
                         LotDetailScreen(
@@ -339,7 +378,18 @@ class _LotCard extends StatelessWidget {
   final TradingPurchase lot;
   final VoidCallback onTap;
 
-  const _LotCard({required this.lot, required this.onTap});
+  /// Null when the person may not edit this lot (or it is cancelled).
+  final VoidCallback? onEdit;
+
+  /// Null unless the deal can still be cancelled (all goats at the supplier).
+  final VoidCallback? onCancelDeal;
+
+  const _LotCard({
+    required this.lot,
+    required this.onTap,
+    this.onEdit,
+    this.onCancelDeal,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -367,9 +417,62 @@ class _LotCard extends StatelessWidget {
                   ),
                   const Spacer(),
                   LotBadge(
-                    label: lotLocationLabel(lot.location),
-                    color: lotLocationColor(lot.location),
+                    label: lot.dealCancelled
+                        ? 'Deal Cancelled'
+                        : lotLocationLabel(lot.location),
+                    color: lot.dealCancelled
+                        ? AppColors.error
+                        : lotLocationColor(lot.location),
                   ),
+                  if (onEdit != null || onCancelDeal != null)
+                    SizedBox(
+                      width: 32,
+                      height: 32,
+                      child: PopupMenuButton<String>(
+                        tooltip: 'Lot options',
+                        padding: EdgeInsets.zero,
+                        icon: const Icon(
+                          Icons.more_vert_rounded,
+                          size: 20,
+                          color: AppColors.textGrey,
+                        ),
+                        onSelected: (value) {
+                          if (value == 'edit') onEdit?.call();
+                          if (value == 'cancel') onCancelDeal?.call();
+                        },
+                        itemBuilder: (_) => [
+                          if (onEdit != null)
+                            const PopupMenuItem<String>(
+                              value: 'edit',
+                              child: Row(
+                                children: [
+                                  Icon(Icons.edit_outlined, size: 20),
+                                  SizedBox(width: 10),
+                                  Text('Edit lot'),
+                                ],
+                              ),
+                            ),
+                          if (onCancelDeal != null)
+                            const PopupMenuItem<String>(
+                              value: 'cancel',
+                              child: Row(
+                                children: [
+                                  Icon(
+                                    Icons.cancel_outlined,
+                                    size: 20,
+                                    color: AppColors.error,
+                                  ),
+                                  SizedBox(width: 10),
+                                  Text(
+                                    'Cancel deal',
+                                    style: TextStyle(color: AppColors.error),
+                                  ),
+                                ],
+                              ),
+                            ),
+                        ],
+                      ),
+                    ),
                 ],
               ),
               const SizedBox(height: 4),
@@ -398,7 +501,10 @@ class _LotCard extends StatelessWidget {
               Row(
                 children: [
                   Text(
-                    lot.dueAmount >= 0.01
+                    lot.dealCancelled
+                        ? 'Loss ${wizardCurrency(lot.cancelLossAmount)}'
+                        '  •  Refunded ${wizardCurrency(lot.cancelRefundAmount)}'
+                        : lot.dueAmount >= 0.01
                         ? 'Due ${wizardCurrency(lot.dueAmount)}'
                         : 'Fully paid',
                     style: AppTheme.body(

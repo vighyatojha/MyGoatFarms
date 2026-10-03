@@ -1241,6 +1241,10 @@ class TradingService {
         );
       }
 
+      if (lot.dealCancelled) {
+        throw StateError('This deal was cancelled, so it takes no payments.');
+      }
+
       if (rounded > lot.dueAmount + 0.005) {
         throw ArgumentError(
           'Payment cannot be more than the balance due '
@@ -1355,6 +1359,13 @@ class TradingService {
       final lot = TradingPurchase.fromDoc(lotSnap);
       final payment = LotPayment.fromDoc(paymentSnap);
 
+      if (lot.dealCancelled) {
+        throw StateError(
+          'This deal was cancelled and settled, so its payments cannot be '
+              'voided.',
+        );
+      }
+
       if (payment.voided) {
         throw StateError('This payment was already voided.');
       }
@@ -1406,6 +1417,469 @@ class TradingService {
       amount: voidedAmount,
       actor: actor,
     );
+  }
+
+  // -----------------------------------------------------------------------
+  // EDIT LOT
+  // -----------------------------------------------------------------------
+
+  static DateTime _dayOnly(DateTime d) => DateTime(d.year, d.month, d.day);
+
+  /// Edits a lot's supplier details, purchase figures and extra costs — at
+  /// the supplier or at the farm, whatever has been received or sold so far.
+  ///
+  /// Every figure derived from them is recomputed with [PurchaseCosting]
+  /// (the same engine the purchase wizard and receiving use), so Purchase
+  /// Amount, Grand Total, Effective Cost / Kg, weight loss and the supplier
+  /// balance stay consistent. In ONE transaction:
+  ///  * the lot document is updated;
+  ///  * the lot's audit-only Credit purchase row in Finance follows the new
+  ///    amount / supplier / date;
+  ///  * the dashboard's "wholesale purchased" counter moves by the change in
+  ///    goats bought.
+  ///
+  /// Refused (nothing is written) when the edit would break the lot:
+  ///  * fewer goats than have already left the supplier (sold from it or
+  ///    received — see [TradingPurchase.minEditableTotalGoats]);
+  ///  * a male / female split that no longer adds up, or is below the goats
+  ///    already registered per gender;
+  ///  * a purchase weight below the weight that already arrived;
+  ///  * a new purchase amount below what has already been paid (void a
+  ///    payment first);
+  ///  * a purchase date after an existing payment or the receiving date;
+  ///  * a cancelled lot.
+  ///
+  /// Sales already made keep the cost they were saved with; only later
+  /// sales use the new cost per goat.
+  Future<TradingPurchase> editLot({
+    required String farmId,
+    required String lotDocId,
+
+    // Supplier
+    required String sellerName,
+    required String mobile,
+    required String market,
+    required String vehicleNumber,
+    required DateTime purchaseDate,
+    required String remarks,
+    DateTime? expectedDeliveryDate,
+
+    // Purchase
+    required int totalGoats,
+    required int maleGoats,
+    required int femaleGoats,
+    required double totalWeightAtPurchase,
+    required double pricePerKg,
+
+    // Extra costs
+    required double transportCost,
+    required double loadingCharges,
+    required double unloadingCharges,
+    required double otherExpenses,
+  }) async {
+    if (sellerName.trim().isEmpty) {
+      throw ArgumentError('Supplier name is required.');
+    }
+
+    if (totalGoats <= 0) {
+      throw ArgumentError('Total goats must be greater than zero.');
+    }
+
+    if (maleGoats < 0 || femaleGoats < 0) {
+      throw ArgumentError('Male and Female goat counts cannot be negative.');
+    }
+
+    if ((maleGoats > 0 || femaleGoats > 0) &&
+        (maleGoats + femaleGoats) != totalGoats) {
+      throw ArgumentError(
+        'Male + Female goats must add up to the total goats.',
+      );
+    }
+
+    if (totalWeightAtPurchase <= 0) {
+      throw ArgumentError('Purchase weight must be greater than zero.');
+    }
+
+    if (pricePerKg <= 0) {
+      throw ArgumentError('Price per kg must be greater than zero.');
+    }
+
+    if (transportCost < 0 ||
+        loadingCharges < 0 ||
+        unloadingCharges < 0 ||
+        otherExpenses < 0) {
+      throw ArgumentError('Costs cannot be negative.');
+    }
+
+    final lotRef = _tradingPurchases(farmId).doc(lotDocId);
+
+    // Payments are read once, outside the transaction (a transaction cannot
+    // run a query): they are only needed to keep the purchase date before
+    // the first real payment and to refresh the supplier name on their
+    // Finance rows.
+    final paymentsSnap =
+    await lotRef.collection('payments').get().timeout(_timeout);
+
+    final payments = paymentsSnap.docs.map(LotPayment.fromDoc).toList();
+
+    final purchaseDay = _dayOnly(purchaseDate);
+
+    for (final payment in payments) {
+      if (payment.voided || payment.isLegacy) continue;
+
+      if (purchaseDay.isAfter(_dayOnly(payment.date))) {
+        throw ArgumentError(
+          'Purchase date cannot be after a payment already made on '
+              '${payment.date.day.toString().padLeft(2, '0')}/'
+              '${payment.date.month.toString().padLeft(2, '0')}/'
+              '${payment.date.year}.',
+        );
+      }
+    }
+
+    final purchaseExpenseRef = FinanceService.instance
+        .expenseDocRef(farmId, _lotPurchaseExpenseDocId(lotDocId));
+
+    late String previousSupplierName;
+
+    await _db.runTransaction((transaction) async {
+      // All reads first.
+      final snap = await transaction.get(lotRef);
+      final expenseSnap = await transaction.get(purchaseExpenseRef);
+
+      if (!snap.exists) {
+        throw StateError('Lot $lotDocId was not found.');
+      }
+
+      final lot = TradingPurchase.fromDoc(snap);
+
+      if (!lot.isLot) {
+        throw StateError(
+          'Lot $lotDocId has not been converted to the lot format yet.',
+        );
+      }
+
+      if (lot.dealCancelled) {
+        throw StateError('This deal was cancelled, so it cannot be edited.');
+      }
+
+      previousSupplierName = lot.sellerName;
+
+      if (totalGoats < lot.minEditableTotalGoats) {
+        throw ArgumentError(
+          'Total goats cannot be less than ${lot.minEditableTotalGoats} — '
+              'that many have already been sold from the supplier or '
+              'received at the farm.',
+        );
+      }
+
+      if (maleGoats > 0 || femaleGoats > 0) {
+        if (maleGoats < lot.maleRegistered) {
+          throw ArgumentError(
+            'Male goats cannot be less than ${lot.maleRegistered} — '
+                'already registered.',
+          );
+        }
+
+        if (femaleGoats < lot.femaleRegistered) {
+          throw ArgumentError(
+            'Female goats cannot be less than ${lot.femaleRegistered} — '
+                'already registered.',
+          );
+        }
+      }
+
+      final arrivedWeight = lot.totalWeightAfterArrival ?? 0;
+
+      if (arrivedWeight > totalWeightAtPurchase + 0.005) {
+        throw ArgumentError(
+          'Purchase weight cannot be less than the weight that already '
+              'arrived (${PurchaseCosting.formatNumber(arrivedWeight)} kg).',
+        );
+      }
+
+      final received = lot.dateReceivedAtFarm;
+
+      if (received != null && purchaseDay.isAfter(_dayOnly(received))) {
+        throw ArgumentError(
+          'Purchase date cannot be after the date goats were received.',
+        );
+      }
+
+      final costing = PurchaseCosting(
+        totalGoats: totalGoats,
+        weightAtPurchase: totalWeightAtPurchase,
+        pricePerKg: pricePerKg,
+        weightAfterArrival: arrivedWeight,
+        mortality: lot.mortality,
+        transportCost: transportCost,
+        loadingCharges: loadingCharges,
+        unloadingCharges: unloadingCharges,
+        otherExpenses: otherExpenses,
+      );
+
+      final newPurchaseAmount = costing.purchaseAmount;
+
+      if (lot.paidAmount > newPurchaseAmount + 0.005) {
+        throw ArgumentError(
+          'The new purchase amount (${newPurchaseAmount.toStringAsFixed(2)}) '
+              'is less than the ${lot.paidAmount.toStringAsFixed(2)} already '
+              'paid to the supplier. Void a payment first, or raise the '
+              'weight / price.',
+        );
+      }
+
+      final newSupplierQty =
+          totalGoats - lot.soldFromSupplierQty - lot.receivedTotalQty;
+
+      final String? newReceivingStatus;
+
+      if (lot.isReceivingCompleted && newSupplierQty > 0) {
+        newReceivingStatus = 'pending';
+      } else if (!lot.isReceivingCompleted &&
+          lot.receivedTotalQty > 0 &&
+          newSupplierQty <= 0) {
+        newReceivingStatus = 'completed';
+      } else {
+        newReceivingStatus = null;
+      }
+
+      final expectedWeight =
+          totalWeightAtPurchase * lot.receivedTotalQty / totalGoats;
+
+      transaction.update(lotRef, {
+        'sellerName': sellerName.trim(),
+        'mobile': mobile.trim(),
+        'market': market.trim(),
+        'vehicleNumber': vehicleNumber.trim(),
+        'purchaseDate': Timestamp.fromDate(purchaseDate),
+        'remarks': remarks.trim(),
+        'expectedDeliveryDate': expectedDeliveryDate == null
+            ? FieldValue.delete()
+            : Timestamp.fromDate(expectedDeliveryDate),
+        'totalGoats': totalGoats,
+        'maleGoats': maleGoats,
+        'femaleGoats': femaleGoats,
+        'totalWeightAtPurchase': totalWeightAtPurchase,
+        'pricePerKg': pricePerKg,
+        'purchaseAmount': newPurchaseAmount,
+        'transportCost': transportCost,
+        'loadingCharges': loadingCharges,
+        'unloadingCharges': unloadingCharges,
+        'otherExpenses': otherExpenses,
+        'totalTransportExpenses': costing.totalExpenses,
+        'grandTotal': costing.grandTotal,
+        'effectiveCostPerKg': costing.effectiveCostPerKg,
+        if (lot.receivedTotalQty > 0)
+          'weightLoss': PurchaseCosting.round2(expectedWeight - arrivedWeight),
+        if (newReceivingStatus != null) 'receivingStatus': newReceivingStatus,
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
+
+      // The lot's audit-only Credit purchase row follows the edit. Skipped
+      // when it does not exist (older converted lots) or was voided.
+      if (expenseSnap.exists && expenseSnap.data()?['status'] != 'voided') {
+        transaction.update(purchaseExpenseRef, {
+          'amount': newPurchaseAmount,
+          'supplierName': sellerName.trim(),
+          'date': Timestamp.fromDate(purchaseDate),
+          'updatedAt': FieldValue.serverTimestamp(),
+        });
+      }
+
+      final goatDelta = totalGoats - lot.totalGoats;
+
+      if (goatDelta != 0) {
+        transaction.set(
+          _summaryDoc(farmId),
+          {'wholesalePurchased': FieldValue.increment(goatDelta)},
+          SetOptions(merge: true),
+        );
+      }
+    }).timeout(_timeout);
+
+    // Supplier name on the payments' Finance rows — metadata only, so a
+    // failure here must never undo or fail the edit itself.
+    if (previousSupplierName.trim() != sellerName.trim()) {
+      for (final payment in payments) {
+        if (payment.voided || payment.isLegacy) continue;
+
+        try {
+          await FinanceService.instance
+              .expenseDocRef(farmId, _lotPaymentExpenseDocId(payment.id))
+              .update({'supplierName': sellerName.trim()}).timeout(_timeout);
+        } catch (_) {
+          // Row missing or offline: harmless.
+        }
+      }
+    }
+
+    final updated = await getPurchase(farmId, lotDocId);
+
+    if (updated == null) {
+      throw StateError('The lot was saved but could not be read back.');
+    }
+
+    return updated;
+  }
+
+  // -----------------------------------------------------------------------
+  // CANCEL DEAL (goats still at the supplier)
+  // -----------------------------------------------------------------------
+
+  /// Cancels a lot's deal while every goat is still at the supplier, and
+  /// settles what was already paid.
+  ///
+  /// [refundAmount] is what the supplier actually handed back. The rest of
+  /// the paid amount is the farm's loss:
+  ///
+  ///   loss = paid - refund        (paid 5000, refund 4500 -> loss 500)
+  ///
+  /// In ONE transaction:
+  ///  * the lot is marked `dealCancelled` with the paid / refund / loss
+  ///    figures. It then owns no goats, owes the supplier nothing and moves
+  ///    to Completed;
+  ///  * the refund is posted to Finance as income (Supplier Refund), while
+  ///    the original supplier payments stay as the money that went out — so
+  ///    the net cash effect is exactly the loss;
+  ///  * the lot's audit-only Credit purchase row is voided (nothing was
+  ///    bought);
+  ///  * the dashboard's "wholesale purchased" counter drops by the lot's
+  ///    goats.
+  ///
+  /// Refused when anything has been received, sold, moved or reserved
+  /// ([TradingPurchase.canCancelDeal]), when the refund is more than what
+  /// was paid, or when the deal is already cancelled.
+  Future<TradingPurchase> cancelLotDeal({
+    required String farmId,
+    required String lotDocId,
+    required double refundAmount,
+    required String refundMethod,
+    required DateTime date,
+    String note = '',
+  }) async {
+    final refund = PurchaseCosting.round2(refundAmount);
+
+    if (refund < 0) {
+      throw ArgumentError('Refund cannot be negative.');
+    }
+
+    final method = _normalizePaymentMethod(refundMethod);
+    final actor = await FirestoreService.instance.getCurrentActor();
+
+    final lotRef = _tradingPurchases(farmId).doc(lotDocId);
+    final purchaseExpenseRef = FinanceService.instance
+        .expenseDocRef(farmId, _lotPurchaseExpenseDocId(lotDocId));
+
+    late TradingPurchase lot;
+
+    await _db.runTransaction((transaction) async {
+      // All reads first.
+      final snap = await transaction.get(lotRef);
+      final expenseSnap = await transaction.get(purchaseExpenseRef);
+
+      if (!snap.exists) {
+        throw StateError('Lot $lotDocId was not found.');
+      }
+
+      lot = TradingPurchase.fromDoc(snap);
+
+      if (!lot.isLot) {
+        throw StateError(
+          'Lot $lotDocId has not been converted to the lot format yet.',
+        );
+      }
+
+      if (lot.dealCancelled) {
+        throw StateError('This deal was already cancelled.');
+      }
+
+      if (!lot.canCancelDeal) {
+        throw StateError(
+          'A deal can only be cancelled while all goats are still at the '
+              'supplier — nothing received, sold or moved yet.',
+        );
+      }
+
+      final paid = lot.paidAmount;
+
+      if (refund > paid + 0.005) {
+        throw ArgumentError(
+          'Refund cannot be more than the ${paid.toStringAsFixed(2)} paid '
+              'to the supplier.',
+        );
+      }
+
+      if (_dayOnly(date).isBefore(_dayOnly(lot.purchaseDate))) {
+        throw ArgumentError('Cancellation date cannot be before the purchase.');
+      }
+
+      final rawLoss = PurchaseCosting.round2(paid - refund);
+      final loss = rawLoss < 0 ? 0.0 : rawLoss;
+
+      transaction.update(lotRef, {
+        'dealCancelled': true,
+        'cancelledAt': Timestamp.fromDate(date),
+        'cancelPaidAmount': paid,
+        'cancelRefundAmount': refund,
+        'cancelLossAmount': loss,
+        'cancelRefundMethod': method,
+        'cancelNote': note.trim(),
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
+
+      FinanceService.instance.writeLotRefundIncomeInTransaction(
+        transaction,
+        farmId,
+        docId: 'lotrefund_$lotDocId',
+        amount: refund,
+        paymentMethod: method,
+        date: date,
+        lotId: lot.id,
+        lotLabel: lot.lotId,
+        supplierName: lot.sellerName,
+        note: note,
+        actor: actor,
+      );
+
+      // Nothing was bought, so the audit-only purchase row stops counting.
+      FinanceService.instance.voidExpenseInTransaction(
+        transaction,
+        farmId,
+        expenseSnap: expenseSnap,
+        title: 'Goat Purchase (${lot.lotId})',
+        amount: lot.purchaseAmount,
+        actor: actor,
+      );
+
+      transaction.set(
+        _summaryDoc(farmId),
+        {'wholesalePurchased': FieldValue.increment(-lot.totalGoats)},
+        SetOptions(merge: true),
+      );
+    }).timeout(_timeout);
+
+    FinanceService.instance.notifyExpenseVoided(
+      farmId,
+      title: 'Goat Purchase (${lot.lotId})',
+      amount: lot.purchaseAmount,
+      actor: actor,
+    );
+
+    FinanceService.instance.notifyLotRefundRecorded(
+      farmId,
+      lotLabel: lot.lotId,
+      amount: refund,
+      actor: actor,
+    );
+
+    final updated = await getPurchase(farmId, lotDocId);
+
+    if (updated == null) {
+      throw StateError('The deal was cancelled but the lot could not be read.');
+    }
+
+    return updated;
   }
 
   // -----------------------------------------------------------------------
@@ -2093,7 +2567,8 @@ class TradingService {
     for (final doc in snapshot.docs) {
       final purchase = TradingPurchase.fromDoc(doc);
 
-      wholesalePurchased += purchase.totalGoats;
+      // A cancelled deal bought no goats.
+      if (!purchase.dealCancelled) wholesalePurchased += purchase.totalGoats;
       costPerSurvivingGoatByPurchaseId[purchase.id] =
           purchase.costPerSurvivingGoat;
 
