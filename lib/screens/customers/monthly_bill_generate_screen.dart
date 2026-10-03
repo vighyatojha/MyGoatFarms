@@ -446,7 +446,7 @@ class _MonthlyBillGenerateScreenState
               const SizedBox(height: 8),
               _row('Previous outstanding', _currency(p.previousOutstanding)),
               for (final line in p.previousBreakdown)
-                _subRow(periodLabel(line.periodKey), _currency(line.amount)),
+                _subRow(line.displayLabel, _currency(line.amount)),
               if (p.earlierBalance > kMoneyEpsilon)
                 _subRow('Earlier balance', _currency(p.earlierBalance)),
               if (p.advanceApplied > kMoneyEpsilon) ...[
@@ -454,6 +454,14 @@ class _MonthlyBillGenerateScreenState
                 _row(
                   'Less: advance applied',
                   '− ${_currency(p.advanceApplied)}',
+                  color: AppColors.success,
+                ),
+              ],
+              if (p.paidFromDeletedBill > kMoneyEpsilon) ...[
+                const SizedBox(height: 8),
+                _row(
+                  'Less: already paid for $month',
+                  '− ${_currency(p.paidFromDeletedBill)}',
                   color: AppColors.success,
                 ),
               ],

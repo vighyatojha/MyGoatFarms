@@ -49,6 +49,7 @@ dependencies:
   # Added for Customer Ledger WhatsApp payment reminders (opens WhatsApp
   # with the message pre-filled for each customer).
   url_launcher: ^6.3.1
+  file_picker: ^13.1.0
 
 dev_dependencies:
   flutter_test:

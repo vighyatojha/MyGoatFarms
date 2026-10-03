@@ -194,62 +194,6 @@ class _GoatListScreenState extends State<GoatListScreen> {
     super.dispose();
   }
 
-  String _boardedFor(DateTime arrivalDate) {
-    final now = DateTime.now();
-
-    // Normalize both dates to midnight so the calculation is based
-    // on calendar dates rather than hours/minutes.
-    final startDate = DateTime(
-      arrivalDate.year,
-      arrivalDate.month,
-      arrivalDate.day,
-    );
-
-    final today = DateTime(
-      now.year,
-      now.month,
-      now.day,
-    );
-
-    // Safety: never show a negative boarding duration.
-    if (startDate.isAfter(today)) {
-      return '0 days';
-    }
-
-    int months =
-        (today.year - startDate.year) * 12 +
-            (today.month - startDate.month);
-
-    DateTime monthsAgo = DateTime(
-      startDate.year,
-      startDate.month + months,
-      startDate.day,
-    );
-
-    if (monthsAgo.isAfter(today)) {
-      months -= 1;
-
-      monthsAgo = DateTime(
-        startDate.year,
-        startDate.month + months,
-        startDate.day,
-      );
-    }
-
-    final days =
-        today.difference(monthsAgo).inDays;
-
-    if (months <= 0) {
-      return '$days day${days == 1 ? '' : 's'}';
-    }
-
-    if (days <= 0) {
-      return '$months month${months == 1 ? '' : 's'}';
-    }
-
-    return '$months mo $days d';
-  }
-
   Color _healthColor(String status) {
     switch (status) {
       case 'Sick':
@@ -1674,9 +1618,7 @@ class _GoatListScreenState extends State<GoatListScreen> {
   }
 
   Widget _boardingBadge(PalaiGoat goat) {
-    final duration = _boardedFor(
-      goat.billingStartDate,
-    );
+    final duration = goat.boardedForLabel();
 
     return Container(
       constraints: const BoxConstraints(

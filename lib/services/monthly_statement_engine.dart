@@ -1,10 +1,12 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:intl/intl.dart';
 
 import '../models/monthly_bill_model.dart';
 import '../models/palai_models.dart';
 import '../utils/billing_ledger.dart';
 import '../utils/palai_proration.dart';
 import 'firestore_service.dart';
+import 'monthly_billing_service.dart';
 import 'payment_allocation_service.dart';
 
 // ===========================================================================
@@ -163,9 +165,13 @@ class StatementPreview {
     this.advanceApplied = 0,
     this.totalPayable = 0,
     this.advanceAfter = 0,
+    this.paidFromDeletedBill = 0,
     this.lastBilledKey,
     this.laterPeriods = const [],
   });
+
+  /// Payment made on a deleted bill, used on this month.
+  final double paidFromDeletedBill;
 
   /// The month this preview is for ('YYYY-MM').
   final String periodKey;
@@ -215,6 +221,8 @@ class _StatementPlan {
     required this.finalRemaining,
     required this.newOwnPaid,
     required this.newOwnRemaining,
+    this.creditApplied = 0,
+    this.creditLeft = 0,
   });
 
   final List<GoatChargeLine> lines;
@@ -232,6 +240,81 @@ class _StatementPlan {
 
   final double newOwnPaid;
   final double newOwnRemaining;
+
+  /// Payment made on a DELETED bill for this customer (kept as a credit,
+  /// see deleteLatestBill), used on this new month. Already income when it
+  /// was received, so it is not income again.
+  final double creditApplied;
+
+  /// Credit still left after this bill (used on the next one).
+  final double creditLeft;
+}
+
+// ===========================================================================
+// SYNC (after bills were generated: new customers, new / removed goats)
+// ===========================================================================
+
+enum BillSyncKind {
+  /// A month still to bill (e.g. a customer added after the run).
+  generate,
+
+  /// The latest bill no longer matches the goats on the farm; it will be
+  /// deleted and generated again.
+  rebuild,
+
+  /// Something differs but can't be fixed automatically; shown with the
+  /// reason and what to do.
+  attention,
+}
+
+class BillSyncItem {
+  const BillSyncItem({
+    required this.customerId,
+    required this.customerName,
+    required this.kind,
+    required this.periodKey,
+    this.billId,
+    this.billNumber,
+    this.oldAmount = 0,
+    this.newAmount = 0,
+    this.changes = const [],
+    this.note,
+  });
+
+  final String customerId;
+  final String customerName;
+  final BillSyncKind kind;
+
+  /// Month concerned ('YYYY-MM'). For [BillSyncKind.generate], the first
+  /// month that will be generated.
+  final String periodKey;
+
+  final String? billId;
+  final String? billNumber;
+
+  /// Palai charges on the bill now / as worked out from today's goats.
+  final double oldAmount;
+  final double newAmount;
+
+  /// Plain-language lines: 'Added Gauri: 12–30 Sep (₹950)'.
+  final List<String> changes;
+
+  /// Why it needs attention / what to do.
+  final String? note;
+
+  bool get isAutomatic => kind != BillSyncKind.attention;
+}
+
+class BillSyncResult {
+  const BillSyncResult({
+    required this.customerName,
+    required this.ok,
+    required this.message,
+  });
+
+  final String customerName;
+  final bool ok;
+  final String message;
 }
 
 // ===========================================================================
@@ -253,7 +336,7 @@ class MonthlyStatementEngine {
 
   final FirebaseFirestore _db = FirebaseFirestore.instance;
 
-  static const Duration _timeout = Duration(seconds: 20);
+  static const Duration _timeout = Duration(seconds: 60);
 
   /// Longest catch-up a single run will produce for one customer.
   static const int maxCatchUpMonths = 12;
@@ -273,8 +356,13 @@ class MonthlyStatementEngine {
       ) =>
       _customers(farmId).doc(customerId).collection('goats');
 
+  /// Bill-number counter. Kept inside monthlyBills (a collection the
+  /// app's security rules already allow) rather than a new 'counters'
+  /// collection, which the rules blocked with permission-denied. It has no
+  /// customerId and its type is 'counter', so no bill list or query ever
+  /// picks it up.
   DocumentReference<Map<String, dynamic>> _counter(String farmId) =>
-      _farm(farmId).collection('counters').doc('monthlyBills');
+      _bills(farmId).doc('_billNumberCounter');
 
   static String billIdFor(String customerId, String periodKey) =>
       'monthly_${customerId}_$periodKey';
@@ -627,9 +715,28 @@ class MonthlyStatementEngine {
         }
       }
 
+      // Adjustments made since the last bill are listed on this one (they
+      // are already inside Previous Outstanding; this just shows them).
+      final adjustmentLines = <Map<String, dynamic>>[];
+      for (final adj in ledger.bills) {
+        if (!adj.isAdjustment) continue;
+        if (adj.data['includedInStatementId'] != null) continue;
+        adjustmentLines.add({
+          'periodKey': adj.periodKey,
+          'amount': roundMoney(
+            (adj.data['adjustmentAmount'] as num?)?.toDouble() ?? 0,
+          ),
+          'label': (adj.data['ledgerLabel'] ?? 'Adjustment').toString(),
+          'billId': adj.id,
+          'reason': (adj.data['notes'] ?? '').toString(),
+        });
+        writer.merge(adj.ref, {'includedInStatementId': billId});
+      }
+
       // The previous bill becomes history.
-      if (ledger.bills.isNotEmpty) {
-        final previous = ledger.bills.last;
+      final monthBills = ledger.monthBills;
+      if (monthBills.isNotEmpty) {
+        final previous = monthBills.last;
         final statementRemaining =
         roundMoney((previous.data['remainingAmount'] as num?)?.toDouble() ?? 0);
         writer.merge(previous.ref, {
@@ -647,6 +754,7 @@ class MonthlyStatementEngine {
       transaction.set(billRef, {
         'type': 'monthly',
         'billingModel': MonthlyBill.statementModel,
+        'adjustmentLines': adjustmentLines,
         'billNumber': billNumber,
         'customerId': customerId,
         'customerName': customerName,
@@ -701,6 +809,7 @@ class MonthlyStatementEngine {
         'ownCharges': currentCharges,
         'ownPaid': newOwnPaid,
         'ownRemaining': newOwnRemaining,
+        if (plan.creditApplied > 0) 'paidFromDeletedBill': plan.creditApplied,
         'ownStatus':
         paymentStatusFor(paid: newOwnPaid, remaining: newOwnRemaining),
 
@@ -726,7 +835,11 @@ class MonthlyStatementEngine {
 
       transaction.set(
         counterRef,
-        {seqField: seq, 'updatedAt': FieldValue.serverTimestamp()},
+        {
+          seqField: seq,
+          'type': 'counter',
+          'updatedAt': FieldValue.serverTimestamp(),
+        },
         SetOptions(merge: true),
       );
 
@@ -734,6 +847,7 @@ class MonthlyStatementEngine {
         'pendingAmount': totals.totalPayable,
         'advanceAmount': totals.advanceAfter,
         'lastBilledPeriod': periodKey,
+        if (plan.creditApplied > 0) 'billPaymentCredit': plan.creditLeft,
         'updatedAt': FieldValue.serverTimestamp(),
       });
 
@@ -949,16 +1063,39 @@ class MonthlyStatementEngine {
         .fold<double>(0, (sum, a) => sum + a.amount);
     final newOwnPaid = roundMoney(advanceOnNewMonth);
 
+    // A payment made on a deleted bill is used on this month first; the
+    // rest waits for the next bill.
+    final credit =
+    roundMoney((customer['billPaymentCredit'] as num?)?.toDouble() ?? 0);
+    final ownRemainingAfterAdvance = roundMoney(currentCharges - newOwnPaid);
+    final creditApplied = credit <= kMoneyEpsilon
+        ? 0.0
+        : roundMoney(credit < ownRemainingAfterAdvance
+        ? credit
+        : ownRemainingAfterAdvance);
+
+    final adjustedTotals = creditApplied <= kMoneyEpsilon
+        ? totals
+        : StatementTotals(
+      previousOutstanding: totals.previousOutstanding,
+      currentCharges: totals.currentCharges,
+      advanceApplied: totals.advanceApplied,
+      totalPayable: roundMoney(totals.totalPayable - creditApplied),
+      advanceAfter: totals.advanceAfter,
+    );
+
     return _StatementPlan(
       lines: lines,
       goatBilledThrough: billedThrough,
       currentCharges: currentCharges,
       breakdown: breakdown,
-      totals: totals,
+      totals: adjustedTotals,
       advanceAllocation: advanceAllocation,
       finalRemaining: finalRemaining,
-      newOwnPaid: newOwnPaid,
-      newOwnRemaining: roundMoney(currentCharges - newOwnPaid),
+      newOwnPaid: roundMoney(newOwnPaid + creditApplied),
+      newOwnRemaining: roundMoney(ownRemainingAfterAdvance - creditApplied),
+      creditApplied: creditApplied,
+      creditLeft: roundMoney(credit - creditApplied),
     );
   }
 
@@ -1000,10 +1137,10 @@ class MonthlyStatementEngine {
     await _customers(farmId).doc(customerId).get().timeout(_timeout);
     final billRefs =
     await PalaiLedger.instance.monthlyBillRefs(farmId, customerId);
-    final bills = <LedgerBill>[];
-    for (final ref in billRefs) {
-      bills.add(LedgerBill(await ref.get().timeout(_timeout)));
-    }
+    final bills = (await Future.wait(billRefs.map((ref) => ref.get()))
+        .timeout(_timeout))
+        .map(LedgerBill.new)
+        .toList();
     final ledger = CustomerLedger(bills);
     final goatSnaps = (await _goats(farmId, customerId)
         .get()
@@ -1038,9 +1175,674 @@ class MonthlyStatementEngine {
       advanceApplied: computed.totals.advanceApplied,
       totalPayable: computed.totals.totalPayable,
       advanceAfter: computed.totals.advanceAfter,
+      paidFromDeletedBill: computed.creditApplied,
       lastBilledKey: lastBilled,
       laterPeriods: plan.periods.skip(1).toList(),
     );
+  }
+
+  // =========================================================================
+  // SYNC: ANALYSE AND REBUILD BILLS
+  // =========================================================================
+
+  /// Looks at every customer and reports what Generate Bills alone would
+  /// miss once bills already exist:
+  ///
+  /// * customers (or months) not billed yet → generate;
+  /// * a latest bill whose goats changed since it was made (goat added
+  ///   with days in that month, goat deleted, price changed, goat checked
+  ///   out later) → rebuild: delete it and generate it fresh;
+  /// * anything that can't be fixed safely by itself → attention, with
+  ///   what to do.
+  ///
+  /// Nothing is written.
+  Future<List<BillSyncItem>> analyseSync({
+    required String farmId,
+    void Function(int done, int total)? onProgress,
+  }) async {
+    final target = targetPeriodKey();
+    final plans = await planRun(farmId: farmId, targetKey: target);
+    final items = <BillSyncItem>[];
+
+    for (var i = 0; i < plans.length; i++) {
+      final plan = plans[i];
+      onProgress?.call(i, plans.length);
+
+      if (plan.periods.isNotEmpty) {
+        items.add(BillSyncItem(
+          customerId: plan.customerId,
+          customerName: plan.customerName,
+          kind: BillSyncKind.generate,
+          periodKey: plan.periods.first,
+          changes: [
+            plan.periods.length == 1
+                ? 'Not billed for ${periodLabel(plan.periods.first)} yet.'
+                : 'Not billed for ${plan.periods.map(periodLabel).join(', ')} yet.',
+          ],
+        ));
+        continue;
+      }
+
+      try {
+        final item = await _analyseLatestBill(
+          farmId: farmId,
+          customerId: plan.customerId,
+          customerName: plan.customerName,
+          target: target,
+        );
+        if (item != null) items.add(item);
+      } catch (e) {
+        items.add(BillSyncItem(
+          customerId: plan.customerId,
+          customerName: plan.customerName,
+          kind: BillSyncKind.attention,
+          periodKey: target,
+          note: 'Could not check: ${FirestoreService.instance.describeError(e)}',
+        ));
+      }
+    }
+    onProgress?.call(plans.length, plans.length);
+    return items;
+  }
+
+  /// Re-works the customer's latest bill from the goats on the farm now,
+  /// exactly as Delete + Generate would, and compares. Null when it still
+  /// matches.
+  Future<BillSyncItem?> _analyseLatestBill({
+    required String farmId,
+    required String customerId,
+    required String customerName,
+    required String target,
+  }) async {
+    final bill = await latestBill(farmId: farmId, customerId: customerId);
+    if (bill == null) return null;
+
+    final periodKey = bill.billingPeriodKey;
+    final monthStart = periodStart(periodKey);
+    final dayBefore = DateTime(monthStart.year, monthStart.month, 0);
+    final month = periodLabel(periodKey);
+
+    final goatSnaps = (await _goats(farmId, customerId)
+        .get()
+        .timeout(_timeout))
+        .docs;
+
+    final billLines = <String, GoatBillingLine>{
+      for (final line in bill.goatBreakdown)
+        if (line.goatId.isNotEmpty) line.goatId: line,
+    };
+
+    // Each goat as if this bill did not exist yet.
+    final recomputed = <String, GoatChargeLine>{};
+    final earlierMissing = <String>[];
+
+    // Goats billed again after this bill (checkout / death): their later
+    // days were charged there, so this bill's line stays as it is.
+    final kept = <String, double>{};
+
+    for (final snap in goatSnaps) {
+      final data = Map<String, dynamic>.from(snap.data());
+      final line = billLines[snap.id];
+      final stored = data['billedThroughDate'];
+      final storedDate = stored is Timestamp ? palaiDateOnly(stored.toDate()) : null;
+
+      if (line != null &&
+          line.toDate != null &&
+          storedDate != null &&
+          storedDate != palaiDateOnly(line.toDate!)) {
+        kept[snap.id] = line.palaiAmount;
+        continue;
+      }
+
+      if (line?.fromDate != null) {
+        final from = palaiDateOnly(line!.fromDate!);
+        data['billedThroughDate'] =
+            Timestamp.fromDate(DateTime(from.year, from.month, from.day - 1));
+      } else if (storedDate == null && line == null) {
+        // Not on this bill and never billed: a goat added after the bill.
+        // Days before this month were never billed by anything.
+        final input = _goatInput(
+          snap.id,
+          data,
+          lastBilledKey: null,
+          fallbackBilledThrough: dayBefore,
+        );
+        final arrival = input.billingStart == null
+            ? null
+            : palaiDateOnly(input.billingStart!);
+        if (arrival != null && arrival.isBefore(monthStart)) {
+          final missed = PalaiRangeCalculator.chargeForRange(
+            monthlyCharge: input.monthlyRate < 0 ? 0.0 : input.monthlyRate,
+            from: arrival,
+            to: dayBefore,
+          );
+          if (missed.amount > kMoneyEpsilon) {
+            earlierMissing.add(
+              '${input.label} arrived ${DateFormat('d MMM yyyy').format(arrival)}: '
+                  '${missed.totalDays} days before $month were never billed '
+                  '(₹${missed.amount.toStringAsFixed(0)}).',
+            );
+          }
+        }
+      }
+
+      final input = _goatInput(
+        snap.id,
+        data,
+        lastBilledKey: previousPeriodKey(periodKey),
+        fallbackBilledThrough: dayBefore,
+      );
+      final charge = chargeGoatForPeriod(input, periodKey);
+      if (charge != null && charge.amount > kMoneyEpsilon) {
+        recomputed[snap.id] = charge;
+      }
+    }
+
+    // ---------------------------------------------------------- compare
+    final changes = <String>[];
+    final dayFmt = DateFormat('d MMM');
+    String money(double v) => '₹${v.toStringAsFixed(0)}';
+
+    for (final entry in recomputed.entries) {
+      final old = billLines[entry.key];
+      final now = entry.value;
+      if (old == null) {
+        changes.add(
+          'Added ${now.label}: ${dayFmt.format(now.fromDate)} – '
+              '${dayFmt.format(now.toDate)} (${money(now.amount)}).',
+        );
+      } else if ((old.palaiAmount - now.amount).abs() > 0.5) {
+        changes.add(
+          'Changed ${now.label}: ${money(old.palaiAmount)} → ${money(now.amount)}.',
+        );
+      }
+    }
+    for (final entry in billLines.entries) {
+      if (recomputed.containsKey(entry.key)) continue;
+      if (kept.containsKey(entry.key)) continue;
+      if (entry.value.palaiAmount <= kMoneyEpsilon) continue;
+      final exists = goatSnaps.any((g) => g.id == entry.key);
+      changes.add(
+        exists
+            ? 'Removed ${entry.value.label}: no Palai due for $month any more '
+            '(was ${money(entry.value.palaiAmount)}).'
+            : 'Removed ${entry.value.label}: goat deleted '
+            '(was ${money(entry.value.palaiAmount)}).',
+      );
+    }
+
+    final newPalai = roundMoney(
+      recomputed.values.fold<double>(0, (sum, l) => sum + l.amount) +
+          kept.values.fold<double>(0, (sum, v) => sum + v),
+    );
+    final oldPalai = roundMoney(bill.palaiCharges);
+
+    // Old bills without goat lines: compare totals only.
+    if (billLines.isEmpty && (newPalai - oldPalai).abs() > 0.5) {
+      changes.add(
+        'Palai worked out from today\'s goats: ${money(newPalai)} '
+            '(bill shows ${money(oldPalai)}).',
+      );
+    }
+
+    final differs = (newPalai - oldPalai).abs() > 0.5 || changes.isNotEmpty;
+
+    if (!differs && earlierMissing.isEmpty) return null;
+
+    // ----------------------------------------------------- decide action
+    String? blocked;
+    if (!differs) {
+      blocked = null;
+    } else if (periodKey.compareTo(target) > 0) {
+      blocked = 'This is an older-style bill for $month, made before the '
+          'update. Bills are now made for the previous month, so it can\'t '
+          'be rebuilt until ${DateFormat('d MMMM yyyy').format(periodStart(nextPeriodKey(periodKey)))}. '
+          'Delete it in Monthly Bills if it should go now; $month will then '
+          'be billed correctly on that date.';
+    } else if (kept.isNotEmpty) {
+      blocked = 'A goat on this bill was checked out or died after it was '
+          'made, so the bill can\'t be rebuilt. Use an adjustment for the '
+          'difference (${money((newPalai - oldPalai).abs())} '
+          '${newPalai > oldPalai ? 'more' : 'less'}).';
+    } else if (bill.isStatement && await _wasEditedByHand(farmId, bill.id)) {
+      blocked = 'This bill was edited by hand, so it isn\'t rebuilt '
+          'automatically (that would undo the edit). Check it in Monthly Bills.';
+    }
+
+    if (!differs) {
+      return BillSyncItem(
+        customerId: customerId,
+        customerName: customerName,
+        kind: BillSyncKind.attention,
+        periodKey: periodKey,
+        billId: bill.id,
+        billNumber: bill.billNumber,
+        oldAmount: oldPalai,
+        newAmount: newPalai,
+        changes: earlierMissing,
+        note: 'Add an adjustment for these days in Monthly Bills.',
+      );
+    }
+
+    return BillSyncItem(
+      customerId: customerId,
+      customerName: customerName,
+      kind: blocked == null ? BillSyncKind.rebuild : BillSyncKind.attention,
+      periodKey: periodKey,
+      billId: bill.id,
+      billNumber: bill.billNumber,
+      oldAmount: oldPalai,
+      newAmount: newPalai,
+      changes: [...changes, ...earlierMissing],
+      note: blocked ??
+          (earlierMissing.isEmpty
+              ? null
+              : 'Earlier days are not part of the rebuild: add an '
+              'adjustment for them in Monthly Bills.'),
+    );
+  }
+
+  Future<bool> _wasEditedByHand(String farmId, String billId) async {
+    final snap = await _bills(farmId).doc(billId).get().timeout(_timeout);
+    final corrections = snap.data()?['corrections'];
+    return corrections is List &&
+        corrections.any((c) => c is Map && c['type'] == 'edit');
+  }
+
+  /// Carries out the automatic items from [analyseSync]: generates missing
+  /// bills and rebuilds changed ones (delete, then generate fresh). Each
+  /// customer is separate; one failure never stops the others.
+  Future<List<BillSyncResult>> applySync({
+    required String farmId,
+    required List<BillSyncItem> items,
+    void Function(int index, int total, String customerName)? onProgress,
+  }) async {
+    final todo = items.where((i) => i.isAutomatic).toList();
+    final results = <BillSyncResult>[];
+
+    for (var i = 0; i < todo.length; i++) {
+      final item = todo[i];
+      onProgress?.call(i + 1, todo.length, item.customerName);
+
+      try {
+        if (item.kind == BillSyncKind.rebuild) {
+          await deleteLatestBill(
+            farmId: farmId,
+            customerId: item.customerId,
+            billId: item.billId!,
+            reason: 'Sync: goats changed after the bill was made.',
+          );
+        }
+
+        final outcomes = await generateForCustomer(
+          farmId: farmId,
+          customerId: item.customerId,
+        );
+        final generated = outcomes
+            .where((o) => o.kind == StatementOutcomeKind.generated)
+            .toList();
+        final failed = outcomes
+            .where((o) => o.kind == StatementOutcomeKind.failed)
+            .toList();
+
+        if (failed.isNotEmpty) {
+          results.add(BillSyncResult(
+            customerName: item.customerName,
+            ok: false,
+            message: item.kind == BillSyncKind.rebuild
+                ? 'Old bill removed, but the new one failed: '
+                '${failed.first.message} Press Generate Bills to retry.'
+                : failed.first.message,
+          ));
+        } else if (generated.isEmpty) {
+          results.add(BillSyncResult(
+            customerName: item.customerName,
+            ok: true,
+            message: item.kind == BillSyncKind.rebuild
+                ? 'Old bill removed. Nothing to charge for '
+                '${periodLabel(item.periodKey)} with the current goats.'
+                : 'Nothing to bill.',
+          ));
+        } else {
+          results.add(BillSyncResult(
+            customerName: item.customerName,
+            ok: true,
+            message: generated
+                .map((o) =>
+            '${periodLabel(o.periodKey)}: ₹${o.totalPayable.toStringAsFixed(0)} '
+                'payable')
+                .join(', '),
+          ));
+        }
+      } catch (e) {
+        results.add(BillSyncResult(
+          customerName: item.customerName,
+          ok: false,
+          message: FirestoreService.instance.describeError(e),
+        ));
+      }
+    }
+    return results;
+  }
+
+  // =========================================================================
+  // NEW CUSTOMER: ENROLLMENT DATE + PENDING BEFORE THE FIRST BILL
+  // =========================================================================
+
+  /// Adds a customer and sets up where their billing starts, in one
+  /// atomic write.
+  ///
+  /// [customer].joiningDate is the farm enrollment date. See
+  /// [enrollmentBilling]: when the customer enrolled before the month the
+  /// next run bills, the owner was asked whether those earlier months are
+  /// fully paid. [pendingBeforeBilling] is the amount still owed for them
+  /// (0 when fully paid). It is saved as an OPENING BALANCE:
+  ///
+  ///   * a record in monthlyBills (billingModel 'openingBalance') dated
+  ///     the month before the first bill, so it is the oldest thing owed
+  ///     and payments clear it first;
+  ///   * shown on the first bill as 'Pending before September 2026';
+  ///   * not income until it is paid.
+  ///
+  /// The app then bills this customer from the first billed month only;
+  /// goats are never charged for days before it.
+  Future<String> addCustomerWithEnrollment({
+    required String farmId,
+    required PalaiCustomer customer,
+    double pendingBeforeBilling = 0,
+    DateTime? today,
+  }) async {
+    final now = today ?? DateTime.now();
+    final enrolled = palaiDateOnly(customer.joiningDate);
+    if (enrolled.isAfter(palaiDateOnly(now))) {
+      throw ArgumentError('Enrollment date cannot be in the future.');
+    }
+
+    final plan = enrollmentBilling(enrollmentDate: enrolled, today: now);
+    final amount = roundMoney(pendingBeforeBilling < 0 ? 0 : pendingBeforeBilling);
+    if (amount > kMoneyEpsilon && !plan.asksAboutEarlierMonths) {
+      throw ArgumentError(
+        'There are no months before the first bill to carry a pending amount.',
+      );
+    }
+
+    final customerRef = _customers(farmId).doc();
+    final batch = _db.batch();
+
+    batch.set(customerRef, {
+      ...customer.toMap(),
+      'joiningDate': Timestamp.fromDate(enrolled),
+      'enrollmentDate': Timestamp.fromDate(enrolled),
+      'pendingAmount': amount,
+      'billingStartPeriod': plan.firstBilledKey,
+      // Marks the months before the first bill as settled (paid, or
+      // carried as the opening balance below), so the engine bills from
+      // the first billed month, including catch-up if a run is missed.
+      if (plan.asksAboutEarlierMonths)
+        'lastBilledPeriod': previousPeriodKey(plan.firstBilledKey),
+      if (plan.asksAboutEarlierMonths)
+        'earlierMonths': plan.monthsBefore,
+      if (plan.asksAboutEarlierMonths)
+        'earlierMonthsPaid': amount <= kMoneyEpsilon,
+    });
+
+    if (amount > kMoneyEpsilon) {
+      final through = previousPeriodKey(plan.firstBilledKey);
+      final monthStart = periodStart(through);
+      final shortId = customerRef.id.length > 6
+          ? customerRef.id.substring(0, 6).toUpperCase()
+          : customerRef.id.toUpperCase();
+
+      batch.set(_bills(farmId).doc('opening_${customerRef.id}'), {
+        'type': 'monthly',
+        'billingModel': MonthlyBill.openingBalanceModel,
+        'customerId': customerRef.id,
+        'customerName': customer.name,
+        'customerMobile': customer.mobileNumber,
+        'billNumber': 'OB-$shortId',
+        'ledgerLabel': plan.openingBalanceLabel,
+        'openingMonths': plan.monthsBefore,
+        'billingPeriodKey': through,
+        'month': monthStart.month,
+        'year': monthStart.year,
+        'billingMonth': Timestamp.fromDate(monthStart),
+        'periodEnd': Timestamp.fromDate(periodEnd(through)),
+        'goatCount': 0,
+        'goatBreakdown': const <Map<String, dynamic>>[],
+        'palaiCharges': 0.0,
+        'otherCharges': 0.0,
+        'discount': 0.0,
+        'newCharges': amount,
+        'currentBillAmount': amount,
+        'previousOutstanding': 0.0,
+        'advanceApplied': 0.0,
+        'totalDue': amount,
+        'amountPaid': 0.0,
+        'remainingAmount': amount,
+        'pendingAfter': amount,
+        'status': 'unpaid',
+        'paymentStatus': 'unpaid',
+        'notes': '${plan.monthsBeforeLabel} not fully paid when the '
+            'customer was added. Carried forward, never charged again.',
+        'generatedAt': FieldValue.serverTimestamp(),
+        'createdAt': FieldValue.serverTimestamp(),
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
+    }
+
+    await batch.commit().timeout(_timeout);
+    return customerRef.id;
+  }
+
+  // =========================================================================
+  // ADJUSTMENTS (corrections to older, already-billed months)
+  // =========================================================================
+
+  /// Months an adjustment can be made for: every billed month (and an
+  /// opening balance's month) except the newest unlocked statement, which
+  /// is corrected with Edit instead. Newest first.
+  Future<List<String>> adjustableMonths({
+    required String farmId,
+    required String customerId,
+  }) async {
+    final snapshot = await _bills(farmId)
+        .where('customerId', isEqualTo: customerId)
+        .get()
+        .timeout(_timeout);
+    final bills = CustomerLedger([
+      for (final doc in snapshot.docs)
+        if (doc.data()['type']?.toString() == 'monthly') LedgerBill(doc),
+    ]).monthBills;
+
+    final keys = <String>{};
+    for (var i = 0; i < bills.length; i++) {
+      final bill = bills[i];
+      final isNewest = i == bills.length - 1;
+      if (isNewest && bill.isStatement && !bill.locked) continue;
+      keys.add(bill.periodKey);
+    }
+    final list = keys.toList()..sort((a, b) => b.compareTo(a));
+    return list;
+  }
+
+  /// Adds a correction for an older month, positive (charge more) or
+  /// negative (credit). Takes effect immediately and is listed on the
+  /// customer's next bill.
+  ///
+  /// * Positive: owed like that month (payments clear it in that month's
+  ///   place, oldest first); pending goes up.
+  /// * Negative: reduces what is owed, oldest month first; anything
+  ///   beyond what is owed becomes advance. It is not a payment and not
+  ///   income.
+  Future<void> addAdjustment({
+    required String farmId,
+    required String customerId,
+    required String periodKey,
+    required double amount,
+    required String reason,
+  }) async {
+    final value = roundMoney(amount);
+    if (value.abs() <= kMoneyEpsilon) {
+      throw ArgumentError('Enter an amount.');
+    }
+    if (reason.trim().isEmpty) {
+      throw ArgumentError('Add a reason for the adjustment.');
+    }
+    if (parsePeriodKey(periodKey) == null) {
+      throw ArgumentError('Choose the month this adjustment is for.');
+    }
+
+    final allowed = await adjustableMonths(
+      farmId: farmId,
+      customerId: customerId,
+    );
+    if (!allowed.contains(periodKey)) {
+      throw StateError(
+        'Adjustments are for months that are already billed. Use Edit on '
+            'the latest bill instead.',
+      );
+    }
+
+    final customerRef = _customers(farmId).doc(customerId);
+    final billRefs =
+    await PalaiLedger.instance.monthlyBillRefs(farmId, customerId);
+    final adjustmentRef = _bills(farmId).doc(
+      'adj_${customerId}_${DateTime.now().millisecondsSinceEpoch}',
+    );
+    final activityRef = _farm(farmId).collection('activities').doc();
+    final actor = await FirestoreService.instance.getCurrentActor();
+
+    final shortId = customerId.length > 6
+        ? customerId.substring(0, 6).toUpperCase()
+        : customerId.toUpperCase();
+    final label = 'Adjustment for ${periodLabel(periodKey)}';
+
+    await _db.runTransaction<void>((transaction) async {
+      final customerSnap = await transaction.get(customerRef);
+      if (!customerSnap.exists) {
+        throw StateError('Customer no longer exists.');
+      }
+      final ledger = await PalaiLedger.instance.read(transaction, billRefs);
+
+      final customer = customerSnap.data() ?? {};
+      final pendingBefore =
+      roundMoney((customer['pendingAmount'] as num?)?.toDouble() ?? 0);
+      final advanceBefore =
+      roundMoney((customer['advanceAmount'] as num?)?.toDouble() ?? 0);
+
+      double pendingAfter;
+      double advanceAfter = advanceBefore;
+      double applied = 0;
+      List<Map<String, dynamic>> allocations = const [];
+
+      final writer = LedgerWriter();
+
+      if (value > 0) {
+        pendingAfter = roundMoney(pendingBefore + value);
+      } else {
+        final credit = -value;
+        final reduction = PalaiLedger.instance.reduceDues(
+          writer: writer,
+          ledger: ledger,
+          amount: credit,
+          pendingBefore: pendingBefore,
+          recordOnStatement: false,
+        );
+        applied = reduction.applied;
+        allocations = [
+          for (final a in reduction.allocations)
+            {
+              'billId': a.billId,
+              'periodKey': a.periodKey,
+              'amount': a.amount,
+            },
+        ];
+        pendingAfter = roundMoney(pendingBefore - applied);
+        advanceAfter = roundMoney(advanceBefore + (credit - applied));
+      }
+
+      final monthStart = periodStart(periodKey);
+      writer.flush(transaction);
+
+      transaction.set(adjustmentRef, {
+        'type': 'monthly',
+        'billingModel': MonthlyBill.adjustmentModel,
+        'customerId': customerId,
+        'customerName': (customer['name'] ?? '').toString(),
+        'billNumber': 'ADJ-$periodKey-$shortId',
+        'ledgerLabel': label,
+        'billingPeriodKey': periodKey,
+        'month': monthStart.month,
+        'year': monthStart.year,
+        'billingMonth': Timestamp.fromDate(monthStart),
+        'periodEnd': Timestamp.fromDate(periodEnd(periodKey)),
+        'adjustmentAmount': value,
+        'goatCount': 0,
+        'goatBreakdown': const <Map<String, dynamic>>[],
+        'palaiCharges': 0.0,
+        'newCharges': value > 0 ? value : 0.0,
+        'currentBillAmount': value,
+        'previousOutstanding': 0.0,
+        'advanceApplied': 0.0,
+        'totalDue': value > 0 ? value : 0.0,
+        'amountPaid': 0.0,
+        'remainingAmount': value > 0 ? value : 0.0,
+        'status': value > 0 ? 'unpaid' : 'paid',
+        'paymentStatus': value > 0 ? 'unpaid' : 'paid',
+        'creditAppliedToDues': applied,
+        'creditToAdvance': value < 0 ? roundMoney(-value - applied) : 0.0,
+        'creditAllocations': allocations,
+        'pendingAfter': pendingAfter,
+        'locked': true,
+        'notes': reason.trim(),
+        'generatedAt': FieldValue.serverTimestamp(),
+        'createdAt': FieldValue.serverTimestamp(),
+        'updatedAt': FieldValue.serverTimestamp(),
+        if (actor != null) 'createdBy': actor.name,
+      });
+
+      transaction.update(customerRef, {
+        'pendingAmount': pendingAfter,
+        'advanceAmount': advanceAfter,
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
+
+      transaction.set(activityRef, {
+        'type': 'monthlyBillUpdated',
+        'title': value > 0 ? 'Adjustment Added' : 'Credit Adjustment Added',
+        'subtitle': '${(customer['name'] ?? '').toString()} · $label · '
+            '${value > 0 ? '+' : '−'}₹${value.abs().toStringAsFixed(0)}',
+        'module': 'palai',
+        'customerId': customerId,
+        'billId': adjustmentRef.id,
+        'timestamp': FieldValue.serverTimestamp(),
+        if (actor != null) 'actorUid': actor.uid,
+        if (actor != null) 'actorName': actor.name,
+        if (actor != null) 'actorRole': actor.role,
+      });
+    }).timeout(_timeout);
+  }
+
+  // =========================================================================
+  // CONSISTENCY CHECK (all customers)
+  // =========================================================================
+
+  /// Flags (never fixes) every customer whose figures disagree. Returns
+  /// customer name → issues; customers without issues are left out.
+  Future<Map<String, List<String>>> checkAllCustomers({
+    required String farmId,
+  }) async {
+    final customers = await _customers(farmId).get().timeout(_timeout);
+    final results = <String, List<String>>{};
+    for (final doc in customers.docs) {
+      final issues = await MonthlyBillingService.instance
+          .checkCustomerConsistency(farmId: farmId, customerId: doc.id);
+      if (issues.isNotEmpty) {
+        final name = (doc.data()['name'] ?? doc.id).toString();
+        results[name] = issues;
+      }
+    }
+    return results;
   }
 
   // =========================================================================
@@ -1059,6 +1861,7 @@ class MonthlyStatementEngine {
         required List<DocumentReference<Map<String, dynamic>>> billRefs,
         required String billId,
         required String customerId,
+        bool allowOldStyle = false,
       }) async {
     final customerSnap = await transaction.get(customerRef);
     if (!customerSnap.exists) {
@@ -1074,12 +1877,20 @@ class MonthlyStatementEngine {
     if ((bill.data['customerId'] ?? '').toString() != customerId) {
       throw StateError('This bill does not belong to this customer.');
     }
-    if (!bill.isStatement) {
+    final model = bill.data['billingModel'];
+    if (bill.isAdjustment || model == MonthlyBill.openingBalanceModel) {
       throw StateError(
-        'Only bills made by Generate Bills can be corrected here.',
+        'Opening balances and adjustments are not bills, so they cannot be '
+            'changed here. Add an adjustment instead.',
       );
     }
-    if (bill.locked || ledger.bills.last.id != billId) {
+    if (!bill.isStatement && !allowOldStyle) {
+      throw StateError(
+        'Only bills made by Generate Bills can be edited. Delete this bill '
+            'and generate it again instead.',
+      );
+    }
+    if (bill.locked || ledger.monthBills.last.id != billId) {
       throw StateError(
         'Only the latest bill can be corrected. A newer bill already '
             'carries this month forward.',
@@ -1245,7 +2056,40 @@ class MonthlyStatementEngine {
   ///
   /// Refused when a payment or waiver touched this month, or a goat was
   /// checked out / died after the bill (those days were charged there).
+  @Deprecated('Use deleteLatestBill.')
   Future<void> voidStatement({
+    required String farmId,
+    required String customerId,
+    required String billId,
+    String reason = '',
+  }) =>
+      deleteLatestBill(
+        farmId: farmId,
+        customerId: customerId,
+        billId: billId,
+        reason: reason,
+      ).then((_) {});
+
+  /// DELETE BILL: removes the customer's latest bill so it can be
+  /// generated again from the goats on the farm now. Works for bills made
+  /// by Generate Bills and for bills made before statement billing.
+  ///
+  /// Typical use: a goat was deleted (or a price fixed) after the bill was
+  /// made. Delete the bill, then Generate again: the new bill is worked
+  /// out fresh, so the deleted goat is no longer charged.
+  ///
+  /// * The bill is kept only as a deleted record (status 'void') under a
+  ///   new id; it disappears from the customer's bills.
+  /// * Its own charge comes off pending; any advance it used goes back to
+  ///   advance (and older months that advance cleared are owed again).
+  /// * Payments that cleared OLDER months stay exactly as they are.
+  /// * Each goat's billedThroughDate goes back to before this bill, so
+  ///   those days are charged again on the next Generate.
+  ///
+  /// Refused when this month itself was paid or waived, or a goat on it
+  /// was checked out / died after the bill (those days were charged
+  /// there). Returns the deleted bill's month ('YYYY-MM').
+  Future<String> deleteLatestBill({
     required String farmId,
     required String customerId,
     required String billId,
@@ -1269,192 +2113,270 @@ class MonthlyStatementEngine {
           raw['goatId'].toString(),
     ];
 
-    await _db.runTransaction<void>((transaction) async {
-      // ------------------------------------------------------------- READS
-      final read = await _readLatestStatement(
-        transaction,
-        customerRef: customerRef,
-        billRefs: billRefs,
-        billId: billId,
-        customerId: customerId,
-      );
-      final goatSnaps = <String, DocumentSnapshot<Map<String, dynamic>>>{};
-      for (final id in goatIds) {
-        goatSnaps[id] = await transaction.get(goatsCol.doc(id));
+    // Already deleted (an earlier try finished on the server after the
+    // phone stopped waiting): nothing to do.
+    if (!preview.exists) {
+      final archived = await _bills(farmId)
+          .where('voidedFromBillId', isEqualTo: billId)
+          .limit(1)
+          .get()
+          .timeout(_timeout);
+      if (archived.docs.isNotEmpty) {
+        return LedgerBill(archived.docs.first).periodKey;
       }
+      throw StateError('This bill no longer exists.');
+    }
+    final previewPeriod = LedgerBill(preview).periodKey;
 
-      final bill = read.bill;
-      final data = bill.data;
-      final ledger = read.ledger;
-      final customer = read.customerSnap.data() ?? {};
-
-      double num0(String key) =>
-          roundMoney((data[key] as num?)?.toDouble() ?? 0);
-
-      // ------------------------------------------------------------ CHECKS
-      if (num0('amountPaid') > kMoneyEpsilon) {
-        throw StateError(
-          'A payment was recorded against this bill, so it cannot be '
-              'voided. Correct it with Edit instead.',
+    var deletedPeriod = '';
+    try {
+      await _db.runTransaction<void>((transaction) async {
+        // ------------------------------------------------------------- READS
+        final read = await _readLatestStatement(
+          transaction,
+          customerRef: customerRef,
+          billRefs: billRefs,
+          billId: billId,
+          customerId: customerId,
+          allowOldStyle: true,
         );
-      }
-
-      final allocations = <BreakdownLine>[
-        for (final raw in (data['advanceAllocations'] as List? ?? const []))
-          if (raw is Map) BreakdownLine.fromMap(Map<String, dynamic>.from(raw)),
-      ];
-      final advanceOnThisMonth = roundMoney(
-        allocations
-            .where((a) => a.billId == billId)
-            .fold<double>(0, (sum, a) => sum + a.amount),
-      );
-      if (bill.ownPaid > advanceOnThisMonth + kMoneyEpsilon) {
-        throw StateError(
-          'Part of this month was paid or waived after the bill was '
-              'issued, so it cannot be voided. Correct it with Edit instead.',
+        final goatList = await Future.wait(
+          goatIds.map((id) => transaction.get(goatsCol.doc(id))),
         );
-      }
+        final goatSnaps = <String, DocumentSnapshot<Map<String, dynamic>>>{
+          for (final snap in goatList) snap.id: snap,
+        };
 
-      final goatRestore = <DocumentReference<Map<String, dynamic>>, DateTime>{};
-      for (final raw in (data['goatBreakdown'] as List? ?? const [])) {
-        if (raw is! Map) continue;
-        final line = GoatBillingLine.fromMap(Map<String, dynamic>.from(raw));
-        final snap = goatSnaps[line.goatId];
-        if (snap == null || !snap.exists || line.fromDate == null ||
-            line.toDate == null) {
-          continue;
+        final bill = read.bill;
+        final data = bill.data;
+        final ledger = read.ledger;
+        deletedPeriod = bill.periodKey;
+        final customer = read.customerSnap.data() ?? {};
+
+        double num0(String key) =>
+            roundMoney((data[key] as num?)?.toDouble() ?? 0);
+
+        // ------------------------------------------------------------ CHECKS
+        // A bill made before statement billing records its own payments in
+        // amountPaid. A statement's amountPaid can include money that only
+        // cleared OLDER months, which is fine: only this month's own
+        // payments block deleting it (checked below via ownPaid).
+        // Payments made for THIS month are not lost: they are kept as a
+        // credit (billPaymentCredit) and used on the regenerated bill. Only
+        // the unpaid part of the month comes off pending.
+
+        final allocations = <BreakdownLine>[
+          for (final raw in (data['advanceAllocations'] as List? ?? const []))
+            if (raw is Map) BreakdownLine.fromMap(Map<String, dynamic>.from(raw)),
+        ];
+        final advanceOnThisMonth = roundMoney(
+          allocations
+              .where((a) => a.billId == billId)
+              .fold<double>(0, (sum, a) => sum + a.amount),
+        );
+        // What was paid for this month (not counting advance the bill used).
+        // Older-style bills: the month's own charge. Their amountPaid could
+        // include money that really cleared older balances (the old app
+        // recorded every payment on the newest bill), so at most the
+        // month's own charge counts as paid for this month.
+        final legacyCharge = num0('currentBillAmount') > 0
+            ? num0('currentBillAmount')
+            : (num0('newCharges') > 0 ? num0('newCharges') : num0('palaiCharges'));
+        final legacyMax = roundMoney(legacyCharge - num0('advanceApplied'));
+        final paidOnMonth = bill.isStatement
+            ? roundMoney(bill.ownPaid - advanceOnThisMonth)
+            : roundMoney(
+          num0('amountPaid') < legacyMax
+              ? num0('amountPaid')
+              : (legacyMax < 0 ? 0.0 : legacyMax),
+        );
+        final creditFromPayments = paidOnMonth > kMoneyEpsilon ? paidOnMonth : 0.0;
+
+        final goatRestore = <DocumentReference<Map<String, dynamic>>, DateTime>{};
+        for (final raw in (data['goatBreakdown'] as List? ?? const [])) {
+          if (raw is! Map) continue;
+          final line = GoatBillingLine.fromMap(Map<String, dynamic>.from(raw));
+          final snap = goatSnaps[line.goatId];
+          if (snap == null || !snap.exists || line.fromDate == null ||
+              line.toDate == null) {
+            continue;
+          }
+          final stored = snap.data()?['billedThroughDate'];
+          final current = stored is Timestamp ? palaiDateOnly(stored.toDate()) : null;
+          if (current == null || current != palaiDateOnly(line.toDate!)) {
+            throw StateError(
+              '${line.label} was checked out, died or was billed again after '
+                  'this bill (those days were charged there), so it cannot be '
+                  'deleted. Use Edit or an adjustment instead.',
+            );
+          }
+          final from = palaiDateOnly(line.fromDate!);
+          goatRestore[snap.reference] =
+              DateTime(from.year, from.month, from.day - 1);
         }
-        final stored = snap.data()?['billedThroughDate'];
-        final current = stored is Timestamp ? palaiDateOnly(stored.toDate()) : null;
-        if (current == null || current != palaiDateOnly(line.toDate!)) {
-          throw StateError(
-            '${line.label} was checked out, died or was billed again after '
-                'this bill, so it cannot be voided. Correct it with Edit instead.',
+
+        final advanceApplied = num0('advanceApplied');
+        final pendingBefore =
+        roundMoney((customer['pendingAmount'] as num?)?.toDouble() ?? 0);
+
+        // What this bill still adds to pending (the month's UNPAID part):
+        //  * Statement: its charge minus the advance it used, minus what was
+        //    paid on the month (that payment becomes a credit).
+        //  * Older-style bill: its own charge minus advance minus paid. Some
+        //    old bills stored a remaining amount that also included the
+        //    previous outstanding; that part is NOT this month's, so the
+        //    smaller figure is used and the old outstanding stays owed.
+        double pendingDelta;
+        if (bill.isStatement) {
+          pendingDelta = roundMoney(
+            voidPendingDelta(
+              ownCharges: num0('ownCharges'),
+              advanceApplied: advanceApplied,
+            ) +
+                creditFromPayments,
+          );
+        } else {
+          final ownUnpaid =
+          roundMoney(legacyCharge - advanceApplied - creditFromPayments);
+          final stored = num0('remainingAmount');
+          final unpaid = ownUnpaid < 0
+              ? 0.0
+              : (stored < ownUnpaid ? stored : ownUnpaid);
+          pendingDelta = -unpaid;
+        }
+
+        final pendingAfter = roundMoney(pendingBefore + pendingDelta);
+        // Never below zero: anything this month owed beyond the customer's
+        // pending was already settled another way.
+        final safePendingAfter = pendingAfter < 0 ? 0.0 : pendingAfter;
+        final creditBefore = roundMoney(
+          (customer['billPaymentCredit'] as num?)?.toDouble() ?? 0,
+        );
+        final advanceAfter = roundMoney(
+          ((customer['advanceAmount'] as num?)?.toDouble() ?? 0) +
+              advanceApplied,
+        );
+
+        final monthBills = ledger.monthBills;
+        final previous = monthBills.length >= 2
+            ? monthBills[monthBills.length - 2]
+            : null;
+
+        // With no earlier bill, go back to the customer's billing start
+        // (set when they were added), so the first month is billed again
+        // from the same place, never earlier.
+        final startKey = customer['billingStartPeriod']?.toString();
+        final Object startMarker = parsePeriodKey(startKey) != null
+            ? previousPeriodKey(startKey!)
+            : FieldValue.delete();
+
+        // ------------------------------------------------------------ WRITES
+        final writer = LedgerWriter();
+
+        // Older months the advance cleared are owed again.
+        for (final a in allocations) {
+          if (a.billId == null || a.billId == billId || a.amount <= 0) continue;
+          final older = ledger.byId(a.billId!);
+          if (older == null) continue;
+          final paid = roundMoney(older.ownPaid - a.amount);
+          final remaining = roundMoney(older.ownRemaining + a.amount);
+          final status = paymentStatusFor(
+            paid: paid < 0 ? 0.0 : paid,
+            remaining: remaining,
+          );
+          if (older.hasOwnFields) {
+            writer.merge(older.ref, {
+              'ownPaid': paid < 0 ? 0.0 : paid,
+              'ownRemaining': remaining,
+              'ownStatus': status,
+            });
+          } else {
+            writer.merge(older.ref, {
+              'amountPaid': paid < 0 ? 0.0 : paid,
+              'remainingAmount': remaining,
+              'status': status,
+              'paymentStatus': status,
+            });
+          }
+        }
+
+        // The previous bill becomes the latest again.
+        if (previous != null) {
+          writer.merge(previous.ref, {
+            'locked': false,
+            'lockedByBillId': FieldValue.delete(),
+            'carriedForward': FieldValue.delete(),
+            'carriedForwardToBillId': FieldValue.delete(),
+          });
+        }
+        writer.flush(transaction);
+
+        // Keep the bill as a void record and free the month's id.
+        transaction.set(archiveRef, {
+          ...data,
+          'status': 'void',
+          'paymentStatus': 'void',
+          'isVoid': true,
+          'voidedFromBillId': billId,
+          'voidReason': reason.trim(),
+          'paymentKeptAsCredit': creditFromPayments,
+          'deletedBill': true,
+          'voidedAt': FieldValue.serverTimestamp(),
+          if (actor != null) 'voidedBy': actor.name,
+          'updatedAt': FieldValue.serverTimestamp(),
+        });
+        transaction.delete(bill.ref);
+
+        for (final entry in goatRestore.entries) {
+          transaction.update(entry.key, {
+            'billedThroughDate': Timestamp.fromDate(entry.value),
+            'lastBilledPeriod': previous?.periodKey ?? startMarker,
+          });
+        }
+
+        transaction.update(customerRef, {
+          'pendingAmount': safePendingAfter,
+          'advanceAmount': advanceAfter,
+          if (creditFromPayments > 0)
+            'billPaymentCredit': roundMoney(creditBefore + creditFromPayments),
+          'lastBilledPeriod': previous?.periodKey ?? startMarker,
+          'updatedAt': FieldValue.serverTimestamp(),
+        });
+
+        // The advance used by this bill was income; it is held again now.
+        if (advanceApplied > 0) {
+          transaction.delete(transactionsRef.doc('advuse_$billId'));
+          transaction.delete(
+            customerRef.collection('advanceEntries').doc('bill_$billId'),
           );
         }
-        final from = palaiDateOnly(line.fromDate!);
-        goatRestore[snap.reference] =
-            DateTime(from.year, from.month, from.day - 1);
-      }
 
-      final ownCharges = num0('ownCharges');
-      final advanceApplied = num0('advanceApplied');
-      final pendingBefore =
-      roundMoney((customer['pendingAmount'] as num?)?.toDouble() ?? 0);
-      final pendingAfter = roundMoney(
-        pendingBefore +
-            voidPendingDelta(
-              ownCharges: ownCharges,
-              advanceApplied: advanceApplied,
-            ),
-      );
-      if (pendingAfter < -kMoneyEpsilon) {
-        throw StateError(
-          'The customer\'s pending would go below zero. Check their '
-              'balance before voiding this bill.',
-        );
-      }
-      final advanceAfter = roundMoney(
-        ((customer['advanceAmount'] as num?)?.toDouble() ?? 0) +
-            advanceApplied,
-      );
-
-      final previous = ledger.bills.length >= 2
-          ? ledger.bills[ledger.bills.length - 2]
-          : null;
-
-      // ------------------------------------------------------------ WRITES
-      final writer = LedgerWriter();
-
-      // Older months the advance cleared are owed again.
-      for (final a in allocations) {
-        if (a.billId == null || a.billId == billId || a.amount <= 0) continue;
-        final older = ledger.byId(a.billId!);
-        if (older == null) continue;
-        final paid = roundMoney(older.ownPaid - a.amount);
-        final remaining = roundMoney(older.ownRemaining + a.amount);
-        final status = paymentStatusFor(
-          paid: paid < 0 ? 0.0 : paid,
-          remaining: remaining,
-        );
-        if (older.hasOwnFields) {
-          writer.merge(older.ref, {
-            'ownPaid': paid < 0 ? 0.0 : paid,
-            'ownRemaining': remaining,
-            'ownStatus': status,
-          });
-        } else {
-          writer.merge(older.ref, {
-            'amountPaid': paid < 0 ? 0.0 : paid,
-            'remainingAmount': remaining,
-            'status': status,
-            'paymentStatus': status,
-          });
-        }
-      }
-
-      // The previous bill becomes the latest again.
-      if (previous != null) {
-        writer.merge(previous.ref, {
-          'locked': false,
-          'lockedByBillId': FieldValue.delete(),
-          'carriedForward': FieldValue.delete(),
-          'carriedForwardToBillId': FieldValue.delete(),
+        transaction.set(activityRef, {
+          'type': 'monthlyBillDeleted',
+          'title': 'Monthly Bill Deleted',
+          'subtitle': '${(customer['name'] ?? '').toString()} · '
+              '${periodLabel(bill.periodKey)} · ${bill.billNumber}',
+          'module': 'palai',
+          'customerId': customerId,
+          'billId': archiveRef.id,
+          'billNumber': bill.billNumber,
+          'timestamp': FieldValue.serverTimestamp(),
+          if (actor != null) 'actorUid': actor.uid,
+          if (actor != null) 'actorName': actor.name,
+          if (actor != null) 'actorRole': actor.role,
         });
+      }).timeout(_timeout);
+    } catch (e) {
+      // On a slow connection the phone can stop waiting while the server
+      // still finishes the delete. If the bill is gone, it worked.
+      final again = await _bills(farmId).doc(billId).get().timeout(_timeout);
+      if (!again.exists) {
+        return deletedPeriod.isNotEmpty ? deletedPeriod : previewPeriod;
       }
-      writer.flush(transaction);
+      rethrow;
+    }
 
-      // Keep the bill as a void record and free the month's id.
-      transaction.set(archiveRef, {
-        ...data,
-        'status': 'void',
-        'paymentStatus': 'void',
-        'isVoid': true,
-        'voidedFromBillId': billId,
-        'voidReason': reason.trim(),
-        'voidedAt': FieldValue.serverTimestamp(),
-        if (actor != null) 'voidedBy': actor.name,
-        'updatedAt': FieldValue.serverTimestamp(),
-      });
-      transaction.delete(bill.ref);
-
-      for (final entry in goatRestore.entries) {
-        transaction.update(entry.key, {
-          'billedThroughDate': Timestamp.fromDate(entry.value),
-          'lastBilledPeriod': previous?.periodKey ?? FieldValue.delete(),
-        });
-      }
-
-      transaction.update(customerRef, {
-        'pendingAmount': pendingAfter < 0 ? 0.0 : pendingAfter,
-        'advanceAmount': advanceAfter,
-        'lastBilledPeriod': previous?.periodKey ?? FieldValue.delete(),
-        'updatedAt': FieldValue.serverTimestamp(),
-      });
-
-      // The advance used by this bill was income; it is held again now.
-      if (advanceApplied > 0) {
-        transaction.delete(transactionsRef.doc('advuse_$billId'));
-        transaction.delete(
-          customerRef.collection('advanceEntries').doc('bill_$billId'),
-        );
-      }
-
-      transaction.set(activityRef, {
-        'type': 'monthlyBillVoided',
-        'title': 'Monthly Bill Voided',
-        'subtitle': '${(customer['name'] ?? '').toString()} · '
-            '${periodLabel(bill.periodKey)} · ${bill.billNumber}',
-        'module': 'palai',
-        'customerId': customerId,
-        'billId': archiveRef.id,
-        'billNumber': bill.billNumber,
-        'timestamp': FieldValue.serverTimestamp(),
-        if (actor != null) 'actorUid': actor.uid,
-        if (actor != null) 'actorName': actor.name,
-        if (actor != null) 'actorRole': actor.role,
-      });
-    }).timeout(_timeout);
+    return deletedPeriod;
   }
 
   // =========================================================================
@@ -1462,9 +2384,16 @@ class MonthlyStatementEngine {
   // =========================================================================
 
   /// The customer's newest monthly bill that is not void, or null.
+  ///
+  /// [preferStatement]: for reports. Returns the newest bill made by the
+  /// new billing (Generate Bills) when there is one, so an older-style
+  /// bill made for the current month before the update never hides it.
+  /// Falls back to the newest older-style bill only when the customer has
+  /// no new bill yet.
   Future<MonthlyBill?> latestBill({
     required String farmId,
     required String customerId,
+    bool preferStatement = false,
   }) async {
     final snapshot = await _bills(farmId)
         .where('customerId', isEqualTo: customerId)
@@ -1473,16 +2402,30 @@ class MonthlyStatementEngine {
 
     MonthlyBill? latest;
     String? latestKey;
+    MonthlyBill? latestStatement;
+    String? latestStatementKey;
     for (final doc in snapshot.docs) {
       final query = _QueryBill(doc.data());
       if (query.type != 'monthly' || query.isVoid) continue;
+      final model = doc.data()['billingModel'];
+      if (model == MonthlyBill.openingBalanceModel ||
+          model == MonthlyBill.adjustmentModel) {
+        continue;
+      }
       final key = query.periodKey;
       if (key == null) continue;
       if (latestKey == null || key.compareTo(latestKey) > 0) {
         latestKey = key;
         latest = MonthlyBill.fromDoc(doc);
       }
+      if (model == MonthlyBill.statementModel &&
+          (latestStatementKey == null ||
+              key.compareTo(latestStatementKey) > 0)) {
+        latestStatementKey = key;
+        latestStatement = MonthlyBill.fromDoc(doc);
+      }
     }
+    if (preferStatement && latestStatement != null) return latestStatement;
     return latest;
   }
 

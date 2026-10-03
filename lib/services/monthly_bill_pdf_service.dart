@@ -7,6 +7,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
+import '../utils/pdf_download.dart';
 import '../models/bill_settings_model.dart';
 import '../models/monthly_bill_model.dart';
 
@@ -257,7 +258,18 @@ class MonthlyBillPdfService {
     );
   }
 
-  /// Saves the PDF to the application documents directory.
+  /// Download: opens the phone's "Save as" screen (file name can be
+  /// changed, any folder can be picked). See [savePdfAs].
+  Future<PdfSaveResult> saveAs(
+      MonthlyBill bill,
+      BillSettings settings,
+      ) async {
+    final bytes = await generatePdf(bill, settings);
+    return savePdfAs(bytes, _safeFileName(bill));
+  }
+
+  /// Saves the PDF to the application documents directory (private to the
+  /// app; not visible in Files). Kept for internal use.
   ///
   /// Returns the full local path.
   Future<String> save(
@@ -804,7 +816,7 @@ class MonthlyBillPdfService {
       ),
       for (final line in bill.previousBreakdown)
         _summaryRow(
-          '      ${_periodLabel(line.periodKey)}',
+          '      ${line.label ?? _periodLabel(line.periodKey)}',
           line.amount,
           small: true,
         ),
@@ -814,11 +826,33 @@ class MonthlyBillPdfService {
           bill.earlierBalance,
           small: true,
         ),
+      if (bill.adjustmentLines.isNotEmpty) ...[
+        pw.SizedBox(height: 4),
+        pw.Text(
+          '      Adjustments since the last bill (included above):',
+          style: const pw.TextStyle(fontSize: 7.5, color: PdfColors.grey700),
+        ),
+        for (final line in bill.adjustmentLines)
+          _summaryRow(
+            '      ${line.label ?? _periodLabel(line.periodKey)}',
+            line.amount.abs(),
+            small: true,
+            prefix: line.amount < 0 ? '- ' : '+ ',
+          ),
+      ],
       if (bill.advanceApplied > 0.005) ...[
         pw.SizedBox(height: 6),
         _summaryRow(
           'Less: Advance Applied',
           bill.advanceApplied,
+          prefix: '- ',
+        ),
+      ],
+      if (bill.paidFromDeletedBill > 0.005) ...[
+        pw.SizedBox(height: 6),
+        _summaryRow(
+          'Less: Already Paid for ${bill.monthYear}',
+          bill.paidFromDeletedBill,
           prefix: '- ',
         ),
       ],

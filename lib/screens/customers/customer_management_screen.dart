@@ -55,6 +55,24 @@ class _CustomerManagementScreenState
   /// start a second run.
   bool _generatingBills = false;
 
+  bool _checkingBalances = false;
+
+  bool _syncingBills = false;
+
+  /// Sync bills: after bills were generated, finds new customers / months
+  /// and bills whose goats changed (added, deleted, price changed) and
+  /// rebuilds them after the owner reviews the list.
+  Future<void> _syncBills() async {
+    final farmId = _farmId;
+    if (farmId == null || _syncingBills) return;
+    setState(() => _syncingBills = true);
+    try {
+      await runSyncBillsFlow(context, farmId: farmId);
+    } finally {
+      if (mounted) setState(() => _syncingBills = false);
+    }
+  }
+
   @override
   void initState() {
     super.initState();
@@ -134,6 +152,83 @@ class _CustomerManagementScreenState
     } finally {
       if (mounted) setState(() => _generatingBills = false);
     }
+  }
+
+  /// Flags (never fixes) customers whose bills and pending disagree.
+  Future<void> _checkAllBalances() async {
+    final farmId = _farmId;
+    if (farmId == null || _checkingBalances) return;
+
+    setState(() => _checkingBalances = true);
+    Map<String, List<String>> results;
+    try {
+      results = await MonthlyStatementEngine.instance
+          .checkAllCustomers(farmId: farmId);
+    } catch (e) {
+      if (mounted) {
+        setState(() => _checkingBalances = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(FirestoreService.instance.describeError(e)),
+            backgroundColor: AppColors.error,
+          ),
+        );
+      }
+      return;
+    }
+    if (!mounted) return;
+    setState(() => _checkingBalances = false);
+
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+        title: Text(
+          results.isEmpty
+              ? 'All balances look right'
+              : '${results.length} customer${results.length == 1 ? '' : 's'} need a look',
+          style: AppTheme.heading(size: 17),
+        ),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              if (results.isEmpty)
+                Text(
+                  'Every customer\'s unpaid months match their pending amount.',
+                  style: AppTheme.body(size: 13, color: AppColors.textDark),
+                )
+              else ...[
+                for (final entry in results.entries)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 10),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(entry.key, style: AppTheme.heading(size: 13)),
+                        for (final issue in entry.value)
+                          Text(issue, style: AppTheme.body(size: 11.5)),
+                      ],
+                    ),
+                  ),
+                Text(
+                  'Nothing was changed. Open the customer\'s Monthly Bills to '
+                      'add an adjustment if a figure needs correcting.',
+                  style: AppTheme.body(size: 11),
+                ),
+              ],
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(),
+            child: const Text('OK'),
+          ),
+        ],
+      ),
+    );
   }
 
   Widget _buildGenerateBillsButton() {
@@ -506,7 +601,43 @@ class _CustomerManagementScreenState
                   SliverToBoxAdapter(
                     child: Padding(
                       padding: const EdgeInsets.fromLTRB(16, 10, 16, 0),
-                      child: _buildGenerateBillsButton(),
+                      child: Column(
+                        children: [
+                          _buildGenerateBillsButton(),
+                          Row(
+                            children: [
+                              Expanded(
+                                child: TextButton.icon(
+                                  onPressed: _syncingBills || _generatingBills
+                                      ? null
+                                      : _syncBills,
+                                  icon: _syncingBills
+                                      ? const SizedBox(
+                                    width: 14,
+                                    height: 14,
+                                    child: CircularProgressIndicator(strokeWidth: 2),
+                                  )
+                                      : const Icon(Icons.sync, size: 17),
+                                  label: const Text('Sync bills'),
+                                ),
+                              ),
+                              Expanded(
+                                child: TextButton.icon(
+                                  onPressed: _checkingBalances ? null : _checkAllBalances,
+                                  icon: _checkingBalances
+                                      ? const SizedBox(
+                                    width: 14,
+                                    height: 14,
+                                    child: CircularProgressIndicator(strokeWidth: 2),
+                                  )
+                                      : const Icon(Icons.fact_check_outlined, size: 17),
+                                  label: const Text('Check balances'),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ],
+                      ),
                     ),
                   ),
 

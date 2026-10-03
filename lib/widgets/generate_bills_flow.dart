@@ -193,7 +193,12 @@ Future<BillingRunSummary> _runWithProgress(
     );
   } finally {
     navigator.pop();
-    progress.dispose();
+    // Dispose only after the dialog's closing animation has finished;
+    // its ValueListenableBuilder is still listening until then.
+    Future<void>.delayed(
+      const Duration(milliseconds: 600),
+      progress.dispose,
+    );
   }
 
   return summary;
@@ -534,4 +539,312 @@ Future<void> _showMessage(
       ],
     ),
   );
+}
+
+// ===========================================================================
+// SYNC BILLS
+// ===========================================================================
+
+/// The Sync bills button's flow, for after bills were already generated:
+///
+///   1. Analyse every customer (nothing is written).
+///   2. Review: bills to generate (new customers / months), bills to
+///      rebuild (goats added, deleted or changed since the bill), and
+///      anything that needs the owner (with what to do).
+///   3. Apply: one customer at a time, then a Done summary.
+Future<void> runSyncBillsFlow(
+    BuildContext context, {
+      required String farmId,
+    }) async {
+  final engine = MonthlyStatementEngine.instance;
+
+  List<BillSyncItem> items;
+  try {
+    items = await _withLoading(
+      context,
+      'Checking every customer\u2019s bill against their goats\u2026',
+          () => engine.analyseSync(farmId: farmId),
+    );
+  } catch (e) {
+    if (context.mounted) {
+      await _showMessage(
+        context,
+        title: 'Could not check bills',
+        message: FirestoreService.instance.describeError(e),
+      );
+    }
+    return;
+  }
+  if (!context.mounted) return;
+
+  if (items.isEmpty) {
+    await _showMessage(
+      context,
+      title: 'Everything is up to date',
+      message: 'Every customer is billed for '
+          '${periodLabel(engine.targetPeriodKey())}, and every bill matches '
+          'the goats on the farm.',
+    );
+    return;
+  }
+
+  final automatic = items.where((i) => i.isAutomatic).toList();
+  final apply = await showDialog<bool>(
+    context: context,
+    builder: (_) => _SyncReviewDialog(items: items),
+  );
+  if (apply != true || automatic.isEmpty || !context.mounted) return;
+
+  // ------------------------------------------------------------- apply
+  final progress = ValueNotifier<String>('Getting ready\u2026');
+  final navigator = Navigator.of(context, rootNavigator: true);
+  showDialog<void>(
+    context: context,
+    barrierDismissible: false,
+    useRootNavigator: true,
+    builder: (_) => PopScope(
+      canPop: false,
+      child: AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+        title: Text('Syncing bills', style: AppTheme.heading(size: 17)),
+        content: ValueListenableBuilder<String>(
+          valueListenable: progress,
+          builder: (_, text, __) => Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const LinearProgressIndicator(
+                minHeight: 6,
+                color: AppColors.primaryGreen,
+                backgroundColor: AppColors.lightGreen,
+              ),
+              const SizedBox(height: 14),
+              Text(text, style: AppTheme.body(size: 13, color: AppColors.textDark)),
+            ],
+          ),
+        ),
+      ),
+    ),
+  );
+
+  List<BillSyncResult> results;
+  try {
+    results = await engine.applySync(
+      farmId: farmId,
+      items: items,
+      onProgress: (index, total, name) =>
+      progress.value = 'Customer $index of $total \u00b7 $name',
+    );
+  } catch (e) {
+    results = [
+      BillSyncResult(
+        customerName: 'Sync',
+        ok: false,
+        message: FirestoreService.instance.describeError(e),
+      ),
+    ];
+  } finally {
+    navigator.pop();
+    Future<void>.delayed(const Duration(milliseconds: 600), progress.dispose);
+  }
+
+  if (!context.mounted) return;
+  final failed = results.where((r) => !r.ok).toList();
+  final attention = items.length - automatic.length;
+
+  await showDialog<void>(
+    context: context,
+    builder: (dialogContext) => AlertDialog(
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+      title: Row(
+        children: [
+          Icon(
+            failed.isEmpty ? Icons.check_circle : Icons.error_outline,
+            color: failed.isEmpty ? AppColors.success : AppColors.warning,
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              failed.isEmpty ? 'Done' : 'Finished with problems',
+              style: AppTheme.heading(size: 18),
+            ),
+          ),
+        ],
+      ),
+      content: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            for (final r in results)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 8),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(r.customerName, style: AppTheme.heading(size: 13)),
+                    Text(
+                      r.message,
+                      style: AppTheme.body(
+                        size: 11.5,
+                        color: r.ok ? AppColors.textDark : AppColors.error,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            if (attention > 0) ...[
+              const Divider(height: 18),
+              Text(
+                '$attention customer${attention == 1 ? '' : 's'} still need '
+                    'your attention (see the review list). Press Sync bills '
+                    'again any time to re-check.',
+                style: AppTheme.body(size: 11.5),
+              ),
+            ],
+          ],
+        ),
+      ),
+      actions: [
+        ElevatedButton(
+          onPressed: () => Navigator.of(dialogContext).pop(),
+          style: ElevatedButton.styleFrom(
+            backgroundColor: AppColors.primaryGreen,
+            foregroundColor: Colors.white,
+            elevation: 0,
+          ),
+          child: const Text('Done'),
+        ),
+      ],
+    ),
+  );
+}
+
+class _SyncReviewDialog extends StatelessWidget {
+  const _SyncReviewDialog({required this.items});
+
+  final List<BillSyncItem> items;
+
+  @override
+  Widget build(BuildContext context) {
+    final generate =
+    items.where((i) => i.kind == BillSyncKind.generate).toList();
+    final rebuild = items.where((i) => i.kind == BillSyncKind.rebuild).toList();
+    final attention =
+    items.where((i) => i.kind == BillSyncKind.attention).toList();
+    final automaticCount = generate.length + rebuild.length;
+
+    return AlertDialog(
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+      title: Text('Sync bills', style: AppTheme.heading(size: 18)),
+      content: SizedBox(
+        width: double.maxFinite,
+        child: ListView(
+          shrinkWrap: true,
+          children: [
+            if (generate.isNotEmpty)
+              _section(
+                'New bills to generate (${generate.length})',
+                AppColors.success,
+                generate,
+                showAmounts: false,
+              ),
+            if (rebuild.isNotEmpty)
+              _section(
+                'Bills to rebuild (${rebuild.length})',
+                AppColors.info,
+                rebuild,
+                showAmounts: true,
+                intro: 'Deleted and generated again from the goats on the '
+                    'farm now. Payments for older months are not touched.',
+              ),
+            if (attention.isNotEmpty)
+              _section(
+                'Needs your attention (${attention.length})',
+                AppColors.warning,
+                attention,
+                showAmounts: true,
+                intro: 'Not changed automatically.',
+              ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(false),
+          child: Text(automaticCount == 0 ? 'Close' : 'Cancel'),
+        ),
+        if (automaticCount > 0)
+          ElevatedButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppColors.primaryGreen,
+              foregroundColor: Colors.white,
+              elevation: 0,
+            ),
+            child: Text('Apply $automaticCount'),
+          ),
+      ],
+    );
+  }
+
+  Widget _section(
+      String title,
+      Color color,
+      List<BillSyncItem> list, {
+        required bool showAmounts,
+        String? intro,
+      }) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 14),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(title, style: AppTheme.heading(size: 13.5, color: color)),
+          if (intro != null) ...[
+            const SizedBox(height: 2),
+            Text(intro, style: AppTheme.body(size: 11)),
+          ],
+          const SizedBox(height: 6),
+          for (final item in list)
+            Container(
+              width: double.infinity,
+              margin: const EdgeInsets.only(bottom: 8),
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: color.withValues(alpha: 0.08),
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    showAmounts
+                        ? '${item.customerName} \u00b7 ${periodLabel(item.periodKey)}'
+                        : item.customerName,
+                    style: AppTheme.heading(size: 12.5),
+                  ),
+                  if (showAmounts &&
+                      (item.oldAmount - item.newAmount).abs() > 0.5)
+                    Text(
+                      'Palai \u20b9${item.oldAmount.toStringAsFixed(0)} \u2192 '
+                          '\u20b9${item.newAmount.toStringAsFixed(0)}',
+                      style: AppTheme.body(size: 11.5, color: AppColors.textDark),
+                    ),
+                  for (final change in item.changes)
+                    Text('\u2022 $change', style: AppTheme.body(size: 11)),
+                  if (item.note != null) ...[
+                    const SizedBox(height: 3),
+                    Text(
+                      item.note!,
+                      style: AppTheme.body(size: 11, color: AppColors.textDark),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+        ],
+      ),
+    );
+  }
 }

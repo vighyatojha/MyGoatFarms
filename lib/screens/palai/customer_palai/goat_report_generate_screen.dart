@@ -225,6 +225,7 @@ class _GoatReportGenerateScreenState extends State<GoatReportGenerateScreen> {
       final bills = await MonthlyBillingService.instance.getMonthlyBills(
         farmId: farmId,
         customerId: customerId,
+        billsOnly: true,
       );
 
       final monthlyPalaiLines = <GoatMonthlyPalaiLine>[];

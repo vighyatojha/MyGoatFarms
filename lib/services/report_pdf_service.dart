@@ -55,7 +55,7 @@ class ReportPdfService {
           pw.SizedBox(height: 14),
           pw.Row(
             children: [
-              _statCard('Boarded For', _boardedFor(goat.billingStartDate)),
+              _statCard('Boarded For', goat.boardedForLabel()),
               _statCard(
                 'Weight Gain',
                 gain != null ? '${gain >= 0 ? '+' : ''}${gain.toStringAsFixed(1)} kg' : '—',
@@ -215,7 +215,7 @@ class ReportPdfService {
         _pdfRow('Gender', goat.gender),
         _pdfRow('Color', goat.color),
         _pdfRow('Date of Join', _fmt(goat.billingStartDate)),
-        _pdfRow('Boarded For', _boardedFor(goat.billingStartDate)),
+        _pdfRow('Boarded For', goat.boardedForLabel()),
         if (goat.monthlyPackage.trim().isNotEmpty) _pdfRow('Monthly Package', goat.monthlyPackage),
       ],
     );
@@ -443,20 +443,6 @@ class ReportPdfService {
   static const _shortMonths = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
   String _fmtShort(DateTime d) => '${d.day} ${_shortMonths[d.month - 1]}';
-
-  String _boardedFor(DateTime checkInDate) {
-    final now = DateTime.now();
-    int months = (now.year - checkInDate.year) * 12 + (now.month - checkInDate.month);
-    DateTime monthsAgo = DateTime(checkInDate.year, checkInDate.month + months, checkInDate.day);
-    if (monthsAgo.isAfter(now)) {
-      months -= 1;
-      monthsAgo = DateTime(checkInDate.year, checkInDate.month + months, checkInDate.day);
-    }
-    final days = now.difference(monthsAgo).inDays;
-    if (months <= 0) return '$days day${days == 1 ? '' : 's'}';
-    if (days <= 0) return '$months month${months == 1 ? '' : 's'}';
-    return '$months mo $days d';
-  }
 
   String _reportId(PalaiGoat goat, GoatReport report) {
     final d = report.generatedAt;

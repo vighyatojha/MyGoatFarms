@@ -1,5 +1,6 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
 
 import '../../app_theme.dart';
@@ -7,8 +8,10 @@ import '../../models/bill_settings_model.dart';
 import '../../models/monthly_bill_model.dart';
 import '../../services/firestore_service.dart';
 import '../../services/monthly_bill_pdf_service.dart';
+import '../../services/monthly_billing_service.dart';
 import '../../services/monthly_statement_engine.dart';
 import '../../utils/billing_ledger.dart';
+import '../../utils/pdf_download.dart';
 import 'edit_statement_screen.dart';
 import 'monthly_bill_generate_screen.dart';
 
@@ -76,6 +79,9 @@ class _MonthlyBillsScreenState
   double? _livePending;
   double? _liveAdvance;
 
+  /// Payment from a deleted bill, waiting to be used on the next bill.
+  double? _liveCredit;
+
   // ==========================================================================
   // PDF ACTION STATE
   // ==========================================================================
@@ -86,6 +92,10 @@ class _MonthlyBillsScreenState
   // (PDF generation can take a few seconds, e.g. while fonts are fetched).
 
   final Set<String> _viewingBillIds = {};
+
+  /// Bills being deleted right now: their card shows a loader until the
+  /// delete finishes, then the card is removed in place.
+  final Set<String> _deletingBillIds = {};
   final Set<String> _downloadingBillIds = {};
   final Set<String> _sharingBillIds = {};
 
@@ -192,8 +202,11 @@ class _MonthlyBillsScreenState
   // LOAD BILLS
   // ========================================================================
 
-  Future<void> _loadBills() async {
-    if (mounted) {
+  /// Loads the bills. [silent] keeps the list on screen while it refreshes
+  /// (used after an action), instead of the full-screen loader that is
+  /// only shown on first open.
+  Future<void> _loadBills({bool silent = false}) async {
+    if (mounted && !silent) {
       setState(() {
         _loading = true;
       });
@@ -238,6 +251,7 @@ class _MonthlyBillsScreenState
         _bills = bills;
         _livePending = _number(customerData['pendingAmount']);
         _liveAdvance = _number(customerData['advanceAmount']);
+        _liveCredit = _number(customerData['billPaymentCredit']);
       });
     } catch (e) {
       debugPrint(
@@ -285,7 +299,7 @@ class _MonthlyBillsScreenState
       );
 
       if (generated == true) {
-        await _loadBills();
+        await _loadBills(silent: true);
       }
     } finally {
       if (mounted) {
@@ -300,11 +314,18 @@ class _MonthlyBillsScreenState
   // CORRECTIONS (latest statement only)
   // ========================================================================
 
-  bool _canCorrect(MonthlyBill bill) =>
-      bill.isStatement &&
-          !bill.locked &&
-          _bills.isNotEmpty &&
-          _bills.first.id == bill.id;
+  /// The customer's newest real bill (not an opening balance or an
+  /// adjustment), while no newer bill has carried it forward.
+  bool _isLatestBill(MonthlyBill bill) {
+    if (bill.locked || bill.isOpeningBalance || bill.isAdjustment) {
+      return false;
+    }
+    for (final b in _bills) {
+      if (b.isAdjustment || b.isOpeningBalance) continue;
+      return b.id == bill.id;
+    }
+    return false;
+  }
 
   Future<void> _editBill(MonthlyBill bill) async {
     final saved = await Navigator.of(context).push<bool>(
@@ -316,77 +337,200 @@ class _MonthlyBillsScreenState
         ),
       ),
     );
-    if (saved == true) await _loadBills();
+    if (saved == true) await _loadBills(silent: true);
   }
 
-  Future<void> _voidBill(MonthlyBill bill) async {
-    final reasonController = TextEditingController();
-    final month = periodLabel(bill.billingPeriodKey);
-
-    final confirmed = await showDialog<bool>(
+  /// Deletes the newest bill so it can be generated again from the goats
+  /// on the farm now (e.g. after a goat was deleted or a price fixed).
+  Future<void> _deleteBill(MonthlyBill bill) async {
+    // The dialog owns its text controller and disposes it itself once it
+    // has fully closed. Disposing it here, while the dialog was still
+    // animating out, caused the "_dependents.isEmpty" red screen.
+    final reason = await showDialog<String>(
       context: context,
-      builder: (dialogContext) => AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
-        title: Text('Void $month bill?', style: AppTheme.heading(size: 17)),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              '${bill.billNumber} will be kept as a void record. Its charges '
-                  'come off what the customer owes, any advance it used goes '
-                  'back to advance, and $month can be generated again.',
-              style: AppTheme.body(size: 12.5, color: AppColors.textDark),
-            ),
-            const SizedBox(height: 12),
-            TextField(
-              controller: reasonController,
-              decoration: InputDecoration(
-                isDense: true,
-                labelText: 'Reason (optional)',
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(10),
-                ),
-              ),
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(dialogContext).pop(false),
-            child: const Text('Cancel'),
-          ),
-          ElevatedButton(
-            onPressed: () => Navigator.of(dialogContext).pop(true),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: AppColors.error,
-              foregroundColor: Colors.white,
-              elevation: 0,
-            ),
-            child: const Text('Void bill'),
-          ),
-        ],
-      ),
+      builder: (_) => _DeleteBillDialog(bill: bill),
     );
+    if (reason == null || !mounted) return;
+    if (_deletingBillIds.contains(bill.id)) return;
 
-    final reason = reasonController.text;
-    reasonController.dispose();
-    if (confirmed != true || !mounted) return;
+    // Loader on this card only; it stays until the delete has really
+    // finished (on a slow connection that can take a while).
+    setState(() => _deletingBillIds.add(bill.id));
 
+    String periodKey;
     try {
-      await MonthlyStatementEngine.instance.voidStatement(
+      periodKey = await MonthlyStatementEngine.instance.deleteLatestBill(
         farmId: widget.farmId,
         customerId: widget.customerId,
         billId: bill.id,
         reason: reason,
       );
+    } catch (e) {
       if (!mounted) return;
-      _showSuccess('$month bill voided.');
-      await _loadBills();
+      setState(() => _deletingBillIds.remove(bill.id));
+      _showError(FirestoreService.instance.describeError(e));
+      return;
+    }
+
+    if (!mounted) return;
+
+    // Remove the card in place: no full-screen reload.
+    setState(() {
+      _deletingBillIds.remove(bill.id);
+      _bills = _bills.where((b) => b.id != bill.id).toList();
+    });
+
+    // Quietly refresh totals and the previous bill (it is the latest
+    // again, so it gets its menu back) while the list stays on screen.
+    await _loadBills(silent: true);
+    if (!mounted) return;
+    await _showRegenerateInfo(periodKey);
+  }
+
+  /// After deleting: says when the month can be generated again and
+  /// offers to do it now when it already can.
+  Future<void> _showRegenerateInfo(String periodKey) async {
+    final month = periodLabel(periodKey);
+    final target = MonthlyStatementEngine.instance.targetPeriodKey();
+    final canNow = periodKey.compareTo(target) <= 0;
+    final availableFrom = periodStart(nextPeriodKey(periodKey));
+
+    final generateNow = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+        title: Text('Bill deleted', style: AppTheme.heading(size: 17)),
+        content: Text(
+          canNow
+              ? 'Generate the $month bill again now? It will be worked out '
+              'fresh from the goats on the farm.'
+              : 'Bills are made for the previous month, so the $month bill '
+              'can be generated from '
+              '${DateFormat('d MMMM yyyy').format(availableFrom)} with '
+              'Generate Bills.',
+          style: AppTheme.body(size: 13, color: AppColors.textDark),
+        ),
+        actions: [
+          if (canNow)
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(false),
+              child: const Text('Later'),
+            ),
+          ElevatedButton(
+            onPressed: () => Navigator.of(dialogContext).pop(canNow),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppColors.primaryGreen,
+              foregroundColor: Colors.white,
+              elevation: 0,
+            ),
+            child: Text(canNow ? 'Generate now' : 'OK'),
+          ),
+        ],
+      ),
+    );
+
+    if (generateNow == true && mounted) {
+      await _createMonthlyBill();
+    }
+  }
+
+  // ========================================================================
+  // ADJUSTMENTS + BALANCE CHECK
+  // ========================================================================
+
+  Future<void> _addAdjustment() async {
+    List<String> months;
+    try {
+      months = await MonthlyStatementEngine.instance.adjustableMonths(
+        farmId: widget.farmId,
+        customerId: widget.customerId,
+      );
+    } catch (e) {
+      _showError(FirestoreService.instance.describeError(e));
+      return;
+    }
+    if (!mounted) return;
+    if (months.isEmpty) {
+      _showError(
+        'No older billed months to adjust. Use Edit on the latest bill.',
+      );
+      return;
+    }
+
+    // The dialog owns its controllers (see _DeleteBillDialog for why).
+    final result = await showDialog<_AdjustmentInput>(
+      context: context,
+      builder: (_) => _AdjustmentDialog(months: months),
+    );
+    if (result == null || !mounted) return;
+
+    final month = result.month;
+    final isCredit = result.isCredit;
+    final amount = result.amount;
+    final reason = result.reason;
+
+    if (amount <= 0) {
+      _showError('Enter an amount above zero.');
+      return;
+    }
+    if (reason.isEmpty) {
+      _showError('Add a reason for the adjustment.');
+      return;
+    }
+
+    try {
+      await MonthlyStatementEngine.instance.addAdjustment(
+        farmId: widget.farmId,
+        customerId: widget.customerId,
+        periodKey: month,
+        amount: isCredit ? -amount : amount,
+        reason: reason,
+      );
+      if (!mounted) return;
+      _showSuccess('Adjustment saved.');
+      await _loadBills(silent: true);
     } catch (e) {
       if (!mounted) return;
       _showError(FirestoreService.instance.describeError(e));
     }
+  }
+
+  Future<void> _checkBalances() async {
+    List<String> issues;
+    try {
+      issues = await MonthlyBillingService.instance.checkCustomerConsistency(
+        farmId: widget.farmId,
+        customerId: widget.customerId,
+      );
+    } catch (e) {
+      _showError(FirestoreService.instance.describeError(e));
+      return;
+    }
+    if (!mounted) return;
+
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+        title: Text(
+          issues.isEmpty ? 'Balances look right' : 'Needs a look',
+          style: AppTheme.heading(size: 17),
+        ),
+        content: Text(
+          issues.isEmpty
+              ? 'The unpaid months match the customer\'s pending amount.'
+              : '${issues.join('\n\n')}\n\nNothing was changed. Use an '
+              'adjustment if a figure needs correcting.',
+          style: AppTheme.body(size: 13, color: AppColors.textDark),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(),
+            child: const Text('OK'),
+          ),
+        ],
+      ),
+    );
   }
 
   // ========================================================================
@@ -430,7 +574,7 @@ class _MonthlyBillsScreenState
       return;
     }
 
-    await _loadBills();
+    await _loadBills(silent: true);
   }
 
   // ========================================================================
@@ -480,19 +624,27 @@ class _MonthlyBillsScreenState
     try {
       final settings = await _loadBillSettings();
 
-      final path =
-      await _pdfService.save(bill, settings);
+      // Opens the phone's own "Save as" screen: the name can be changed
+      // and any folder (Downloads, Drive...) chosen.
+      final result = await _pdfService.saveAs(bill, settings);
 
       if (!mounted) return;
 
-      _showSuccess(
-        'Bill saved successfully.\n$path',
-      );
+      switch (result.status) {
+        case PdfSaveStatus.saved:
+          _showSuccess('Saved: ${result.fileName}');
+        case PdfSaveStatus.cancelled:
+          break; // closed the save screen: nothing to say
+        case PdfSaveStatus.shared:
+          break; // share sheet was shown instead (iOS)
+      }
     } catch (e) {
       if (!mounted) return;
 
       _showError(
-        'Unable to save bill PDF.\n$e',
+        e is PlatformException
+            ? (e.message ?? 'Unable to save bill PDF.')
+            : 'Unable to save bill PDF.\n$e',
       );
     } finally {
       if (mounted) {
@@ -589,7 +741,61 @@ class _MonthlyBillsScreenState
   // BILL CARD
   // ========================================================================
 
+  /// The bill card, with a "Deleting…" loader over it while it is being
+  /// deleted (the rest of the screen stays usable).
   Widget _buildBillCard(
+      MonthlyBill bill,
+      ) {
+    final deleting = _deletingBillIds.contains(bill.id);
+    final card = _buildBillCardContent(bill);
+    if (!deleting) return card;
+
+    return Stack(
+      children: [
+        AbsorbPointer(
+          child: Opacity(opacity: 0.45, child: card),
+        ),
+        Positioned.fill(
+          bottom: 14, // the card's own bottom margin
+          child: Center(
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(14),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withValues(alpha: 0.08),
+                    blurRadius: 12,
+                  ),
+                ],
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const SizedBox(
+                    width: 20,
+                    height: 20,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2.5,
+                      color: AppColors.error,
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Text(
+                    'Deleting bill…',
+                    style: AppTheme.heading(size: 13, color: AppColors.textDark),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildBillCardContent(
       MonthlyBill bill,
       ) {
     // A locked (older) bill's statement balance was carried into the
@@ -663,7 +869,7 @@ class _MonthlyBillsScreenState
                     CrossAxisAlignment.start,
                     children: [
                       Text(
-                        bill.monthYear,
+                        bill.displayTitle,
                         style: AppTheme.heading(
                           size: 16,
                         ),
@@ -687,8 +893,8 @@ class _MonthlyBillsScreenState
                   displayStatus,
                 ),
 
-                // Corrections: only the newest, unlocked statement.
-                if (_canCorrect(bill))
+                // Corrections: only the customer's newest bill.
+                if (_isLatestBill(bill) && !_deletingBillIds.contains(bill.id))
                   PopupMenuButton<String>(
                     tooltip: 'Correct bill',
                     icon: const Icon(
@@ -697,17 +903,17 @@ class _MonthlyBillsScreenState
                     ),
                     onSelected: (value) {
                       if (value == 'edit') _editBill(bill);
-                      if (value == 'void') _voidBill(bill);
+                      if (value == 'delete') _deleteBill(bill);
                     },
                     itemBuilder: (_) => [
+                      if (bill.isStatement)
+                        const PopupMenuItem(
+                          value: 'edit',
+                          child: Text('Edit charges'),
+                        ),
                       const PopupMenuItem(
-                        value: 'edit',
-                        child: Text('Edit charges'),
-                      ),
-                      PopupMenuItem(
-                        value: 'void',
-                        enabled: bill.amountPaid <= kMoneyEpsilon,
-                        child: const Text('Void bill'),
+                        value: 'delete',
+                        child: Text('Delete bill'),
                       ),
                     ],
                   ),
@@ -722,8 +928,12 @@ class _MonthlyBillsScreenState
 
             if (bill.isStatement)
               _buildStatementFigures(bill, statusColor)
-            else
-              _buildLegacyFigures(bill, statusColor),
+            else if (bill.isOpeningBalance)
+              _buildOpeningFigures(bill, statusColor)
+            else if (bill.isAdjustment)
+                _buildAdjustmentFigures(bill)
+              else
+                _buildLegacyFigures(bill, statusColor),
 
             const SizedBox(height: 14),
 
@@ -743,7 +953,9 @@ class _MonthlyBillsScreenState
             // month first).
             // ----------------------------------------------------------
 
-            if (bill.locked)
+            if (bill.isAdjustment)
+              const SizedBox.shrink()
+            else if (bill.locked)
               _buildCarriedForwardNote(bill)
             else
               Row(
@@ -809,142 +1021,145 @@ class _MonthlyBillsScreenState
             // PDF ACTIONS
             // ----------------------------------------------------------
 
-            Builder(
-              builder: (context) {
-                final isViewing =
-                _viewingBillIds.contains(bill.id);
-                final isDownloading =
-                _downloadingBillIds.contains(bill.id);
-                final isSharing =
-                _sharingBillIds.contains(bill.id);
+            // An opening balance is not a bill of its own; it is shown on
+            // the customer's first bill, so it has no PDF.
+            if (!bill.isOpeningBalance && !bill.isAdjustment)
+              Builder(
+                builder: (context) {
+                  final isViewing =
+                  _viewingBillIds.contains(bill.id);
+                  final isDownloading =
+                  _downloadingBillIds.contains(bill.id);
+                  final isSharing =
+                  _sharingBillIds.contains(bill.id);
 
-                return Row(
-                  children: [
-                    Expanded(
-                      child: OutlinedButton.icon(
-                        onPressed: isViewing
-                            ? null
-                            : () {
-                          _viewBill(bill);
-                        },
-                        icon: isViewing
-                            ? const SizedBox(
-                          width: 16,
-                          height: 16,
-                          child:
-                          CircularProgressIndicator(
-                            strokeWidth: 2,
-                            color: AppColors
-                                .primaryGreen,
+                  return Row(
+                    children: [
+                      Expanded(
+                        child: OutlinedButton.icon(
+                          onPressed: isViewing
+                              ? null
+                              : () {
+                            _viewBill(bill);
+                          },
+                          icon: isViewing
+                              ? const SizedBox(
+                            width: 16,
+                            height: 16,
+                            child:
+                            CircularProgressIndicator(
+                              strokeWidth: 2,
+                              color: AppColors
+                                  .primaryGreen,
+                            ),
+                          )
+                              : const Icon(
+                            Icons.visibility_outlined,
+                            size: 18,
                           ),
-                        )
-                            : const Icon(
-                          Icons.visibility_outlined,
-                          size: 18,
-                        ),
-                        label: Text(
-                          isViewing
-                              ? 'Opening…'
-                              : 'View Bill',
-                        ),
-                        style:
-                        OutlinedButton.styleFrom(
-                          foregroundColor:
-                          AppColors
-                              .primaryGreen,
-                          side: const BorderSide(
-                            color:
+                          label: Text(
+                            isViewing
+                                ? 'Opening…'
+                                : 'View Bill',
+                          ),
+                          style:
+                          OutlinedButton.styleFrom(
+                            foregroundColor:
                             AppColors
                                 .primaryGreen,
-                          ),
-                          shape:
-                          RoundedRectangleBorder(
-                            borderRadius:
-                            BorderRadius.circular(
-                              11,
+                            side: const BorderSide(
+                              color:
+                              AppColors
+                                  .primaryGreen,
+                            ),
+                            shape:
+                            RoundedRectangleBorder(
+                              borderRadius:
+                              BorderRadius.circular(
+                                11,
+                              ),
                             ),
                           ),
                         ),
                       ),
-                    ),
 
-                    const SizedBox(width: 8),
+                      const SizedBox(width: 8),
 
-                    Expanded(
-                      child: OutlinedButton.icon(
-                        onPressed: isDownloading
+                      Expanded(
+                        child: OutlinedButton.icon(
+                          onPressed: isDownloading
+                              ? null
+                              : () {
+                            _downloadBill(bill);
+                          },
+                          icon: isDownloading
+                              ? const SizedBox(
+                            width: 16,
+                            height: 16,
+                            child:
+                            CircularProgressIndicator(
+                              strokeWidth: 2,
+                              color: AppColors
+                                  .textDark,
+                            ),
+                          )
+                              : const Icon(
+                            Icons.download_outlined,
+                            size: 18,
+                          ),
+                          label: Text(
+                            isDownloading
+                                ? 'Saving…'
+                                : 'Download',
+                          ),
+                          style:
+                          OutlinedButton.styleFrom(
+                            foregroundColor:
+                            AppColors.textDark,
+                            side: BorderSide(
+                              color: Colors.grey.shade300,
+                            ),
+                            shape:
+                            RoundedRectangleBorder(
+                              borderRadius:
+                              BorderRadius.circular(
+                                11,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+
+                      const SizedBox(width: 8),
+
+                      IconButton(
+                        tooltip: 'Share bill',
+                        onPressed: isSharing
                             ? null
                             : () {
-                          _downloadBill(bill);
+                          _shareBill(bill);
                         },
-                        icon: isDownloading
+                        icon: isSharing
                             ? const SizedBox(
-                          width: 16,
-                          height: 16,
+                          width: 18,
+                          height: 18,
                           child:
                           CircularProgressIndicator(
                             strokeWidth: 2,
                             color: AppColors
-                                .textDark,
+                                .primaryGreen,
                           ),
                         )
                             : const Icon(
-                          Icons.download_outlined,
-                          size: 18,
+                          Icons.share_outlined,
                         ),
-                        label: Text(
-                          isDownloading
-                              ? 'Saving…'
-                              : 'Download',
-                        ),
-                        style:
-                        OutlinedButton.styleFrom(
-                          foregroundColor:
-                          AppColors.textDark,
-                          side: BorderSide(
-                            color: Colors.grey.shade300,
-                          ),
-                          shape:
-                          RoundedRectangleBorder(
-                            borderRadius:
-                            BorderRadius.circular(
-                              11,
-                            ),
-                          ),
-                        ),
+                        color:
+                        AppColors.primaryGreen,
                       ),
-                    ),
-
-                    const SizedBox(width: 8),
-
-                    IconButton(
-                      tooltip: 'Share bill',
-                      onPressed: isSharing
-                          ? null
-                          : () {
-                        _shareBill(bill);
-                      },
-                      icon: isSharing
-                          ? const SizedBox(
-                        width: 18,
-                        height: 18,
-                        child:
-                        CircularProgressIndicator(
-                          strokeWidth: 2,
-                          color: AppColors
-                              .primaryGreen,
-                        ),
-                      )
-                          : const Icon(
-                        Icons.share_outlined,
-                      ),
-                      color:
-                      AppColors.primaryGreen,
-                    ),
-                  ],
-                );
-              },
-            ),
+                    ],
+                  );
+                },
+              ),
           ],
         ),
       ),
@@ -980,7 +1195,7 @@ class _MonthlyBillsScreenState
           ),
           for (final line in bill.previousBreakdown)
             _figureRow(
-              '   ${periodLabel(line.periodKey)}',
+              '   ${line.displayLabel}',
               _currency(line.amount),
               muted: true,
             ),
@@ -990,11 +1205,34 @@ class _MonthlyBillsScreenState
               _currency(bill.earlierBalance),
               muted: true,
             ),
+          if (bill.adjustmentLines.isNotEmpty) ...[
+            const SizedBox(height: 4),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: Text(
+                'Adjustments since the last bill (already included above):',
+                style: AppTheme.body(size: 10.5, color: AppColors.textGrey),
+              ),
+            ),
+            for (final line in bill.adjustmentLines)
+              _figureRow(
+                '   ${line.displayLabel}',
+                '${line.amount < 0 ? '−' : '+'} ${_currency(line.amount.abs())}',
+                muted: true,
+              ),
+          ],
           if (bill.advanceApplied > kMoneyEpsilon) ...[
             const SizedBox(height: 5),
             _figureRow(
               'Less: advance applied',
               '− ${_currency(bill.advanceApplied)}',
+            ),
+          ],
+          if (bill.paidFromDeletedBill > kMoneyEpsilon) ...[
+            const SizedBox(height: 5),
+            _figureRow(
+              'Less: already paid for $month',
+              '− ${_currency(bill.paidFromDeletedBill)}',
             ),
           ],
           const Divider(height: 18),
@@ -1040,6 +1278,86 @@ class _MonthlyBillsScreenState
               '$month charges: ${_ownStatusText(bill)}',
               style: AppTheme.body(size: 11, color: AppColors.textGrey),
             ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Opening balance entered when the customer was added: what was still
+  /// owed for the months before their first bill.
+  Widget _buildOpeningFigures(MonthlyBill bill, Color statusColor) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(13),
+      decoration: BoxDecoration(
+        color: AppColors.paleGreen,
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Column(
+        children: [
+          _figureRow('Pending when added', _currency(bill.currentBillAmount)),
+          _figureRow('Paid', _currency(bill.effectiveOwnPaid)),
+          const Divider(height: 18),
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  'Still owed',
+                  style: AppTheme.body(size: 12, color: AppColors.textGrey),
+                ),
+              ),
+              Text(
+                _currency(bill.effectiveOwnRemaining),
+                style: AppTheme.heading(size: 15, color: statusColor),
+              ),
+            ],
+          ),
+          if (bill.notes.isNotEmpty) ...[
+            const SizedBox(height: 6),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: Text(
+                bill.notes,
+                style: AppTheme.body(size: 10.5, color: AppColors.textGrey),
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildAdjustmentFigures(MonthlyBill bill) {
+    final amount = bill.currentBillAmount;
+    final isCredit = amount < 0;
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(13),
+      decoration: BoxDecoration(
+        color: AppColors.paleGreen,
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _figureRow(
+            isCredit ? 'Credit' : 'Extra charge',
+            '${isCredit ? '−' : '+'} ${_currency(amount.abs())}',
+          ),
+          if (!isCredit)
+            _figureRow('Still owed', _currency(bill.effectiveOwnRemaining)),
+          if (bill.notes.isNotEmpty) ...[
+            const SizedBox(height: 6),
+            Text(
+              'Reason: ${bill.notes}',
+              style: AppTheme.body(size: 11, color: AppColors.textGrey),
+            ),
+          ],
+          const SizedBox(height: 4),
+          Text(
+            'Shown on the customer\'s next bill.',
+            style: AppTheme.body(size: 10.5, color: AppColors.textGrey),
           ),
         ],
       ),
@@ -1351,6 +1669,23 @@ class _MonthlyBillsScreenState
           ),
         ),
         actions: [
+          PopupMenuButton<String>(
+            tooltip: 'More',
+            onSelected: (value) {
+              if (value == 'adjust') _addAdjustment();
+              if (value == 'check') _checkBalances();
+            },
+            itemBuilder: (_) => const [
+              PopupMenuItem(
+                value: 'adjust',
+                child: Text('Add adjustment'),
+              ),
+              PopupMenuItem(
+                value: 'check',
+                child: Text('Check balances'),
+              ),
+            ],
+          ),
           IconButton(
             tooltip:
             'Generate bill',
@@ -1380,7 +1715,7 @@ class _MonthlyBillsScreenState
       body: RefreshIndicator(
         color:
         AppColors.primaryGreen,
-        onRefresh: _loadBills,
+        onRefresh: () => _loadBills(silent: true),
         child: _loading
             ? const Center(
           child:
@@ -1490,7 +1825,8 @@ class _MonthlyBillsScreenState
                         Text(
                           '${_bills.length} monthly bill${_bills.length == 1 ? '' : 's'}'
                               '${_livePending == null ? '' : ' · Total pending ${_currency(_livePending!)}'}'
-                              '${(_liveAdvance ?? 0) > kMoneyEpsilon ? ' · Advance ${_currency(_liveAdvance!)}' : ''}',
+                              '${(_liveAdvance ?? 0) > kMoneyEpsilon ? ' · Advance ${_currency(_liveAdvance!)}' : ''}'
+                              '${(_liveCredit ?? 0) > kMoneyEpsilon ? ' · Paid ${_currency(_liveCredit!)} on a deleted bill (used on the next bill)' : ''}',
                           style:
                           AppTheme
                               .body(
@@ -1516,6 +1852,230 @@ class _MonthlyBillsScreenState
           ],
         ),
       ),
+    );
+  }
+}
+
+// ============================================================================
+// DIALOGS
+// ============================================================================
+//
+// Each dialog is its own StatefulWidget so its TextEditingControllers are
+// disposed in its own dispose(), i.e. only after the dialog has completely
+// left the screen.
+
+class _DeleteBillDialog extends StatefulWidget {
+  const _DeleteBillDialog({required this.bill});
+
+  final MonthlyBill bill;
+
+  @override
+  State<_DeleteBillDialog> createState() => _DeleteBillDialogState();
+}
+
+class _DeleteBillDialogState extends State<_DeleteBillDialog> {
+  final _reasonController = TextEditingController();
+
+  @override
+  void dispose() {
+    _reasonController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final bill = widget.bill;
+    final month = bill.displayTitle;
+
+    return AlertDialog(
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+      title: Text('Delete $month bill?', style: AppTheme.heading(size: 17)),
+      content: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Use this when the bill is wrong, for example a goat was '
+                  'deleted or a price changed after it was made.',
+              style: AppTheme.body(size: 12.5, color: AppColors.textDark),
+            ),
+            const SizedBox(height: 10),
+            Text(
+              '• ${bill.billNumber} is removed from the bills (a deleted '
+                  'record is kept).\n'
+                  '• Its charges come off what the customer owes. Any '
+                  'advance it used goes back to advance.\n'
+                  '• Money already paid for this month is kept and used '
+                  'on the new bill, so nothing paid is lost.\n'
+                  '• Payments for older months stay as they are.\n'
+                  '• Generating again works the bill out fresh from the '
+                  'goats on the farm now.',
+              style: AppTheme.body(size: 12, color: AppColors.textDark),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: _reasonController,
+              decoration: InputDecoration(
+                isDense: true,
+                labelText: 'Reason (optional)',
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(10),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Cancel'),
+        ),
+        ElevatedButton(
+          // Pops the reason ('' when none); null means cancelled.
+          onPressed: () =>
+              Navigator.of(context).pop(_reasonController.text.trim()),
+          style: ElevatedButton.styleFrom(
+            backgroundColor: AppColors.error,
+            foregroundColor: Colors.white,
+            elevation: 0,
+          ),
+          child: const Text('Delete bill'),
+        ),
+      ],
+    );
+  }
+}
+
+class _AdjustmentInput {
+  const _AdjustmentInput({
+    required this.month,
+    required this.isCredit,
+    required this.amount,
+    required this.reason,
+  });
+
+  final String month;
+  final bool isCredit;
+  final double amount;
+  final String reason;
+}
+
+class _AdjustmentDialog extends StatefulWidget {
+  const _AdjustmentDialog({required this.months});
+
+  /// Adjustable months, newest first.
+  final List<String> months;
+
+  @override
+  State<_AdjustmentDialog> createState() => _AdjustmentDialogState();
+}
+
+class _AdjustmentDialogState extends State<_AdjustmentDialog> {
+  final _amountController = TextEditingController();
+  final _reasonController = TextEditingController();
+  late String _month = widget.months.first;
+  bool _isCredit = false;
+
+  @override
+  void dispose() {
+    _amountController.dispose();
+    _reasonController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+      title: Text('Add adjustment', style: AppTheme.heading(size: 17)),
+      content: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            DropdownButtonFormField<String>(
+              value: _month,
+              decoration: const InputDecoration(
+                isDense: true,
+                labelText: 'For month',
+              ),
+              items: [
+                for (final m in widget.months)
+                  DropdownMenuItem(value: m, child: Text(periodLabel(m))),
+              ],
+              onChanged: (v) =>
+                  setState(() => _month = v ?? widget.months.first),
+            ),
+            const SizedBox(height: 12),
+            Wrap(
+              spacing: 8,
+              children: [
+                ChoiceChip(
+                  label: const Text('Charge more'),
+                  selected: !_isCredit,
+                  onSelected: (_) => setState(() => _isCredit = false),
+                ),
+                ChoiceChip(
+                  label: const Text('Credit (reduce)'),
+                  selected: _isCredit,
+                  onSelected: (_) => setState(() => _isCredit = true),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: _amountController,
+              keyboardType:
+              const TextInputType.numberWithOptions(decimal: true),
+              decoration: const InputDecoration(
+                isDense: true,
+                labelText: 'Amount',
+                prefixText: '₹ ',
+              ),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: _reasonController,
+              decoration: const InputDecoration(
+                isDense: true,
+                labelText: 'Reason (required)',
+              ),
+            ),
+            const SizedBox(height: 10),
+            Text(
+              _isCredit
+                  ? 'Reduces what the customer owes, oldest month first. '
+                  'Anything beyond what they owe becomes advance.'
+                  : 'Added to what the customer owes for that month.',
+              style: AppTheme.body(size: 11.5),
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Cancel'),
+        ),
+        ElevatedButton(
+          onPressed: () => Navigator.of(context).pop(
+            _AdjustmentInput(
+              month: _month,
+              isCredit: _isCredit,
+              amount: double.tryParse(_amountController.text.trim()) ?? 0,
+              reason: _reasonController.text.trim(),
+            ),
+          ),
+          style: ElevatedButton.styleFrom(
+            backgroundColor: AppColors.primaryGreen,
+            foregroundColor: Colors.white,
+            elevation: 0,
+          ),
+          child: const Text('Save'),
+        ),
+      ],
     );
   }
 }

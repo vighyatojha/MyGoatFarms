@@ -71,6 +71,7 @@ class _GoatMonthlyReportsTabState extends State<GoatMonthlyReportsTab> {
       final bills = await MonthlyBillingService.instance.getMonthlyBills(
         farmId: widget.farmId,
         customerId: widget.customerId,
+        billsOnly: true,
       );
 
       final monthlyPalaiLines = <GoatMonthlyPalaiLine>[];

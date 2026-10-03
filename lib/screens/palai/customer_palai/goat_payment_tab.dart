@@ -49,6 +49,7 @@ class _GoatPaymentTabState extends State<GoatPaymentTab> {
       final bills = await MonthlyBillingService.instance.getMonthlyBills(
         farmId: widget.farmId,
         customerId: widget.customerId,
+        billsOnly: true,
       );
       final customer = await FirestoreService.instance.getCustomer(widget.farmId, widget.customerId);
 

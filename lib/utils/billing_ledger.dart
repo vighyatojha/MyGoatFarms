@@ -105,6 +105,77 @@ String periodLabel(String key) {
 }
 
 // ===========================================================================
+// NEW CUSTOMER: ENROLLMENT DATE → FIRST BILLED MONTH
+// ===========================================================================
+
+String periodKeyForDate(DateTime date) => periodKeyOf(date.year, date.month);
+
+String previousPeriodKey(String key) {
+  final p = parsePeriodKey(key)!;
+  final d = DateTime(p.year, p.month - 1, 1);
+  return periodKeyOf(d.year, d.month);
+}
+
+/// How the app bills a customer who is being added now.
+class EnrollmentBilling {
+  const EnrollmentBilling({
+    required this.firstBilledKey,
+    required this.monthsBefore,
+  });
+
+  /// The first month the app itself bills.
+  final String firstBilledKey;
+
+  /// Months between enrollment and [firstBilledKey], oldest first. The
+  /// owner is asked whether these are fully paid; empty when there are
+  /// none (enrolled in or after the first billed month).
+  final List<String> monthsBefore;
+
+  bool get asksAboutEarlierMonths => monthsBefore.isNotEmpty;
+
+  /// 'July – August 2026', 'August 2026', 'December 2025 – January 2026'.
+  String get monthsBeforeLabel {
+    if (monthsBefore.isEmpty) return '';
+    if (monthsBefore.length == 1) return periodLabel(monthsBefore.first);
+    final first = parsePeriodKey(monthsBefore.first)!;
+    final last = parsePeriodKey(monthsBefore.last)!;
+    final firstName = _monthNames[first.month - 1];
+    final lastLabel = periodLabel(monthsBefore.last);
+    return first.year == last.year
+        ? '$firstName – $lastLabel'
+        : '${periodLabel(monthsBefore.first)} – $lastLabel';
+  }
+
+  /// Label of the opening-balance line on the first bill.
+  String get openingBalanceLabel =>
+      'Pending before ${periodLabel(firstBilledKey)}';
+}
+
+/// Enrolled on 25 July, added on 4 October (next run bills September):
+/// the app bills from September, and July + August are asked about.
+/// Enrolled in September or later: billed from the enrollment month,
+/// nothing is asked.
+EnrollmentBilling enrollmentBilling({
+  required DateTime enrollmentDate,
+  required DateTime today,
+}) {
+  final target = targetPeriodKeyFor(today);
+  final enrolled = periodKeyForDate(enrollmentDate);
+
+  if (enrolled.compareTo(target) >= 0) {
+    return EnrollmentBilling(firstBilledKey: enrolled, monthsBefore: const []);
+  }
+
+  final months = <String>[];
+  var cursor = enrolled;
+  while (cursor.compareTo(target) < 0) {
+    months.add(cursor);
+    cursor = nextPeriodKey(cursor);
+  }
+  return EnrollmentBilling(firstBilledKey: target, monthsBefore: months);
+}
+
+// ===========================================================================
 // OLDEST-FIRST ALLOCATION
 // ===========================================================================
 
@@ -114,11 +185,16 @@ class LedgerMonth {
     required this.billId,
     required this.periodKey,
     required this.ownRemaining,
+    this.label,
   });
 
   final String billId;
   final String periodKey;
   final double ownRemaining;
+
+  /// Display name when it isn't simply the month, e.g. an opening
+  /// balance: 'Pending before September 2026'.
+  final String? label;
 }
 
 class MonthAllocation {
@@ -207,22 +283,31 @@ class BreakdownLine {
     required this.periodKey,
     required this.amount,
     this.billId,
+    this.label,
   });
 
   final String periodKey;
   final double amount;
   final String? billId;
 
+  /// See [LedgerMonth.label]. Null for an ordinary month.
+  final String? label;
+
+  /// What to print for this line: the label, or the month's name.
+  String get displayLabel => label ?? periodLabel(periodKey);
+
   Map<String, dynamic> toMap() => {
     'periodKey': periodKey,
     'amount': amount,
     if (billId != null) 'billId': billId,
+    if (label != null) 'label': label,
   };
 
   factory BreakdownLine.fromMap(Map<String, dynamic> map) => BreakdownLine(
     periodKey: map['periodKey']?.toString() ?? '',
     amount: (map['amount'] as num?)?.toDouble() ?? 0,
     billId: map['billId']?.toString(),
+    label: map['label']?.toString(),
   );
 }
 
@@ -278,6 +363,7 @@ PreviousOutstandingBreakdown buildPreviousBreakdown({
           periodKey: month.periodKey,
           amount: roundMoney(covered),
           billId: month.billId,
+          label: month.label,
         ),
       );
     }

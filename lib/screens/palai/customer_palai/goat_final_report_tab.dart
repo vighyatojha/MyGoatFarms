@@ -59,6 +59,7 @@ class _GoatFinalReportTabState extends State<GoatFinalReportTab> {
       final bills = await MonthlyBillingService.instance.getMonthlyBills(
         farmId: widget.farmId,
         customerId: widget.customerId,
+        billsOnly: true,
       );
 
       double totalPalai = 0;
@@ -71,9 +72,16 @@ class _GoatFinalReportTabState extends State<GoatFinalReportTab> {
             // bill — apportion it across this bill's goats by Palai
             // share so a multi-goat bill's payment isn't double-counted
             // against every goat.
+            //
+            // New bills: use what was paid on THAT month (ownPaid). Their
+            // amountPaid is for the whole statement and can include
+            // money that cleared older months.
             final billTotalPalai = bill.palaiCharges;
             if (billTotalPalai > 0) {
-              totalPaid += bill.amountPaid * (line.palaiAmount / billTotalPalai);
+              final paidOnMonth = bill.isStatement
+                  ? bill.effectiveOwnPaid
+                  : bill.amountPaid;
+              totalPaid += paidOnMonth * (line.palaiAmount / billTotalPalai);
             }
           }
         }

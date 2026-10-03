@@ -175,9 +175,11 @@ class _CustomerGoatsProgressReportScreenState
         widget.customer.id,
       );
 
+      // The newest bill from the new billing; reports never create one.
       final latestBill = await MonthlyStatementEngine.instance.latestBill(
         farmId: widget.farmId,
         customerId: widget.customer.id,
+        preferStatement: true,
       );
 
       // Same lookup the Goat sale credit card on the customer's profile

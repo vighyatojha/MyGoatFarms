@@ -42,6 +42,11 @@ class LedgerBill {
 
   bool get locked => data['locked'] == true;
 
+  /// A correction to an older month (see MonthlyStatementEngine
+  /// .addAdjustment). Owed like any month when positive, but never
+  /// "the latest bill" and never locked or carried like a bill.
+  bool get isAdjustment => data['billingModel'] == 'adjustment';
+
   String get billNumber => (data['billNumber'] ?? id).toString();
 
   double _num(String key) => roundMoney((data[key] as num?)?.toDouble() ?? 0);
@@ -67,6 +72,7 @@ class LedgerBill {
     billId: id,
     periodKey: periodKey,
     ownRemaining: ownRemaining,
+    label: data['ledgerLabel']?.toString(),
   );
 }
 
@@ -91,13 +97,22 @@ class CustomerLedger {
     openMonths.fold<double>(0, (sum, m) => sum + m.ownRemaining),
   );
 
-  String? get lastBilledKey => bills.isEmpty ? null : bills.last.periodKey;
+  /// Real monthly bills (and opening balances), oldest first, without
+  /// adjustments. "Latest bill" decisions use this list.
+  List<LedgerBill> get monthBills =>
+      bills.where((b) => !b.isAdjustment).toList();
+
+  String? get lastBilledKey {
+    final months = monthBills;
+    return months.isEmpty ? null : months.last.periodKey;
+  }
 
   /// The newest bill, when it is a statement that is still open for
   /// statement-level payment tracking.
   LedgerBill? get latestStatement {
-    if (bills.isEmpty) return null;
-    final latest = bills.last;
+    final months = monthBills;
+    if (months.isEmpty) return null;
+    final latest = months.last;
     return latest.isStatement && !latest.locked ? latest : null;
   }
 
@@ -177,11 +192,10 @@ class PalaiLedger {
       Transaction transaction,
       List<DocumentReference<Map<String, dynamic>>> refs,
       ) async {
-    final bills = <LedgerBill>[];
-    for (final ref in refs) {
-      bills.add(LedgerBill(await transaction.get(ref)));
-    }
-    return CustomerLedger(bills);
+    // Read together, not one by one: on a slow connection sequential
+    // reads made bigger customers time out.
+    final snaps = await Future.wait(refs.map(transaction.get));
+    return CustomerLedger(snaps.map(LedgerBill.new).toList());
   }
 
   /// Applies month allocations (from [allocateOldestFirst]) to the bills.

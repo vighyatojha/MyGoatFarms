@@ -1454,8 +1454,8 @@ class _CustomerProfileScreenState extends State<CustomerProfileScreen> {
                               Expanded(
                                 child: Text(
                                   goat.isCheckedOut
-                                      ? 'Checked out · ${_boardedFor(goat.billingStartDate, goat.checkOutDate)}'
-                                      : 'Boarded ${_boardedFor(goat.billingStartDate, null)}',
+                                      ? 'Checked out · ${goat.boardedForLabel()}'
+                                      : 'Boarded ${goat.boardedForLabel()}',
                                   maxLines: 1,
                                   overflow: TextOverflow.ellipsis,
                                   style: AppTheme.body(
@@ -2584,45 +2584,6 @@ class _CustomerProfileScreenState extends State<CustomerProfileScreen> {
       default:
         return AppColors.success;
     }
-  }
-
-  String _boardedFor(
-      DateTime checkInDate,
-      DateTime? checkOutDate,
-      ) {
-    final end = checkOutDate ?? DateTime.now();
-
-    int months =
-        (end.year - checkInDate.year) * 12 +
-            (end.month - checkInDate.month);
-
-    DateTime monthsAgo = DateTime(
-      checkInDate.year,
-      checkInDate.month + months,
-      checkInDate.day,
-    );
-
-    if (monthsAgo.isAfter(end)) {
-      months -= 1;
-
-      monthsAgo = DateTime(
-        checkInDate.year,
-        checkInDate.month + months,
-        checkInDate.day,
-      );
-    }
-
-    final days = end.difference(monthsAgo).inDays;
-
-    if (months <= 0) {
-      return '$days day${days == 1 ? '' : 's'}';
-    }
-
-    if (days <= 0) {
-      return '$months month${months == 1 ? '' : 's'}';
-    }
-
-    return '$months mo $days d';
   }
 
   String _formatDate(

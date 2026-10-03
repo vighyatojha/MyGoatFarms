@@ -1602,6 +1602,15 @@ class FirestoreService {
     final message = e.toString();
     debugPrint('Firestore raw error: $e'); // always log the real error
 
+    // The app's own checks (e.g. "this bill can't be deleted because...")
+    // are messages for the user, not connection problems.
+    if (e is StateError) return e.message;
+    if (e is ArgumentError) return e.message?.toString() ?? message;
+    if (e is TimeoutException) {
+      return 'The internet connection is too slow and the request timed '
+          'out. Check the connection and try again.';
+    }
+
     if (message.contains('NOT_FOUND') && message.contains('database')) {
       return 'Firestore database not reachable yet. If you just created it, '
           'wait a minute and try again.';

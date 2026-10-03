@@ -268,8 +268,23 @@ class MonthlyBill {
   // effective* getters fall back to those.
   // ================================================================
 
-  /// 'statementV2' for bills made by the statement engine, '' otherwise.
+  /// 'statementV2' for bills made by the statement engine,
+  /// 'openingBalance' for a new customer's pending-before-billing record,
+  /// '' for bills made before statement billing.
   final String billingModel;
+
+  /// Display name of an opening balance ('Pending before September 2026')
+  /// or adjustment ('Adjustment for August 2026').
+  final String ledgerLabel;
+
+  /// Statement only: adjustments made since the previous bill. Already
+  /// inside Previous Outstanding; listed so the customer can see them.
+  /// Amounts are signed (negative = credit).
+  final List<BreakdownLine> adjustmentLines;
+
+  /// Statement only: payment made on a deleted bill for this customer,
+  /// used on this month (already inside Total Payable).
+  final double paidFromDeletedBill;
 
   /// previousOutstanding + currentBillAmount − advanceApplied.
   final double totalPayable;
@@ -324,6 +339,9 @@ class MonthlyBill {
     this.farmEmail = '',
     this.goatBreakdown = const [],
     this.billingModel = '',
+    this.ledgerLabel = '',
+    this.adjustmentLines = const [],
+    this.paidFromDeletedBill = 0,
     double? totalPayable,
     this.ownCharges,
     this.ownPaid,
@@ -340,7 +358,25 @@ class MonthlyBill {
 
   static const String statementModel = 'statementV2';
 
+  /// Amount still owed for months before the customer's first bill,
+  /// entered when the customer was added.
+  static const String openingBalanceModel = 'openingBalance';
+
+  /// A correction to an older month (positive = charge, negative = credit).
+  static const String adjustmentModel = 'adjustment';
+
   bool get isStatement => billingModel == statementModel;
+
+  bool get isOpeningBalance => billingModel == openingBalanceModel;
+
+  bool get isAdjustment => billingModel == adjustmentModel;
+
+  /// Card / PDF title: 'September 2026', or for an opening balance
+  /// 'Pending before September 2026'.
+  String get displayTitle =>
+      (isOpeningBalance || isAdjustment) && ledgerLabel.isNotEmpty
+          ? ledgerLabel
+          : monthYear;
 
   /// This month's own charge.
   double get effectiveOwnCharges => ownCharges ?? currentBillAmount;
@@ -571,6 +607,18 @@ class MonthlyBill {
       billingModel:
       data['billingModel']?.toString() ?? '',
 
+      ledgerLabel:
+      data['ledgerLabel']?.toString() ?? '',
+
+      paidFromDeletedBill:
+      (data['paidFromDeletedBill'] as num?)?.toDouble() ?? 0,
+
+      adjustmentLines: (data['adjustmentLines'] as List?)
+          ?.whereType<Map>()
+          .map((e) => BreakdownLine.fromMap(Map<String, dynamic>.from(e)))
+          .toList() ??
+          const [],
+
       totalPayable:
       (data['totalPayable'] as num?)?.toDouble(),
 
@@ -677,6 +725,10 @@ class MonthlyBill {
       'goatBreakdown': goatBreakdown.map((g) => g.toMap()).toList(),
 
       if (billingModel.isNotEmpty) 'billingModel': billingModel,
+      if (ledgerLabel.isNotEmpty) 'ledgerLabel': ledgerLabel,
+      if (adjustmentLines.isNotEmpty)
+        'adjustmentLines': adjustmentLines.map((l) => l.toMap()).toList(),
+      if (paidFromDeletedBill > 0) 'paidFromDeletedBill': paidFromDeletedBill,
       if (isStatement) 'totalPayable': totalPayable,
       if (ownCharges != null) 'ownCharges': ownCharges,
       if (ownPaid != null) 'ownPaid': ownPaid,
@@ -754,6 +806,9 @@ class MonthlyBill {
       farmEmail: farmEmail ?? this.farmEmail,
       goatBreakdown: goatBreakdown ?? this.goatBreakdown,
       billingModel: billingModel,
+      ledgerLabel: ledgerLabel,
+      adjustmentLines: adjustmentLines,
+      paidFromDeletedBill: paidFromDeletedBill,
       totalPayable: (totalDue != null && !isStatement)
           ? totalDue
           : this.totalPayable,

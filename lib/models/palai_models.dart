@@ -102,8 +102,9 @@ class PalaiCustomer {
       'mobileNumber': mobileNumber,
       'address': address,
       'package': package,
-      'pendingAmount': pendingAmount,
-      'advanceAmount': advanceAmount,
+      // pendingAmount / advanceAmount are deliberately NOT here: they are
+      // changed only by bills, payments, checkout, death settlement and
+      // corrections, so editing a customer can never overwrite them.
       'price': price,
     };
   }
