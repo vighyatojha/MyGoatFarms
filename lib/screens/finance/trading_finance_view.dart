@@ -5,6 +5,7 @@ import 'package:mygoatfarms/models/expense_categories.dart';
 import 'package:mygoatfarms/models/finance_scope.dart';
 import 'package:mygoatfarms/models/finance_summary_model.dart';
 import 'package:mygoatfarms/models/trading_finance_summary.dart';
+import 'package:mygoatfarms/screens/finance/trading_loss_screen.dart';
 import 'package:mygoatfarms/services/finance_service.dart';
 import 'package:mygoatfarms/services/firestore_service.dart';
 import 'package:mygoatfarms/services/sales_service.dart';
@@ -18,7 +19,6 @@ import 'package:mygoatfarms/screens/finance/expense_list_screen.dart';
 import 'package:mygoatfarms/screens/finance/finance_range.dart';
 import 'package:mygoatfarms/screens/finance/revenue_list_screen.dart';
 import 'package:mygoatfarms/screens/finance/supplier_pending_payments_screen.dart';
-import 'package:mygoatfarms/screens/finance/trading_loss_screen.dart';
 
 /// TRADING side of the Finance tab.
 ///

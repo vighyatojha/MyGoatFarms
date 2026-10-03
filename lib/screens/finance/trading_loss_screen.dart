@@ -4,6 +4,7 @@ import 'package:intl/intl.dart';
 import 'package:mygoatfarms/app_theme.dart';
 import 'package:mygoatfarms/services/firestore_service.dart';
 import 'package:mygoatfarms/widgets/fast_route.dart';
+
 import '../../services/trading_loss_screen.dart';
 import '../../widgets/finance/finance_widgets.dart';
 import '../home/record_farm_loss_screen.dart';
@@ -31,13 +32,16 @@ class _TradingLossScreenState
   String? _error;
 
   List<TradingLossItem> _items = [];
-  TradingLossType _filter = TradingLossType.all;
 
-  double get _totalLoss =>
-      _filteredItems.fold<double>(
-        0,
-            (sum, item) => sum + item.amount,
-      );
+  TradingLossType _filter =
+      TradingLossType.all;
+
+  double get _totalLoss {
+    return _filteredItems.fold<double>(
+      0,
+          (sum, item) => sum + item.amount,
+    );
+  }
 
   List<TradingLossItem> get _filteredItems {
     if (_filter == TradingLossType.all) {
@@ -45,7 +49,9 @@ class _TradingLossScreenState
     }
 
     return _items
-        .where((item) => item.type == _filter)
+        .where(
+          (item) => item.type == _filter,
+    )
         .toList();
   }
 
@@ -64,24 +70,27 @@ class _TradingLossScreenState
     }
 
     try {
-      // One shared loader - the Recent Trading Activity feed reads the
-      // same list, so the two can never disagree.
-      final items = await TradingLossService.instance.load(
+      final items =
+      await TradingLossService.instance.load(
         widget.farmId,
         start: widget.start,
         end: widget.end,
       );
 
       if (!mounted) return;
+
       setState(() {
         _items = items;
         _loading = false;
       });
     } catch (e) {
       if (!mounted) return;
+
       setState(() {
         _loading = false;
-        _error = FirestoreService.instance.describeError(e);
+        _error =
+            FirestoreService.instance
+                .describeError(e);
       });
     }
   }
@@ -92,46 +101,51 @@ class _TradingLossScreenState
     ).format(date);
   }
 
-  String _filterLabel(TradingLossType type) {
+  String _filterLabel(
+      TradingLossType type,
+      ) {
     switch (type) {
       case TradingLossType.all:
         return 'All';
+
       case TradingLossType.goatDeath:
         return 'Goat Death';
+
       case TradingLossType.lotDeath:
         return 'Lot Death';
+
       case TradingLossType.cancellation:
         return 'Cancellation';
-      case TradingLossType.saleDiscount:
-        return 'Discount';
-      case TradingLossType.belowCost:
-        return 'Below Cost';
+
       case TradingLossType.other:
         return 'Other';
     }
   }
 
-  IconData _filterIcon(TradingLossType type) {
+  IconData _filterIcon(
+      TradingLossType type,
+      ) {
     switch (type) {
       case TradingLossType.all:
         return Icons.list_alt_rounded;
+
       case TradingLossType.goatDeath:
         return Icons.pets_outlined;
+
       case TradingLossType.lotDeath:
         return Icons.inventory_2_outlined;
+
       case TradingLossType.cancellation:
         return Icons.cancel_outlined;
-      case TradingLossType.saleDiscount:
-        return Icons.local_offer_outlined;
-      case TradingLossType.belowCost:
-        return Icons.trending_down_rounded;
+
       case TradingLossType.other:
         return Icons.report_gmailerrorred_outlined;
     }
   }
 
   Future<void> _recordManualLoss() async {
-    final changed = await Navigator.of(context).push(
+    final changed =
+    await Navigator.of(context).push(
       fastRoute(
         RecordFarmLossScreen(
           farmId: widget.farmId,
@@ -140,29 +154,41 @@ class _TradingLossScreenState
     );
 
     if (changed == true && mounted) {
-      _load();
+      await _load();
     }
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: AppColors.paleGreen,
+      backgroundColor:
+      AppColors.paleGreen,
       appBar: AppBar(
-        title: const Text('Trading Losses'),
-        backgroundColor: Colors.transparent,
+        title: const Text(
+          'Trading Losses',
+        ),
+        backgroundColor:
+        Colors.transparent,
         elevation: 0,
-        foregroundColor: AppColors.textDark,
+        foregroundColor:
+        AppColors.textDark,
       ),
-      floatingActionButton: FloatingActionButton.extended(
+      floatingActionButton:
+      FloatingActionButton.extended(
         onPressed:
-        _loading ? null : _recordManualLoss,
-        backgroundColor: AppColors.error,
-        foregroundColor: Colors.white,
+        _loading
+            ? null
+            : _recordManualLoss,
+        backgroundColor:
+        AppColors.error,
+        foregroundColor:
+        Colors.white,
         icon: const Icon(
           Icons.add_circle_outline_rounded,
         ),
-        label: const Text('Record Loss'),
+        label: const Text(
+          'Record Loss',
+        ),
       ),
       body: RefreshIndicator(
         color: AppColors.error,
@@ -177,7 +203,8 @@ class _TradingLossScreenState
       return ListView(
         physics:
         const AlwaysScrollableScrollPhysics(),
-        padding: const EdgeInsets.all(16),
+        padding:
+        const EdgeInsets.all(16),
         children: [
           _summarySkeleton(),
           const SizedBox(height: 12),
@@ -187,7 +214,9 @@ class _TradingLossScreenState
             4,
                 (_) => Padding(
               padding:
-              const EdgeInsets.only(bottom: 10),
+              const EdgeInsets.only(
+                bottom: 10,
+              ),
               child: _lossSkeleton(),
             ),
           ),
@@ -199,10 +228,11 @@ class _TradingLossScreenState
       return ListView(
         physics:
         const AlwaysScrollableScrollPhysics(),
-        padding: const EdgeInsets.all(16),
+        padding:
+        const EdgeInsets.all(16),
         children: [
           const SizedBox(height: 80),
-          Icon(
+          const Icon(
             Icons.error_outline_rounded,
             size: 44,
             color: AppColors.error,
@@ -210,38 +240,48 @@ class _TradingLossScreenState
           const SizedBox(height: 12),
           Text(
             'Could not load losses',
-            textAlign: TextAlign.center,
-            style: AppTheme.heading(size: 16),
+            textAlign:
+            TextAlign.center,
+            style:
+            AppTheme.heading(
+              size: 16,
+            ),
           ),
           const SizedBox(height: 6),
           Text(
             _error!,
-            textAlign: TextAlign.center,
+            textAlign:
+            TextAlign.center,
             style: AppTheme.body(
               size: 12,
-              color: AppColors.textGrey,
+              color:
+              AppColors.textGrey,
             ),
           ),
           const SizedBox(height: 18),
           Center(
-            child: ElevatedButton.icon(
+            child:
+            ElevatedButton.icon(
               onPressed: _load,
               icon: const Icon(
                 Icons.refresh_rounded,
               ),
-              label: const Text('Retry'),
+              label:
+              const Text('Retry'),
             ),
           ),
         ],
       );
     }
 
-    final items = _filteredItems;
+    final items =
+        _filteredItems;
 
     return ListView(
       physics:
       const AlwaysScrollableScrollPhysics(),
-      padding: const EdgeInsets.fromLTRB(
+      padding:
+      const EdgeInsets.fromLTRB(
         16,
         8,
         16,
@@ -259,8 +299,11 @@ class _TradingLossScreenState
           ...items.map(
                 (item) => Padding(
               padding:
-              const EdgeInsets.only(bottom: 10),
-              child: _lossCard(item),
+              const EdgeInsets.only(
+                bottom: 10,
+              ),
+              child:
+              _lossCard(item),
             ),
           ),
       ],
@@ -270,8 +313,10 @@ class _TradingLossScreenState
   Widget _summaryCard() {
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.all(18),
-      decoration: BoxDecoration(
+      padding:
+      const EdgeInsets.all(18),
+      decoration:
+      BoxDecoration(
         color: Colors.white,
         borderRadius:
         BorderRadius.circular(18),
@@ -296,18 +341,24 @@ class _TradingLossScreenState
               Container(
                 width: 42,
                 height: 42,
-                decoration: BoxDecoration(
+                decoration:
+                BoxDecoration(
                   color: AppColors.error
                       .withValues(alpha: 0.09),
-                  shape: BoxShape.circle,
+                  shape:
+                  BoxShape.circle,
                 ),
                 child: const Icon(
-                  Icons.trending_down_rounded,
-                  color: AppColors.error,
+                  Icons
+                      .trending_down_rounded,
+                  color:
+                  AppColors.error,
                   size: 21,
                 ),
               ),
-              const SizedBox(width: 12),
+              const SizedBox(
+                width: 12,
+              ),
               Expanded(
                 child: Column(
                   crossAxisAlignment:
@@ -324,9 +375,13 @@ class _TradingLossScreenState
                         FontWeight.w600,
                       ),
                     ),
-                    const SizedBox(height: 2),
+                    const SizedBox(
+                      height: 2,
+                    ),
                     Text(
-                      financeRupees(_totalLoss),
+                      financeRupees(
+                        _totalLoss,
+                      ),
                       style:
                       AppTheme.heading(
                         size: 23,
@@ -343,31 +398,46 @@ class _TradingLossScreenState
                   horizontal: 10,
                   vertical: 7,
                 ),
-                decoration: BoxDecoration(
-                  color: AppColors.paleGreen,
+                decoration:
+                BoxDecoration(
+                  color:
+                  AppColors.paleGreen,
                   borderRadius:
-                  BorderRadius.circular(10),
+                  BorderRadius.circular(
+                    10,
+                  ),
                 ),
                 child: Text(
                   '${_filteredItems.length} record'
                       '${_filteredItems.length == 1 ? '' : 's'}',
-                  style: AppTheme.body(
+                  style:
+                  AppTheme.body(
                     size: 11,
-                    color: AppColors.textDark,
-                    weight: FontWeight.w700,
+                    color:
+                    AppColors.textDark,
+                    weight:
+                    FontWeight.w700,
                   ),
                 ),
               ),
             ],
           ),
-          const SizedBox(height: 12),
+          const SizedBox(
+            height: 12,
+          ),
           Text(
             '${DateFormat('dd MMM yyyy').format(widget.start)}'
                 ' – '
-                '${DateFormat('dd MMM yyyy').format(widget.end.subtract(const Duration(days: 1)))}',
-            style: AppTheme.body(
+                '${DateFormat('dd MMM yyyy').format(
+              widget.end.subtract(
+                const Duration(days: 1),
+              ),
+            )}',
+            style:
+            AppTheme.body(
               size: 10.5,
-              color: AppColors.textGrey,
+              color:
+              AppColors.textGrey,
             ),
           ),
         ],
@@ -378,18 +448,21 @@ class _TradingLossScreenState
   Widget _filterCard() {
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.fromLTRB(
+      padding:
+      const EdgeInsets.fromLTRB(
         12,
         12,
         12,
         10,
       ),
-      decoration: BoxDecoration(
+      decoration:
+      BoxDecoration(
         color: Colors.white,
         borderRadius:
         BorderRadius.circular(16),
         border: Border.all(
-          color: AppColors.divider,
+          color:
+          AppColors.divider,
         ),
       ),
       child: Column(
@@ -398,24 +471,31 @@ class _TradingLossScreenState
         children: [
           Text(
             'Loss Type',
-            style: AppTheme.heading(size: 12.5),
+            style:
+            AppTheme.heading(
+              size: 12.5,
+            ),
           ),
-          const SizedBox(height: 9),
+          const SizedBox(
+            height: 9,
+          ),
           SizedBox(
             height: 36,
             child: ListView(
               scrollDirection:
               Axis.horizontal,
-              children: TradingLossType.values
+              children:
+              TradingLossType.values
                   .map(
-                    (type) => Padding(
-                  padding:
-                  const EdgeInsets.only(
-                    right: 7,
-                  ),
-                  child:
-                  _filterChip(type),
-                ),
+                    (type) =>
+                    Padding(
+                      padding:
+                      const EdgeInsets.only(
+                        right: 7,
+                      ),
+                      child:
+                      _filterChip(type),
+                    ),
               )
                   .toList(),
             ),
@@ -425,7 +505,9 @@ class _TradingLossScreenState
     );
   }
 
-  Widget _filterChip(TradingLossType type) {
+  Widget _filterChip(
+      TradingLossType type,
+      ) {
     final selected =
         _filter == type;
 
@@ -433,17 +515,23 @@ class _TradingLossScreenState
       borderRadius:
       BorderRadius.circular(20),
       onTap: () {
-        setState(() => _filter = type);
+        setState(
+              () => _filter = type,
+        );
       },
-      child: AnimatedContainer(
+      child:
+      AnimatedContainer(
         duration:
-        const Duration(milliseconds: 160),
+        const Duration(
+          milliseconds: 160,
+        ),
         padding:
         const EdgeInsets.symmetric(
           horizontal: 12,
           vertical: 8,
         ),
-        decoration: BoxDecoration(
+        decoration:
+        BoxDecoration(
           color: selected
               ? AppColors.error
               : AppColors.paleGreen,
@@ -466,15 +554,19 @@ class _TradingLossScreenState
                   ? Colors.white
                   : AppColors.textGrey,
             ),
-            const SizedBox(width: 5),
+            const SizedBox(
+              width: 5,
+            ),
             Text(
               _filterLabel(type),
-              style: AppTheme.body(
+              style:
+              AppTheme.body(
                 size: 11,
                 color: selected
                     ? Colors.white
                     : AppColors.textDark,
-                weight: FontWeight.w600,
+                weight:
+                FontWeight.w600,
               ),
             ),
           ],
@@ -491,13 +583,16 @@ class _TradingLossScreenState
 
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
+      padding:
+      const EdgeInsets.all(14),
+      decoration:
+      BoxDecoration(
         color: Colors.white,
         borderRadius:
         BorderRadius.circular(16),
         border: Border.all(
-          color: AppColors.divider,
+          color:
+          AppColors.divider,
         ),
       ),
       child: Row(
@@ -507,19 +602,25 @@ class _TradingLossScreenState
           Container(
             width: 42,
             height: 42,
-            decoration: BoxDecoration(
+            decoration:
+            BoxDecoration(
               color: AppColors.error
                   .withValues(alpha: 0.08),
               borderRadius:
-              BorderRadius.circular(12),
+              BorderRadius.circular(
+                12,
+              ),
             ),
             child: Icon(
               item.icon,
-              color: AppColors.error,
+              color:
+              AppColors.error,
               size: 20,
             ),
           ),
-          const SizedBox(width: 11),
+          const SizedBox(
+            width: 11,
+          ),
           Expanded(
             child: Column(
               crossAxisAlignment:
@@ -541,7 +642,9 @@ class _TradingLossScreenState
                         ),
                       ),
                     ),
-                    const SizedBox(width: 8),
+                    const SizedBox(
+                      width: 8,
+                    ),
                     Text(
                       financeRupees(
                         item.amount,
@@ -555,35 +658,45 @@ class _TradingLossScreenState
                     ),
                   ],
                 ),
-                const SizedBox(height: 4),
+                const SizedBox(
+                  height: 4,
+                ),
                 Text(
                   item.subtitle,
                   maxLines: 2,
                   overflow:
                   TextOverflow.ellipsis,
-                  style: AppTheme.body(
+                  style:
+                  AppTheme.body(
                     size: 11,
                     color:
                     AppColors.textGrey,
                   ),
                 ),
-                const SizedBox(height: 8),
+                const SizedBox(
+                  height: 8,
+                ),
                 Wrap(
                   spacing: 6,
                   runSpacing: 5,
                   children: [
                     _metaChip(
                       item.typeLabel,
-                      Icons.label_outline_rounded,
+                      Icons
+                          .label_outline_rounded,
                     ),
                     _metaChip(
-                      _formatDate(item.date),
-                      Icons.calendar_today_outlined,
+                      _formatDate(
+                        item.date,
+                      ),
+                      Icons
+                          .calendar_today_outlined,
                     ),
                     if (actor.isNotEmpty)
                       _metaChip(
                         actor,
-                        Icons.person_outline_rounded,
+                        Icons
+                            .person_outline_rounded,
                       ),
                   ],
                 ),
@@ -605,8 +718,10 @@ class _TradingLossScreenState
         horizontal: 7,
         vertical: 5,
       ),
-      decoration: BoxDecoration(
-        color: AppColors.paleGreen,
+      decoration:
+      BoxDecoration(
+        color:
+        AppColors.paleGreen,
         borderRadius:
         BorderRadius.circular(8),
       ),
@@ -617,15 +732,21 @@ class _TradingLossScreenState
           Icon(
             icon,
             size: 11,
-            color: AppColors.textGrey,
+            color:
+            AppColors.textGrey,
           ),
-          const SizedBox(width: 4),
+          const SizedBox(
+            width: 4,
+          ),
           Text(
             text,
-            style: AppTheme.body(
+            style:
+            AppTheme.body(
               size: 9.5,
-              color: AppColors.textGrey,
-              weight: FontWeight.w600,
+              color:
+              AppColors.textGrey,
+              weight:
+              FontWeight.w600,
             ),
           ),
         ],
@@ -641,12 +762,14 @@ class _TradingLossScreenState
         horizontal: 20,
         vertical: 42,
       ),
-      decoration: BoxDecoration(
+      decoration:
+      BoxDecoration(
         color: Colors.white,
         borderRadius:
         BorderRadius.circular(18),
         border: Border.all(
-          color: AppColors.divider,
+          color:
+          AppColors.divider,
         ),
       ),
       child: Column(
@@ -654,32 +777,48 @@ class _TradingLossScreenState
           Container(
             width: 58,
             height: 58,
-            decoration: BoxDecoration(
-              color: AppColors.paleGreen,
-              shape: BoxShape.circle,
+            decoration:
+            const BoxDecoration(
+              color:
+              AppColors.paleGreen,
+              shape:
+              BoxShape.circle,
             ),
             child: const Icon(
-              Icons.check_circle_outline_rounded,
-              color: AppColors.success,
+              Icons
+                  .check_circle_outline_rounded,
+              color:
+              AppColors.success,
               size: 29,
             ),
           ),
-          const SizedBox(height: 14),
+          const SizedBox(
+            height: 14,
+          ),
           Text(
             'No losses recorded',
-            style: AppTheme.heading(size: 15),
+            style:
+            AppTheme.heading(
+              size: 15,
+            ),
           ),
-          const SizedBox(height: 6),
+          const SizedBox(
+            height: 6,
+          ),
           Text(
-            _filter == TradingLossType.all
+            _filter ==
+                TradingLossType.all
                 ? 'There are no trading-related losses '
                 'in this finance period.'
                 : 'There are no losses in the selected '
                 'category for this period.',
-            textAlign: TextAlign.center,
-            style: AppTheme.body(
+            textAlign:
+            TextAlign.center,
+            style:
+            AppTheme.body(
               size: 11.5,
-              color: AppColors.textGrey,
+              color:
+              AppColors.textGrey,
             ),
           ),
         ],
@@ -690,14 +829,17 @@ class _TradingLossScreenState
   Widget _summarySkeleton() {
     return Container(
       height: 105,
-      decoration: BoxDecoration(
+      decoration:
+      BoxDecoration(
         color: Colors.white,
         borderRadius:
         BorderRadius.circular(18),
       ),
       child: const Center(
-        child: CircularProgressIndicator(
-          color: AppColors.error,
+        child:
+        CircularProgressIndicator(
+          color:
+          AppColors.error,
         ),
       ),
     );
@@ -706,7 +848,8 @@ class _TradingLossScreenState
   Widget _filterSkeleton() {
     return Container(
       height: 70,
-      decoration: BoxDecoration(
+      decoration:
+      BoxDecoration(
         color: Colors.white,
         borderRadius:
         BorderRadius.circular(16),
@@ -717,7 +860,8 @@ class _TradingLossScreenState
   Widget _lossSkeleton() {
     return Container(
       height: 110,
-      decoration: BoxDecoration(
+      decoration:
+      BoxDecoration(
         color: Colors.white,
         borderRadius:
         BorderRadius.circular(16),
