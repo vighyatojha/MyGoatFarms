@@ -141,12 +141,41 @@ class SaleDraft {
       ? round2(fixedSalePrice)
       : round2(totalSellingWeight * sellingPricePerKg);
 
+  /// Discount entered in Step 4 (Sale Details).
   double discount = 0;
 
-  double get appliedDiscount => SaleSettlement.fromAmount(
+  /// Extra discount given at delivery, entered in Step 5 on the
+  /// Deliver Now branch only. It stacks on top of [discount] and, like
+  /// it, comes off the goat amount only (never transport).
+  double deliveryDiscount = 0;
+
+  /// The Step 4 discount alone, capped at the goat amount. Step 4 uses
+  /// this so it never shows a Step 5 delivery discount.
+  double get saleDiscountApplied => SaleSettlement.fromAmount(
     goatAmount: grossSaleAmount,
     discount: discount,
   ).appliedDiscount;
+
+  /// The delivery discount actually applied: only on Deliver Now, and
+  /// never more than what is left of the goat amount after the Step 4
+  /// discount.
+  double get appliedDeliveryDiscount {
+    if (!isDeliverNow || deliveryDiscount <= 0) return 0;
+
+    final remaining = round2(grossSaleAmount - saleDiscountApplied);
+
+    return remaining <= 0
+        ? 0
+        : round2(deliveryDiscount > remaining ? remaining : deliveryDiscount);
+  }
+
+  /// Goat amount after the Step 4 discount only (what Step 4 shows).
+  double get saleAmountAfterSaleDiscount =>
+      round2(grossSaleAmount - saleDiscountApplied);
+
+  /// Total discount saved on the sale (Step 4 + delivery discount).
+  double get appliedDiscount =>
+      round2(saleDiscountApplied + appliedDeliveryDiscount);
 
   double get totalSaleAmount =>
       round2(grossSaleAmount - appliedDiscount);

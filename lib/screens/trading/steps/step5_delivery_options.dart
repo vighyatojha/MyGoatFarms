@@ -82,6 +82,7 @@ class Step5DeliveryOptionsState extends State<Step5DeliveryOptions> {
   final GlobalKey<FormState> _palaiFormKey = GlobalKey<FormState>();
 
   late final TextEditingController _transportCostController;
+  late final TextEditingController _deliveryDiscountController;
   late final TextEditingController _amountReceivedController;
 
   late final TextEditingController _bookingAmountController;
@@ -116,6 +117,10 @@ class Step5DeliveryOptionsState extends State<Step5DeliveryOptions> {
 
     _transportCostController = TextEditingController(
       text: _trimZero(draft.transportCost),
+    );
+
+    _deliveryDiscountController = TextEditingController(
+      text: _trimZero(draft.deliveryDiscount),
     );
 
     _amountReceivedController = TextEditingController(
@@ -231,6 +236,7 @@ class Step5DeliveryOptionsState extends State<Step5DeliveryOptions> {
   @override
   void dispose() {
     _transportCostController.dispose();
+    _deliveryDiscountController.dispose();
     _amountReceivedController.dispose();
     _bookingAmountController.dispose();
     _holdingChargePerDayController.dispose();
@@ -251,6 +257,7 @@ class Step5DeliveryOptionsState extends State<Step5DeliveryOptions> {
     final draft = widget.draft;
 
     draft.transportCost = _money(_transportCostController);
+    draft.deliveryDiscount = _money(_deliveryDiscountController);
     draft.amountReceived = _money(_amountReceivedController);
 
     // An excess action only makes sense while there is actually
@@ -835,6 +842,53 @@ class Step5DeliveryOptionsState extends State<Step5DeliveryOptions> {
 
               const SizedBox(height: 14),
 
+              wizardField(
+                controller: _deliveryDiscountController,
+                label: 'Delivery Discount',
+                hint: '0.00',
+                icon: Icons.discount_outlined,
+                suffix: 'Off goat amount',
+                optional: true,
+                helper: 'Extra discount given while delivering. '
+                    'It comes off the goat amount only, not '
+                    'transportation, and adds to any discount '
+                    'from Sale Details.',
+                keyboardType:
+                const TextInputType.numberWithOptions(
+                  decimal: true,
+                ),
+                inputFormatters: [
+                  FilteringTextInputFormatter.allow(
+                    RegExp(r'^\d*\.?\d{0,2}'),
+                  ),
+                ],
+                onChanged: (_) =>
+                    setState(_syncDeliverNow),
+                validator: (value) {
+                  final text = value?.trim() ?? '';
+
+                  if (text.isEmpty) return null;
+
+                  final number = double.tryParse(text);
+
+                  if (number == null || number < 0) {
+                    return 'Enter a valid discount';
+                  }
+
+                  final available =
+                      draft.saleAmountAfterSaleDiscount;
+
+                  if (SaleDraft.round2(number) > available) {
+                    return 'Discount cannot be more than the goat '
+                        'amount (${_currency(available)})';
+                  }
+
+                  return null;
+                },
+              ),
+
+              const SizedBox(height: 14),
+
               _creditSwitch(
                 draft,
                 onText: 'Whatever is not paid now is added to '
@@ -950,6 +1004,17 @@ class Step5DeliveryOptionsState extends State<Step5DeliveryOptions> {
 
     return _buildSummaryCard(
       [
+        if (draft.appliedDeliveryDiscount > 0) ...[
+          _SummaryRow(
+            'Goat Amount',
+            _currency(draft.grossSaleAmount),
+          ),
+          _SummaryRow(
+            'Discount',
+            '− ${_currency(draft.appliedDiscount)}',
+          ),
+        ],
+
         _SummaryRow(
           'Goat Sale',
           _currency(draft.totalSaleAmount),

@@ -274,7 +274,7 @@ class _Step4SaleDetailsState extends State<Step4SaleDetails> {
   }
 
   Widget _buildTotalCard(SaleDraft draft) {
-    final amount = draft.totalSaleAmount;
+    final amount = draft.saleAmountAfterSaleDiscount;
 
     // Live, human-checkable working.
     //   By KG:       "52.8 kg × ₹520.00 / kg"
@@ -296,9 +296,9 @@ class _Step4SaleDetailsState extends State<Step4SaleDetails> {
     }
 
     // With a discount, show the working: goat amount - discount.
-    final discounted = draft.appliedDiscount > 0
+    final discounted = draft.saleDiscountApplied > 0
         ? '${_currency(draft.grossSaleAmount)} − '
-        '${_currency(draft.appliedDiscount)} discount\n$formula'
+        '${_currency(draft.saleDiscountApplied)} discount\n$formula'
         : formula;
 
     return Container(

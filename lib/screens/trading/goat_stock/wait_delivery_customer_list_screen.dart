@@ -9,6 +9,7 @@ import '../../../models/wait_delivery_group.dart';
 import '../../../services/goat_service.dart';
 import '../../../services/wait_delivery_service.dart';
 import '../../../widgets/fast_route.dart';
+import 'completed_deliveries_view.dart';
 import 'wait_delivery_customer_screen.dart';
 
 /// Wait on Delivery — customer list.
@@ -49,6 +50,9 @@ class _WaitDeliveryCustomerListScreenState
   WaitDeliveryService.instance.openSalesStream(widget.farmId);
 
   final TextEditingController _searchController = TextEditingController();
+
+  /// False: open deliveries still to be made. True: completed history.
+  bool _showCompleted = false;
   String _search = '';
 
   @override
@@ -81,8 +85,19 @@ class _WaitDeliveryCustomerListScreenState
         child: Column(
           children: [
             _header(),
+            DeliveryStatusToggle(
+              showCompleted: _showCompleted,
+              onChanged: (value) =>
+                  setState(() => _showCompleted = value),
+            ),
             Expanded(
-              child: StreamBuilder<List<Goat>>(
+              child: _showCompleted
+                  ? CompletedDeliveriesView(
+                key: const ValueKey('completed'),
+                farmId: widget.farmId,
+                kind: CompletedDeliveryKind.waitForDelivery,
+              )
+                  : StreamBuilder<List<Goat>>(
                 stream: _goatsStream,
                 builder: (context, goatSnap) {
                   return StreamBuilder<List<Sale>>(
