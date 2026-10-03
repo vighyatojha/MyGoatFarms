@@ -14,6 +14,7 @@ import '../../../services/trading_service.dart';
 import '../../../widgets/fast_route.dart';
 import '../../../widgets/permission_gate.dart';
 import '../purchase_goats/purchase_wizard_widgets.dart';
+import '../register_goats/goat_registration_form_screen.dart';
 import 'add_lot_payment_sheet.dart';
 import '../sell_from_lot/sell_from_lot_wizard_screen.dart';
 import 'lot_sales_cards.dart';
@@ -225,6 +226,19 @@ class _LotDetailScreenState extends State<LotDetailScreen> {
     await Navigator.of(context).push(
       fastRoute(const SellFromLotWizardScreen()),
     );
+  }
+
+  /// Optional: turns goats of this lot into individual goat records
+  /// (G-0041 ...) that go straight to Available Stock. A lot never needs
+  /// this — its goats can be sold, transferred or recorded as dead while
+  /// they are still anonymous — so nothing prompts for it.
+  Future<void> _registerGoats(TradingPurchase lot) async {
+    await Navigator.of(context).push(
+      fastRoute(
+        GoatRegistrationFormScreen(farmId: widget.farmId, purchase: lot),
+      ),
+    );
+    // The lot's live stream already shows the new numbers on return.
   }
 
   Future<void> _transferToOwnPalai(TradingPurchase lot) async {
@@ -852,6 +866,16 @@ class _LotDetailScreenState extends State<LotDetailScreen> {
               : 'No goats available to sell',
           enabled: lot.isLot && canSell && lot.availableForSaleQty > 0,
           onTap: _sellFromLot,
+        ),
+        _ActionButton(
+          icon: Icons.app_registration_rounded,
+          label: 'Register Goats (optional)',
+          hint: lot.farmAvailableQty > 0
+              ? '${lot.farmAvailableQty} at farm · add them to Available '
+              'Stock one by one'
+              : 'Needs goats at the farm',
+          enabled: lot.isLot && canManage && lot.farmAvailableQty > 0,
+          onTap: () => _registerGoats(lot),
         ),
         _ActionButton(
           icon: Icons.home_work_outlined,

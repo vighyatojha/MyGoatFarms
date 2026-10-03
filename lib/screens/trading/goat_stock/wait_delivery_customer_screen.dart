@@ -465,7 +465,8 @@ class _WaitDeliveryCustomerScreenState
     final result = await showEditWaitBookingSheet(
       context,
       farmId: widget.farmId,
-      entry: entry,
+      sale: entry.sale,
+      goats: entry.goats,
     );
 
     if (result == null || !mounted) return;

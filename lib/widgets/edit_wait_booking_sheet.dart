@@ -5,11 +5,11 @@ import 'package:intl/intl.dart';
 import 'package:mygoatfarms/app_theme.dart';
 import 'package:mygoatfarms/models/goat_model.dart';
 import 'package:mygoatfarms/models/sale_model.dart';
-import 'package:mygoatfarms/models/wait_delivery_group.dart';
 import 'package:mygoatfarms/services/firestore_service.dart';
 import 'package:mygoatfarms/services/wait_booking_split_service.dart';
 
-/// Edit Booking for a Wait on Delivery booking.
+/// Edit Booking for an open booking: a Wait on Delivery booking or a
+/// Booking / Holding one.
 ///
 /// Lets the person pick how many (or which) goats are delivered now and
 /// what happens to the rest — keep them on a booking, or take them off it
@@ -19,26 +19,36 @@ import 'package:mygoatfarms/services/wait_booking_split_service.dart';
 ///
 /// Returns the [WaitBookingSplitResult] when the booking was changed, or
 /// null when the sheet was dismissed.
+///
+/// [goats] are the sale's goats that are still held (empty for a lot
+/// booking, whose goats are only a quantity).
 Future<WaitBookingSplitResult?> showEditWaitBookingSheet(
     BuildContext context, {
       required String farmId,
-      required WaitDeliverySale entry,
+      required Sale sale,
+      required List<Goat> goats,
     }) {
   return showModalBottomSheet<WaitBookingSplitResult>(
     context: context,
     isScrollControlled: true,
     backgroundColor: Colors.transparent,
-    builder: (_) => _EditWaitBookingSheet(farmId: farmId, entry: entry),
+    builder: (_) => _EditWaitBookingSheet(
+      farmId: farmId,
+      sale: sale,
+      goats: goats,
+    ),
   );
 }
 
 class _EditWaitBookingSheet extends StatefulWidget {
   final String farmId;
-  final WaitDeliverySale entry;
+  final Sale sale;
+  final List<Goat> goats;
 
   const _EditWaitBookingSheet({
     required this.farmId,
-    required this.entry,
+    required this.sale,
+    required this.goats,
   });
 
   @override
@@ -54,19 +64,19 @@ class _EditWaitBookingSheetState extends State<_EditWaitBookingSheet> {
 
   /// Individual-goat booking: the goats going out now.
   late final Set<String> _deliverIds =
-  widget.entry.goats.map((goat) => goat.id).toSet();
+  widget.goats.map((goat) => goat.id).toSet();
 
   /// Lot booking: how many of the held goats go out now.
-  late int _qty = widget.entry.goatCount;
+  late int _qty = widget.sale.lotQuantity;
 
   LeftoverGoatsAction _action = LeftoverGoatsAction.keepBooked;
 
   final TextEditingController _advance = TextEditingController();
-  final TextEditingController _fixed = TextEditingController();
+  final TextEditingController _amount = TextEditingController();
 
   /// Until the person types in a field it follows the proportional share.
   bool _advanceEdited = false;
-  bool _fixedEdited = false;
+  bool _amountEdited = false;
 
   bool _saving = false;
   String? _error;
@@ -80,7 +90,7 @@ class _EditWaitBookingSheetState extends State<_EditWaitBookingSheet> {
   @override
   void dispose() {
     _advance.dispose();
-    _fixed.dispose();
+    _amount.dispose();
     super.dispose();
   }
 
@@ -88,13 +98,30 @@ class _EditWaitBookingSheetState extends State<_EditWaitBookingSheet> {
   // STATE HELPERS
   // ---------------------------------------------------------------------
 
-  WaitDeliverySale get _entry => widget.entry;
+  Sale get _sale => widget.sale;
 
-  Sale get _sale => widget.entry.sale;
+  bool get _isLot => _sale.isLotSale;
 
-  int get _total => _entry.goatCount;
+  bool get _isBooking => _sale.isBooking;
 
-  int get _deliverCount => _entry.isLotSale ? _qty : _deliverIds.length;
+  /// True when the sale amount is agreed up front, so how it divides
+  /// between the goats is the person's call.
+  bool get _splitsAmount => WaitBookingSplitService.splitsByAmount(_sale);
+
+  double get _paidUpFront => WaitBookingSplitService.advanceOf(_sale);
+
+  /// Sale amount before discount.
+  double get _grossAmount {
+    final discount = _sale.appliedDiscount;
+
+    return _sale.isFixedPrice
+        ? (_sale.fixedSalePrice ?? (_sale.totalSaleAmount + discount))
+        : (_sale.totalSaleAmount + discount);
+  }
+
+  int get _total => _isLot ? _sale.lotQuantity : widget.goats.length;
+
+  int get _deliverCount => _isLot ? _qty : _deliverIds.length;
 
   int get _leftCount => _total - _deliverCount;
 
@@ -118,7 +145,7 @@ class _EditWaitBookingSheetState extends State<_EditWaitBookingSheet> {
   }
 
   double get _share {
-    if (_entry.isLotSale) {
+    if (_isLot) {
       return WaitBookingSplitService.shareOf(
         deliverCount: _qty,
         totalCount: _total,
@@ -129,11 +156,11 @@ class _EditWaitBookingSheetState extends State<_EditWaitBookingSheet> {
       deliverCount: _deliverCount,
       totalCount: _total,
       deliverWeights: [
-        for (final goat in _entry.goats)
+        for (final goat in widget.goats)
           if (_deliverIds.contains(goat.id)) goat.weight,
       ],
       leftoverWeights: [
-        for (final goat in _entry.goats)
+        for (final goat in widget.goats)
           if (!_deliverIds.contains(goat.id)) goat.weight,
       ],
     );
@@ -150,8 +177,8 @@ class _EditWaitBookingSheetState extends State<_EditWaitBookingSheet> {
   double? get _advanceOverride =>
       _advanceEdited && _keep ? _typed(_advance) : null;
 
-  double? get _fixedOverride =>
-      _fixedEdited && _sale.isFixedPrice ? _typed(_fixed) : null;
+  double? get _amountOverride =>
+      _amountEdited && _splitsAmount ? _typed(_amount) : null;
 
   WaitBookingSplitFigures get _figures {
     return WaitBookingSplitService.figures(
@@ -159,7 +186,7 @@ class _EditWaitBookingSheetState extends State<_EditWaitBookingSheet> {
       share: _share,
       action: _action,
       deliverAdvance: _advanceOverride,
-      deliverFixedPrice: _fixedOverride,
+      deliverAmount: _amountOverride,
     );
   }
 
@@ -176,10 +203,8 @@ class _EditWaitBookingSheetState extends State<_EditWaitBookingSheet> {
       _advance.text = _plain(defaults.deliverAdvance);
     }
 
-    final fixed = defaults.deliverFixedPrice;
-
-    if (!_fixedEdited && fixed != null) {
-      _fixed.text = _plain(fixed);
+    if (!_amountEdited && _splitsAmount) {
+      _amount.text = _plain(defaults.deliverGross);
     }
   }
 
@@ -187,28 +212,31 @@ class _EditWaitBookingSheetState extends State<_EditWaitBookingSheet> {
     if (!_changed || !_keep || !_advanceEdited) return null;
 
     final typed = _typed(_advance);
-    final total = _sale.bookingAdvanceAmount ?? 0;
+    final total = _paidUpFront;
 
     if (typed == null) return 'Enter an amount';
-    if (typed > total) return 'More than the advance paid';
+    if (typed > total) {
+      return _isBooking
+          ? 'More than the booking amount paid'
+          : 'More than the advance paid';
+    }
 
     return null;
   }
 
-  String? get _fixedError {
-    if (!_changed || !_sale.isFixedPrice || !_fixedEdited) return null;
+  String? get _amountError {
+    if (!_changed || !_splitsAmount || !_amountEdited) return null;
 
-    final typed = _typed(_fixed);
-    final total = _sale.fixedSalePrice ?? 0;
+    final typed = _typed(_amount);
 
-    if (typed == null || typed <= 0) return 'Enter the price';
-    if (typed > total) return 'More than the agreed price';
+    if (typed == null || typed <= 0) return 'Enter the amount';
+    if (typed > _grossAmount) return 'More than the agreed amount';
 
     return null;
   }
 
   bool get _valid =>
-      _changed && _advanceError == null && _fixedError == null;
+      _changed && _advanceError == null && _amountError == null;
 
   // ---------------------------------------------------------------------
   // SAVE
@@ -225,13 +253,12 @@ class _EditWaitBookingSheetState extends State<_EditWaitBookingSheet> {
     try {
       final result = await WaitBookingSplitService.instance.splitBooking(
         farmId: widget.farmId,
-        saleId: _entry.id,
-        deliverGoatIds:
-        _entry.isLotSale ? null : Set<String>.from(_deliverIds),
-        deliverQuantity: _entry.isLotSale ? _qty : null,
+        saleId: _sale.id,
+        deliverGoatIds: _isLot ? null : Set<String>.from(_deliverIds),
+        deliverQuantity: _isLot ? _qty : null,
         leftover: _action,
         deliverAdvance: _advanceOverride,
-        deliverFixedPrice: _fixedOverride,
+        deliverAmount: _amountOverride,
       );
 
       if (!mounted) return;
@@ -286,7 +313,7 @@ class _EditWaitBookingSheetState extends State<_EditWaitBookingSheet> {
                   ),
                   const SizedBox(height: 14),
                   Text(
-                    'Edit booking ${_entry.id}',
+                    'Edit booking ${_sale.id}',
                     style: AppTheme.heading(size: 16),
                   ),
                   const SizedBox(height: 3),
@@ -317,7 +344,7 @@ class _EditWaitBookingSheetState extends State<_EditWaitBookingSheet> {
                   const SizedBox(height: 14),
                   Text(
                     'Nothing is delivered yet. After saving, deliver the '
-                        'booking from the Wait on Delivery screen as usual.',
+                        'booking from this screen as usual.',
                     style: AppTheme.body(size: 10),
                   ),
                   const SizedBox(height: 14),
@@ -353,7 +380,7 @@ class _EditWaitBookingSheetState extends State<_EditWaitBookingSheet> {
         children: [
           _sectionTitle('Goats to deliver now'),
           const SizedBox(height: 6),
-          if (_entry.isLotSale) _lotStepper() else _goatChecklist(),
+          if (_isLot) _lotStepper() else _goatChecklist(),
         ],
       ),
     );
@@ -420,7 +447,7 @@ class _EditWaitBookingSheetState extends State<_EditWaitBookingSheet> {
   Widget _goatChecklist() {
     return Column(
       children: [
-        for (final goat in _entry.goats) _goatTile(goat),
+        for (final goat in widget.goats) _goatTile(goat),
       ],
     );
   }
@@ -480,7 +507,11 @@ class _EditWaitBookingSheetState extends State<_EditWaitBookingSheet> {
         _choiceTile(
           value: LeftoverGoatsAction.keepBooked,
           title: 'Keep on booking',
-          subtitle: 'They stay waiting for delivery as a new booking for '
+          subtitle: _isBooking
+              ? 'They stay on hold as a new booking for the same '
+              'customer. Holding days keep counting from the original '
+              'booking date.'
+              : 'They stay waiting for delivery as a new booking for '
               'the same customer, at the same rate.',
         ),
         _choiceTile(
@@ -636,8 +667,7 @@ class _EditWaitBookingSheetState extends State<_EditWaitBookingSheet> {
 
   Widget _moneyBox() {
     final money = _figures;
-    final fixed = _sale.isFixedPrice;
-    final totalAdvance = _sale.bookingAdvanceAmount ?? 0;
+    final totalAdvance = _paidUpFront;
 
     return Container(
       width: double.infinity,
@@ -653,31 +683,38 @@ class _EditWaitBookingSheetState extends State<_EditWaitBookingSheet> {
           _sectionTitle('How the money is split'),
           const SizedBox(height: 4),
           Text(
-            fixed
+            _isBooking
+                ? 'The booking amount is divided between the goats. You '
+                'can change the split below.'
+                : _sale.isFixedPrice
                 ? 'This booking has an agreed price, so it is divided '
                 'between the goats. You can change the split below.'
-                : '${_money.format(_entry.ratePerKg)}/kg stays the same. '
-                'The final amount is worked out from the pickup weight '
-                'when you deliver.',
+                : '${_money.format(_sale.bookingPricePerKg ?? 0)}/kg stays '
+                'the same. The final amount is worked out from the '
+                'pickup weight when you deliver.',
             style: AppTheme.body(size: 10.5),
           ),
 
-          if (fixed) ...[
+          if (_splitsAmount) ...[
             const SizedBox(height: 10),
             _moneyField(
-              controller: _fixed,
-              label: 'Agreed price for the goats going out now',
-              error: _fixedError,
+              controller: _amount,
+              label: _isBooking
+                  ? 'Sale amount for the goats going out now'
+                  : 'Agreed price for the goats going out now',
+              error: _amountError,
               onChanged: (_) {
                 setState(() {
-                  _fixedEdited = true;
+                  _amountEdited = true;
                 });
               },
             ),
             if (_keep)
               _line(
-                'Agreed price for the kept goats',
-                _money.format(money.leftFixedPrice ?? 0),
+                _isBooking
+                    ? 'Sale amount for the kept goats'
+                    : 'Agreed price for the kept goats',
+                _money.format(money.leftGross),
               ),
           ],
 
@@ -686,7 +723,9 @@ class _EditWaitBookingSheetState extends State<_EditWaitBookingSheet> {
             if (_keep) ...[
               _moneyField(
                 controller: _advance,
-                label: 'Advance for the goats going out now',
+                label: _isBooking
+                    ? 'Booking amount for the goats going out now'
+                    : 'Advance for the goats going out now',
                 error: _advanceError,
                 onChanged: (_) {
                   setState(() {
@@ -695,20 +734,24 @@ class _EditWaitBookingSheetState extends State<_EditWaitBookingSheet> {
                 },
               ),
               _line(
-                'Advance moving to the kept goats',
+                _isBooking
+                    ? 'Booking amount moving to the kept goats'
+                    : 'Advance moving to the kept goats',
                 _money.format(money.leftAdvance),
               ),
             ] else ...[
               _line(
-                'Advance staying with the goats going out',
+                _isBooking
+                    ? 'Booking amount staying with the goats going out'
+                    : 'Advance staying with the goats going out',
                 _money.format(totalAdvance),
               ),
               const SizedBox(height: 4),
               Text(
-                'The goats going back to stock take no advance with them. '
-                    'If the advance is more than the final bill you can '
-                    'carry the extra to the customer\'s advance or refund '
-                    'it when you deliver.',
+                'The goats going back to stock take no money with them. '
+                    'If it is more than the final bill you can carry the '
+                    'extra to the customer\'s advance or refund it when '
+                    'you deliver.',
                 style: AppTheme.body(size: 10),
               ),
             ],

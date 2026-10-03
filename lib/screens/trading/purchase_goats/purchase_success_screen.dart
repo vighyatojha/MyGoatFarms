@@ -8,16 +8,21 @@ import '../../../services/trading_service.dart';
 import '../../../widgets/fast_route.dart';
 import '../lots/add_lot_payment_sheet.dart';
 import '../lots/lot_detail_screen.dart';
+import '../register_goats/goat_registration_form_screen.dart';
 import '../sell_from_lot/sell_from_lot_wizard_screen.dart';
 import 'purchase_wizard_widgets.dart';
 
 /// Shown after a Purchase Lot is saved.
 ///
 /// Shows the LOT-#### id, where the goats are (At Supplier / At Farm) and
-/// the supplier payment status, plus the three next steps from the spec
-/// (Sell From Lot, View Lot, Add Payment). There is deliberately no
-/// "register goats" action: goats stay anonymous inside the lot and are
-/// only registered when transferred to a Palai.
+/// the supplier payment status, plus the next steps (Sell From Lot, View
+/// Lot, Add Payment) and an OPTIONAL Register Goats action.
+///
+/// Registering is never required: goats stay anonymous inside the lot and
+/// can be sold, transferred or recorded as dead that way. The action only
+/// shows when goats are at the farm, and is for someone who wants
+/// individual goat records (they go straight to Available Stock). It is
+/// also available later from the lot's own screen.
 class PurchaseSuccessScreen extends StatefulWidget {
   final TradingPurchase lot;
 
@@ -56,6 +61,22 @@ class _PurchaseSuccessScreenState extends State<PurchaseSuccessScreen> {
   Future<void> _sellFromLot() async {
     await Navigator.of(context).push(
       fastRoute(SellFromLotWizardScreen(initialLot: _lot)),
+    );
+
+    await _refresh();
+  }
+
+  /// Optional: opens the registration form for this lot's goats, then
+  /// re-reads the lot so the counts on this screen are current.
+  Future<void> _registerGoats() async {
+    final farmId = await _farmId();
+
+    if (farmId == null || !mounted) return;
+
+    await Navigator.of(context).push(
+      fastRoute(
+        GoatRegistrationFormScreen(farmId: farmId, purchase: _lot),
+      ),
     );
 
     await _refresh();
@@ -319,6 +340,39 @@ class _PurchaseSuccessScreenState extends State<PurchaseSuccessScreen> {
                         borderRadius: BorderRadius.circular(15),
                       ),
                     ),
+                  ),
+                ),
+                const SizedBox(height: 12),
+              ],
+
+              // Optional — nothing here is required to use the lot.
+              if (lot.farmAvailableQty > 0) ...[
+                SizedBox(
+                  width: double.infinity,
+                  height: 50,
+                  child: OutlinedButton.icon(
+                    onPressed: _registerGoats,
+                    icon: const Icon(Icons.app_registration_rounded, size: 18),
+                    label: const Text(
+                      'Register Goats (optional)',
+                      style: TextStyle(fontWeight: FontWeight.w700),
+                    ),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: AppColors.primaryGreen,
+                      side: const BorderSide(color: AppColors.primaryGreen),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(15),
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  'Only if you want individual goat records. You can do '
+                      'this any time from the lot.',
+                  textAlign: TextAlign.center,
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: Colors.black54,
                   ),
                 ),
                 const SizedBox(height: 12),

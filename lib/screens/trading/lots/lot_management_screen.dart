@@ -194,8 +194,8 @@ class _LotManagementScreenState extends State<LotManagementScreen> {
                       const SizedBox(height: 2),
                       Text(
                         isOwner
-                            ? 'Convert them to lots to receive, sell and '
-                            'transfer their goats from here.'
+                            ? 'Convert them to lots to receive, sell, register '
+                            'and transfer their goats from here.'
                             : 'The farm owner needs to convert them '
                             'before they appear here.',
                         style: AppTheme.body(size: 11.5),

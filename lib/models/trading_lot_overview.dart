@@ -47,12 +47,6 @@ class TradingLotOverview {
   /// Purchases not yet converted to the lot format (`lotSchema == 0`).
   final int unconvertedPurchases;
 
-  /// Goats from unconverted purchases still awaiting individual
-  /// registration — the same count `pendingRegistrationStream` shows,
-  /// kept here too so the dashboard can decide whether to show the
-  /// "Older Purchases to Register" strip without a second listener.
-  final int legacyPendingRegistrations;
-
   /// Goats sold out of lots so far (`soldFromSupplierQty +
   /// soldFromFarmQty`, completed sales only). The dashboard uses it to
   /// decide whether Total Sold should offer the Lot Sales list.
@@ -77,7 +71,6 @@ class TradingLotOverview {
     required this.farmAvailableQty,
     required this.supplierDue,
     required this.unconvertedPurchases,
-    required this.legacyPendingRegistrations,
     this.lotSoldQty = 0,
     this.totalPurchasedQty = 0,
     this.totalPurchaseAmount = 0,
@@ -94,7 +87,6 @@ class TradingLotOverview {
     farmAvailableQty: 0,
     supplierDue: 0,
     unconvertedPurchases: 0,
-    legacyPendingRegistrations: 0,
   );
 
   int get activeLotCount => activeLots.length;
@@ -140,10 +132,6 @@ class TradingLotOverview {
           .compareTo(a.createdAt ?? DateTime(2000)),
     );
 
-    final legacyPendingRegistrations = legacy
-        .where((p) => p.isReceivingCompleted && p.pendingCount > 0)
-        .fold<int>(0, (sum, p) => sum + p.pendingCount);
-
     return TradingLotOverview(
       activeLots: activeLots,
       pendingReceiving: pendingReceiving,
@@ -153,7 +141,6 @@ class TradingLotOverview {
       farmAvailableQty: farmAvailableQty,
       supplierDue: PurchaseCosting.round2(supplierDue),
       unconvertedPurchases: legacy.length,
-      legacyPendingRegistrations: legacyPendingRegistrations,
       lotSoldQty: lotSoldQty,
       totalPurchasedQty: totalPurchasedQty,
       totalPurchaseAmount: PurchaseCosting.round2(totalPurchaseAmount),

@@ -10,12 +10,17 @@ import '../../../services/firestore_service.dart';
 import '../../../services/goat_service.dart';
 import '../../../services/image_service.dart';
 import '../../../services/trading_service.dart';
-import '../../../widgets/fast_route.dart';
 import '../../../widgets/image_source_sheet.dart';
 import '../../../widgets/photo_upload_circle.dart';
-import 'registration_completed_screen.dart';
 
 /// Single goat registration form.
+///
+/// Registers goats of a Purchase Lot as individual goat records that go
+/// straight to Available Stock.
+///
+/// This is optional — a lot never has to be registered. The form counts
+/// what is still left in the lot (not "x of all goats bought") and simply
+/// goes back when nothing is left to register.
 ///
 /// The UI is intentionally compact and symmetrical:
 /// - Equal-width Age / Weight fields, and Height / Length / Color below
@@ -240,15 +245,15 @@ class _GoatRegistrationFormScreenState
       return;
     }
 
-    if (updated.pendingCount <= 0) {
-      Navigator.of(context).pushReplacement(
-        fastRoute(
-          RegistrationCompletedScreen(
-            farmId: widget.farmId,
-            purchase: updated,
-          ),
-        ),
+    // Goats reserved for a customer cannot be registered, so what is left
+    // to register is the available farm stock, not pendingCount.
+    if (updated.farmAvailableQty <= 0) {
+      _showSnack(
+        'Goat added to Available Stock. No more goats left to register '
+            'in ${updated.lotId}.',
       );
+
+      Navigator.of(context).pop();
 
       return;
     }
@@ -260,8 +265,8 @@ class _GoatRegistrationFormScreenState
     _clearFormForNextGoat();
 
     _showSnack(
-      'Goat registered — '
-          '${updated.registeredCount}/${updated.totalGoats} done.',
+      'Goat added to Available Stock — '
+          '${updated.farmAvailableQty} left in ${updated.lotId}.',
     );
   }
 
@@ -277,9 +282,8 @@ class _GoatRegistrationFormScreenState
     }
 
     _showSnack(
-      'Saved. '
-          '${updated.registeredCount}/${updated.totalGoats} '
-          'registered so far.',
+      'Goat added to Available Stock — '
+          '${updated.farmAvailableQty} left in ${updated.lotId}.',
     );
 
     Navigator.of(context).pop();
@@ -584,8 +588,11 @@ class _GoatRegistrationFormScreenState
   // ===========================================================================
 
   Widget _progressHeader() {
-    final total = _purchase.totalGoats;
+    // Out of the goats that can still be registered (moved out already +
+    // still available at the farm) — not out of everything ever bought,
+    // part of which may be sold, dead or still at the supplier.
     final registered = _purchase.registeredCount;
+    final total = registered + _purchase.farmAvailableQty;
 
     final percent = total > 0
         ? ((registered / total) * 100).round()
@@ -636,7 +643,7 @@ class _GoatRegistrationFormScreenState
                   CrossAxisAlignment.start,
                   children: [
                     Text(
-                      _purchase.id,
+                      _purchase.lotId,
                       style: AppTheme.heading(
                         size: 12,
                         color: AppColors.textDark,
@@ -685,7 +692,8 @@ class _GoatRegistrationFormScreenState
           const SizedBox(height: 6),
 
           Text(
-            '$registered of $total goats registered',
+            '$registered moved to individual goats · '
+                '${_purchase.farmAvailableQty} left in the lot (optional)',
             style: AppTheme.body(
               size: 10,
               color: AppColors.tradingBlue,
@@ -927,15 +935,15 @@ class _GoatRegistrationFormScreenState
             child: Row(
               mainAxisAlignment:
               MainAxisAlignment.center,
-              children: const [
-                Icon(
+              children: [
+                const Icon(
                   Icons.bookmark_border_rounded,
                   size: 18,
                 ),
-                SizedBox(width: 7),
+                const SizedBox(width: 7),
                 Text(
-                  'Save & Continue Later',
-                  style: TextStyle(
+                  'Save & Back to Lot',
+                  style: const TextStyle(
                     fontSize: 13,
                     fontWeight: FontWeight.w700,
                   ),

@@ -26,7 +26,6 @@ import 'lots/lot_stock_screen.dart';
 import 'lots/receive_lot_screen.dart';
 import 'purchase_goats/complete_receiving_screen.dart';
 import 'purchase_goats/purchase_goats_wizard_screen.dart';
-import 'register_goats/select_purchase_screen.dart';
 import 'sell_from_lot/sell_from_lot_wizard_screen.dart';
 import 'sell_goat/sell_goat_wizard_screen.dart';
 
@@ -749,26 +748,27 @@ class _TradingDashboardScreenState extends State<TradingDashboardScreen> {
                 ],
               ),
             ),
-            // Only the lot-first purchases show above. A purchase made
-            // before lots existed still needs one-by-one registration
-            // until it's converted (TradingService.
-            // convertLegacyPurchasesToLots) — this strip is the only way
-            // to reach that old flow now, and disappears on its own once
-            // nothing is left to convert.
-            if (lotOverview.legacyPendingRegistrations > 0) ...[
+            // Registering goats is no longer a Trading-level chore. Every
+            // purchase is a lot, and goats are registered (optionally)
+            // from inside the lot — Lot Management > a lot > Register
+            // Goats. A purchase made before lots existed has to be
+            // converted to a lot first; this row is only a pointer to the
+            // converter in Lot Management and disappears once nothing is
+            // left to convert.
+            if (lotOverview.hasLegacyPurchasesToConvert) ...[
               divider,
               _StripRow(
-                icon: Icons.description_outlined,
+                icon: Icons.swap_horiz_rounded,
                 color: AppColors.warning,
-                title: 'Older Purchases to Register',
-                subtitle: 'From before Purchase Lots — register one by one',
+                title: 'Older Purchases',
+                subtitle: 'Convert to lots — then register goats from the lot',
                 subtitleColor: AppColors.warning,
-                onTap: () => _push(const SelectPurchaseScreen()),
+                onTap: _openLotManagement,
                 trailing: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     _Pill(
-                      '${lotOverview.legacyPendingRegistrations} Pending',
+                      '${lotOverview.unconvertedPurchases} to convert',
                       AppColors.warning,
                     ),
                     const SizedBox(width: 4),

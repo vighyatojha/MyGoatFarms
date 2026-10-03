@@ -86,8 +86,9 @@ class WaitBookingSplitResult {
   });
 }
 
-/// Edit Booking for a Wait for Delivery booking: choose how many (or which)
-/// goats are delivered now, and what happens to the rest.
+/// Edit Booking for a Wait for Delivery OR a Booking / Holding sale: choose
+/// how many (or which) goats are delivered now, and what happens to the
+/// rest.
 ///
 /// A booking is the unit SalesService delivers: one rate, one advance, one
 /// pickup weight and one goat list. So partial delivery is done by
@@ -102,9 +103,17 @@ class WaitBookingSplitResult {
 ///    ([LeftoverGoatsAction.returnToStock]).
 ///
 /// Money is split by the share of goats being delivered (by weight when
-/// every goat has a weight, otherwise by count). A Wait for Delivery
-/// advance is not in Finance until delivery (see SalesService), so moving
-/// part of it to another booking needs no Finance entry to be rewritten.
+/// every goat has a weight, otherwise by count).
+///
+///  * Wait for Delivery: the advance is not in Finance until delivery (see
+///    SalesService), so moving part of it to another booking needs no
+///    Finance entry to be rewritten.
+///  * Booking / Holding: the booking money WAS recorded in Finance on the
+///    booking day as one Sold Goat Revenue entry (`sale_<id>_initial`). It
+///    is split the same way: the original entry is lowered to the
+///    delivered goats' share and the kept booking gets its own entry for
+///    the rest, so Finance never counts the money twice or loses it.
+///    Holding days keep counting from the original booking date on both.
 ///
 /// Everything happens in ONE Firestore transaction, so a booking can never
 /// be half split.
@@ -155,11 +164,39 @@ class WaitBookingSplitService {
       ) =>
       _farm(farmId).collection('customers').doc(customerId);
 
+  /// The booking-day Sold Goat Revenue entry of [saleId] — same id
+  /// SalesService writes it under (`sale_<id>_initial`).
+  DocumentReference<Map<String, dynamic>> _txRefFor(
+      String farmId,
+      String saleId,
+      ) =>
+      _farm(farmId)
+          .collection('transactions')
+          .doc('sale_${saleId}_initial');
+
   // -----------------------------------------------------------------------
   // MONEY — shared with the Edit Booking sheet
   // -----------------------------------------------------------------------
 
   static double _r2(num value) => Sale.roundMoney(value.toDouble());
+
+  /// The money the customer paid up front: the booking amount of a
+  /// Booking / Holding sale, the advance of a Wait for Delivery sale.
+  static double advanceOf(Sale sale) => sale.isBooking
+      ? (sale.bookingAmount ?? 0)
+      : (sale.bookingAdvanceAmount ?? 0);
+
+  /// True when the sale amount is agreed up front (fixed price, or any
+  /// Booking / Holding sale), so the split of that amount is a choice the
+  /// person can adjust. False for a per-KG Wait for Delivery sale, which
+  /// is priced from the pickup weight at delivery.
+  static bool splitsByAmount(Sale sale) => sale.isBooking || sale.isFixedPrice;
+
+  /// Open means: still waiting to be delivered.
+  static bool isOpen(Sale sale) =>
+      (sale.isWaitForDelivery &&
+          sale.status == Sale.statusWaitForDelivery) ||
+          (sale.isBooking && sale.status == Sale.statusBooked);
 
   static double _r3(num value) => (value.toDouble() * 1000).round() / 1000;
 
@@ -193,23 +230,29 @@ class WaitBookingSplitService {
 
   /// The split of [sale]'s money.
   ///
-  /// [deliverAdvance] and [deliverFixedPrice] are optional overrides for
-  /// the delivered side (null = proportional to [share]). The advance
-  /// override only applies when the leftover goats are kept on a booking;
-  /// when they are returned to stock the whole advance stays with the goats
-  /// being delivered.
+  /// [deliverAdvance] and [deliverAmount] are optional overrides for the
+  /// delivered side (null = proportional to [share]). The advance override
+  /// only applies when the leftover goats are kept on a booking; when they
+  /// are returned to stock the whole advance stays with the goats being
+  /// delivered.
+  ///
+  /// [deliverAmount] is the sale amount (before discount) for the goats
+  /// going out. It exists for a fixed-price sale and for a Booking /
+  /// Holding sale, whose amount is agreed up front and not worked out from
+  /// the pickup weight. A per-KG Wait for Delivery sale is priced at
+  /// delivery, so it ignores it.
   static WaitBookingSplitFigures figures({
     required Sale sale,
     required double share,
     required LeftoverGoatsAction action,
     double? deliverAdvance,
-    double? deliverFixedPrice,
+    double? deliverAmount,
   }) {
     final s = math.min(math.max(share, 0.0), 1.0);
     final keep = action == LeftoverGoatsAction.keepBooked && s < 1;
 
     final discount = sale.appliedDiscount;
-    final advance = sale.bookingAdvanceAmount ?? 0;
+    final advance = advanceOf(sale);
 
     // ---- goat value ---------------------------------------------------
     double dGross;
@@ -217,16 +260,23 @@ class WaitBookingSplitService {
     double? dFixed;
     double? lFixed;
 
-    if (sale.isFixedPrice) {
-      final total = _r2(sale.fixedSalePrice ?? (sale.totalSaleAmount + discount));
+    if (splitsByAmount(sale)) {
+      final total = _r2(
+        sale.isFixedPrice
+            ? (sale.fixedSalePrice ?? (sale.totalSaleAmount + discount))
+            : (sale.totalSaleAmount + discount),
+      );
       final d = _r2(
-        math.min(math.max(deliverFixedPrice ?? total * s, 0.0), total),
+        math.min(math.max(deliverAmount ?? total * s, 0.0), total),
       );
 
-      dFixed = d;
-      lFixed = _r2(total - d);
+      if (sale.isFixedPrice) {
+        dFixed = d;
+        lFixed = _r2(total - d);
+      }
+
       dGross = d;
-      lGross = lFixed;
+      lGross = _r2(total - d);
     } else {
       final total = _r2(sale.totalSaleAmount + discount);
 
@@ -298,7 +348,7 @@ class WaitBookingSplitService {
     int? deliverQuantity,
     required LeftoverGoatsAction leftover,
     double? deliverAdvance,
-    double? deliverFixedPrice,
+    double? deliverAmount,
   }) async {
     final actor = await FirestoreService.instance.getCurrentActor();
 
@@ -325,13 +375,15 @@ class WaitBookingSplitService {
 
       final sale = Sale.fromDoc(saleSnap);
 
-      if (!sale.isWaitForDelivery ||
-          sale.status != Sale.statusWaitForDelivery) {
+      if (!isOpen(sale)) {
         throw StateError(
           'Only a booking that is still waiting for delivery can be '
               'edited.',
         );
       }
+
+      final heldStatus =
+      sale.isBooking ? Goat.statusBooked : Goat.statusWaitOnDelivery;
 
       if (sale.payments.isNotEmpty) {
         throw StateError(
@@ -356,8 +408,7 @@ class WaitBookingSplitService {
 
           final goat = Goat.fromDoc(snap);
 
-          if (goat.currentStatus == Goat.statusWaitOnDelivery &&
-              goat.saleId == saleId) {
+          if (goat.currentStatus == heldStatus && goat.saleId == saleId) {
             members[goatId] = goat;
           }
         }
@@ -460,6 +511,13 @@ class WaitBookingSplitService {
         }
       }
 
+      // ---- Booking / Holding: the booking-day Finance entry -----------
+      DocumentSnapshot<Map<String, dynamic>>? revenueSnap;
+
+      if (sale.isBooking) {
+        revenueSnap = await transaction.get(_txRefFor(farmId, saleId));
+      }
+
       // ---------------------------------------------------------------
       // 2. Money.
       // ---------------------------------------------------------------
@@ -482,7 +540,7 @@ class WaitBookingSplitService {
         share: share,
         action: leftover,
         deliverAdvance: deliverAdvance,
-        deliverFixedPrice: deliverFixedPrice,
+        deliverAmount: deliverAmount,
       );
 
       final rawSale = Map<String, dynamic>.from(saleSnap.data() ?? {});
@@ -506,8 +564,14 @@ class WaitBookingSplitService {
         return {
           'totalSaleAmount': total,
           'discount': discount > 0 ? discount : FieldValue.delete(),
-          'bookingAdvanceAmount': advance,
-          'bookingWeight': bookingWeight,
+          // The paid-up-front money lives under a different field in each
+          // flow.
+          if (sale.isBooking)
+            'bookingAmount': advance
+          else ...{
+            'bookingAdvanceAmount': advance,
+            'bookingWeight': bookingWeight,
+          },
           'sellingWeight': sellingWeight,
           if (fixedPrice != null) 'fixedSalePrice': fixedPrice,
           if (fixedPrice != null && sellingWeight > 0)
@@ -584,6 +648,62 @@ class WaitBookingSplitService {
         }
       }
 
+      // ---- Booking / Holding: split the booking-day revenue -------------
+      if (revenueSnap != null &&
+          revenueSnap.exists &&
+          revenueSnap.data()?['status'] != 'voided') {
+        final data = revenueSnap.data() ?? const <String, dynamic>{};
+        final recorded = _r2((data['amount'] as num?) ?? 0);
+
+        final parentAllowed = _r2(
+          Sale.revenueFromPaid(
+            paid: money.deliverAdvance,
+            revenueTotal: money.deliverTotal,
+          ),
+        );
+
+        if (parentAllowed != recorded) {
+          if (parentAllowed <= 0) {
+            transaction.update(revenueSnap.reference, {
+              'status': 'voided',
+              'voidedAt': FieldValue.serverTimestamp(),
+              'voidReason': 'Booking edited: goats removed',
+            });
+          } else {
+            transaction.update(revenueSnap.reference, {
+              'amount': parentAllowed,
+              'note': 'Sold Goat Revenue — Sale $saleId '
+                  '(adjusted for an edited booking)',
+            });
+          }
+        }
+
+        if (keep) {
+          final childAllowed = _r2(
+            Sale.revenueFromPaid(
+              paid: money.leftAdvance,
+              revenueTotal: money.leftTotal,
+            ),
+          );
+
+          if (childAllowed > 0) {
+            final childDoc = Map<String, dynamic>.from(data)
+              ..remove('voidedAt')
+              ..remove('voidReason')
+              ..addAll({
+                'amount': childAllowed,
+                'status': 'active',
+                'referenceId': newSaleId,
+                'note': 'Sold Goat Revenue — Sale $newSaleId '
+                    '(split from booking $saleId)',
+                'createdAt': FieldValue.serverTimestamp(),
+              });
+
+            transaction.set(_txRefFor(farmId, newSaleId!), childDoc);
+          }
+        }
+      }
+
       // ---- the leftover goats -----------------------------------------
       for (final id in leftoverIds) {
         if (keep) {
@@ -612,7 +732,10 @@ class WaitBookingSplitService {
         // only comes down when goats actually leave the booking list.
         transaction.set(
           _summaryRef(farmId),
-          {'waitOnDelivery': FieldValue.increment(-leftoverCount)},
+          {
+            (sale.isBooking ? 'booking' : 'waitOnDelivery'):
+            FieldValue.increment(-leftoverCount),
+          },
           SetOptions(merge: true),
         );
       }

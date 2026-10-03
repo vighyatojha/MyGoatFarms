@@ -11,6 +11,7 @@ import 'package:mygoatfarms/models/sale_model.dart';
 import 'package:mygoatfarms/models/sale_settlement.dart';
 import 'package:mygoatfarms/services/booking_delivery_service.dart';
 import 'package:mygoatfarms/services/goat_service.dart';
+import 'package:mygoatfarms/widgets/edit_wait_booking_sheet.dart';
 import 'package:mygoatfarms/widgets/sale_actions.dart';
 import 'package:mygoatfarms/widgets/excess_action_picker.dart';
 import 'package:mygoatfarms/screens/trading/purchase_goats/purchase_wizard_widgets.dart';
@@ -116,6 +117,12 @@ class _BookingDeliveryCustomerScreenState
   /// Until then it follows the final amount as the delivery date
   /// changes, same as the single-goat screen.
   final Set<String> _amountEdited = <String>{};
+
+  /// What each booking looked like the last time it was drawn, so the
+  /// amount received can follow the new final amount once a booking has
+  /// been edited (goats split off) — here or on another device.
+  final Map<String, ({int goats, double total, double paid})> _signatures =
+  <String, ({int goats, double total, double paid})>{};
 
   /// Delivery date shared across every booking in this batch — holding
   /// charges are computed against it. Set once the customer's bookings
@@ -358,7 +365,78 @@ class _BookingDeliveryCustomerScreenState
 
     _selected.removeWhere((id) => !ids.contains(id));
 
+    for (final entry in customer.sales) {
+      final now = (
+      goats: entry.goatCount,
+      total: entry.sale.totalSaleAmount,
+      paid: entry.bookingAmount,
+      );
+
+      final before = _signatures[entry.id];
+
+      _signatures[entry.id] = now;
+
+      // The booking was edited: let the amount received follow the new
+      // final amount again instead of keeping a figure typed for the old
+      // one.
+      if (before != null && before != now) {
+        _amountEdited.remove(entry.id);
+      }
+    }
+
     _syncAllAutoAmounts(customer);
+  }
+
+  /// Edit booking: pick how many (or which) goats go out now and what
+  /// happens to the rest. The booking is trimmed to the goats being
+  /// delivered; the person then delivers it as usual.
+  Future<void> _openEditBooking(BookingDeliverySale entry) async {
+    if (_delivering) return;
+
+    final result = await showEditWaitBookingSheet(
+      context,
+      farmId: widget.farmId,
+      sale: entry.sale,
+      goats: entry.goats,
+    );
+
+    if (result == null || !mounted) return;
+
+    setState(() {
+      // The goats to deliver stay on this booking, so tick it. A kept
+      // booking is marked as seen WITHOUT being ticked, otherwise it would
+      // be selected for delivery automatically as a "new" booking.
+      _selected.add(result.deliverSaleId);
+
+      final kept = result.keptSaleId;
+
+      if (kept != null) {
+        _seen.add(kept);
+        _selected.remove(kept);
+      }
+    });
+
+    final deliver = _goats(result.deliverCount);
+    final left = _goats(result.leftoverCount);
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          result.keptSaleId != null
+              ? 'Booking ${result.deliverSaleId} now has $deliver to '
+              'deliver. $left kept on booking ${result.keptSaleId}.'
+              : 'Booking ${result.deliverSaleId} now has $deliver to '
+              'deliver. $left went back to stock.',
+          style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+        ),
+        backgroundColor: AppColors.darkGreen,
+        behavior: SnackBarBehavior.floating,
+        margin: const EdgeInsets.all(14),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(12),
+        ),
+      ),
+    );
   }
 
   List<BookingDeliverySale> _picked(BookingDeliveryCustomer customer) {
@@ -1406,6 +1484,8 @@ class _BookingDeliveryCustomerScreenState
                   ],
                 ),
                 const Divider(height: 18, color: AppColors.divider),
+                // Deliver only some of the goats, and keep or remove the rest.
+                if (entry.goatCount > 1) _editBookingButton(entry),
                 if (entry.isLotSale)
                   _lotRow(entry)
                 else
@@ -1426,6 +1506,63 @@ class _BookingDeliveryCustomerScreenState
             ),
           ),
         ],
+      ),
+    );
+  }
+
+  /// Opens Edit booking — deliver one or any number of the booking's goats
+  /// and keep or remove the rest.
+  Widget _editBookingButton(BookingDeliverySale entry) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 9),
+      child: InkWell(
+        onTap: _delivering ? null : () => _openEditBooking(entry),
+        borderRadius: BorderRadius.circular(12),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+          decoration: BoxDecoration(
+            color: AppColors.stockTeal.withValues(alpha: 0.08),
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(
+              color: AppColors.stockTeal.withValues(alpha: 0.4),
+            ),
+          ),
+          child: Row(
+            children: [
+              const Icon(
+                Icons.edit_outlined,
+                size: 16,
+                color: AppColors.stockTeal,
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Edit booking',
+                      style: AppTheme.heading(
+                        size: 12,
+                        color: AppColors.darkGreen,
+                      ),
+                    ),
+                    Text(
+                      'Deliver some goats now · keep or remove the rest',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: AppTheme.body(size: 10),
+                    ),
+                  ],
+                ),
+              ),
+              const Icon(
+                Icons.chevron_right,
+                size: 18,
+                color: AppColors.stockTeal,
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }
