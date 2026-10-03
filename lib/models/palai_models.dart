@@ -228,6 +228,20 @@ class PalaiGoat {
   static const double maxLengthCm = 200;
 
   // --------------------------------------------------------------------------
+  // AGE
+  // --------------------------------------------------------------------------
+
+  /// Age in complete months when the goat entered Palai.
+  ///
+  /// 0 means "not recorded" — age is optional, and goats checked in before
+  /// this field existed have none. Use [hasAge] / [ageLabel] rather than
+  /// checking for 0 directly.
+  final int ageMonthsAtCheckIn;
+
+  /// Upper bound accepted by the Palai forms (a typo sanity check).
+  static const int maxAgeMonths = 300;
+
+  // --------------------------------------------------------------------------
   // HEALTH
   // --------------------------------------------------------------------------
 
@@ -419,6 +433,9 @@ class PalaiGoat {
     // Length (cm, 0 = not recorded)
     this.lengthAtCheckIn = 0,
 
+    // Age (months, 0 = not recorded)
+    this.ageMonthsAtCheckIn = 0,
+
     // Health
     this.healthStatus = 'Healthy',
 
@@ -558,6 +575,11 @@ class PalaiGoat {
       _readDouble(
         data['lengthAtCheckIn'],
       ),
+
+      ageMonthsAtCheckIn:
+      _readDouble(
+        data['ageMonthsAtCheckIn'],
+      ).round(),
 
       // ----------------------------------------------------------------------
       // HEALTH
@@ -764,6 +786,11 @@ class PalaiGoat {
         data['lengthAtCheckIn'],
       ),
 
+      ageMonthsAtCheckIn:
+      _readDouble(
+        data['ageMonthsAtCheckIn'],
+      ).round(),
+
       healthStatus:
       _readString(
         data['healthStatus'],
@@ -891,6 +918,9 @@ class PalaiGoat {
       // Length (cm, 0 = not recorded)
       'lengthAtCheckIn': lengthAtCheckIn,
 
+      // Age (months, 0 = not recorded)
+      'ageMonthsAtCheckIn': ageMonthsAtCheckIn,
+
       // Health
       'healthStatus': healthStatus,
 
@@ -1007,6 +1037,9 @@ class PalaiGoat {
       // Length (cm, 0 = not recorded)
       'lengthAtCheckIn': lengthAtCheckIn,
 
+      // Age (months, 0 = not recorded)
+      'ageMonthsAtCheckIn': ageMonthsAtCheckIn,
+
       // Health
       'healthStatus': healthStatus,
 
@@ -1101,6 +1134,7 @@ class PalaiGoat {
     double? currentWeight,
     double? heightAtCheckIn,
     double? lengthAtCheckIn,
+    int? ageMonthsAtCheckIn,
 
     String? healthStatus,
 
@@ -1176,6 +1210,10 @@ class PalaiGoat {
       lengthAtCheckIn:
       lengthAtCheckIn ??
           this.lengthAtCheckIn,
+
+      ageMonthsAtCheckIn:
+      ageMonthsAtCheckIn ??
+          this.ageMonthsAtCheckIn,
 
       healthStatus:
       healthStatus ??
@@ -1296,6 +1334,31 @@ class PalaiGoat {
     final text = lengthAtCheckIn.toStringAsFixed(1);
 
     return '${text.endsWith('.0') ? text.substring(0, text.length - 2) : text} cm';
+  }
+
+  // ==========================================================================
+  // AGE HELPERS
+  // ==========================================================================
+
+  /// Whether an age was recorded for this goat.
+  bool get hasAge => ageMonthsAtCheckIn > 0;
+
+  /// e.g. "8 months", "1 year 3 months"; empty when no age was recorded.
+  String get ageLabel {
+    if (!hasAge) return '';
+
+    final years = ageMonthsAtCheckIn ~/ 12;
+    final months = ageMonthsAtCheckIn % 12;
+
+    if (years == 0) {
+      return '$months ${months == 1 ? 'month' : 'months'}';
+    }
+
+    final y = '$years ${years == 1 ? 'year' : 'years'}';
+
+    if (months == 0) return y;
+
+    return '$y $months ${months == 1 ? 'month' : 'months'}';
   }
 
   // ==========================================================================

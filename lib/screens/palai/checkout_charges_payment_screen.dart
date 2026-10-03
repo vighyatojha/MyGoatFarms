@@ -356,12 +356,13 @@ class _CheckoutChargesPaymentScreenState
       return;
     }
 
-    /// The final checkout flow currently requires the customer
-    /// account to be completely settled before proceeding.
-    if (_pendingAfter > 0) {
-      await _showPaymentRequiredDialog();
-      return;
-    }
+    // Payment is NOT compulsory at final checkout. Whatever is left
+    // unpaid (_pendingAfter) is written to the customer's outstanding
+    // (customers/{id}.pendingAmount) by createMonthlyBill() inside
+    // onDone below. That same field drives the Finance tab's total
+    // outstanding and the Customer Ledger, so the balance shows up
+    // there automatically and can be collected later via Receive
+    // Payment.
 
     setState(() {
       _saving = true;
@@ -486,9 +487,11 @@ class _CheckoutChargesPaymentScreenState
                   // remainingAmount forever — still "counting" a goat
                   // that had just been checked out and fully paid for —
                   // and blocked future payments with a mismatch error.
-                  // Checkout requires pendingAmount to be zero before it
-                  // gets here, so any Monthly Bill still open at this
-                  // point is stale and safe to close out.
+                  // This only closes them when the customer ended up fully
+                  // settled (pendingAmount == 0). If part of the checkout
+                  // amount was left unpaid, that balance now lives in
+                  // customer.pendingAmount (Customer Ledger + Finance
+                  // outstanding) and the helper leaves the bills alone.
                   await MonthlyBillingService.instance
                       .closeOpenBillsIfCustomerSettled(
                     farmId: widget.farmId,
@@ -515,108 +518,6 @@ class _CheckoutChargesPaymentScreenState
         FirestoreService.instance.describeError(e),
       );
     }
-  }
-
-// ================================================================
-// PAYMENT REQUIRED
-// ================================================================
-
-  Future<void> _showPaymentRequiredDialog() async {
-    if (!mounted) return;
-
-    await showDialog<void>(
-      context: context,
-      builder: (dialogContext) {
-        return AlertDialog(
-          shape: RoundedRectangleBorder(
-            borderRadius:
-            BorderRadius.circular(16),
-          ),
-          title: const Row(
-            children: [
-              Icon(
-                Icons.error_outline,
-                color: Colors.orange,
-              ),
-              SizedBox(width: 8),
-              Text('Payment Required'),
-            ],
-          ),
-          content: Column(
-            mainAxisSize:
-            MainAxisSize.min,
-            crossAxisAlignment:
-            CrossAxisAlignment.stretch,
-            children: [
-              const Text(
-                'The final checkout cannot be completed while an amount is still outstanding. Please collect the remaining balance before checking out.',
-              ),
-              const SizedBox(height: 16),
-              _paymentRequiredRow(
-                'Final Amount Due',
-                _rupees(_totalDue),
-              ),
-              _paymentRequiredRow(
-                'Already Paid',
-                _rupees(_paid),
-              ),
-              const Divider(height: 20),
-              _paymentRequiredRow(
-                'Remaining',
-                _rupees(_pendingAfter),
-                bold: true,
-              ),
-            ],
-          ),
-          actions: [
-            TextButton(
-              onPressed: () =>
-                  Navigator.of(dialogContext).pop(),
-              child: const Text('Okay'),
-            ),
-          ],
-        );
-      },
-    );
-  }
-
-  Widget _paymentRequiredRow(
-      String label,
-      String value, {
-        bool bold = false,
-      }) {
-    return Padding(
-      padding:
-      const EdgeInsets.symmetric(
-        vertical: 4,
-      ),
-      child: Row(
-        mainAxisAlignment:
-        MainAxisAlignment.spaceBetween,
-        children: [
-          Expanded(
-            child: Text(
-              label,
-              style: TextStyle(
-                fontWeight: bold
-                    ? FontWeight.w700
-                    : FontWeight.w400,
-              ),
-            ),
-          ),
-          Text(
-            value,
-            style: TextStyle(
-              fontWeight:
-              FontWeight.w700,
-              color: bold
-                  ? AppColors.error
-                  : AppColors.textDark,
-            ),
-          ),
-        ],
-      ),
-    );
   }
 
 // ================================================================
@@ -1397,6 +1298,32 @@ class _CheckoutChargesPaymentScreenState
                 : AppColors.success,
             bold: true,
           ),
+
+          if (_pendingAfter > 0)
+            Padding(
+              padding: const EdgeInsets.only(top: 8),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Icon(
+                    Icons.info_outline,
+                    size: 16,
+                    color: AppColors.textGrey,
+                  ),
+                  const SizedBox(width: 6),
+                  Expanded(
+                    child: Text(
+                      '${_rupees(_pendingAfter)} will be added to this '
+                          "customer's outstanding and shown in Finance.",
+                      style: AppTheme.body(
+                        size: 12,
+                        color: AppColors.textGrey,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
 
           if (_advanceAfter > 0)
             _summaryRow(

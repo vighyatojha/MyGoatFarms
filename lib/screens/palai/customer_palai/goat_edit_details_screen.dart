@@ -45,6 +45,7 @@ class _GoatEditDetailsScreenState extends State<GoatEditDetailsScreen> {
   late final TextEditingController _weightController;
   late final TextEditingController _heightController;
   late final TextEditingController _lengthController;
+  late final TextEditingController _ageController;
   late final TextEditingController _pricingController;
   late final TextEditingController _notesController;
 
@@ -76,6 +77,9 @@ class _GoatEditDetailsScreenState extends State<GoatEditDetailsScreen> {
     _lengthController = TextEditingController(
       text: goat.hasLength ? goat.lengthAtCheckIn.toStringAsFixed(1) : '',
     );
+    _ageController = TextEditingController(
+      text: goat.hasAge ? goat.ageMonthsAtCheckIn.toString() : '',
+    );
     _pricingController = TextEditingController(text: goat.pricing.toStringAsFixed(2));
     _notesController = TextEditingController(text: goat.notes);
     _gender = _genders.contains(goat.gender) ? goat.gender : 'Male';
@@ -94,6 +98,7 @@ class _GoatEditDetailsScreenState extends State<GoatEditDetailsScreen> {
     _weightController.dispose();
     _heightController.dispose();
     _lengthController.dispose();
+    _ageController.dispose();
     _pricingController.dispose();
     _notesController.dispose();
     super.dispose();
@@ -173,6 +178,17 @@ class _GoatEditDetailsScreenState extends State<GoatEditDetailsScreen> {
       return;
     }
 
+    // Age is optional — blank clears it (0 = not recorded). Months.
+    final ageText = _ageController.text.trim();
+    final age = ageText.isEmpty ? 0 : int.tryParse(ageText);
+    if (age == null || age < 0 || age > PalaiGoat.maxAgeMonths) {
+      _showSnack(
+        'Please enter a valid goat age in months (up to ${PalaiGoat.maxAgeMonths}).',
+        isError: true,
+      );
+      return;
+    }
+
     final pricingText = _pricingController.text.trim();
     final pricing = pricingText.isEmpty ? 0.0 : double.tryParse(pricingText);
     if (pricing == null || pricing < 0) {
@@ -191,6 +207,7 @@ class _GoatEditDetailsScreenState extends State<GoatEditDetailsScreen> {
         weightAtCheckIn: weight,
         heightAtCheckIn: height,
         lengthAtCheckIn: length,
+        ageMonthsAtCheckIn: age,
         healthStatus: _healthStatus,
         farmArrivalDate: _farmArrivalDate,
         monthlyPackage: _monthlyPackage,
@@ -302,6 +319,15 @@ class _GoatEditDetailsScreenState extends State<GoatEditDetailsScreen> {
               hint: 'e.g. 70',
               icon: Icons.straighten_outlined,
               keyboardType: const TextInputType.numberWithOptions(decimal: true),
+              optional: true,
+            ),
+            const SizedBox(height: 16),
+            _textField(
+              controller: _ageController,
+              label: 'Age (months)',
+              hint: 'e.g. 8',
+              icon: Icons.cake_outlined,
+              keyboardType: TextInputType.number,
               optional: true,
             ),
             const SizedBox(height: 16),

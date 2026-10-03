@@ -2498,6 +2498,7 @@ class FirestoreService {
       'weightAtCheckIn': updated.weightAtCheckIn,
       'heightAtCheckIn': updated.heightAtCheckIn,
       'lengthAtCheckIn': updated.lengthAtCheckIn,
+      'ageMonthsAtCheckIn': updated.ageMonthsAtCheckIn,
       'healthStatus': updated.healthStatus,
       'farmArrivalDate': updated.farmArrivalDate != null ? Timestamp.fromDate(updated.farmArrivalDate!) : null,
       'monthlyPackage': updated.monthlyPackage,

@@ -2095,6 +2095,7 @@ class SalesService {
           weightAtCheckIn: draft.weightFor(goat),
           heightAtCheckIn: goat.height,
           lengthAtCheckIn: goat.length,
+          ageMonthsAtCheckIn: goat.currentAgeMonths,
           healthStatus:
           goat.healthStatus.isEmpty ? 'Healthy' : goat.healthStatus,
           checkInDate: draft.transferDate ?? DateTime.now(),
@@ -2311,6 +2312,7 @@ class SalesService {
           weightAtCheckIn: goat.weight,
           heightAtCheckIn: goat.height,
           lengthAtCheckIn: goat.length,
+          ageMonthsAtCheckIn: goat.currentAgeMonths,
           healthStatus:
           goat.healthStatus.isEmpty ? 'Healthy' : goat.healthStatus,
           checkInDate: draft.transferDate ?? DateTime.now(),

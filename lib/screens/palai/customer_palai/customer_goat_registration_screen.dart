@@ -47,6 +47,7 @@ class _CustomerGoatRegistrationScreenState
   final _weightController = TextEditingController();
   final _heightController = TextEditingController();
   final _lengthController = TextEditingController();
+  final _ageController = TextEditingController();
   final _pricingController = TextEditingController();
   final _checkInTransportController = TextEditingController();
   final _notesController = TextEditingController();
@@ -296,6 +297,7 @@ class _CustomerGoatRegistrationScreenState
     _weightController.dispose();
     _heightController.dispose();
     _lengthController.dispose();
+    _ageController.dispose();
     _pricingController.dispose();
     _checkInTransportController.dispose();
     _notesController.dispose();
@@ -434,6 +436,24 @@ class _CustomerGoatRegistrationScreenState
       return;
     }
 
+    // Age is optional — blank means "not recorded" (0). Entered in months.
+    final ageText = _ageController.text.trim();
+
+    final age = ageText.isEmpty
+        ? 0
+        : int.tryParse(ageText);
+
+    if (age == null ||
+        age < 0 ||
+        age > PalaiGoat.maxAgeMonths) {
+      _showSnack(
+        'Please enter a valid goat age in months '
+            '(up to ${PalaiGoat.maxAgeMonths}).',
+        isError: true,
+      );
+      return;
+    }
+
     // When opened without a preset customer, the picker's selection is
     // the source of truth for the owner.
     if (_needsCustomerPicker && _selectedCustomer == null) {
@@ -533,6 +553,10 @@ class _CustomerGoatRegistrationScreenState
         // Length (optional, cm — 0 = not recorded)
         lengthAtCheckIn:
         length,
+
+        // Age (optional, months — 0 = not recorded)
+        ageMonthsAtCheckIn:
+        age,
 
         // Health
         healthStatus:
@@ -874,6 +898,10 @@ class _CustomerGoatRegistrationScreenState
             const SizedBox(height: 16),
 
             _buildLengthField(),
+
+            const SizedBox(height: 16),
+
+            _buildAgeField(),
 
             const SizedBox(height: 16),
 
@@ -1325,6 +1353,50 @@ class _CustomerGoatRegistrationScreenState
 
         if (length > PalaiGoat.maxLengthCm) {
           return 'Please check the length';
+        }
+
+        return null;
+      },
+    );
+  }
+
+
+  // ===========================================================================
+  // AGE (optional)
+  // ===========================================================================
+
+  Widget _buildAgeField() {
+    return _textField(
+      controller:
+      _ageController,
+      label:
+      'Age (months)',
+      hint:
+      'Example: 8',
+      icon:
+      Icons.cake_outlined,
+      keyboardType:
+      TextInputType.number,
+      optional:
+      true,
+      validator: (value) {
+        final text =
+            value?.trim() ?? '';
+
+        // Optional — blank is fine.
+        if (text.isEmpty) {
+          return null;
+        }
+
+        final age =
+        int.tryParse(text);
+
+        if (age == null || age <= 0) {
+          return 'Enter a valid age in months';
+        }
+
+        if (age > PalaiGoat.maxAgeMonths) {
+          return 'Please check the age';
         }
 
         return null;
