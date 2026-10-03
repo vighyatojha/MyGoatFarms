@@ -1484,6 +1484,24 @@ class _BookingDeliveryCustomerScreenState
                   ],
                 ),
                 const Divider(height: 18, color: AppColors.divider),
+
+                // Edit the deal or cancel it while nothing is delivered.
+                // Cancel puts the goats back in stock (or the lot) and
+                // removes the sale; the open-deals stream refreshes this
+                // list by itself.
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 9),
+                  child: OpenDealButtons(
+                    farmId: widget.farmId,
+                    sale: entry.sale,
+                    onResult: (_) {
+                      if (mounted) {
+                        setState(() => _selected.remove(entry.id));
+                      }
+                    },
+                  ),
+                ),
+
                 // Deliver only some of the goats, and keep or remove the rest.
                 if (entry.goatCount > 1) _editBookingButton(entry),
                 if (entry.isLotSale)

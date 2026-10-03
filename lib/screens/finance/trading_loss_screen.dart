@@ -2,13 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 
 import 'package:mygoatfarms/app_theme.dart';
-import 'package:mygoatfarms/models/death_record.dart';
-import 'package:mygoatfarms/models/trading_lot_death_model.dart';
-import 'package:mygoatfarms/models/trading_purchase_model.dart';
-import 'package:mygoatfarms/services/death_settlement_service.dart';
 import 'package:mygoatfarms/services/firestore_service.dart';
-import 'package:mygoatfarms/services/trading_service.dart';
 import 'package:mygoatfarms/widgets/fast_route.dart';
+import '../../services/trading_loss_screen.dart';
 import '../../widgets/finance/finance_widgets.dart';
 import '../home/record_farm_loss_screen.dart';
 
@@ -29,43 +25,13 @@ class TradingLossScreen extends StatefulWidget {
       _TradingLossScreenState();
 }
 
-enum _LossType {
-  all,
-  goatDeath,
-  lotDeath,
-  cancellation,
-  other,
-}
-
-class _TradingLossItem {
-  final String title;
-  final String subtitle;
-  final String typeLabel;
-  final double amount;
-  final DateTime date;
-  final String? actorName;
-  final _LossType type;
-  final IconData icon;
-
-  const _TradingLossItem({
-    required this.title,
-    required this.subtitle,
-    required this.typeLabel,
-    required this.amount,
-    required this.date,
-    required this.actorName,
-    required this.type,
-    required this.icon,
-  });
-}
-
 class _TradingLossScreenState
     extends State<TradingLossScreen> {
   bool _loading = true;
   String? _error;
 
-  List<_TradingLossItem> _items = [];
-  _LossType _filter = _LossType.all;
+  List<TradingLossItem> _items = [];
+  TradingLossType _filter = TradingLossType.all;
 
   double get _totalLoss =>
       _filteredItems.fold<double>(
@@ -73,8 +39,8 @@ class _TradingLossScreenState
             (sum, item) => sum + item.amount,
       );
 
-  List<_TradingLossItem> get _filteredItems {
-    if (_filter == _LossType.all) {
+  List<TradingLossItem> get _filteredItems {
+    if (_filter == TradingLossType.all) {
       return _items;
     }
 
@@ -98,227 +64,26 @@ class _TradingLossScreenState
     }
 
     try {
-      final deathRecordsFuture =
-          DeathSettlementService.instance
-              .deathHistoryStream(widget.farmId)
-              .first;
-
-      final lotsFuture =
-          TradingService.instance
-              .purchasesStream(widget.farmId)
-              .first;
-
-      final results = await Future.wait([
-        deathRecordsFuture,
-        lotsFuture,
-      ]);
-
-      final deathRecords =
-      results[0] as List<DeathRecord>;
-
-      final lots =
-      results[1] as List<TradingPurchase>;
-
-      final items = <_TradingLossItem>[];
-
-      // ---------------------------------------------------------------
-      // FARM / GOAT / MANUAL LOSSES
-      // ---------------------------------------------------------------
-      //
-      // These already exist in deathRecords. We only show records
-      // which actually carry a monetary farm loss.
-      //
-      // A Customer Palai death with farmLossAmount == 0 is therefore
-      // intentionally excluded.
-      for (final record in deathRecords) {
-        if (record.farmLossAmount <= 0) {
-          continue;
-        }
-
-        if (!_inRange(record.deathDate)) {
-          continue;
-        }
-
-        if (record.isManualLoss) {
-          items.add(
-            _TradingLossItem(
-              title: record.displayTitle,
-              subtitle: record.description.trim().isNotEmpty
-                  ? record.description.trim()
-                  : record.reason.trim().isNotEmpty
-                  ? record.reason.trim()
-                  : record.goatTypeLabel,
-              typeLabel: record.goatTypeLabel,
-              amount: record.farmLossAmount,
-              date: record.deathDate,
-              actorName: record.actorName,
-              type: _LossType.other,
-              icon: Icons.report_gmailerrorred_outlined,
-            ),
-          );
-
-          continue;
-        }
-
-        final goatLabel =
-        record.goatLabel.trim().isNotEmpty
-            ? record.goatLabel.trim()
-            : 'Goat';
-
-        final customerSuffix =
-        record.customerName?.trim().isNotEmpty == true
-            ? ' • ${record.customerName!.trim()}'
-            : '';
-
-        items.add(
-          _TradingLossItem(
-            title: '$goatLabel$customerSuffix',
-            subtitle: record.reason.trim().isNotEmpty
-                ? record.reason.trim()
-                : 'Goat death loss',
-            typeLabel: record.goatTypeLabel,
-            amount: record.farmLossAmount,
-            date: record.deathDate,
-            actorName: record.actorName,
-            type: _LossType.goatDeath,
-            icon: Icons.pets_outlined,
-          ),
-        );
-      }
-
-      // ---------------------------------------------------------------
-      // PURCHASE LOT DEATHS + DEAL CANCELLATIONS
-      // ---------------------------------------------------------------
-      //
-      // Lot deaths are stored below each trading purchase:
-      //
-      // tradingPurchases/{lotId}/deaths
-      //
-      // They are separate from deathRecords, so they must be loaded
-      // independently.
-      final lotResults = await Future.wait(
-        lots
-            .where((lot) => lot.isLot)
-            .map(
-              (lot) => TradingService.instance
-              .lotDeathsStream(
-            widget.farmId,
-            lot.id,
-          )
-              .first
-              .then(
-                (deaths) => (
-            lot: lot,
-            deaths: deaths,
-            ),
-          ),
-        ),
-      );
-
-      for (final result in lotResults) {
-        final lot = result.lot;
-
-        // Lot death losses.
-        for (final death in result.deaths) {
-          if (death.reversed) {
-            continue;
-          }
-
-          if (death.lossAmount <= 0) {
-            continue;
-          }
-
-          if (!_inRange(death.date)) {
-            continue;
-          }
-
-          final lotName =
-          lot.lotId.trim().isNotEmpty
-              ? lot.lotId
-              : 'Purchase Lot';
-
-          final reason =
-          death.reason.trim().isNotEmpty
-              ? death.reason.trim()
-              : 'Goat death';
-
-          items.add(
-            _TradingLossItem(
-              title: '$lotName • Goat death',
-              subtitle:
-              '${death.qty} goat'
-                  '${death.qty == 1 ? '' : 's'} • $reason',
-              typeLabel: 'Lot Death',
-              amount: death.lossAmount,
-              date: death.date,
-              actorName: death.actorName,
-              type: _LossType.lotDeath,
-              icon: Icons.pets_outlined,
-            ),
-          );
-        }
-
-        // -------------------------------------------------------------
-        // CANCELLED DEAL LOSS
-        // -------------------------------------------------------------
-        //
-        // TradingService stores:
-        //
-        // cancelPaidAmount
-        // cancelRefundAmount
-        // cancelLossAmount
-        //
-        // The loss is paid minus refunded.
-        if (lot.dealCancelled &&
-            lot.cancelLossAmount > 0 &&
-            lot.cancelledAt != null &&
-            _inRange(lot.cancelledAt!)) {
-          final note =
-          lot.cancelNote.trim();
-
-          items.add(
-            _TradingLossItem(
-              title:
-              '${lot.lotId} • Deal cancellation',
-              subtitle: note.isNotEmpty
-                  ? note
-                  : 'Supplier cancellation loss',
-              typeLabel: 'Cancellation',
-              amount: lot.cancelLossAmount,
-              date: lot.cancelledAt!,
-              actorName: null,
-              type: _LossType.cancellation,
-              icon: Icons.cancel_outlined,
-            ),
-          );
-        }
-      }
-
-      items.sort(
-            (a, b) => b.date.compareTo(a.date),
+      // One shared loader - the Recent Trading Activity feed reads the
+      // same list, so the two can never disagree.
+      final items = await TradingLossService.instance.load(
+        widget.farmId,
+        start: widget.start,
+        end: widget.end,
       );
 
       if (!mounted) return;
-
       setState(() {
         _items = items;
         _loading = false;
       });
     } catch (e) {
       if (!mounted) return;
-
       setState(() {
         _loading = false;
-        _error =
-            FirestoreService.instance
-                .describeError(e);
+        _error = FirestoreService.instance.describeError(e);
       });
     }
-  }
-
-  bool _inRange(DateTime date) {
-    return !date.isBefore(widget.start) &&
-        date.isBefore(widget.end);
   }
 
   String _formatDate(DateTime date) {
@@ -327,32 +92,40 @@ class _TradingLossScreenState
     ).format(date);
   }
 
-  String _filterLabel(_LossType type) {
+  String _filterLabel(TradingLossType type) {
     switch (type) {
-      case _LossType.all:
+      case TradingLossType.all:
         return 'All';
-      case _LossType.goatDeath:
+      case TradingLossType.goatDeath:
         return 'Goat Death';
-      case _LossType.lotDeath:
+      case TradingLossType.lotDeath:
         return 'Lot Death';
-      case _LossType.cancellation:
+      case TradingLossType.cancellation:
         return 'Cancellation';
-      case _LossType.other:
+      case TradingLossType.saleDiscount:
+        return 'Discount';
+      case TradingLossType.belowCost:
+        return 'Below Cost';
+      case TradingLossType.other:
         return 'Other';
     }
   }
 
-  IconData _filterIcon(_LossType type) {
+  IconData _filterIcon(TradingLossType type) {
     switch (type) {
-      case _LossType.all:
+      case TradingLossType.all:
         return Icons.list_alt_rounded;
-      case _LossType.goatDeath:
+      case TradingLossType.goatDeath:
         return Icons.pets_outlined;
-      case _LossType.lotDeath:
+      case TradingLossType.lotDeath:
         return Icons.inventory_2_outlined;
-      case _LossType.cancellation:
+      case TradingLossType.cancellation:
         return Icons.cancel_outlined;
-      case _LossType.other:
+      case TradingLossType.saleDiscount:
+        return Icons.local_offer_outlined;
+      case TradingLossType.belowCost:
+        return Icons.trending_down_rounded;
+      case TradingLossType.other:
         return Icons.report_gmailerrorred_outlined;
     }
   }
@@ -633,7 +406,7 @@ class _TradingLossScreenState
             child: ListView(
               scrollDirection:
               Axis.horizontal,
-              children: _LossType.values
+              children: TradingLossType.values
                   .map(
                     (type) => Padding(
                   padding:
@@ -652,7 +425,7 @@ class _TradingLossScreenState
     );
   }
 
-  Widget _filterChip(_LossType type) {
+  Widget _filterChip(TradingLossType type) {
     final selected =
         _filter == type;
 
@@ -711,7 +484,7 @@ class _TradingLossScreenState
   }
 
   Widget _lossCard(
-      _TradingLossItem item,
+      TradingLossItem item,
       ) {
     final actor =
         item.actorName?.trim() ?? '';
@@ -898,7 +671,7 @@ class _TradingLossScreenState
           ),
           const SizedBox(height: 6),
           Text(
-            _filter == _LossType.all
+            _filter == TradingLossType.all
                 ? 'There are no trading-related losses '
                 'in this finance period.'
                 : 'There are no losses in the selected '

@@ -82,6 +82,85 @@ class SaleActionsMenu extends StatelessWidget {
   }
 }
 
+/// Visible "Edit" and "Cancel Deal" buttons for a deal that has not been
+/// delivered yet (Booking / Holding or Wait for Delivery).
+///
+/// Shows nothing for a sale that is already delivered, so it is safe to
+/// drop under any sale row. [onResult] runs after a successful action;
+/// after [SaleActionResult.cancelled] the sale no longer exists.
+class OpenDealButtons extends StatelessWidget {
+  final String farmId;
+  final Sale sale;
+  final ValueChanged<SaleActionResult>? onResult;
+
+  const OpenDealButtons({
+    super.key,
+    required this.farmId,
+    required this.sale,
+    this.onResult,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    if (!SaleAdjustmentService.instance.canCancel(sale)) {
+      return const SizedBox.shrink();
+    }
+
+    Future<void> run(
+        Future<SaleActionResult> Function() action,
+        ) async {
+      final result = await action();
+      if (result != SaleActionResult.none) onResult?.call(result);
+    }
+
+    return Row(
+      children: [
+        Expanded(
+          child: OutlinedButton.icon(
+            onPressed: () => run(
+                  () => showEditSaleSheet(context, farmId: farmId, sale: sale),
+            ),
+            icon: const Icon(Icons.edit_outlined, size: 16),
+            label: const Text('Edit'),
+            style: OutlinedButton.styleFrom(
+              foregroundColor: AppColors.primaryGreen,
+              side: const BorderSide(color: AppColors.primaryGreen),
+              visualDensity: VisualDensity.compact,
+              textStyle: const TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ),
+        ),
+        const SizedBox(width: 8),
+        Expanded(
+          child: OutlinedButton.icon(
+            onPressed: () => run(
+                  () => showCancelDealDialog(
+                context,
+                farmId: farmId,
+                sale: sale,
+              ),
+            ),
+            icon: const Icon(Icons.cancel_outlined, size: 16),
+            label: const Text('Cancel Deal'),
+            style: OutlinedButton.styleFrom(
+              foregroundColor: AppColors.error,
+              side: const BorderSide(color: AppColors.error),
+              visualDensity: VisualDensity.compact,
+              textStyle: const TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
 String _clean(Object e) =>
     e.toString().replaceFirst(RegExp(r'^\w*(Error|Exception): '), '');
 

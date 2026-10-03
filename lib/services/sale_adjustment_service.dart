@@ -9,6 +9,7 @@ import 'package:mygoatfarms/models/sale_draft.dart';
 import 'package:mygoatfarms/models/sale_model.dart';
 import 'package:mygoatfarms/models/trading_purchase_model.dart';
 import 'package:mygoatfarms/services/firestore_service.dart';
+import 'package:mygoatfarms/services/health_reminder_scheduler.dart';
 
 /// What happens to the advance / booking money when a deal is cancelled.
 enum AdvanceDecision {
@@ -308,6 +309,7 @@ class SaleAdjustmentService {
     final actor = await FirestoreService.instance.getCurrentActor();
 
     String customerName = '';
+    var restoredToOwnPalai = <String>[];
 
     await _db.runTransaction((transaction) async {
       // ---------------------------- READS ----------------------------
@@ -340,7 +342,7 @@ class SaleAdjustmentService {
       await _readCustomer(transaction, farmId, sale.customerId);
 
       // ---------------------------- WRITES ---------------------------
-      _releaseOpenDeal(
+      restoredToOwnPalai = _releaseOpenDeal(
         transaction: transaction,
         farmId: farmId,
         sale: sale,
@@ -407,6 +409,8 @@ class SaleAdjustmentService {
       );
     }).timeout(_timeout * 2);
 
+    _rearmReminders(farmId, restoredToOwnPalai);
+
     unawaited(
       FirestoreService.instance.notifyPartnerActivity(
         farmId: farmId,
@@ -421,12 +425,18 @@ class SaleAdjustmentService {
 
   /// Puts the goats of an open (undelivered) deal back and lowers the
   /// dashboard counter. Shared by cancel and delete.
-  void _releaseOpenDeal({
+  ///
+  /// Each goat goes back to the status it had before the deal (Available
+  /// or Own Palai - see `statusBeforeSale`; deals made before that field
+  /// existed return to Available). Returns the ids of the goats restored
+  /// to Own Palai so the caller can re-arm their health reminders.
+  List<String> _releaseOpenDeal({
     required Transaction transaction,
     required String farmId,
     required Sale sale,
     required List<DocumentSnapshot<Map<String, dynamic>>> goatSnaps,
   }) {
+    final restoredToOwnPalai = <String>[];
     final heldStatus = sale.isBooking
         ? Goat.statusBooked
         : Goat.statusWaitOnDelivery;
@@ -442,11 +452,19 @@ class SaleAdjustmentService {
         continue;
       }
 
+      final before =
+      (snap.data()?['statusBeforeSale'] ?? '').toString().trim();
+      final backToOwnPalai = before == Goat.statusOwnPalai;
+
       transaction.update(snap.reference, {
-        'currentStatus': Goat.statusAvailable,
+        'currentStatus':
+        backToOwnPalai ? Goat.statusOwnPalai : Goat.statusAvailable,
         'saleId': FieldValue.delete(),
         'waitOnDeliveryAt': FieldValue.delete(),
+        'statusBeforeSale': FieldValue.delete(),
       });
+
+      if (backToOwnPalai) restoredToOwnPalai.add(snap.id);
 
       released++;
     }
@@ -468,6 +486,20 @@ class SaleAdjustmentService {
       },
       SetOptions(merge: true),
     );
+
+    return restoredToOwnPalai;
+  }
+
+  /// Health reminders of goats that went back to Own Palai. Best effort:
+  /// the deal is already cancelled, so this never throws.
+  void _rearmReminders(String farmId, List<String> goatIds) {
+    for (final id in goatIds) {
+      unawaited(
+        HealthReminderScheduler.instance
+            .syncOwnPalaiFarmReminders(farmId, goatId: id, force: true)
+            .catchError((_) {}),
+      );
+    }
   }
 
   // -----------------------------------------------------------------------

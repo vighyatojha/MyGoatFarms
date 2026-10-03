@@ -4,10 +4,13 @@ import 'package:intl/intl.dart';
 import '../../../app_theme.dart';
 import '../../../goat_icons.dart';
 import '../../../models/goat_model.dart';
+import '../../../models/sale_model.dart';
 import '../../../models/trading_purchase_model.dart';
 import '../../../services/firestore_service.dart';
+import '../../../services/sales_service.dart';
 import '../../../services/trading_service.dart';
 import '../../../widgets/fast_route.dart';
+import '../../../widgets/sale_actions.dart';
 import '../../palai/fullscreen_image_viewer.dart';
 import '../sale_receipt_screen.dart';
 import 'complete_booking_delivery_screen.dart';
@@ -32,6 +35,44 @@ class GoatStockDetailScreen extends StatefulWidget {
 class _GoatStockDetailScreenState
     extends State<GoatStockDetailScreen> {
   bool _loadingPurchase = false;
+
+  /// The open sale (Booking / Wait for Delivery) this goat belongs to, so
+  /// Edit and Cancel Deal can be offered next to Complete Delivery.
+  Sale? _openSale;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadOpenSale();
+  }
+
+  Future<void> _loadOpenSale() async {
+    final goat = widget.goat;
+    final saleId = (goat.saleId ?? '').trim();
+
+    if (saleId.isEmpty || !_awaitingPickup(goat)) return;
+
+    try {
+      final sale = await SalesService.instance.getSale(widget.farmId, saleId);
+      if (!mounted) return;
+      setState(() => _openSale = sale);
+    } catch (_) {
+      // The buttons simply stay hidden if the sale can't be read.
+    }
+  }
+
+  /// After Edit the sale is re-read; after Cancel Deal the goat is back in
+  /// stock, so this screen (showing a booked goat) closes.
+  void _onSaleAction(SaleActionResult result) {
+    if (!mounted) return;
+
+    if (result == SaleActionResult.edited) {
+      _loadOpenSale();
+      return;
+    }
+
+    Navigator.of(context).pop(true);
+  }
 
   Color _statusColor(String status) {
     switch (status) {
@@ -894,6 +935,14 @@ class _GoatStockDetailScreenState
                 ),
               ),
             ),
+            if (_openSale != null) ...[
+              const SizedBox(height: 8),
+              OpenDealButtons(
+                farmId: widget.farmId,
+                sale: _openSale!,
+                onResult: _onSaleAction,
+              ),
+            ],
             const SizedBox(height: 8),
           ],
 
