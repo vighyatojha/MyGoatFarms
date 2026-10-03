@@ -136,3 +136,123 @@ class PalaiProrationCalculator {
 
   static double _round2(double v) => (v * 100).roundToDouble() / 100;
 }
+// ===========================================================================
+// DATE-RANGE CHARGES (statement billing)
+// ===========================================================================
+
+/// Strips the time of day so billing always works on whole calendar days.
+DateTime palaiDateOnly(DateTime value) =>
+    DateTime(value.year, value.month, value.day);
+
+/// Whole days from [from] to [to], both inclusive. Counted on UTC dates so
+/// a daylight-saving change can never turn a 24-hour day into 23 hours and
+/// drop a day from the count.
+int palaiDaysInclusive(DateTime from, DateTime to) {
+  final a = DateTime.utc(from.year, from.month, from.day);
+  final b = DateTime.utc(to.year, to.month, to.day);
+  return b.difference(a).inDays + 1;
+}
+
+/// One calendar month's slice of a [PalaiRangeCharge].
+class PalaiRangeSegment {
+  const PalaiRangeSegment({
+    required this.year,
+    required this.month,
+    required this.fromDate,
+    required this.toDate,
+    required this.days,
+    required this.daysInMonth,
+    required this.amount,
+  });
+
+  final int year;
+  final int month;
+  final DateTime fromDate;
+  final DateTime toDate;
+  final int days;
+  final int daysInMonth;
+  final double amount;
+}
+
+/// Palai charge for a stay that can cross month boundaries, e.g. the
+/// unbilled days charged at checkout or at a goat's death.
+///
+/// Each month is pro-rated on its own day count (₹3,000 in a 30-day month
+/// is ₹100/day, in a 31-day month ₹96.77/day), so a range charge always
+/// equals the sum of what the monthly bills would have charged.
+class PalaiRangeCharge {
+  const PalaiRangeCharge({
+    required this.monthlyCharge,
+    required this.segments,
+  });
+
+  const PalaiRangeCharge.none(this.monthlyCharge) : segments = const [];
+
+  final double monthlyCharge;
+  final List<PalaiRangeSegment> segments;
+
+  int get totalDays => segments.fold(0, (sum, s) => sum + s.days);
+
+  double get amount => PalaiProrationCalculator._round2(
+    segments.fold<double>(0, (sum, s) => sum + s.amount),
+  );
+
+  bool get isEmpty => segments.isEmpty;
+
+  DateTime? get fromDate => segments.isEmpty ? null : segments.first.fromDate;
+
+  DateTime? get toDate => segments.isEmpty ? null : segments.last.toDate;
+}
+
+class PalaiRangeCalculator {
+  const PalaiRangeCalculator._();
+
+  /// Charges [monthlyCharge] for every day from [from] to [to], both
+  /// inclusive. Returns an empty charge when [to] is before [from].
+  static PalaiRangeCharge chargeForRange({
+    required double monthlyCharge,
+    required DateTime from,
+    required DateTime to,
+  }) {
+    final start = palaiDateOnly(from);
+    final end = palaiDateOnly(to);
+
+    if (end.isBefore(start) || monthlyCharge <= 0) {
+      return PalaiRangeCharge.none(monthlyCharge < 0 ? 0.0 : monthlyCharge);
+    }
+
+    final segments = <PalaiRangeSegment>[];
+    var cursor = start;
+
+    while (!cursor.isAfter(end)) {
+      final dim = PalaiProrationCalculator.daysInMonth(
+        cursor.year,
+        cursor.month,
+      );
+      final monthEnd = DateTime(cursor.year, cursor.month, dim);
+      final segmentEnd = monthEnd.isBefore(end) ? monthEnd : end;
+      final days = palaiDaysInclusive(cursor, segmentEnd);
+
+      segments.add(
+        PalaiRangeSegment(
+          year: cursor.year,
+          month: cursor.month,
+          fromDate: cursor,
+          toDate: segmentEnd,
+          days: days,
+          daysInMonth: dim,
+          amount: PalaiProrationCalculator._round2(
+            monthlyCharge / dim * days,
+          ),
+        ),
+      );
+
+      cursor = DateTime(cursor.year, cursor.month + 1, 1);
+    }
+
+    return PalaiRangeCharge(
+      monthlyCharge: monthlyCharge,
+      segments: segments,
+    );
+  }
+}

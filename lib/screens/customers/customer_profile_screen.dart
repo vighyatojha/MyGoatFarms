@@ -4,25 +4,26 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 
-import '../../app_theme.dart';
-import '../../goat_icons.dart';
-import '../../models/monthly_bill_model.dart';
-import '../../models/palai_models.dart';
-import '../../services/firestore_service.dart';
-import '../../services/monthly_billing_service.dart';
-import '../../widgets/fast_route.dart';
+import 'package:mygoatfarms/app_theme.dart';
+import 'package:mygoatfarms/goat_icons.dart';
+import 'package:mygoatfarms/models/monthly_bill_model.dart';
+import 'package:mygoatfarms/models/palai_models.dart';
+import 'package:mygoatfarms/services/firestore_service.dart';
+import 'package:mygoatfarms/services/monthly_billing_service.dart';
+import 'package:mygoatfarms/widgets/fast_route.dart';
 
-import '../../widgets/finance/advance_history_section.dart';
-import '../../widgets/goat_credit_cards.dart';
-import '../finance/customer_ledger_screen.dart';
-import '../palai/add_customer_screen.dart';
-import '../palai/customer_palai/customer_goat_registration_screen.dart';
-import '../palai/customer_palai/goat_profile_screen.dart';
-import '../palai/fullscreen_image_viewer.dart';
-import '../palai/multi_goat_checkout_screen.dart';
-import 'customer_goats_progress_report_pdf_screen.dart';
-import 'monthly_bills_screen.dart';
-import 'record_customer_goat_death_screen.dart';
+import 'package:mygoatfarms/widgets/finance/advance_history_section.dart';
+import 'package:mygoatfarms/widgets/goat_credit_cards.dart';
+import 'package:mygoatfarms/screens/finance/customer_ledger_screen.dart';
+import 'package:mygoatfarms/screens/palai/add_customer_screen.dart';
+import 'package:mygoatfarms/screens/palai/customer_palai/customer_goat_registration_screen.dart';
+import 'package:mygoatfarms/screens/palai/customer_palai/goat_profile_screen.dart';
+import 'package:mygoatfarms/screens/palai/fullscreen_image_viewer.dart';
+import 'package:mygoatfarms/screens/palai/palai_goat_delete_helper.dart';
+import 'package:mygoatfarms/screens/palai/multi_goat_checkout_screen.dart';
+import 'package:mygoatfarms/screens/customers/customer_goats_progress_report_pdf_screen.dart';
+import 'package:mygoatfarms/screens/customers/monthly_bills_screen.dart';
+import 'package:mygoatfarms/screens/customers/record_customer_goat_death_screen.dart';
 
 class CustomerProfileScreen extends StatefulWidget {
   final PalaiCustomer customer;
@@ -145,6 +146,18 @@ class _CustomerProfileScreenState extends State<CustomerProfileScreen> {
     );
 
     if (recorded == true && mounted) {
+      await _refreshCustomer();
+    }
+  }
+
+  Future<void> _deleteGoat(PalaiGoat goat) async {
+    final deleted = await confirmAndDeletePalaiGoat(
+      context,
+      farmId: widget.farmId,
+      goat: goat,
+    );
+
+    if (deleted && mounted) {
       await _refreshCustomer();
     }
   }
@@ -516,7 +529,7 @@ class _CustomerProfileScreenState extends State<CustomerProfileScreen> {
           ),
         ),
 
-        if (trailing != null) trailing,
+        ?trailing,
       ],
     );
   }
@@ -1291,95 +1304,6 @@ class _CustomerProfileScreenState extends State<CustomerProfileScreen> {
   }
 
   // ===========================================================================
-  // GOAT STATS
-  // ===========================================================================
-
-  Widget _buildGoatStats(
-      int total,
-      int active,
-      ) {
-    return Row(
-      children: [
-        Expanded(
-          child: _statCard(
-            icon: GoatIcons.paw,
-            label: 'Total Goats',
-            value: '$total',
-            color: AppColors.primaryGreen,
-          ),
-        ),
-
-        const SizedBox(width: 10),
-
-        Expanded(
-          child: _statCard(
-            icon: Icons.login_rounded,
-            label: 'Currently Boarded',
-            value: '$active',
-            color: AppColors.info,
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _statCard({
-    required IconData icon,
-    required String label,
-    required String value,
-    required Color color,
-  }) {
-    return Container(
-      padding: const EdgeInsets.all(13),
-      decoration: AppTheme.card(
-        radius: 14,
-      ),
-      child: Row(
-        children: [
-          Container(
-            width: 34,
-            height: 34,
-            decoration: BoxDecoration(
-              color: color.withValues(alpha: 0.12),
-              shape: BoxShape.circle,
-            ),
-            child: Icon(
-              icon,
-              size: 17,
-              color: color,
-            ),
-          ),
-
-          const SizedBox(width: 9),
-
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  value,
-                  style: AppTheme.heading(
-                    size: 17,
-                  ),
-                ),
-                Text(
-                  label,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: AppTheme.body(
-                    size: 9,
-                    color: AppColors.textGrey,
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  // ===========================================================================
   // GOAT CARD
   // ===========================================================================
 
@@ -1647,73 +1571,104 @@ class _CustomerProfileScreenState extends State<CustomerProfileScreen> {
                   top: BorderSide(color: AppColors.divider),
                 ),
               ),
-              child: Row(
+              child: Column(
                 children: [
-                  TextButton.icon(
-                    onPressed: () => _recordGoatDeath(goat),
-                    icon: const Icon(
-                      Icons.warning_amber_rounded,
-                      size: 17,
-                      color: AppColors.error,
-                    ),
-                    label: const Text(
-                      'Record Death',
-                      style: TextStyle(
-                        fontSize: 11,
-                        fontWeight: FontWeight.w700,
-                        color: AppColors.error,
-                      ),
-                    ),
-                    style: TextButton.styleFrom(
-                      padding: const EdgeInsets.symmetric(horizontal: 4),
-                      minimumSize: Size.zero,
-                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                    ),
-                  ),
-                  const SizedBox(width: 5),
-                  OutlinedButton(
-                    onPressed: openProfile,
-                    style: OutlinedButton.styleFrom(
-                      foregroundColor: AppColors.textDark,
-                      side: const BorderSide(color: AppColors.divider),
-                      backgroundColor: Colors.white,
-                      padding: const EdgeInsets.symmetric(horizontal: 13),
-                      minimumSize: const Size(0, 40),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                    ),
-                    child: const Text(
-                      'Daily Log',
-                      style: TextStyle(
-                        fontSize: 11,
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 9),
-                  Expanded(
-                    child: SizedBox(
-                      height: 40,
-                      child: ElevatedButton.icon(
-                        onPressed: () => _checkoutGoat(goat),
-                        icon: const Icon(Icons.logout_rounded, size: 16),
+                  Row(
+                    children: [
+                      TextButton.icon(
+                        onPressed: () => _recordGoatDeath(goat),
+                        icon: const Icon(
+                          Icons.warning_amber_rounded,
+                          size: 17,
+                          color: AppColors.error,
+                        ),
                         label: const Text(
-                          'Checkout',
+                          'Record Death',
                           style: TextStyle(
-                            fontSize: 12,
-                            fontWeight: FontWeight.w800,
+                            fontSize: 11,
+                            fontWeight: FontWeight.w700,
+                            color: AppColors.error,
                           ),
                         ),
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: AppColors.textDark,
-                          foregroundColor: Colors.white,
-                          elevation: 0,
-                          padding: const EdgeInsets.symmetric(horizontal: 12),
+                        style: TextButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(horizontal: 4),
+                          minimumSize: Size.zero,
+                          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                        ),
+                      ),
+                      const SizedBox(width: 5),
+                      OutlinedButton(
+                        onPressed: openProfile,
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: AppColors.textDark,
+                          side: const BorderSide(color: AppColors.divider),
+                          backgroundColor: Colors.white,
+                          padding: const EdgeInsets.symmetric(horizontal: 13),
+                          minimumSize: const Size(0, 40),
                           shape: RoundedRectangleBorder(
                             borderRadius: BorderRadius.circular(12),
                           ),
                         ),
+                        child: const Text(
+                          'Daily Log',
+                          style: TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 9),
+                      Expanded(
+                        child: SizedBox(
+                          height: 40,
+                          child: ElevatedButton.icon(
+                            onPressed: () => _checkoutGoat(goat),
+                            icon: const Icon(Icons.logout_rounded, size: 16),
+                            label: const Text(
+                              'Checkout',
+                              style: TextStyle(
+                                fontSize: 12,
+                                fontWeight: FontWeight.w800,
+                              ),
+                            ),
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: AppColors.textDark,
+                              foregroundColor: Colors.white,
+                              elevation: 0,
+                              padding: const EdgeInsets.symmetric(horizontal: 12),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  Align(
+                    alignment: Alignment.centerRight,
+                    child: TextButton.icon(
+                      onPressed: () => _deleteGoat(goat),
+                      icon: const Icon(
+                        Icons.delete_outline_rounded,
+                        size: 17,
+                        color: AppColors.error,
+                      ),
+                      label: const Text(
+                        'Delete Goat',
+                        style: TextStyle(
+                          fontSize: 11,
+                          fontWeight: FontWeight.w700,
+                          color: AppColors.error,
+                        ),
+                      ),
+                      style: TextButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 4,
+                          vertical: 2,
+                        ),
+                        minimumSize: Size.zero,
+                        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                       ),
                     ),
                   ),
@@ -1801,7 +1756,7 @@ class _CustomerProfileScreenState extends State<CustomerProfileScreen> {
           cacheWidth: 96,
           cacheHeight: 96,
 
-          errorBuilder: (_, __, ___) {
+          errorBuilder: (_, _, _) {
             return const Icon(
               GoatIcons.paw,
               color: AppColors.primaryGreen,
@@ -1833,82 +1788,6 @@ class _CustomerProfileScreenState extends State<CustomerProfileScreen> {
         ),
       ),
       child: avatar,
-    );
-  }
-
-  // ===========================================================================
-  // EMPTY GOATS
-  // ===========================================================================
-
-  Widget _emptyGoatsState() {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.symmetric(
-        vertical: 28,
-        horizontal: 20,
-      ),
-      decoration: AppTheme.card(
-        radius: 16,
-      ),
-      child: Column(
-        children: [
-          Container(
-            width: 62,
-            height: 62,
-            decoration: const BoxDecoration(
-              color: AppColors.lightGreen,
-              shape: BoxShape.circle,
-            ),
-            child: const Icon(
-              GoatIcons.paw,
-              size: 29,
-              color: AppColors.primaryGreen,
-            ),
-          ),
-
-          const SizedBox(height: 11),
-
-          Text(
-            'No goats yet',
-            style: AppTheme.heading(
-              size: 14,
-            ),
-          ),
-
-          const SizedBox(height: 4),
-
-          Text(
-            'Goats checked in for ${_customer.name} will appear here.',
-            textAlign: TextAlign.center,
-            style: AppTheme.body(
-              size: 10,
-              color: AppColors.textGrey,
-            ),
-          ),
-
-          const SizedBox(height: 13),
-
-          OutlinedButton.icon(
-            onPressed: _openRegisterGoat,
-            icon: const Icon(
-              Icons.add,
-              size: 17,
-            ),
-            label: const Text(
-              'Check In Goat',
-            ),
-            style: OutlinedButton.styleFrom(
-              foregroundColor: AppColors.darkGreen,
-              side: const BorderSide(
-                color: AppColors.primaryGreen,
-              ),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(10),
-              ),
-            ),
-          ),
-        ],
-      ),
     );
   }
 
@@ -3226,28 +3105,18 @@ class _AddPaymentSheetState
       ) ??
           0;
 
-  double get _paymentLimit {
-    if (widget.bill != null) {
-      return widget.bill!.remainingAmount;
-    }
-
-    return widget.customer.pendingAmount;
-  }
+  /// STATEMENT BILLING: every payment, including one taken from a
+  /// monthly bill, clears the customer's unpaid months oldest first, so
+  /// the most that can go against dues is the customer's whole pending
+  /// balance (which is also the latest statement's Total Payable).
+  /// Anything above it becomes advance (or pays goat sales).
+  double get _paymentLimit => widget.customer.pendingAmount;
 
   double get _applied {
     return _amount
         .clamp(
       0,
       _paymentLimit,
-    )
-        .toDouble();
-  }
-
-  double get _advanceAdded {
-    return (_amount - _applied)
-        .clamp(
-      0,
-      double.infinity,
     )
         .toDouble();
   }
@@ -3271,7 +3140,7 @@ class _AddPaymentSheetState
     if (_paymentLimit <= 0) {
       _error(
         widget.bill != null
-            ? 'This monthly bill has no remaining amount.'
+            ? 'This customer has nothing pending on Palai.'
             : 'This customer has no outstanding amount.',
       );
       return;
@@ -3597,7 +3466,7 @@ class _AddPaymentSheetState
             _outlinedField(
               controller: _amountController,
               hint: widget.bill != null
-                  ? 'Maximum ₹${widget.bill!.remainingAmount.toStringAsFixed(0)}'
+                  ? 'Total pending ₹${_paymentLimit.toStringAsFixed(0)}'
                   : 'Enter amount',
               keyboardType:
               const TextInputType.numberWithOptions(

@@ -1234,14 +1234,14 @@ class CustomerGoatsProgressReportPdfService {
           pw.Divider(color: PdfColors.green200),
           pw.SizedBox(height: 8),
           if (bill.goatBreakdown.isNotEmpty) ...[
-            _billingHeading('CURRENT MONTH PALAI'),
+            _billingHeading(bill.isStatement ? '${bill.monthYear.toUpperCase()} PALAI' : 'CURRENT MONTH PALAI'),
             pw.SizedBox(height: 5),
             for (final line in bill.goatBreakdown) _billingRow(line.displayLabel, _currency(line.palaiAmount)),
             pw.SizedBox(height: 4),
             pw.Divider(color: PdfColors.green200),
             pw.SizedBox(height: 7),
           ] else if (entries.isNotEmpty) ...[
-            _billingHeading('CURRENT MONTH PALAI'),
+            _billingHeading(bill.isStatement ? '${bill.monthYear.toUpperCase()} PALAI' : 'CURRENT MONTH PALAI'),
             pw.SizedBox(height: 5),
             for (final entry in entries)
               _billingRow(
@@ -1264,9 +1264,21 @@ class CustomerGoatsProgressReportPdfService {
             pw.Divider(color: PdfColors.green200),
             pw.SizedBox(height: 7),
           ],
-          _billingRow('Current Month Palai', _currency(bill.palaiCharges)),
-          _billingRow('Old Pending Payment', _currency(bill.previousOutstanding)),
-          if (bill.advanceApplied > 0) _billingRow('Current Advance', '- ${_currency(bill.advanceApplied)}'),
+          // Statement bills: Month charges + Previous outstanding
+          // − Advance = Total payable (billed for the previous month).
+          _billingRow(
+            bill.isStatement ? '${bill.monthYear} Palai Charges' : 'Current Month Palai',
+            _currency(bill.palaiCharges),
+          ),
+          _billingRow(
+            bill.isStatement ? 'Previous Outstanding' : 'Old Pending Payment',
+            _currency(bill.previousOutstanding),
+          ),
+          if (bill.advanceApplied > 0)
+            _billingRow(
+              bill.isStatement ? 'Less: Advance Applied' : 'Current Advance',
+              '- ${_currency(bill.advanceApplied)}',
+            ),
           pw.SizedBox(height: 5),
           pw.Divider(color: PdfColors.green300),
           pw.SizedBox(height: 5),
@@ -1292,7 +1304,9 @@ class CustomerGoatsProgressReportPdfService {
             padding: const pw.EdgeInsets.all(10),
             decoration: pw.BoxDecoration(color: PdfColors.white, borderRadius: const pw.BorderRadius.all(pw.Radius.circular(7))),
             child: _billingRow(
-              balanceHasMoved ? 'BALANCE DUE NOW' : 'TOTAL PENDING PAYMENT',
+              balanceHasMoved
+                  ? 'BALANCE DUE NOW'
+                  : (bill.isStatement ? 'TOTAL PAYABLE' : 'TOTAL PENDING PAYMENT'),
               _currency(balanceHasMoved ? balanceNow : billedTotal),
               emphasize: true,
             ),
@@ -1329,7 +1343,9 @@ class CustomerGoatsProgressReportPdfService {
             balanceHasMoved
                 ? 'Lines above the total are as billed on ${DateFormat('d MMM yyyy').format(bill.generatedAt)}. '
                 'Balance Due Now is the customer\'s outstanding balance today and matches the customer profile.'
-                : 'Current Month Calculation Only \u2014 previous monthly payments and historical transactions are not included above.',
+                : (bill.isStatement
+                ? 'Previous Outstanding is carried forward from earlier months and is not charged again.'
+                : 'Current Month Calculation Only \u2014 previous monthly payments and historical transactions are not included above.'),
             style: const pw.TextStyle(fontSize: 7, color: PdfColors.grey600, fontStyle: pw.FontStyle.italic),
           ),
           pw.SizedBox(height: 6),

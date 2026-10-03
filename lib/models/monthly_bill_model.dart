@@ -1,5 +1,6 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 
+import '../utils/billing_ledger.dart';
 import '../utils/palai_proration.dart';
 
 /// One goat's line in the goat-wise Palai breakdown of a [MonthlyBill].
@@ -27,6 +28,11 @@ class GoatBillingLine {
   final int? daysInMonth;
   final double? monthlyRate;
 
+  /// Statement bills only: the exact days charged for this goat in the
+  /// month (both inclusive). Null on older bills.
+  final DateTime? fromDate;
+  final DateTime? toDate;
+
   const GoatBillingLine({
     required this.goatId,
     required this.label,
@@ -34,7 +40,25 @@ class GoatBillingLine {
     this.billableDays,
     this.daysInMonth,
     this.monthlyRate,
+    this.fromDate,
+    this.toDate,
   });
+
+  /// Line for a statement bill, built from the engine's calculated charge.
+  /// Always carries the day count, so the bill/PDF can show
+  /// "20 of 30 days" for partial months.
+  factory GoatBillingLine.fromCharge(GoatChargeLine charge) {
+    return GoatBillingLine(
+      goatId: charge.goatId,
+      label: charge.label,
+      palaiAmount: charge.amount,
+      billableDays: charge.days,
+      daysInMonth: charge.daysInMonth,
+      monthlyRate: charge.monthlyRate,
+      fromDate: charge.fromDate,
+      toDate: charge.toDate,
+    );
+  }
 
   /// Builds a line from the amount the owner ended up with.
   ///
@@ -75,6 +99,7 @@ class GoatBillingLine {
       isPartialMonth ? '$label ($billableDays of $daysInMonth days)' : label;
 
   factory GoatBillingLine.fromMap(Map<String, dynamic> map) {
+    DateTime? date(dynamic v) => v is Timestamp ? v.toDate() : null;
     return GoatBillingLine(
       goatId: map['goatId']?.toString() ?? '',
       label: map['label']?.toString() ?? '',
@@ -82,6 +107,8 @@ class GoatBillingLine {
       billableDays: (map['billableDays'] as num?)?.toInt(),
       daysInMonth: (map['daysInMonth'] as num?)?.toInt(),
       monthlyRate: (map['monthlyRate'] as num?)?.toDouble(),
+      fromDate: date(map['fromDate']),
+      toDate: date(map['toDate']),
     );
   }
 
@@ -93,6 +120,8 @@ class GoatBillingLine {
       if (billableDays != null) 'billableDays': billableDays,
       if (daysInMonth != null) 'daysInMonth': daysInMonth,
       if (monthlyRate != null) 'monthlyRate': monthlyRate,
+      if (fromDate != null) 'fromDate': Timestamp.fromDate(fromDate!),
+      if (toDate != null) 'toDate': Timestamp.fromDate(toDate!),
     };
   }
 }
@@ -225,6 +254,49 @@ class MonthlyBill {
   /// should never be recalculated from a goat's current price.
   final List<GoatBillingLine> goatBreakdown;
 
+  // ================================================================
+  // STATEMENT BILLING (billingModel == 'statementV2')
+  //
+  // A statement bill shows the CUSTOMER-FACING totals in the fields
+  // above: totalDue == totalPayable, amountPaid / remainingAmount /
+  // status track payments received against this statement while it is
+  // the latest one.
+  //
+  // The own* fields below track only THIS MONTH's charge, which is what
+  // oldest-first payments clear. Older bills (no billingModel) used
+  // amountPaid / remainingAmount for the month's own charge, so the
+  // effective* getters fall back to those.
+  // ================================================================
+
+  /// 'statementV2' for bills made by the statement engine, '' otherwise.
+  final String billingModel;
+
+  /// previousOutstanding + currentBillAmount − advanceApplied.
+  final double totalPayable;
+
+  final double? ownCharges;
+  final double? ownPaid;
+  final double? ownRemaining;
+  final String? ownStatus;
+
+  /// Previous Outstanding split by month, oldest first.
+  final List<BreakdownLine> previousBreakdown;
+
+  /// Part of previousOutstanding not tied to a monthly bill.
+  final double earlierBalance;
+
+  /// Which months the advance applied on this statement paid off.
+  final List<BreakdownLine> advanceAllocations;
+
+  /// True once a later statement exists. A locked bill is history.
+  final bool locked;
+
+  /// The unpaid statement balance was carried into a later statement.
+  final bool carriedForward;
+  final String? carriedForwardToBillId;
+
+  final bool isVoid;
+
   const MonthlyBill({
     required this.id,
     required this.customerId,
@@ -251,7 +323,41 @@ class MonthlyBill {
     this.farmPhone = '',
     this.farmEmail = '',
     this.goatBreakdown = const [],
-  });
+    this.billingModel = '',
+    double? totalPayable,
+    this.ownCharges,
+    this.ownPaid,
+    this.ownRemaining,
+    this.ownStatus,
+    this.previousBreakdown = const [],
+    this.earlierBalance = 0,
+    this.advanceAllocations = const [],
+    this.locked = false,
+    this.carriedForward = false,
+    this.carriedForwardToBillId,
+    this.isVoid = false,
+  }) : totalPayable = totalPayable ?? totalDue;
+
+  static const String statementModel = 'statementV2';
+
+  bool get isStatement => billingModel == statementModel;
+
+  /// This month's own charge.
+  double get effectiveOwnCharges => ownCharges ?? currentBillAmount;
+
+  /// Paid against this month's own charge.
+  double get effectiveOwnPaid => ownPaid ?? amountPaid;
+
+  /// Still unpaid from this month's own charge.
+  double get effectiveOwnRemaining => ownRemaining ?? remainingAmount;
+
+  /// Status of this month's own charge: 'paid' / 'partial' / 'unpaid'.
+  String get effectiveOwnStatus =>
+      ownStatus ??
+          paymentStatusFor(
+            paid: effectiveOwnPaid,
+            remaining: effectiveOwnRemaining,
+          );
 
   // ================================================================
   // STATUS HELPERS
@@ -461,7 +567,50 @@ class MonthlyBill {
       ))
           .toList() ??
           const [],
+
+      billingModel:
+      data['billingModel']?.toString() ?? '',
+
+      totalPayable:
+      (data['totalPayable'] as num?)?.toDouble(),
+
+      ownCharges:
+      (data['ownCharges'] as num?)?.toDouble(),
+
+      ownPaid:
+      (data['ownPaid'] as num?)?.toDouble(),
+
+      ownRemaining:
+      (data['ownRemaining'] as num?)?.toDouble(),
+
+      ownStatus:
+      data['ownStatus']?.toString(),
+
+      previousBreakdown: _lines(data['previousBreakdown']),
+
+      earlierBalance:
+      (data['earlierBalance'] as num?)?.toDouble() ?? 0,
+
+      advanceAllocations: _lines(data['advanceAllocations']),
+
+      locked: data['locked'] == true,
+
+      carriedForward: data['carriedForward'] == true,
+
+      carriedForwardToBillId:
+      data['carriedForwardToBillId']?.toString(),
+
+      isVoid: data['isVoid'] == true ||
+          data['status']?.toString() == 'void',
     );
+  }
+
+  static List<BreakdownLine> _lines(dynamic value) {
+    if (value is! List) return const [];
+    return value
+        .whereType<Map>()
+        .map((e) => BreakdownLine.fromMap(Map<String, dynamic>.from(e)))
+        .toList();
   }
 
   Map<String, dynamic> toMap() {
@@ -526,6 +675,21 @@ class MonthlyBill {
       'farmEmail': farmEmail,
 
       'goatBreakdown': goatBreakdown.map((g) => g.toMap()).toList(),
+
+      if (billingModel.isNotEmpty) 'billingModel': billingModel,
+      if (isStatement) 'totalPayable': totalPayable,
+      if (ownCharges != null) 'ownCharges': ownCharges,
+      if (ownPaid != null) 'ownPaid': ownPaid,
+      if (ownRemaining != null) 'ownRemaining': ownRemaining,
+      if (ownStatus != null) 'ownStatus': ownStatus,
+      if (isStatement)
+        'previousBreakdown':
+        previousBreakdown.map((l) => l.toMap()).toList(),
+      if (isStatement) 'earlierBalance': earlierBalance,
+      if (isStatement)
+        'advanceAllocations':
+        advanceAllocations.map((l) => l.toMap()).toList(),
+      if (isStatement) 'locked': locked,
     };
   }
 
@@ -589,6 +753,21 @@ class MonthlyBill {
       farmPhone: farmPhone ?? this.farmPhone,
       farmEmail: farmEmail ?? this.farmEmail,
       goatBreakdown: goatBreakdown ?? this.goatBreakdown,
+      billingModel: billingModel,
+      totalPayable: (totalDue != null && !isStatement)
+          ? totalDue
+          : this.totalPayable,
+      ownCharges: ownCharges,
+      ownPaid: ownPaid,
+      ownRemaining: ownRemaining,
+      ownStatus: ownStatus,
+      previousBreakdown: previousBreakdown,
+      earlierBalance: earlierBalance,
+      advanceAllocations: advanceAllocations,
+      locked: locked,
+      carriedForward: carriedForward,
+      carriedForwardToBillId: carriedForwardToBillId,
+      isVoid: isVoid,
     );
   }
 

@@ -10,6 +10,9 @@ import '../models/trading_purchase_model.dart';
 import 'finance_service.dart';
 import 'firestore_service.dart';
 import 'image_service.dart';
+import 'payment_allocation_service.dart';
+import '../utils/billing_ledger.dart';
+import '../utils/palai_proration.dart';
 
 /// Implements the "Goat Death & Settlement" feature.
 ///
@@ -85,6 +88,14 @@ class DeathSettlementService {
   /// (`goatPendingCharge - customerAmountToPay`, floored at 0) is
   /// recorded as a "Goat Death Loss" expense in Finance — paying in
   /// full means no loss; paying nothing means the whole charge is lost.
+  ///
+  /// STATEMENT BILLING: [unbilledCharge] is the Palai for the days since
+  /// this goat was last charged, up to its death date (worked out by
+  /// MonthlyStatementEngine.unbilledChargeFor and editable by the owner).
+  /// It is added to what the customer owes, the goat's billedThroughDate
+  /// moves to the death date so no statement charges those days again,
+  /// and any waived amount reduces the customer's unpaid months oldest
+  /// first, so the monthly bills and pendingAmount always agree.
   Future<void> recordCustomerPalaiDeath({
     required String farmId,
     required String customerId,
@@ -94,7 +105,11 @@ class DeathSettlementService {
     String notes = '',
     double goatPendingCharge = 0,
     double customerAmountToPay = 0,
+    double unbilledCharge = 0,
   }) async {
+    if (unbilledCharge < 0) {
+      throw ArgumentError('Unbilled charge cannot be negative.');
+    }
     if (goatPendingCharge < 0) {
       throw ArgumentError('Pending charge cannot be negative.');
     }
@@ -106,9 +121,14 @@ class DeathSettlementService {
     final customerRef = _customers(farmId).doc(customerId);
     final deathRecordRef = _deathRecords(farmId).doc();
     final activityRef = _activities(farmId).doc();
-    final billRef = (goatPendingCharge > 0 || customerAmountToPay > 0)
-        ? _bills(farmId).doc()
-        : null;
+    final hasSettlement = goatPendingCharge > 0 ||
+        customerAmountToPay > 0 ||
+        unbilledCharge > 0;
+    final billRef = hasSettlement ? _bills(farmId).doc() : null;
+
+    // Found before the transaction, re-read inside it (see PalaiLedger).
+    final ledgerBillRefs =
+    await PalaiLedger.instance.monthlyBillRefs(farmId, customerId);
 
     final actor = await FirestoreService.instance.getCurrentActor();
 
@@ -116,6 +136,7 @@ class DeathSettlementService {
     double currentPending = 0;
     double newPending = 0;
     double farmLossAmount = 0;
+    List<Map<String, dynamic>> waiverAllocations = const [];
 
     await _db.runTransaction<void>((transaction) async {
       final goatSnapshot = await transaction.get(goatRef);
@@ -141,6 +162,9 @@ class DeathSettlementService {
         throw StateError('Customer no longer exists.');
       }
 
+      final ledger =
+      await PalaiLedger.instance.read(transaction, ledgerBillRefs);
+
       final customerData = customerSnapshot.data() ?? {};
       final customerName = (customerData['name'] ?? '').toString();
       currentPending = (customerData['pendingAmount'] ?? 0).toDouble();
@@ -151,11 +175,51 @@ class DeathSettlementService {
       // what gets waived (see farmLossAmount below). Every other goat
       // the customer has, and every other charge already in their
       // pendingAmount, is untouched.
-      newPending =
-          currentPending - goatPendingCharge + customerAmountToPay;
+      //
+      // The goat's total = what was already billed for it and still
+      // pending + its unbilled days. Adding the unbilled days and taking
+      // off the waived part nets out to the same formula as before.
+      final goatTotal = goatPendingCharge + unbilledCharge;
+      final waived = roundMoney(goatTotal - customerAmountToPay);
 
-      farmLossAmount =
-          (goatPendingCharge - customerAmountToPay).clamp(0, double.infinity);
+      newPending = roundMoney(
+        (currentPending - goatPendingCharge + customerAmountToPay)
+            .clamp(0, double.infinity)
+            .toDouble(),
+      );
+
+      farmLossAmount = waived > 0 ? waived : 0.0;
+
+      // The waiver first cancels the unbilled days (never on any bill);
+      // only the rest reduces billed months, oldest first. A waiver is not
+      // a payment, so it is not recorded on the statement's Paid amount.
+      final waivedFromBills = roundMoney(
+        (waived - unbilledCharge).clamp(0, double.infinity).toDouble(),
+      );
+      final ledgerWriter = LedgerWriter();
+      final waiver = waivedFromBills > 0
+          ? PalaiLedger.instance.reduceDues(
+        writer: ledgerWriter,
+        ledger: ledger,
+        amount: waivedFromBills,
+        pendingBefore: currentPending,
+        recordOnStatement: false,
+      )
+          : null;
+      waiverAllocations =
+          waiver?.allocations.map((a) => a.toMap()).toList() ?? const [];
+      ledgerWriter.flush(transaction);
+
+      // Never move billedThroughDate backwards (a statement may already
+      // cover days past the death date if the death is recorded late).
+      final death = palaiDateOnly(deathDate);
+      final storedBilled = goatData['billedThroughDate'] is Timestamp
+          ? (goatData['billedThroughDate'] as Timestamp).toDate()
+          : null;
+      final billedThrough =
+      storedBilled != null && storedBilled.isAfter(death)
+          ? palaiDateOnly(storedBilled)
+          : death;
 
       // ---------------------------------------------------------------
       // Mark the goat dead. Setting isCheckedOut: true re-uses the exact
@@ -172,10 +236,11 @@ class DeathSettlementService {
         'deathDate': Timestamp.fromDate(deathDate),
         'deathReason': reason.trim(),
         'deathNotes': notes.trim(),
+        'billedThroughDate': Timestamp.fromDate(billedThrough),
         'updatedAt': FieldValue.serverTimestamp(),
       });
 
-      if (goatPendingCharge > 0 || customerAmountToPay > 0) {
+      if (hasSettlement) {
         transaction.update(customerRef, {
           'pendingAmount': newPending,
           'updatedAt': FieldValue.serverTimestamp(),
@@ -202,8 +267,10 @@ class DeathSettlementService {
           // collection.
           'newCharges': customerAmountToPay - goatPendingCharge,
           'goatPendingCharge': goatPendingCharge,
+          'unbilledCharge': unbilledCharge,
           'customerAmountToPay': customerAmountToPay,
           'farmLossAmount': farmLossAmount,
+          'waiverAllocations': waiverAllocations,
           'previousPending': currentPending,
           'pendingAfter': newPending,
           'amountPaid': 0,
@@ -224,6 +291,7 @@ class DeathSettlementService {
         'reason': reason.trim(),
         'notes': notes.trim(),
         'goatPendingCharge': goatPendingCharge,
+        'unbilledCharge': unbilledCharge,
         'customerAmountToPay': customerAmountToPay,
         'customerPendingBefore': currentPending,
         'customerPendingAfter': newPending,

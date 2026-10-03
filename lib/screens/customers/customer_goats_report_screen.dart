@@ -1,43 +1,27 @@
 import 'package:flutter/material.dart';
-import 'package:intl/intl.dart';
 
 import '../../app_theme.dart';
 import '../../goat_icons.dart';
 import '../../models/bill_settings_model.dart';
 import '../../models/customer_credit.dart';
-import '../../models/monthly_bill_model.dart' show MonthlyBill, GoatBillingLine;
+import '../../models/monthly_bill_model.dart' show MonthlyBill;
 import '../../models/palai_models.dart';
 import '../../services/customer_goats_report_pdf_service.dart';
 import '../../services/firestore_service.dart';
-import '../../services/monthly_billing_service.dart';
+import '../../services/monthly_statement_engine.dart';
 import '../../services/sales_service.dart';
-import '../../utils/palai_proration.dart';
 import '../../widgets/fast_route.dart';
-import 'monthly_bill_generate_screen.dart';
+import '../../widgets/latest_statement_card.dart';
+import 'monthly_bills_screen.dart';
 
 /// Lets the owner generate ONE consolidated report covering all (or a
 /// chosen subset of) the goats under a single Palai customer — instead
 /// of generating a report per goat one at a time.
 ///
-/// Alongside the flat goat table, this screen carries the SAME
-/// current-month billing machinery as CustomerGoatsProgressReportScreen
-/// (goat-wise editable Palai amounts, Current Outstanding / Current
-/// Advance read fresh from the customer's live balance, and a
-/// redirect into Monthly Billing to fix a bill that already exists),
-/// so whichever screen the owner happens to generate a report from,
-/// the numbers can never disagree with each other — both ultimately
-/// call [MonthlyBillingService.createCurrentMonthMonthlyBill] /
-/// [MonthlyBillingService.updateCurrentMonthMonthlyBill].
-///
-///   Current Month Palai (per goat, editable)
-///         +
-///   Current Outstanding (customer's current balance — zero if none)
-///         −
-///   Current Advance (customer's current advance — zero if none)
-///         =
-///   Current Amount Due
-///
-/// Old bills, old payments, past months — none of it is re-summed here.
+/// Billing on this report is READ-ONLY: it shows the customer's latest
+/// monthly statement and what they owe today (see [LatestStatementCard]).
+/// Reports never create or change bills; bills are statements for the
+/// previous month, made by [MonthlyStatementEngine].
 class CustomerGoatsReportScreen extends StatefulWidget {
   final String farmId;
   final PalaiCustomer customer;
@@ -63,30 +47,8 @@ class _CustomerGoatsReportScreenState
   bool _generating = false;
 
   // ------------------------------------------------------------------
-  // CURRENT-MONTH BILLING (same rule as the Progress Report screen)
-  //
-  //   Current Month Palai (sum of each goat's editable amount)
-  //         +
-  //   Current Outstanding (customer's live balance, 0 if none)
-  //         −
-  //   Current Advance (customer's live advance, 0 if none)
-  //         =
-  //   Current Amount Due
-  //
-  // Historical payments and old bills are never summed/subtracted
-  // again here — Current Outstanding and Current Advance are read
-  // fresh from the customer's live profile and nothing else feeds
-  // into them.
+  // BILLING (read-only, see LatestStatementCard)
   // ------------------------------------------------------------------
-
-  /// One editable "Monthly Palai Amount" controller per selected goat,
-  /// seeded from that goat's registered [PalaiGoat.pricing] as a
-  /// starting point only — fully editable, and never affects any other
-  /// goat's amount.
-  final Map<String, TextEditingController> _palaiControllers = {};
-
-  final TextEditingController _outstandingController = TextEditingController();
-  final TextEditingController _advanceController = TextEditingController();
 
   /// The customer's CURRENT outstanding balance, re-fetched fresh (not
   /// from `widget.customer`, which may be stale).
@@ -111,13 +73,9 @@ class _CustomerGoatsReportScreenState
   /// pending Trading balance.
   CustomerCredit? _goatSaleCredit;
 
-  /// Convenience accessor for [_goatSaleCredit]'s total — 0 when there is
-  /// none.
-  double get _goatSaleCreditAmount => _goatSaleCredit?.totalDue ?? 0;
 
-  /// If a monthly bill for the current month already exists for this
-  /// customer, it's loaded here so a fresh one is never created on top
-  /// of it — its own saved numbers are shown/used instead.
+  /// The customer's newest monthly bill (any month), or null if they
+  /// have none yet. Included in the report as issued.
   MonthlyBill? _existingMonthlyBill;
 
   bool _loadingBilling = true;
@@ -131,16 +89,6 @@ class _CustomerGoatsReportScreenState
       widget.customer.id,
     );
     _loadBillingInfo();
-  }
-
-  @override
-  void dispose() {
-    for (final controller in _palaiControllers.values) {
-      controller.dispose();
-    }
-    _outstandingController.dispose();
-    _advanceController.dispose();
-    super.dispose();
   }
 
   // ================================================================
@@ -173,12 +121,11 @@ class _CustomerGoatsReportScreenState
       _lastLoadedGoats.where((g) => _selectedIds.contains(g.id)).toList();
 
   // ================================================================
-  // BILLING — LOAD
+  // BILLING — LOAD (read-only)
   // ================================================================
 
-  /// Loads the customer's current outstanding/advance, and checks
-  /// whether a monthly bill already exists for the current month so a
-  /// duplicate is never created.
+  /// Loads the customer's live balance, their latest monthly bill and
+  /// any unpaid Trading goat sales. Nothing is written.
   Future<void> _loadBillingInfo() async {
     setState(() {
       _loadingBilling = true;
@@ -191,19 +138,13 @@ class _CustomerGoatsReportScreenState
         widget.customer.id,
       );
 
-      final now = DateTime.now();
-      final billId = _monthlyBillId(widget.customer.id, now.year, now.month);
-
-      final existingBill = await MonthlyBillingService.instance.getMonthlyBill(
+      final latestBill = await MonthlyStatementEngine.instance.latestBill(
         farmId: widget.farmId,
-        billId: billId,
+        customerId: widget.customer.id,
       );
 
       // Same lookup the Goat sale credit card on the customer's profile
-      // uses (by mobile number, else customer id, else name), so this
-      // report and that card always agree on what's still owed on
-      // Trading goat sales — including a goat that came in via a
-      // "Transfer to Palai" sale.
+      // uses, so this report and that card always agree.
       final goatSaleCredit = await SalesService.instance.creditForPerson(
         widget.farmId,
         customerId: widget.customer.id,
@@ -214,20 +155,13 @@ class _CustomerGoatsReportScreenState
       if (!mounted) return;
 
       setState(() {
-        _currentOutstanding = freshCustomer?.pendingAmount ?? widget.customer.pendingAmount;
-        _currentAdvanceAvailable = freshCustomer?.advanceAmount ?? widget.customer.advanceAmount;
+        _currentOutstanding =
+            freshCustomer?.pendingAmount ?? widget.customer.pendingAmount;
+        _currentAdvanceAvailable =
+            freshCustomer?.advanceAmount ?? widget.customer.advanceAmount;
         _goatSaleCredit = goatSaleCredit;
-        _existingMonthlyBill = existingBill;
+        _existingMonthlyBill = latestBill;
         _loadingBilling = false;
-
-        if (existingBill == null) {
-          // Prefilled ONLY from the customer's live current balance —
-          // zero if there is none. This month's goat-wise Palai amount
-          // is a completely separate line item and must never be
-          // folded into Current Outstanding here.
-          _outstandingController.text = _currentOutstanding.toStringAsFixed(2);
-          _advanceController.text = _currentAdvanceAvailable.toStringAsFixed(2);
-        }
       });
     } catch (e) {
       if (!mounted) return;
@@ -238,36 +172,13 @@ class _CustomerGoatsReportScreenState
     }
   }
 
-  /// Mirrors MonthlyBillingService's private document-ID format so we
-  /// can look up "does this month already have a bill" without a new
-  /// public method on the service.
-  String _monthlyBillId(String customerId, int year, int month) {
-    final periodKey = '$year-${month.toString().padLeft(2, '0')}';
-    return 'monthly_${customerId}_$periodKey';
-  }
-
-  /// Sends the owner to the goat-wise Monthly Billing screen to finish
-  /// or fix this month's bill, then refreshes billing info on return.
-  ///
-  /// - If a bill already exists for this month with ₹0 Current Month
-  ///   Palai, opens it in EDIT mode (same bill document is corrected).
-  /// - Otherwise opens in CREATE mode for this month.
-  ///
-  /// `cameFromProgressReport: true` is passed either way so that
-  /// screen shows "Done" instead of "Generate Monthly Bill".
-  Future<void> _openMonthlyBillingToFix() async {
-    final existing = _existingMonthlyBill;
-    final needsFix = existing != null && existing.palaiCharges <= 0;
-
+  Future<void> _openMonthlyBills() async {
     await Navigator.of(context).push(
       fastRoute(
-        MonthlyBillGenerateScreen(
+        MonthlyBillsScreen(
           farmId: widget.farmId,
           customerId: widget.customer.id,
           customerName: widget.customer.name,
-          goatCount: _selectedGoats.length,
-          editBillId: needsFix ? existing.id : null,
-          cameFromProgressReport: true,
         ),
       ),
     );
@@ -276,89 +187,9 @@ class _CustomerGoatsReportScreenState
     await _loadBillingInfo();
   }
 
-  // ================================================================
-  // BILLING — PER-GOAT PALAI
-  // ================================================================
-
-  TextEditingController _palaiControllerFor(PalaiGoat goat) {
-    return _palaiControllers.putIfAbsent(
-      goat.id,
-          () => TextEditingController(
-        text: _prorationFor(goat).amount.toStringAsFixed(2),
-      ),
-    );
-  }
-
-  /// Pro-rated Palai charge for [goat] in the current billing month:
-  /// monthly price ÷ days in month × days the goat has been at the farm.
-  PalaiProration _prorationFor(PalaiGoat goat) {
-    final now = DateTime.now();
-    return PalaiProrationCalculator.calculateForStay(
-      monthlyCharge: goat.pricing,
-      joiningDate: goat.billingStartDate,
-      leavingDate: goat.checkOutDate,
-      year: now.year,
-      month: now.month,
-    );
-  }
-
-  double _enteredPalai(PalaiGoat goat) {
-    final controller = _palaiControllers[goat.id];
-    if (controller == null) return _prorationFor(goat).amount;
-    return double.tryParse(controller.text.trim()) ?? 0;
-  }
-
-  /// Sum of each *selected* goat's current-month Palai amount, exactly
-  /// as typed in that goat's own field. Never combined with Current
-  /// Outstanding/Advance before display.
-  double get _palaiChargesTotal =>
-      _selectedGoats.fold<double>(0, (sum, g) => sum + _enteredPalai(g));
-
-  /// Goat-wise breakdown, saved with the bill as a permanent snapshot.
-  List<GoatBillingLine> get _goatBreakdown => _selectedGoats.map((g) {
-    final label = g.name.trim().isNotEmpty
-        ? g.name
-        : (g.goatCode.trim().isNotEmpty ? g.goatCode : g.tagNumber);
-    return GoatBillingLine.forGoat(
-      goatId: g.id,
-      label: label,
-      amount: _enteredPalai(g),
-      proration: _prorationFor(g),
-    );
-  }).toList();
-
-  double get _enteredOutstanding =>
-      double.tryParse(_outstandingController.text.trim()) ?? 0;
-
-  double get _enteredAdvance =>
-      double.tryParse(_advanceController.text.trim()) ?? 0;
-
-  /// Current Month Palai + Current Outstanding − Current Advance +
-  /// Goat Sale Credit (Trading), floored at zero.
-  ///
-  /// The Trading goat-sale credit is added here purely for DISPLAY —
-  /// it is never written into `currentOutstanding` when the monthly
-  /// bill is created/updated (see [_generate]), so it never touches
-  /// `pendingAmount` or the payment-settlement logic that field feeds.
-  double get _currentAmountDue =>
-      (_palaiChargesTotal + _enteredOutstanding - _enteredAdvance + _goatSaleCreditAmount)
-          .clamp(0, double.infinity)
-          .toDouble();
-
-  /// True once billing is ready to include in the report: either an
-  /// existing bill for this month was found, or every selected goat
-  /// has a valid Palai amount entered.
-  bool get _billingReady {
-    if (_loadingBilling) return false;
-    if (_existingMonthlyBill != null) return true;
-    if (_selectedGoats.isEmpty) return false;
-    return _selectedGoats.every((g) {
-      final controller = _palaiControllers[g.id];
-      if (controller == null) return false;
-      final value = double.tryParse(controller.text.trim());
-      return value != null && value >= 0;
-    });
-  }
+  /// Billing is ready once it has loaded. A customer without any bill
+  /// yet can still get a report; it simply has no bill in it.
+  bool get _billingReady => !_loadingBilling && _billingLoadError == null;
 
   // ================================================================
   // GENERATE
@@ -371,7 +202,7 @@ class _CustomerGoatsReportScreenState
     }
 
     if (!_billingReady) {
-      _showSnack('Enter the Monthly Palai Amount for every goat before generating the report.');
+      _showSnack('Billing is still loading. Try again in a moment.');
       return;
     }
 
@@ -380,42 +211,8 @@ class _CustomerGoatsReportScreenState
     try {
       final farm = await FirestoreService.instance.getFarmById(widget.farmId);
       final billSettings = farm?.billSettings ?? const BillSettings();
-      final now = DateTime.now();
-
-      // ------------------------------------------------------------
-      // BILLING — reuse this month's bill if one already exists,
-      // otherwise create it now from three separate numbers. These
-      // are never merged before being saved.
-      // ------------------------------------------------------------
-      MonthlyBill monthlyBill;
-      if (_existingMonthlyBill != null) {
-        monthlyBill = _existingMonthlyBill!;
-      } else {
-        try {
-          monthlyBill = await MonthlyBillingService.instance.createCurrentMonthMonthlyBill(
-            farmId: widget.farmId,
-            customerId: widget.customer.id,
-            year: now.year,
-            month: now.month,
-            palaiCharges: _palaiChargesTotal,
-            currentOutstanding: _enteredOutstanding,
-            currentAdvance: _enteredAdvance,
-            goatBreakdown: _goatBreakdown,
-            goatCount: _selectedGoats.length,
-            notes: 'Auto-generated with Goats Report.',
-          );
-        } on StateError {
-          // Someone else generated this month's bill in the meantime —
-          // fall back to reading it instead of failing the report.
-          final billId = _monthlyBillId(widget.customer.id, now.year, now.month);
-          final existing = await MonthlyBillingService.instance.getMonthlyBill(
-            farmId: widget.farmId,
-            billId: billId,
-          );
-          if (existing == null) rethrow;
-          monthlyBill = existing;
-        }
-      }
+      // Billing is read-only: the latest bill as issued (may be null).
+      final monthlyBill = _existingMonthlyBill;
 
       if (share) {
         await CustomerGoatsReportPdfService.instance.share(
@@ -456,13 +253,6 @@ class _CustomerGoatsReportScreenState
     );
   }
 
-  String _currency(double value) {
-    return NumberFormat.currency(
-      locale: 'en_IN',
-      symbol: '₹',
-      decimalDigits: 2,
-    ).format(value);
-  }
 
   // ================================================================
   // BUILD
@@ -708,475 +498,19 @@ class _CustomerGoatsReportScreenState
   }
 
   // ------------------------------------------------------------------
-  // BILLING CARD — same shape as the Progress Report screen's
+  // BILLING CARD (read-only)
   // ------------------------------------------------------------------
 
   Widget _buildBillingCard() {
-    final existing = _existingMonthlyBill;
-    final now = DateTime.now();
-    final monthLabel = DateFormat('MMMM yyyy').format(now);
-
-    return Container(
-      margin: const EdgeInsets.only(top: 4, bottom: 10),
-      decoration: AppTheme.card(radius: 14),
-      padding: const EdgeInsets.all(14),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              const Icon(Icons.receipt_long_outlined, color: AppColors.primaryGreen, size: 20),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Text('Monthly Billing — $monthLabel', style: AppTheme.heading(size: 14)),
-              ),
-              if (existing == null)
-                IconButton(
-                  tooltip: 'Re-fetch live Outstanding & Advance',
-                  icon: _loadingBilling
-                      ? const SizedBox(
-                    width: 16,
-                    height: 16,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  )
-                      : const Icon(Icons.refresh, size: 18, color: AppColors.textMuted),
-                  onPressed: _loadingBilling ? null : _loadBillingInfo,
-                ),
-            ],
-          ),
-          const SizedBox(height: 4),
-          Text(
-            existing != null
-                ? 'A bill for $monthLabel was already generated for this customer. Its saved amounts are shown below exactly as recorded — generating this report again will NOT create a duplicate bill or change these numbers.'
-                : 'Set each goat\'s Monthly Palai Amount below, then Current Outstanding and Current Advance. Nothing here is combined for you — you always see exactly what each figure is.',
-            style: AppTheme.body(size: 11, color: AppColors.textMuted),
-          ),
-          if (existing == null) ...[
-            const SizedBox(height: 10),
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-              decoration: BoxDecoration(
-                color: AppColors.warning.withValues(alpha: 0.12),
-                borderRadius: BorderRadius.circular(8),
-                border: Border.all(color: AppColors.warning.withValues(alpha: 0.4)),
-              ),
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Icon(Icons.info_outline, size: 16, color: AppColors.warning),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      'Current Month Calculation Only — previous monthly payments and historical transactions are not included in this calculation.',
-                      style: AppTheme.body(size: 10.5, color: AppColors.textDark),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ],
-          const SizedBox(height: 14),
-
-          if (_loadingBilling)
-            const Center(
-              child: Padding(
-                padding: EdgeInsets.symmetric(vertical: 12),
-                child: CircularProgressIndicator(strokeWidth: 2, color: AppColors.primaryGreen),
-              ),
-            )
-          else if (_billingLoadError != null)
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(_billingLoadError!, style: AppTheme.body(size: 11, color: AppColors.error)),
-                const SizedBox(height: 8),
-                OutlinedButton.icon(
-                  onPressed: _loadBillingInfo,
-                  icon: const Icon(Icons.refresh, size: 16),
-                  label: const Text('Retry'),
-                ),
-              ],
-            )
-          else ...[
-              if (existing != null) ...[
-                // ------------------------------------------------------
-                // EXISTING BILL — the rows below come from THAT bill's
-                // own saved snapshot, taken the moment it was generated.
-                // They are labelled "as billed" rather than "Current"
-                // because they are frozen on purpose and will never
-                // change on their own — a payment or another charge
-                // recorded against the customer AFTER this bill was
-                // generated moves the customer's live pendingAmount
-                // without touching these numbers. The callout below
-                // surfaces that live balance explicitly instead of
-                // silently hiding it, so this screen and Customer
-                // Profile never look like they disagree with no
-                // explanation.
-                // ------------------------------------------------------
-                if (existing.goatBreakdown.isNotEmpty) ...[
-                  for (final line in existing.goatBreakdown)
-                    Padding(
-                      padding: const EdgeInsets.only(bottom: 4),
-                      child: _billingRow(line.displayLabel, _currency(line.palaiAmount)),
-                    ),
-                  const Divider(height: 14),
-                ],
-                _billingRow('Current Month Palai', _currency(existing.palaiCharges)),
-                const SizedBox(height: 4),
-                _billingRow('Outstanding (at time of billing)', _currency(existing.previousOutstanding)),
-                const SizedBox(height: 4),
-                _billingRow('Advance Applied (at time of billing)', '- ${_currency(existing.advanceApplied)}'),
-                const Divider(height: 20),
-                _billingRow('Total Amount Due (as billed)', _currency(existing.totalDue), bold: true),
-                if (existing.amountPaid > 0) ...[
-                  const SizedBox(height: 4),
-                  _billingRow('Paid So Far', _currency(existing.amountPaid)),
-                ],
-                const SizedBox(height: 8),
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    Text(
-                      'Remaining On This Bill',
-                      style: AppTheme.body(size: 12, color: AppColors.textMuted),
-                    ),
-                    Row(
-                      children: [
-                        Icon(
-                          existing.remainingAmount <= 0
-                              ? Icons.check_circle
-                              : Icons.error_outline,
-                          size: 14,
-                          color: existing.remainingAmount <= 0
-                              ? AppColors.success
-                              : AppColors.warning,
-                        ),
-                        const SizedBox(width: 4),
-                        Text(
-                          existing.remainingAmount <= 0
-                              ? 'PAID'
-                              : _currency(existing.remainingAmount),
-                          style: AppTheme.heading(
-                            size: 13,
-                            color: existing.remainingAmount <= 0
-                                ? AppColors.success
-                                : AppColors.warning,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ],
-                ),
-                // ------------------------------------------------------
-                // Goat Sale Credit (Trading) — what this customer still
-                // owes on unpaid Trading goat sales (this includes a
-                // goat that arrived via a "Transfer to Palai" sale).
-                // This is SalesService.creditForPerson()'s live number,
-                // the same source the Goat sale credit card on Customer
-                // Profile uses, so it is never frozen on the bill the
-                // way `existing`'s own numbers are — it always reflects
-                // what is owed today. It is kept as its own line rather
-                // than folded into "Total Amount Due (as billed)" above
-                // (which is a permanent snapshot), and combined here
-                // into one "Total owed" figure so nothing pending from
-                // a Trading sale is silently left out of this report.
-                // ------------------------------------------------------
-                if (_goatSaleCreditAmount > 0) ...[
-                  const SizedBox(height: 12),
-                  Container(
-                    width: double.infinity,
-                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-                    decoration: BoxDecoration(
-                      color: AppColors.error.withValues(alpha: 0.06),
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        _billingRow('Goat Sale Credit (Trading)', _currency(_goatSaleCreditAmount)),
-                        const SizedBox(height: 4),
-                        Text(
-                          'Still owed on ${_goatSaleCredit!.saleCount} Trading goat sale'
-                              '${_goatSaleCredit!.saleCount == 1 ? '' : 's'} (e.g. a goat '
-                              'transferred in via "Transfer to Palai"). Kept on the sale '
-                              'itself, so it is separate from this bill\'s own numbers above.',
-                          style: AppTheme.body(size: 10, color: AppColors.textMuted),
-                        ),
-                        const Divider(height: 16),
-                        _billingRow(
-                          'Total owed to the farm (this bill + goat sale)',
-                          _currency(existing.remainingAmount + _goatSaleCreditAmount),
-                          bold: true,
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
-                // ------------------------------------------------------
-                // This compares against the BILL'S OWN remainingAmount,
-                // not totalDue — a bill that's since been paid off
-                // correctly shows remainingAmount 0 above, and should
-                // NOT trigger this callout just because the original
-                // totalDue no longer matches. This only fires when the
-                // customer's live balance and this specific bill's own
-                // remaining balance genuinely disagree (a payment made
-                // outside this bill, another charge elsewhere, or
-                // leftover pre-fix data).
-                // ------------------------------------------------------
-                if ((_currentOutstanding - existing.remainingAmount).abs() > 0.5) ...[
-                  const SizedBox(height: 12),
-                  Container(
-                    width: double.infinity,
-                    padding: const EdgeInsets.all(10),
-                    decoration: BoxDecoration(
-                      color: AppColors.warning.withValues(alpha: 0.12),
-                      borderRadius: BorderRadius.circular(8),
-                      border: Border.all(color: AppColors.warning.withValues(alpha: 0.4)),
-                    ),
-                    child: Row(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        const Icon(Icons.info_outline, size: 16, color: AppColors.warning),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          child: Text(
-                            'Customer\'s overall outstanding today: ${_currency(_currentOutstanding)}, '
-                                'which doesn\'t match what\'s left on this specific bill '
-                                '(${_currency(existing.remainingAmount)}). This usually means another '
-                                'charge or payment was recorded outside this bill. Check Customer '
-                                'Profile for the full picture, or tap "Sync with Monthly Bills" there.',
-                            style: AppTheme.body(size: 10.5, color: AppColors.textDark),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
-                if (existing.palaiCharges <= 0) ...[
-                  const SizedBox(height: 12),
-                  Container(
-                    width: double.infinity,
-                    padding: const EdgeInsets.all(10),
-                    decoration: BoxDecoration(
-                      color: AppColors.warning.withValues(alpha: 0.12),
-                      borderRadius: BorderRadius.circular(8),
-                      border: Border.all(color: AppColors.warning.withValues(alpha: 0.4)),
-                    ),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Row(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            const Icon(Icons.warning_amber_rounded, size: 16, color: AppColors.warning),
-                            const SizedBox(width: 8),
-                            Expanded(
-                              child: Text(
-                                'This month\'s bill shows ₹0 Current Month Palai. Fix it in Monthly Billing before sharing this report.',
-                                style: AppTheme.body(size: 10.5, color: AppColors.textDark),
-                              ),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 8),
-                        SizedBox(
-                          width: double.infinity,
-                          child: OutlinedButton.icon(
-                            onPressed: _openMonthlyBillingToFix,
-                            icon: const Icon(Icons.build_outlined, size: 16),
-                            label: const Text('Fix in Monthly Billing'),
-                            style: OutlinedButton.styleFrom(
-                              foregroundColor: AppColors.warning,
-                              side: const BorderSide(color: AppColors.warning),
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
-              ] else ...[
-                _buildGoatWisePalaiEntry(),
-                const SizedBox(height: 14),
-                _billingRow('Current Month Palai', _currency(_palaiChargesTotal), bold: true),
-                const SizedBox(height: 14),
-                _billingField(
-                  controller: _outstandingController,
-                  label: 'Current Outstanding',
-                  icon: Icons.account_balance_wallet_outlined,
-                ),
-                const SizedBox(height: 10),
-                _billingField(
-                  controller: _advanceController,
-                  label: 'Current Advance',
-                  icon: Icons.savings_outlined,
-                ),
-                // Goat Sale Credit (Trading) — what this customer still
-                // owes on unpaid Trading goat sales, e.g. a goat that
-                // came in via a "Transfer to Palai" sale
-                // (SalesService.creditForPerson(), the same source the
-                // Goat sale credit card on Customer Profile uses).
-                // Shown as its own line and folded into Current Amount
-                // Due below, but NEVER written into Current Outstanding
-                // itself — pendingAmount and the payment-settlement
-                // logic it feeds are left untouched.
-                if (_goatSaleCreditAmount > 0) ...[
-                  const SizedBox(height: 10),
-                  _billingRow('Goat Sale Credit (Trading)', _currency(_goatSaleCreditAmount)),
-                  const SizedBox(height: 4),
-                  Text(
-                    'Still owed on ${_goatSaleCredit!.saleCount} Trading goat sale'
-                        '${_goatSaleCredit!.saleCount == 1 ? '' : 's'}. Included below in '
-                        'Current Amount Due.',
-                    style: AppTheme.body(size: 10, color: AppColors.textMuted),
-                  ),
-                ],
-                const Divider(height: 24),
-                _billingRow(
-                  'Current Amount Due',
-                  _currency(_currentAmountDue),
-                  bold: true,
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  'This will be saved to the customer\'s profile the moment you generate this report.',
-                  style: AppTheme.body(size: 10, color: AppColors.textMuted),
-                ),
-                const SizedBox(height: 10),
-                Center(
-                  child: TextButton.icon(
-                    onPressed: _openMonthlyBillingToFix,
-                    icon: const Icon(Icons.open_in_new, size: 15),
-                    label: const Text('Fill in Monthly Billing instead'),
-                  ),
-                ),
-              ],
-            ],
-        ],
-      ),
-    );
-  }
-
-  /// Editable, per-goat "Monthly Palai Amount" entry. Each goat gets
-  /// its own card clearly labelled with its ID and reference Palai
-  /// Price (e.g. "GP-11 — Palai Price: ₹2,800"), plus its own editable
-  /// amount textbox. Changing one goat's amount only ever affects that
-  /// goat's row and the overall total.
-  Widget _buildGoatWisePalaiEntry() {
-    if (_selectedGoats.isEmpty) return const SizedBox.shrink();
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text('Monthly Palai Amount (per goat)', style: AppTheme.body(size: 11, color: AppColors.textMuted)),
-        const SizedBox(height: 8),
-        for (final goat in _selectedGoats) ...[
-          _goatPalaiCard(goat),
-          const SizedBox(height: 8),
-        ],
-      ],
-    );
-  }
-
-  Widget _goatPalaiCard(PalaiGoat goat) {
-    final goatId = goat.goatCode.trim().isNotEmpty
-        ? goat.goatCode
-        : (goat.tagNumber.trim().isNotEmpty ? goat.tagNumber : goat.id);
-    final label = goat.name.trim().isNotEmpty ? goat.name : goatId;
-    final controller = _palaiControllerFor(goat);
-
-    return Container(
-      padding: const EdgeInsets.all(10),
-      decoration: BoxDecoration(
-        color: AppColors.lightGreen.withValues(alpha: 0.5),
-        borderRadius: BorderRadius.circular(10),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text.rich(
-            TextSpan(
-              children: [
-                TextSpan(text: label, style: AppTheme.heading(size: 13)),
-                TextSpan(
-                  text: '  •  Palai Price: ${_currency(goat.pricing)}',
-                  style: AppTheme.body(size: 11, color: AppColors.textMuted),
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(height: 8),
-          TextField(
-            controller: controller,
-            keyboardType: const TextInputType.numberWithOptions(decimal: true),
-            onChanged: (_) => setState(() {}),
-            style: AppTheme.heading(size: 13),
-            decoration: InputDecoration(
-              isDense: true,
-              labelText: 'Monthly Palai Amount',
-              labelStyle: AppTheme.body(size: 11, color: AppColors.textMuted),
-              prefixText: '₹ ',
-              contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
-              border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
-            ),
-          ),
-          if (_prorationFor(goat).isPartialMonth) ...[
-            const SizedBox(height: 6),
-            Text(
-              _prorationNote(goat),
-              style: AppTheme.body(size: 11, color: AppColors.textMuted),
-            ),
-          ],
-        ],
-      ),
-    );
-  }
-
-  /// e.g. "Joined 11 Apr 2026 • 20 of 30 days • ₹3,000 ÷ 30 × 20"
-  String _prorationNote(PalaiGoat goat) {
-    final p = _prorationFor(goat);
-    final joined = DateFormat('d MMM yyyy').format(goat.billingStartDate);
-    return 'Joined $joined • ${p.label} • '
-        '${_currency(p.monthlyCharge)} ÷ ${p.daysInMonth} × ${p.billableDays}';
-  }
-
-  Widget _billingRow(String label, String value, {bool bold = false}) {
-    return Row(
-      children: [
-        Expanded(
-          child: Text(
-            label,
-            style: bold ? AppTheme.heading(size: 13) : AppTheme.body(size: 12, color: AppColors.textMuted),
-          ),
-        ),
-        Text(
-          value,
-          style: bold
-              ? AppTheme.heading(size: 14).copyWith(color: AppColors.primaryGreen)
-              : AppTheme.body(size: 12),
-        ),
-      ],
-    );
-  }
-
-  Widget _billingField({
-    required TextEditingController controller,
-    required String label,
-    required IconData icon,
-  }) {
-    return TextField(
-      controller: controller,
-      keyboardType: const TextInputType.numberWithOptions(decimal: true),
-      onChanged: (_) => setState(() {}),
-      decoration: InputDecoration(
-        isDense: true,
-        labelText: label,
-        prefixIcon: Icon(icon, size: 18),
-        prefixText: '₹ ',
-        border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
-        contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
-      ),
+    return LatestStatementCard(
+      bill: _existingMonthlyBill,
+      livePending: _currentOutstanding,
+      liveAdvance: _currentAdvanceAvailable,
+      loading: _loadingBilling,
+      error: _billingLoadError,
+      onRetry: _loadBillingInfo,
+      goatSaleCredit: _goatSaleCredit,
+      onOpenBills: _openMonthlyBills,
     );
   }
 }

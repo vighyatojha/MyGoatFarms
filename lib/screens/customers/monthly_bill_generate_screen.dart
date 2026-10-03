@@ -2,66 +2,37 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 
 import '../../app_theme.dart';
-import '../../models/monthly_bill_model.dart';
-import '../../models/palai_models.dart';
 import '../../services/firestore_service.dart';
-import '../../services/monthly_billing_service.dart';
-import '../../utils/palai_proration.dart';
+import '../../services/monthly_statement_engine.dart';
+import '../../services/payment_allocation_service.dart';
+import '../../utils/billing_ledger.dart';
 
-/// Goat-wise Monthly Bill generation.
+/// Generates the monthly STATEMENT for one customer.
 ///
-/// This screen replaced a single generic "Monthly Palai Charges" input
-/// that made bills misleading — one blended number for every goat, with
-/// no way to tell what was old vs. new, or which goat contributed what.
+/// Same engine as the Generate Bills button on the Customers screen, for
+/// one customer only. The screen first shows a preview worked out with
+/// the exact calculation the bill will use:
 ///
-/// The new flow keeps everything separate, all the way through:
+///   September charges (goat by goat, by days on the farm)
+///   + Previous Outstanding (carried forward, never re-charged)
+///   − Advance applied
+///   = Total Payable
 ///
-///   Goat-wise Current Month Palai (editable per goat)
-///         +
-///   Current Outstanding   (customer's real current balance — 0 if none)
-///         −
-///   Current Advance       (customer's real current advance — 0 if none)
-///         =
-///   Current Amount Due
+/// Nothing is typed in by hand: charges come from each goat's Palai
+/// price and the days it was on the farm, and the previous outstanding
+/// and advance come from the customer's live balance.
 ///
-///   Old Payments           -> shown for reference ONLY, never subtracted
-///   Current Month Payment  -> optional, recorded separately as an actual
-///                              payment against the bill just created
-///
-/// Old payment ≠ current payment. Old payments never silently affect the
-/// current-month calculation.
+/// Pops `true` when at least one bill was generated.
 class MonthlyBillGenerateScreen extends StatefulWidget {
   final String farmId;
   final String customerId;
   final String customerName;
-  final int goatCount;
-  final double suggestedMonthlyAmount;
-
-  /// When set, this screen edits that EXISTING bill in place (via
-  /// [MonthlyBillingService.updateCurrentMonthMonthlyBill]) instead of
-  /// creating a new one — used to fix a bill that was generated with a
-  /// mistake in it (most commonly ₹0 Current Month Palai). The month
-  /// selector is locked to that bill's own billing month.
-  final String? editBillId;
-
-  /// True when this screen was opened as a redirect FROM the Customer
-  /// Goat Progress Report screen (e.g. to fill in or fix this month's
-  /// bill before/after generating a report), rather than opened
-  /// directly from the Monthly Bills list. Purely cosmetic: it swaps
-  /// the primary button's label to "Done" so the flow reads naturally
-  /// when the owner is being sent back to finish something, without
-  /// changing what the button actually does.
-  final bool cameFromProgressReport;
 
   const MonthlyBillGenerateScreen({
     super.key,
     required this.farmId,
     required this.customerId,
     required this.customerName,
-    this.goatCount = 0,
-    this.suggestedMonthlyAmount = 0,
-    this.editBillId,
-    this.cameFromProgressReport = false,
   });
 
   @override
@@ -71,821 +42,630 @@ class MonthlyBillGenerateScreen extends StatefulWidget {
 
 class _MonthlyBillGenerateScreenState
     extends State<MonthlyBillGenerateScreen> {
-  final MonthlyBillingService _billingService = MonthlyBillingService.instance;
+  final MonthlyStatementEngine _engine = MonthlyStatementEngine.instance;
 
-  Stream<List<PalaiGoat>>? _goatsStream;
-  List<PalaiGoat> _lastLoadedGoats = [];
-
-  /// One editable "Current Month Palai" controller per goat, seeded from
-  /// that goat's registered [PalaiGoat.pricing] as a starting point only.
-  final Map<String, TextEditingController> _palaiControllers = {};
-
-  final TextEditingController _outstandingController = TextEditingController();
-  final TextEditingController _advanceController = TextEditingController();
-  final TextEditingController _currentPaymentController = TextEditingController();
-  final TextEditingController _notesController = TextEditingController();
-
+  final TextEditingController _paymentController = TextEditingController();
+  final TextEditingController _noteController = TextEditingController();
   String _paymentMethod = 'Cash';
 
-  DateTime _selectedMonth = DateTime(DateTime.now().year, DateTime.now().month);
-
-  bool _loadingCustomer = true;
+  StatementPreview? _preview;
   String? _loadError;
-
-  /// Sum of every past bill's amountPaid — reference/history only. This
-  /// is NEVER subtracted from the current-month calculation; it exists
-  /// purely so the owner can see what has already come in historically.
-  double _oldPaymentsTotal = 0;
-
+  bool _loading = true;
   bool _saving = false;
-
-  bool get _isEditing => widget.editBillId != null;
-
-  /// The bill being corrected, when [_isEditing]. Loaded once up front
-  /// so the month selector can be locked to it and every field can be
-  /// prefilled from its own saved snapshot rather than the customer's
-  /// live state.
-  MonthlyBill? _editingBill;
 
   @override
   void initState() {
     super.initState();
-    _goatsStream = FirestoreService.instance.goatsForCustomerStream(
-      widget.farmId,
-      widget.customerId,
-    );
-    if (_isEditing) {
-      _loadBillToEdit(widget.editBillId!);
-    } else {
-      _loadCurrentState();
-    }
+    _load();
   }
 
   @override
   void dispose() {
-    for (final controller in _palaiControllers.values) {
-      controller.dispose();
-    }
-    _outstandingController.dispose();
-    _advanceController.dispose();
-    _currentPaymentController.dispose();
-    _notesController.dispose();
+    _paymentController.dispose();
+    _noteController.dispose();
     super.dispose();
   }
 
-  // ================================================================
-  // LOAD CURRENT STATE (never reconstructed from history)
-  // ================================================================
-
-  Future<void> _loadCurrentState() async {
+  Future<void> _load() async {
     setState(() {
-      _loadingCustomer = true;
+      _loading = true;
       _loadError = null;
     });
-
     try {
-      final customer = await FirestoreService.instance.getCustomer(
-        widget.farmId,
-        widget.customerId,
-      );
-
-      // Old Payments — reference-only history, kept completely separate
-      // from the current calculation.
-      final pastBills = await _billingService.getMonthlyBills(
+      final preview = await _engine.previewNext(
         farmId: widget.farmId,
         customerId: widget.customerId,
       );
-      final oldPaymentsTotal = pastBills.fold<double>(
-        0,
-            (sum, b) => sum + b.amountPaid,
-      );
-
       if (!mounted) return;
       setState(() {
-        _outstandingController.text =
-            (customer?.pendingAmount ?? 0).toStringAsFixed(2);
-        _advanceController.text =
-            (customer?.advanceAmount ?? 0).toStringAsFixed(2);
-        _oldPaymentsTotal = oldPaymentsTotal;
-        _loadingCustomer = false;
+        _preview = preview;
+        _loading = false;
       });
     } catch (e) {
       if (!mounted) return;
       setState(() {
-        _loadingCustomer = false;
-        _loadError = 'Could not load current customer state: $e';
+        _loading = false;
+        _loadError = FirestoreService.instance.describeError(e);
       });
     }
   }
 
-  /// Loads the bill being fixed and prefills every field from ITS OWN
-  /// saved snapshot — never from the customer's current live state,
-  /// since that state has already moved on (it includes this bill's
-  /// effect). The month selector is locked to this bill's own month;
-  /// per-goat Palai controllers are seeded from its goatBreakdown so a
-  /// bill that shows ₹0 Palai across the board actually starts blank
-  /// rather than silently pulling in each goat's current registered
-  /// price as if that were what was billed.
-  Future<void> _loadBillToEdit(String billId) async {
-    setState(() {
-      _loadingCustomer = true;
-      _loadError = null;
-    });
+  double get _payment =>
+      double.tryParse(_paymentController.text.trim()) ?? 0;
 
-    try {
-      final bill = await _billingService.getMonthlyBill(
-        farmId: widget.farmId,
-        billId: billId,
-      );
+  // ===========================================================================
+  // GENERATE
+  // ===========================================================================
 
-      if (bill == null) {
-        if (!mounted) return;
-        setState(() {
-          _loadingCustomer = false;
-          _loadError = 'This monthly bill could not be found.';
-        });
-        return;
-      }
+  Future<void> _generate() async {
+    final preview = _preview;
+    if (preview == null || !preview.canGenerate || _saving) return;
 
-      final pastBills = await _billingService.getMonthlyBills(
-        farmId: widget.farmId,
-        customerId: widget.customerId,
-      );
-      final oldPaymentsTotal = pastBills
-          .where((b) => b.id != billId)
-          .fold<double>(0, (sum, b) => sum + b.amountPaid);
-
-      if (!mounted) return;
-      setState(() {
-        _editingBill = bill;
-        _selectedMonth = DateTime(bill.year, bill.month);
-        _outstandingController.text = bill.previousOutstanding.toStringAsFixed(2);
-        _advanceController.text = bill.advanceApplied.toStringAsFixed(2);
-        _notesController.text = bill.notes;
-        _oldPaymentsTotal = oldPaymentsTotal;
-        _loadingCustomer = false;
-      });
-    } catch (e) {
-      if (!mounted) return;
-      setState(() {
-        _loadingCustomer = false;
-        _loadError = 'Could not load this bill: $e';
-      });
-    }
-  }
-
-  // ================================================================
-  // PER-GOAT PALAI
-  // ================================================================
-
-  TextEditingController _palaiControllerFor(PalaiGoat goat) {
-    return _palaiControllers.putIfAbsent(goat.id, () {
-      if (_isEditing) {
-        // Editing an existing bill: seed from what was actually billed
-        // for this goat, not its current registered price — a goat
-        // with no line in the saved breakdown starts at ₹0 rather than
-        // silently pulling in today's price for a past month.
-        final breakdown = _editingBill?.goatBreakdown ?? const [];
-        GoatBillingLine? savedLine;
-        for (final line in breakdown) {
-          if (line.goatId == goat.id) {
-            savedLine = line;
-            break;
-          }
-        }
-        return TextEditingController(
-          text: (savedLine?.palaiAmount ?? 0).toStringAsFixed(2),
-        );
-      }
-      return TextEditingController(
-        text: _prorationFor(goat).amount.toStringAsFixed(2),
-      );
-    });
-  }
-
-  /// Pro-rated Palai charge for [goat] in the selected billing month.
-  /// Monthly price ÷ days in month × days the goat is actually at the
-  /// farm (from its Palai check-in date to month end).
-  PalaiProration _prorationFor(PalaiGoat goat) {
-    return PalaiProrationCalculator.calculate(
-      monthlyCharge: goat.pricing,
-      joiningDate: goat.billingStartDate,
-      year: _selectedMonth.year,
-      month: _selectedMonth.month,
-    );
-  }
-
-  double _enteredPalai(PalaiGoat goat) {
-    final controller = _palaiControllers[goat.id];
-    if (controller == null) return _prorationFor(goat).amount;
-    return double.tryParse(controller.text.trim()) ?? 0;
-  }
-
-  double get _palaiChargesTotal =>
-      _lastLoadedGoats.fold<double>(0, (sum, g) => sum + _enteredPalai(g));
-
-  List<GoatBillingLine> get _goatBreakdown => _lastLoadedGoats.map((g) {
-    final label = g.name.trim().isNotEmpty
-        ? g.name
-        : (g.goatCode.trim().isNotEmpty ? g.goatCode : g.tagNumber);
-    return GoatBillingLine.forGoat(
-      goatId: g.id,
-      label: label,
-      amount: _enteredPalai(g),
-      proration: _prorationFor(g),
-    );
-  }).toList();
-
-  // ================================================================
-  // CURRENT-STATE FIELDS (never reconstructed from history)
-  // ================================================================
-
-  double get _currentOutstanding =>
-      double.tryParse(_outstandingController.text.trim()) ?? 0;
-
-  double get _currentAdvance =>
-      double.tryParse(_advanceController.text.trim()) ?? 0;
-
-  double get _currentMonthPayment =>
-      double.tryParse(_currentPaymentController.text.trim()) ?? 0;
-
-  /// Current Month Palai + Current Outstanding − Current Advance.
-  double get _currentAmountDue =>
-      (_palaiChargesTotal + _currentOutstanding - _currentAdvance)
-          .clamp(0, double.infinity)
-          .toDouble();
-
-  /// Current Amount Due − Current Month Payment (the payment being
-  /// recorded right now — never an old payment).
-  double get _remainingBalance =>
-      (_currentAmountDue - _currentMonthPayment)
-          .clamp(0, double.infinity)
-          .toDouble();
-
-  String _currency(double value) {
-    return NumberFormat.currency(locale: 'en_IN', symbol: '₹', decimalDigits: 2)
-        .format(value);
-  }
-
-  // ================================================================
-  // BUILD
-  // ================================================================
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: Text(_isEditing ? 'Fix Monthly Bill' : 'Generate Monthly Bill'),
-      ),
-      body: StreamBuilder<List<PalaiGoat>>(
-        stream: _goatsStream,
-        builder: (context, snapshot) {
-          if (snapshot.connectionState == ConnectionState.waiting || _loadingCustomer) {
-            return const Center(child: CircularProgressIndicator());
-          }
-
-          if (_loadError != null) {
-            return Center(
-              child: Padding(
-                padding: const EdgeInsets.all(20),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text(_loadError!, textAlign: TextAlign.center),
-                    const SizedBox(height: 12),
-                    OutlinedButton.icon(
-                      onPressed: _loadCurrentState,
-                      icon: const Icon(Icons.refresh),
-                      label: const Text('Retry'),
-                    ),
-                  ],
-                ),
-              ),
-            );
-          }
-
-          final goats = (snapshot.data ?? []).where((g) => !g.isCheckedOut).toList();
-          _lastLoadedGoats = goats;
-
-          return ListView(
-            padding: const EdgeInsets.all(16),
-            children: [
-              _buildCustomerCard(goats.length),
-              const SizedBox(height: 18),
-              _buildMonthSelector(),
-              const SizedBox(height: 18),
-              _buildWarningBanner(),
-              const SizedBox(height: 18),
-              _buildGoatWisePalaiSection(goats),
-              const SizedBox(height: 20),
-              _buildCurrentStateSection(),
-              const SizedBox(height: 20),
-              _buildPaymentDetailsSection(),
-              const SizedBox(height: 12),
-              TextFormField(
-                controller: _notesController,
-                minLines: 2,
-                maxLines: 4,
-                decoration: const InputDecoration(
-                  labelText: 'Notes',
-                  alignLabelWithHint: true,
-                  border: OutlineInputBorder(),
-                ),
-              ),
-              const SizedBox(height: 20),
-              _buildSummaryCard(),
-              const SizedBox(height: 20),
-              SizedBox(
-                height: 50,
-                child: ElevatedButton.icon(
-                  onPressed: (_saving || goats.isEmpty) ? null : _generateBill,
-                  icon: _saving
-                      ? const SizedBox(
-                    width: 18,
-                    height: 18,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  )
-                      : Icon(widget.cameFromProgressReport
-                      ? Icons.check_circle_outline
-                      : Icons.receipt_long),
-                  label: Text(_saving
-                      ? (_isEditing ? 'Saving...' : 'Generating...')
-                      : (widget.cameFromProgressReport
-                      ? 'Done'
-                      : 'Generate Monthly Bill')),
-                ),
-              ),
-            ],
-          );
-        },
-      ),
-    );
-  }
-
-  Widget _buildCustomerCard(int goatCount) {
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Row(
-          children: [
-            const CircleAvatar(radius: 25, child: Icon(Icons.person_outline)),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Text('Customer', style: TextStyle(fontSize: 12, color: Colors.grey)),
-                  const SizedBox(height: 3),
-                  Text(
-                    widget.customerName,
-                    style: const TextStyle(fontSize: 17, fontWeight: FontWeight.bold),
-                  ),
-                  const SizedBox(height: 3),
-                  Text('$goatCount goat(s)', style: TextStyle(color: Colors.grey.shade600)),
-                ],
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildMonthSelector() {
-    final text = DateFormat('MMMM yyyy').format(_selectedMonth);
-    return InkWell(
-      borderRadius: BorderRadius.circular(10),
-      onTap: _isEditing ? null : _selectMonth,
-      child: InputDecorator(
-        decoration: InputDecoration(
-          labelText: 'Billing Month',
-          prefixIcon: const Icon(Icons.calendar_month),
-          border: const OutlineInputBorder(),
-          suffixIcon: _isEditing
-              ? const Tooltip(
-            message: "A bill's month can't be changed once generated.",
-            child: Icon(Icons.lock_outline, size: 18),
-          )
-              : null,
-        ),
-        child: Text(text, style: const TextStyle(fontSize: 15)),
-      ),
-    );
-  }
-
-  Widget _buildWarningBanner() {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-      decoration: BoxDecoration(
-        color: AppColors.warning.withValues(alpha: 0.12),
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: AppColors.warning.withValues(alpha: 0.4)),
-      ),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Icon(Icons.info_outline, size: 18, color: AppColors.warning),
-          const SizedBox(width: 8),
-          Expanded(
-            child: Text(
-              'Current Month Calculation Only — previous monthly payments and historical transactions are not included in this calculation.',
-              style: AppTheme.body(size: 11.5, color: AppColors.textDark),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  // ----------------------------------------------------------------
-  // GOAT-WISE PALAI
-  // ----------------------------------------------------------------
-
-  Widget _buildGoatWisePalaiSection(List<PalaiGoat> goats) {
-    if (goats.isEmpty) {
-      return Text(
-        'This customer has no active goats under Palai.',
-        style: AppTheme.body(size: 12, color: AppColors.textMuted),
-      );
-    }
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text('Goat Billing', style: AppTheme.heading(size: 14)),
-        const SizedBox(height: 8),
-        for (final goat in goats) ...[
-          _goatBillingCard(goat),
-          const SizedBox(height: 8),
-        ],
-      ],
-    );
-  }
-
-  Widget _goatBillingCard(PalaiGoat goat) {
-    final goatId = goat.goatCode.trim().isNotEmpty
-        ? goat.goatCode
-        : (goat.tagNumber.trim().isNotEmpty ? goat.tagNumber : goat.id);
-    final label = goat.name.trim().isNotEmpty ? goat.name : goatId;
-    final controller = _palaiControllerFor(goat);
-
-    return Container(
-      padding: const EdgeInsets.all(12),
-      decoration: AppTheme.card(radius: 12),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text.rich(
-            TextSpan(
-              children: [
-                TextSpan(text: label, style: AppTheme.heading(size: 13)),
-                TextSpan(
-                  text: '  •  Palai Price: ${_currency(goat.pricing)}',
-                  style: AppTheme.body(size: 11, color: AppColors.textMuted),
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(height: 8),
-          TextField(
-            controller: controller,
-            keyboardType: const TextInputType.numberWithOptions(decimal: true),
-            onChanged: (_) => setState(() {}),
-            decoration: InputDecoration(
-              isDense: true,
-              labelText: 'Current Month Palai',
-              prefixText: '₹ ',
-              contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
-              border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
-            ),
-          ),
-          if (!_isEditing && _prorationFor(goat).isPartialMonth) ...[
-            const SizedBox(height: 6),
-            Text(
-              _prorationNote(goat),
-              style: AppTheme.body(size: 11, color: AppColors.textMuted),
-            ),
-          ],
-        ],
-      ),
-    );
-  }
-
-  /// e.g. "Joined 11 Apr 2026 • 20 of 30 days • ₹3,000 ÷ 30 × 20"
-  String _prorationNote(PalaiGoat goat) {
-    final p = _prorationFor(goat);
-    final joined = DateFormat('d MMM yyyy').format(goat.billingStartDate);
-    return 'Joined $joined • ${p.label} • '
-        '${_currency(p.monthlyCharge)} ÷ ${p.daysInMonth} × ${p.billableDays}';
-  }
-
-  // ----------------------------------------------------------------
-  // CURRENT OUTSTANDING / ADVANCE
-  // ----------------------------------------------------------------
-
-  Widget _buildCurrentStateSection() {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text('Current Financial State', style: AppTheme.heading(size: 14)),
-        const SizedBox(height: 4),
-        Text(
-          'Only the customer\'s current outstanding and current advance are used. If there is none, leave it as ₹0 — old bills and old payments are never re-summed here.',
-          style: AppTheme.body(size: 11, color: AppColors.textMuted),
-        ),
-        const SizedBox(height: 10),
-        _moneyField(
-          controller: _outstandingController,
-          label: 'Current Outstanding',
-          icon: Icons.account_balance_wallet_outlined,
-        ),
-        const SizedBox(height: 10),
-        _moneyField(
-          controller: _advanceController,
-          label: 'Current Advance',
-          icon: Icons.savings_outlined,
-        ),
-      ],
-    );
-  }
-
-  // ----------------------------------------------------------------
-  // PAYMENT DETAILS — Old (reference) vs Current Month (editable)
-  // ----------------------------------------------------------------
-
-  Widget _buildPaymentDetailsSection() {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text('Payment Details', style: AppTheme.heading(size: 14)),
-        const SizedBox(height: 8),
-        Container(
-          width: double.infinity,
-          padding: const EdgeInsets.all(12),
-          decoration: BoxDecoration(
-            color: Colors.grey.shade100,
-            borderRadius: BorderRadius.circular(10),
-            border: Border.all(color: Colors.grey.shade300),
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                children: [
-                  Expanded(
-                    child: Text('Previous / Old Payments (all-time)', style: AppTheme.body(size: 12)),
-                  ),
-                  Text(_currency(_oldPaymentsTotal), style: AppTheme.heading(size: 13)),
-                ],
-              ),
-              const SizedBox(height: 4),
-              Text(
-                'Reference only — NOT subtracted from the current calculation.',
-                style: AppTheme.body(size: 10, color: AppColors.textMuted),
-              ),
-            ],
-          ),
-        ),
-        const SizedBox(height: 12),
-        _moneyField(
-          controller: _currentPaymentController,
-          label: 'Current Month Payment (optional)',
-          icon: Icons.payments_outlined,
-        ),
-        const SizedBox(height: 10),
-        _paymentMethodDropdown(),
-      ],
-    );
-  }
-
-  Widget _paymentMethodDropdown() {
-    return Container(
-      decoration: AppTheme.card(radius: 12),
-      padding: const EdgeInsets.symmetric(horizontal: 12),
-      child: DropdownButtonHideUnderline(
-        child: DropdownButton<String>(
-          value: _paymentMethod,
-          isExpanded: true,
-          items: const [
-            DropdownMenuItem(value: 'Cash', child: Text('Cash')),
-            DropdownMenuItem(value: 'UPI', child: Text('UPI')),
-            DropdownMenuItem(value: 'Bank Transfer', child: Text('Bank Transfer')),
-            DropdownMenuItem(value: 'Cheque', child: Text('Cheque')),
-            DropdownMenuItem(value: 'Other', child: Text('Other')),
-          ],
-          onChanged: _saving
-              ? null
-              : (value) {
-            if (value == null) return;
-            setState(() => _paymentMethod = value);
-          },
-        ),
-      ),
-    );
-  }
-
-  Widget _moneyField({
-    required TextEditingController controller,
-    required String label,
-    required IconData icon,
-  }) {
-    return TextFormField(
-      controller: controller,
-      keyboardType: const TextInputType.numberWithOptions(decimal: true),
-      onChanged: (_) => setState(() {}),
-      validator: (value) {
-        final number = double.tryParse(value?.trim() ?? '');
-        if (number == null) return 'Enter a valid amount';
-        if (number < 0) return 'Amount cannot be negative';
-        return null;
-      },
-      decoration: InputDecoration(
-        labelText: label,
-        prefixIcon: Icon(icon),
-        prefixText: '₹ ',
-        border: const OutlineInputBorder(),
-      ),
-    );
-  }
-
-  // ----------------------------------------------------------------
-  // SUMMARY
-  // ----------------------------------------------------------------
-
-  Widget _buildSummaryCard() {
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        border: Border.all(color: Colors.grey.shade300),
-        borderRadius: BorderRadius.circular(10),
-      ),
-      child: Column(
-        children: [
-          const Row(
-            children: [
-              Icon(Icons.calculate_outlined),
-              SizedBox(width: 8),
-              Text('Bill Summary', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
-            ],
-          ),
-          const SizedBox(height: 14),
-          _previewRow('Current Month Palai', _currency(_palaiChargesTotal)),
-          _previewRow('Current Outstanding', _currency(_currentOutstanding)),
-          _previewRow('Current Advance', '- ${_currency(_currentAdvance)}'),
-          const Divider(),
-          _previewRow('Current Amount Due', _currency(_currentAmountDue), bold: true),
-          if (_currentMonthPayment > 0) ...[
-            _previewRow('Current Month Payment', '- ${_currency(_currentMonthPayment)}'),
-            const Divider(),
-            _previewRow('Remaining Balance', _currency(_remainingBalance), bold: true),
-          ],
-        ],
-      ),
-    );
-  }
-
-  Widget _previewRow(String label, String value, {bool bold = false}) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 8),
-      child: Row(
-        children: [
-          Expanded(
-            child: Text(
-              label,
-              style: TextStyle(fontWeight: bold ? FontWeight.bold : FontWeight.normal),
-            ),
-          ),
-          Text(
-            value,
-            style: TextStyle(fontWeight: bold ? FontWeight.bold : FontWeight.normal),
-          ),
-        ],
-      ),
-    );
-  }
-
-  // ================================================================
-  // ACTIONS
-  // ================================================================
-
-  Future<void> _selectMonth() async {
-    final now = DateTime.now();
-    final selected = await showDatePicker(
-      context: context,
-      initialDate: _selectedMonth,
-      firstDate: DateTime(now.year - 5, 1, 1),
-      lastDate: DateTime(now.year + 1, 12, 31),
-      helpText: 'Select any date in the billing month',
-    );
-    if (selected == null) return;
-    setState(() {
-      _selectedMonth = DateTime(selected.year, selected.month);
-      // New bill: re-calculate every goat's default for the new month.
-      // (When editing a saved bill the saved amounts are kept as-is.)
-      if (!_isEditing) {
-        for (final goat in _lastLoadedGoats) {
-          _palaiControllers[goat.id]?.text =
-              _prorationFor(goat).amount.toStringAsFixed(2);
-        }
-      }
-    });
-  }
-
-  Future<void> _generateBill() async {
     FocusScope.of(context).unfocus();
-
-    if (_lastLoadedGoats.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('This customer has no active goats to bill.')),
-      );
+    if (_payment < 0) {
+      _snack('Payment cannot be negative.', error: true);
       return;
     }
 
     setState(() => _saving = true);
 
+    List<StatementOutcome> outcomes;
     try {
-      final MonthlyBill bill;
-
-      if (_isEditing) {
-        // ---------------------------------------------------------
-        // EDIT — correct the same bill document in place. No
-        // duplicate-bill check needed since we're not creating one.
-        // ---------------------------------------------------------
-        bill = await _billingService.updateCurrentMonthMonthlyBill(
-          farmId: widget.farmId,
-          customerId: widget.customerId,
-          billId: widget.editBillId!,
-          palaiCharges: _palaiChargesTotal,
-          currentOutstanding: _currentOutstanding,
-          currentAdvance: _currentAdvance,
-          goatBreakdown: _goatBreakdown,
-          goatCount: _lastLoadedGoats.length,
-          notes: _notesController.text.trim(),
-        );
-      } else {
-        final exists = await _billingService.monthlyBillExists(
-          farmId: widget.farmId,
-          customerId: widget.customerId,
-          year: _selectedMonth.year,
-          month: _selectedMonth.month,
-        );
-
-        if (exists) {
-          throw StateError(
-            'A monthly bill already exists for '
-                '${DateFormat('MMMM yyyy').format(_selectedMonth)}.',
-          );
-        }
-
-        bill = await _billingService.createCurrentMonthMonthlyBill(
-          farmId: widget.farmId,
-          customerId: widget.customerId,
-          year: _selectedMonth.year,
-          month: _selectedMonth.month,
-          palaiCharges: _palaiChargesTotal,
-          currentOutstanding: _currentOutstanding,
-          currentAdvance: _currentAdvance,
-          goatBreakdown: _goatBreakdown,
-          goatCount: _lastLoadedGoats.length,
-          notes: _notesController.text.trim(),
-        );
-      }
-
-      // Current Month Payment, if any, is recorded as an ACTUAL payment
-      // against the bill just created/updated — completely separate
-      // from Old Payments, and never folded into the calculation above.
-      if (_currentMonthPayment > 0) {
-        await _billingService.receiveMonthlyBillPayment(
-          farmId: widget.farmId,
-          customerId: widget.customerId,
-          billId: bill.id,
-          paidAmount: _currentMonthPayment,
-          paymentMethod: _paymentMethod,
-          note: _isEditing
-              ? 'Current month payment recorded while fixing this bill.'
-              : 'Current month payment recorded at bill generation.',
-        );
-      }
-
-      if (!mounted) return;
-
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(_isEditing
-              ? 'Monthly bill ${bill.billNumber} updated.'
-              : 'Monthly bill ${bill.billNumber} generated.'),
-        ),
+      outcomes = await _engine.generateForCustomer(
+        farmId: widget.farmId,
+        customerId: widget.customerId,
       );
-
-      Navigator.of(context).pop(bill);
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Unable to ${_isEditing ? 'update' : 'generate'} bill: $e')),
+      setState(() => _saving = false);
+      _snack(
+        'Could not generate the bill: '
+            '${FirestoreService.instance.describeError(e)}',
+        error: true,
       );
-    } finally {
-      if (mounted) setState(() => _saving = false);
+      return;
     }
+
+    final generated = outcomes
+        .where((o) => o.kind == StatementOutcomeKind.generated)
+        .toList();
+    final failed = outcomes
+        .where((o) => o.kind == StatementOutcomeKind.failed)
+        .toList();
+
+    // The payment is recorded only after the bill exists, through the
+    // normal oldest-first payment rule. If it fails, the bill stays and
+    // the owner is told plainly that the payment still needs recording.
+    String? paymentProblem;
+    if (generated.isNotEmpty && _payment > 0) {
+      try {
+        await PaymentAllocationService.instance.receivePayment(
+          farmId: widget.farmId,
+          customerId: widget.customerId,
+          paidAmount: _payment,
+          paymentMethod: _paymentMethod,
+          note: _noteController.text.trim().isEmpty
+              ? 'Payment received when the bill was generated.'
+              : _noteController.text.trim(),
+          fromBillId: generated.last.billId,
+          paymentType: 'monthlyBillPayment',
+          incomeCategory: 'Palai Monthly Bill Payment',
+        );
+      } catch (e) {
+        paymentProblem = FirestoreService.instance.describeError(e);
+      }
+    }
+
+    if (!mounted) return;
+    setState(() => _saving = false);
+
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+        title: Text(
+          generated.isNotEmpty ? 'Bill generated' : 'No bill generated',
+          style: AppTheme.heading(size: 18),
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            for (final outcome in outcomes)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 6),
+                child: Text(
+                  _outcomeLine(outcome),
+                  style: AppTheme.body(
+                    size: 13,
+                    color: outcome.kind == StatementOutcomeKind.failed
+                        ? AppColors.error
+                        : AppColors.textDark,
+                  ),
+                ),
+              ),
+            if (paymentProblem != null) ...[
+              const SizedBox(height: 6),
+              Text(
+                'The bill was generated, but the payment of '
+                    '${_currency(_payment)} was not recorded: $paymentProblem. '
+                    'Record it from Receive Payment.',
+                style: AppTheme.body(size: 12.5, color: AppColors.error),
+              ),
+            ] else if (generated.isNotEmpty && _payment > 0) ...[
+              const SizedBox(height: 6),
+              Text(
+                'Payment of ${_currency(_payment)} recorded.',
+                style: AppTheme.body(size: 12.5, color: AppColors.success),
+              ),
+            ],
+          ],
+        ),
+        actions: [
+          ElevatedButton(
+            onPressed: () => Navigator.of(dialogContext).pop(),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppColors.primaryGreen,
+              foregroundColor: Colors.white,
+              elevation: 0,
+            ),
+            child: const Text('Done'),
+          ),
+        ],
+      ),
+    );
+
+    if (!mounted) return;
+    if (generated.isNotEmpty) {
+      Navigator.of(context).pop(true);
+    } else if (failed.isEmpty) {
+      await _load();
+    }
+  }
+
+  String _outcomeLine(StatementOutcome outcome) {
+    final month = periodLabel(outcome.periodKey);
+    switch (outcome.kind) {
+      case StatementOutcomeKind.generated:
+        return '$month: ${outcome.billNumber ?? ''} · '
+            'Total payable ${_currency(outcome.totalPayable)}';
+      case StatementOutcomeKind.alreadyBilled:
+        return '$month: already billed.';
+      case StatementOutcomeKind.nothingToBill:
+        return '$month: no Palai charges.';
+      case StatementOutcomeKind.failed:
+        return '$month: ${outcome.message}';
+    }
+  }
+
+  // ===========================================================================
+  // BUILD
+  // ===========================================================================
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: AppColors.paleGreen,
+      appBar: AppBar(
+        backgroundColor: AppColors.paleGreen,
+        elevation: 0,
+        foregroundColor: AppColors.textDark,
+        title: Text('Generate bill', style: AppTheme.heading(size: 18)),
+      ),
+      body: _loading
+          ? const Center(
+        child: CircularProgressIndicator(color: AppColors.primaryGreen),
+      )
+          : _loadError != null
+          ? _buildError()
+          : _buildBody(_preview!),
+      bottomNavigationBar:
+      _preview?.canGenerate == true && !_loading ? _buildBottomBar() : null,
+    );
+  }
+
+  Widget _buildError() {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.cloud_off_outlined,
+                size: 40, color: AppColors.error),
+            const SizedBox(height: 12),
+            Text(
+              'Could not work out the bill',
+              style: AppTheme.heading(size: 16),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              _loadError!,
+              textAlign: TextAlign.center,
+              style: AppTheme.body(size: 12),
+            ),
+            const SizedBox(height: 14),
+            OutlinedButton.icon(
+              onPressed: _load,
+              icon: const Icon(Icons.refresh, size: 18),
+              label: const Text('Try again'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildBody(StatementPreview preview) {
+    return RefreshIndicator(
+      color: AppColors.primaryGreen,
+      onRefresh: _load,
+      child: ListView(
+        physics: const AlwaysScrollableScrollPhysics(),
+        padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
+        children: [
+          Text(
+            widget.customerName,
+            style: AppTheme.heading(size: 17),
+          ),
+          const SizedBox(height: 12),
+          switch (preview.status) {
+            StatementPreviewStatus.alreadyBilled =>
+                _buildInfo(
+                  icon: Icons.check_circle_outline,
+                  color: AppColors.success,
+                  title: preview.lastBilledKey == null
+                      ? 'Already billed'
+                      : 'Billed up to ${periodLabel(preview.lastBilledKey!)}',
+                  message: _nextBillMessage(preview.lastBilledKey),
+                ),
+            StatementPreviewStatus.nothingToBill =>
+                _buildInfo(
+                  icon: Icons.info_outline,
+                  color: AppColors.info,
+                  title: 'No Palai charges for ${periodLabel(preview.periodKey)}',
+                  message: 'No goat of this customer was on the farm that month, '
+                      'or those days were already charged at checkout. Any '
+                      'outstanding balance carries to the next bill.',
+                ),
+            StatementPreviewStatus.ready => _buildStatement(preview),
+          },
+        ],
+      ),
+    );
+  }
+
+  String _nextBillMessage(String? lastBilledKey) {
+    if (lastBilledKey == null) {
+      return 'There is nothing to generate right now.';
+    }
+    final next = nextPeriodKey(lastBilledKey);
+    final availableFrom = periodStart(nextPeriodKey(next));
+    return 'The ${periodLabel(next)} bill can be generated from '
+        '${DateFormat('d MMMM yyyy').format(availableFrom)}.';
+  }
+
+  Widget _buildInfo({
+    required IconData icon,
+    required Color color,
+    required String title,
+    required String message,
+  }) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: AppTheme.card(radius: 16),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(icon, color: color),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(title, style: AppTheme.heading(size: 15)),
+                const SizedBox(height: 4),
+                Text(message, style: AppTheme.body(size: 12.5)),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildStatement(StatementPreview p) {
+    final month = periodLabel(p.periodKey);
+    final dateFormat = DateFormat('d MMM');
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Container(
+          padding: const EdgeInsets.all(16),
+          decoration: AppTheme.card(radius: 16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('$month statement', style: AppTheme.heading(size: 16)),
+              const SizedBox(height: 2),
+              Text(
+                'Preview. Nothing is saved until you generate.',
+                style: AppTheme.body(size: 11.5),
+              ),
+              const SizedBox(height: 14),
+
+              // Goat lines.
+              for (final line in p.lines)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 8),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              line.label,
+                              style: AppTheme.body(
+                                size: 13,
+                                color: AppColors.textDark,
+                                weight: FontWeight.w600,
+                              ),
+                            ),
+                            Text(
+                              line.days < line.daysInMonth
+                                  ? '${line.days} of ${line.daysInMonth} days '
+                                  '(${dateFormat.format(line.fromDate)} to '
+                                  '${dateFormat.format(line.toDate)}) at '
+                                  '${_currency(line.monthlyRate)}/month'
+                                  : 'Full month at ${_currency(line.monthlyRate)}',
+                              style: AppTheme.body(size: 11),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Text(
+                        _currency(line.amount),
+                        style: AppTheme.body(
+                          size: 13,
+                          color: AppColors.textDark,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              const Divider(height: 18),
+              _row(
+                '$month Palai charges (${p.lines.length} '
+                    'goat${p.lines.length == 1 ? '' : 's'})',
+                _currency(p.currentCharges),
+              ),
+              const SizedBox(height: 8),
+              _row('Previous outstanding', _currency(p.previousOutstanding)),
+              for (final line in p.previousBreakdown)
+                _subRow(periodLabel(line.periodKey), _currency(line.amount)),
+              if (p.earlierBalance > kMoneyEpsilon)
+                _subRow('Earlier balance', _currency(p.earlierBalance)),
+              if (p.advanceApplied > kMoneyEpsilon) ...[
+                const SizedBox(height: 8),
+                _row(
+                  'Less: advance applied',
+                  '− ${_currency(p.advanceApplied)}',
+                  color: AppColors.success,
+                ),
+              ],
+              const Divider(height: 22),
+              Row(
+                children: [
+                  Expanded(
+                    child: Text('Total payable', style: AppTheme.heading(size: 16)),
+                  ),
+                  Text(
+                    _currency(p.totalPayable),
+                    style: AppTheme.heading(
+                      size: 20,
+                      color: AppColors.darkGreen,
+                    ),
+                  ),
+                ],
+              ),
+              if (p.advanceAfter > kMoneyEpsilon) ...[
+                const SizedBox(height: 4),
+                Text(
+                  'Advance left after this bill: ${_currency(p.advanceAfter)}',
+                  style: AppTheme.body(size: 11.5),
+                ),
+              ],
+            ],
+          ),
+        ),
+        if (p.laterPeriods.isNotEmpty) ...[
+          const SizedBox(height: 12),
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: AppColors.warning.withValues(alpha: 0.12),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Icon(Icons.history, size: 18, color: AppColors.warning),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    'Missed month${p.laterPeriods.length == 1 ? '' : 's'} '
+                        '${p.laterPeriods.map(periodLabel).join(', ')} will '
+                        'also be billed, in order, right after $month.',
+                    style: AppTheme.body(size: 12, color: AppColors.textDark),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+        const SizedBox(height: 16),
+        _buildPaymentCard(),
+      ],
+    );
+  }
+
+  Widget _buildPaymentCard() {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: AppTheme.card(radius: 16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text('Payment received now', style: AppTheme.heading(size: 14)),
+          const SizedBox(height: 2),
+          Text(
+            'Optional. Applied to the oldest unpaid month first. '
+                'Anything above the total payable becomes advance.',
+            style: AppTheme.body(size: 11.5),
+          ),
+          const SizedBox(height: 12),
+          TextField(
+            controller: _paymentController,
+            keyboardType: const TextInputType.numberWithOptions(decimal: true),
+            onChanged: (_) => setState(() {}),
+            decoration: InputDecoration(
+              isDense: true,
+              labelText: 'Amount',
+              prefixText: '₹ ',
+              border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+            ),
+          ),
+          if (_payment > 0) ...[
+            const SizedBox(height: 10),
+            DropdownButtonFormField<String>(
+              value: _paymentMethod,
+              decoration: InputDecoration(
+                isDense: true,
+                labelText: 'Payment method',
+                border:
+                OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+              ),
+              items: const [
+                DropdownMenuItem(value: 'Cash', child: Text('Cash')),
+                DropdownMenuItem(value: 'UPI', child: Text('UPI')),
+                DropdownMenuItem(
+                    value: 'Bank Transfer', child: Text('Bank Transfer')),
+              ],
+              onChanged: (v) => setState(() => _paymentMethod = v ?? 'Cash'),
+            ),
+            const SizedBox(height: 10),
+            TextField(
+              controller: _noteController,
+              decoration: InputDecoration(
+                isDense: true,
+                labelText: 'Note (optional)',
+                border:
+                OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildBottomBar() {
+    final p = _preview!;
+    final label = p.laterPeriods.isEmpty
+        ? 'Generate ${periodLabel(p.periodKey)} bill'
+        : 'Generate ${1 + p.laterPeriods.length} bills';
+
+    return SafeArea(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
+        child: SizedBox(
+          width: double.infinity,
+          child: ElevatedButton(
+            onPressed: _saving ? null : _generate,
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppColors.primaryGreen,
+              foregroundColor: Colors.white,
+              elevation: 0,
+              padding: const EdgeInsets.symmetric(vertical: 15),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(14),
+              ),
+            ),
+            child: _saving
+                ? const SizedBox(
+              width: 20,
+              height: 20,
+              child: CircularProgressIndicator(
+                strokeWidth: 2,
+                color: Colors.white,
+              ),
+            )
+                : Text(
+              label,
+              style: const TextStyle(
+                fontSize: 14,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  // ===========================================================================
+  // HELPERS
+  // ===========================================================================
+
+  Widget _row(String label, String value, {Color? color}) {
+    return Row(
+      children: [
+        Expanded(
+          child: Text(
+            label,
+            style: AppTheme.body(size: 13, color: AppColors.textDark),
+          ),
+        ),
+        Text(
+          value,
+          style: AppTheme.body(
+            size: 13,
+            color: color ?? AppColors.textDark,
+            weight: FontWeight.w600,
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _subRow(String label, String value) {
+    return Padding(
+      padding: const EdgeInsets.only(left: 14, top: 4),
+      child: Row(
+        children: [
+          Expanded(child: Text(label, style: AppTheme.body(size: 12))),
+          Text(value, style: AppTheme.body(size: 12)),
+        ],
+      ),
+    );
+  }
+
+  String _currency(double value) => NumberFormat.currency(
+    locale: 'en_IN',
+    symbol: '₹',
+    decimalDigits: 2,
+  ).format(value);
+
+  void _snack(String message, {bool error = false}) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        backgroundColor: error ? AppColors.error : AppColors.darkGreen,
+      ),
+    );
   }
 }

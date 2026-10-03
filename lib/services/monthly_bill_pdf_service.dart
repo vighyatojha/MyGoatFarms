@@ -604,7 +604,21 @@ class MonthlyBillPdfService {
         '(${_currency(g.monthlyRate!)} / ${g.daysInMonth} x ${g.billableDays})')
         .toList();
 
-    final rows = <List<String>>[
+    // Statement bills: one row per goat, with the exact days charged.
+    final rows = bill.isStatement && bill.goatBreakdown.isNotEmpty
+        ? <List<String>>[
+      for (final g in bill.goatBreakdown)
+        [
+          g.isPartialMonth && g.monthlyRate != null
+              ? '${g.label}\n${g.billableDays} of ${g.daysInMonth} days '
+              '(${_currency(g.monthlyRate!)} / ${g.daysInMonth} x ${g.billableDays})'
+              : (g.monthlyRate != null
+              ? '${g.label}\nFull month at ${_currency(g.monthlyRate!)}'
+              : g.label),
+          _currency(g.palaiAmount),
+        ],
+    ]
+        : <List<String>>[
       [
         proratedNotes.isEmpty
             ? 'Monthly Palai Charges'
@@ -679,7 +693,9 @@ class MonthlyBillPdfService {
               ),
               children: [
                 _tableCell(
-                  'CURRENT MONTH BILL',
+                  bill.isStatement
+                      ? '${bill.monthYear.toUpperCase()} PALAI CHARGES'
+                      : 'CURRENT MONTH BILL',
                   bold: true,
                 ),
                 _tableCell(
@@ -744,6 +760,10 @@ class MonthlyBillPdfService {
   // ===========================================================================
 
   pw.Widget _buildOutstandingSummary(MonthlyBill bill,) {
+    final rows = bill.isStatement
+        ? _statementSummaryRows(bill)
+        : _legacySummaryRows(bill);
+
     return pw.Container(
       width: double.infinity,
       padding: const pw.EdgeInsets.all(12),
@@ -757,85 +777,178 @@ class MonthlyBillPdfService {
         ),
       ),
       child: pw.Column(
-        children: [
-          _summaryRow(
-            'Previous Outstanding',
-            bill.previousOutstanding,
-          ),
-
-          pw.SizedBox(height: 6),
-
-          _summaryRow(
-            'Current Monthly Bill',
-            bill.currentBillAmount,
-          ),
-
-          pw.Padding(
-            padding: const pw.EdgeInsets.symmetric(
-              vertical: 7,
-            ),
-            child: pw.Divider(
-              color: PdfColors.grey400,
-            ),
-          ),
-
-          _summaryRow(
-            'Total Outstanding',
-            bill.totalDue,
-            bold: true,
-            large: true,
-          ),
-
-          pw.SizedBox(height: 6),
-
-          _summaryRow(
-            'Paid Against This Bill',
-            bill.amountPaid,
-          ),
-
-          pw.SizedBox(height: 6),
-
-          _summaryRow(
-            'Remaining',
-            bill.remainingAmount,
-            bold: true,
-          ),
-        ],
+        crossAxisAlignment: pw.CrossAxisAlignment.start,
+        children: rows,
       ),
     );
+  }
+
+  /// Statement bill (billed for the previous month). Always adds up:
+  ///
+  ///   Month charges + Previous Outstanding − Advance = Total Payable
+  List<pw.Widget> _statementSummaryRows(MonthlyBill bill) {
+    final divider = pw.Padding(
+      padding: const pw.EdgeInsets.symmetric(vertical: 7),
+      child: pw.Divider(color: PdfColors.grey400),
+    );
+
+    return [
+      _summaryRow(
+        '${bill.monthYear} Palai Charges',
+        bill.currentBillAmount,
+      ),
+      pw.SizedBox(height: 6),
+      _summaryRow(
+        'Previous Outstanding',
+        bill.previousOutstanding,
+      ),
+      for (final line in bill.previousBreakdown)
+        _summaryRow(
+          '      ${_periodLabel(line.periodKey)}',
+          line.amount,
+          small: true,
+        ),
+      if (bill.earlierBalance > 0.005)
+        _summaryRow(
+          '      Earlier balance',
+          bill.earlierBalance,
+          small: true,
+        ),
+      if (bill.advanceApplied > 0.005) ...[
+        pw.SizedBox(height: 6),
+        _summaryRow(
+          'Less: Advance Applied',
+          bill.advanceApplied,
+          prefix: '- ',
+        ),
+      ],
+      divider,
+      _summaryRow(
+        'TOTAL PAYABLE',
+        bill.totalPayable,
+        bold: true,
+        large: true,
+      ),
+      if (bill.amountPaid > 0.005) ...[
+        pw.SizedBox(height: 6),
+        _summaryRow(
+          'Paid Against This Bill',
+          bill.amountPaid,
+          prefix: '- ',
+        ),
+        pw.SizedBox(height: 6),
+        _summaryRow(
+          'Balance Due',
+          bill.remainingAmount,
+          bold: true,
+        ),
+      ],
+      pw.SizedBox(height: 6),
+      pw.Text(
+        'Previous Outstanding is the unpaid balance carried forward from '
+            'earlier months. It is not charged again.',
+        style: const pw.TextStyle(
+          fontSize: 7,
+          color: PdfColors.grey600,
+        ),
+      ),
+    ];
+  }
+
+  /// Bill made before statement billing. Its total covers only that
+  /// month, so the previous outstanding is shown separately as
+  /// information, never inside the arithmetic.
+  List<pw.Widget> _legacySummaryRows(MonthlyBill bill) {
+    return [
+      _summaryRow(
+        'Current Monthly Bill',
+        bill.currentBillAmount,
+      ),
+      if (bill.advanceApplied > 0.005) ...[
+        pw.SizedBox(height: 6),
+        _summaryRow(
+          'Less: Advance Applied',
+          bill.advanceApplied,
+          prefix: '- ',
+        ),
+      ],
+      pw.Padding(
+        padding: const pw.EdgeInsets.symmetric(vertical: 7),
+        child: pw.Divider(color: PdfColors.grey400),
+      ),
+      _summaryRow(
+        'This Month Due',
+        bill.totalDue,
+        bold: true,
+        large: true,
+      ),
+      pw.SizedBox(height: 6),
+      _summaryRow(
+        'Paid Against This Month',
+        bill.effectiveOwnPaid,
+        prefix: '- ',
+      ),
+      pw.SizedBox(height: 6),
+      _summaryRow(
+        'Remaining On This Month',
+        bill.effectiveOwnRemaining,
+        bold: true,
+      ),
+      pw.SizedBox(height: 8),
+      _summaryRow(
+        'Outstanding from earlier months (not included above)',
+        bill.previousOutstanding,
+        small: true,
+      ),
+    ];
+  }
+
+  String _periodLabel(String periodKey) {
+    final parts = periodKey.split('-');
+    if (parts.length != 2) return periodKey;
+    final year = int.tryParse(parts[0]);
+    final month = int.tryParse(parts[1]);
+    if (year == null || month == null || month < 1 || month > 12) {
+      return periodKey;
+    }
+    return DateFormat('MMMM yyyy').format(DateTime(year, month));
   }
 
   pw.Widget _summaryRow(String label,
       double amount, {
         bool bold = false,
         bool large = false,
+        bool small = false,
+        String prefix = '',
       }) {
-    return pw.Row(
-      children: [
-        pw.Expanded(
-          child: pw.Text(
-            label,
-            style: pw.TextStyle(
-              fontSize: large ? 11 : 9,
-              fontWeight:
-              bold
-                  ? pw.FontWeight.bold
-                  : pw.FontWeight.normal,
+    final size = large ? 11.0 : (small ? 8.0 : 9.0);
+    final color = small ? PdfColors.grey700 : PdfColors.black;
+    return pw.Padding(
+      padding: pw.EdgeInsets.only(top: small ? 2 : 0),
+      child: pw.Row(
+        children: [
+          pw.Expanded(
+            child: pw.Text(
+              label,
+              style: pw.TextStyle(
+                fontSize: size,
+                color: color,
+                fontWeight:
+                bold ? pw.FontWeight.bold : pw.FontWeight.normal,
+              ),
             ),
           ),
-        ),
-
-        pw.Text(
-          _currency(amount),
-          style: pw.TextStyle(
-            fontSize: large ? 12 : 9,
-            fontWeight:
-            bold
-                ? pw.FontWeight.bold
-                : pw.FontWeight.normal,
+          pw.Text(
+            '$prefix${_currency(amount)}',
+            style: pw.TextStyle(
+              fontSize: large ? 12 : size,
+              color: color,
+              fontWeight:
+              bold ? pw.FontWeight.bold : pw.FontWeight.normal,
+            ),
           ),
-        ),
-      ],
+        ],
+      ),
     );
   }
 

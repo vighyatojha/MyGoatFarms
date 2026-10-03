@@ -5,7 +5,11 @@ import 'package:intl/intl.dart';
 import '../../app_theme.dart';
 import '../../models/bill_settings_model.dart';
 import '../../models/monthly_bill_model.dart';
+import '../../services/firestore_service.dart';
 import '../../services/monthly_bill_pdf_service.dart';
+import '../../services/monthly_statement_engine.dart';
+import '../../utils/billing_ledger.dart';
+import 'edit_statement_screen.dart';
 import 'monthly_bill_generate_screen.dart';
 
 /// Customer-level Monthly Bills.
@@ -65,6 +69,12 @@ class _MonthlyBillsScreenState
   bool _creatingBill = false;
 
   List<MonthlyBill> _bills = [];
+
+  /// The customer's live balance, read with the bills. On statement
+  /// billing this equals the latest statement's remaining Total Payable
+  /// unless something was charged or paid since (checkout, payment).
+  double? _livePending;
+  double? _liveAdvance;
 
   // ==========================================================================
   // PDF ACTION STATE
@@ -206,10 +216,15 @@ class _MonthlyBillsScreenState
           .get();
 
       final bills = snapshot.docs
+          .where((doc) => doc.data()['type']?.toString() == 'monthly')
           .map(
             (doc) => MonthlyBill.fromDoc(doc),
       )
+          .where((bill) => !bill.isVoid)
           .toList();
+
+      final customerSnapshot = await _customerReference.get();
+      final customerData = customerSnapshot.data() ?? {};
 
       bills.sort(
             (a, b) => b.billingMonth.compareTo(
@@ -221,6 +236,8 @@ class _MonthlyBillsScreenState
 
       setState(() {
         _bills = bills;
+        _livePending = _number(customerData['pendingAmount']);
+        _liveAdvance = _number(customerData['advanceAmount']);
       });
     } catch (e) {
       debugPrint(
@@ -245,73 +262,130 @@ class _MonthlyBillsScreenState
   // CREATE MONTHLY BILL
   // ========================================================================
   //
-  // This used to build and write the bill inline, right here. That logic
-  // now lives in MonthlyBillGenerateScreen + MonthlyBillingService (which
-  // covers the same duplicate-protection and outstanding-balance update,
-  // transactionally). We just compute the same prefill values — current
-  // goat count and the customer's package price — and hand off to it.
+  // Opens the statement preview for this customer. Bills are always for
+  // the previous month (see MonthlyStatementEngine); the same engine runs
+  // behind the Generate Bills button on the Customers screen.
 
   Future<void> _createMonthlyBill() async {
     if (_creatingBill) return;
 
+    setState(() {
+      _creatingBill = true;
+    });
+
     try {
-      setState(() {
-        _creatingBill = true;
-      });
-
-      final customerSnapshot = await _customerReference.get();
-
-      if (!customerSnapshot.exists) {
-        throw StateError('Customer could not be found.');
-      }
-
-      final customerData = customerSnapshot.data() ?? {};
-
-      final suggestedMonthlyAmount = _number(customerData['price']);
-
-      final goatsSnapshot = await _db
-          .collection('farms')
-          .doc(widget.farmId)
-          .collection('palaiCustomers')
-          .doc(widget.customerId)
-          .collection('goats')
-          .get();
-
-      final goatCount = goatsSnapshot.docs
-          .where((doc) => doc.data()['isCheckedOut'] != true)
-          .length;
-
-      if (!mounted) return;
-
-      final createdBill = await Navigator.of(context).push<MonthlyBill>(
+      final generated = await Navigator.of(context).push<bool>(
         MaterialPageRoute(
           builder: (_) => MonthlyBillGenerateScreen(
             farmId: widget.farmId,
             customerId: widget.customerId,
             customerName: widget.customerName,
-            goatCount: goatCount,
-            suggestedMonthlyAmount: suggestedMonthlyAmount,
           ),
         ),
       );
 
-      if (createdBill != null) {
+      if (generated == true) {
         await _loadBills();
       }
-    } catch (e) {
-      debugPrint('Create monthly bill error: $e');
-
-      if (!mounted) return;
-
-      _showError(
-        e.toString().replaceFirst('Bad state: ', ''),
-      );
     } finally {
       if (mounted) {
         setState(() {
           _creatingBill = false;
         });
       }
+    }
+  }
+
+  // ========================================================================
+  // CORRECTIONS (latest statement only)
+  // ========================================================================
+
+  bool _canCorrect(MonthlyBill bill) =>
+      bill.isStatement &&
+          !bill.locked &&
+          _bills.isNotEmpty &&
+          _bills.first.id == bill.id;
+
+  Future<void> _editBill(MonthlyBill bill) async {
+    final saved = await Navigator.of(context).push<bool>(
+      MaterialPageRoute(
+        builder: (_) => EditStatementScreen(
+          farmId: widget.farmId,
+          customerId: widget.customerId,
+          bill: bill,
+        ),
+      ),
+    );
+    if (saved == true) await _loadBills();
+  }
+
+  Future<void> _voidBill(MonthlyBill bill) async {
+    final reasonController = TextEditingController();
+    final month = periodLabel(bill.billingPeriodKey);
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+        title: Text('Void $month bill?', style: AppTheme.heading(size: 17)),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              '${bill.billNumber} will be kept as a void record. Its charges '
+                  'come off what the customer owes, any advance it used goes '
+                  'back to advance, and $month can be generated again.',
+              style: AppTheme.body(size: 12.5, color: AppColors.textDark),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: reasonController,
+              decoration: InputDecoration(
+                isDense: true,
+                labelText: 'Reason (optional)',
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(10),
+                ),
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppColors.error,
+              foregroundColor: Colors.white,
+              elevation: 0,
+            ),
+            child: const Text('Void bill'),
+          ),
+        ],
+      ),
+    );
+
+    final reason = reasonController.text;
+    reasonController.dispose();
+    if (confirmed != true || !mounted) return;
+
+    try {
+      await MonthlyStatementEngine.instance.voidStatement(
+        farmId: widget.farmId,
+        customerId: widget.customerId,
+        billId: bill.id,
+        reason: reason,
+      );
+      if (!mounted) return;
+      _showSuccess('$month bill voided.');
+      await _loadBills();
+    } catch (e) {
+      if (!mounted) return;
+      _showError(FirestoreService.instance.describeError(e));
     }
   }
 
@@ -518,8 +592,14 @@ class _MonthlyBillsScreenState
   Widget _buildBillCard(
       MonthlyBill bill,
       ) {
+    // A locked (older) bill's statement balance was carried into the
+    // newer bill, so its badge shows its own month's payment state.
+    final displayStatus = bill.locked
+        ? MonthlyBill.statusFromString(bill.effectiveOwnStatus)
+        : bill.status;
+
     final statusColor =
-    _statusColor(bill.status);
+    _statusColor(displayStatus);
 
     return Container(
       margin: const EdgeInsets.only(
@@ -604,126 +684,46 @@ class _MonthlyBillsScreenState
                 ),
 
                 _statusBadge(
-                  bill.status,
+                  displayStatus,
                 ),
+
+                // Corrections: only the newest, unlocked statement.
+                if (_canCorrect(bill))
+                  PopupMenuButton<String>(
+                    tooltip: 'Correct bill',
+                    icon: const Icon(
+                      Icons.more_vert,
+                      color: AppColors.textGrey,
+                    ),
+                    onSelected: (value) {
+                      if (value == 'edit') _editBill(bill);
+                      if (value == 'void') _voidBill(bill);
+                    },
+                    itemBuilder: (_) => [
+                      const PopupMenuItem(
+                        value: 'edit',
+                        child: Text('Edit charges'),
+                      ),
+                      PopupMenuItem(
+                        value: 'void',
+                        enabled: bill.amountPaid <= kMoneyEpsilon,
+                        child: const Text('Void bill'),
+                      ),
+                    ],
+                  ),
               ],
             ),
 
             const SizedBox(height: 16),
 
             // ----------------------------------------------------------
-            // AMOUNT
+            // AMOUNTS
             // ----------------------------------------------------------
 
-            Container(
-              width: double.infinity,
-              padding:
-              const EdgeInsets.all(13),
-              decoration: BoxDecoration(
-                color:
-                AppColors.paleGreen,
-                borderRadius:
-                BorderRadius.circular(
-                  12,
-                ),
-              ),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment:
-                      CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          'Monthly Bill',
-                          style:
-                          AppTheme.body(
-                            size: 11,
-                            color:
-                            AppColors.textGrey,
-                          ),
-                        ),
-                        const SizedBox(
-                          height: 3,
-                        ),
-                        Text(
-                          _currency(
-                            bill.currentBillAmount,
-                          ),
-                          style:
-                          AppTheme.heading(
-                            size: 17,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-
-                  Column(
-                    crossAxisAlignment:
-                    CrossAxisAlignment.end,
-                    children: [
-                      Text(
-                        'Remaining',
-                        style:
-                        AppTheme.body(
-                          size: 11,
-                          color:
-                          AppColors.textGrey,
-                        ),
-                      ),
-                      const SizedBox(
-                        height: 3,
-                      ),
-                      Text(
-                        _currency(
-                          bill.remainingAmount,
-                        ),
-                        style:
-                        AppTheme.heading(
-                          size: 15,
-                          color:
-                          statusColor,
-                        ),
-                      ),
-                    ],
-                  ),
-                ],
-              ),
-            ),
-
-            const SizedBox(height: 12),
-
-            // ----------------------------------------------------------
-            // DETAILS
-            // ----------------------------------------------------------
-
-            Row(
-              children: [
-                Expanded(
-                  child: _detail(
-                    'Goats',
-                    '${bill.goatCount}',
-                  ),
-                ),
-                Expanded(
-                  child: _detail(
-                    'Previous',
-                    _currency(
-                      bill.previousOutstanding,
-                    ),
-                  ),
-                ),
-                Expanded(
-                  child: _detail(
-                    'Total Due',
-                    _currency(
-                      bill.totalDue,
-                    ),
-                  ),
-                ),
-              ],
-            ),
+            if (bill.isStatement)
+              _buildStatementFigures(bill, statusColor)
+            else
+              _buildLegacyFigures(bill, statusColor),
 
             const SizedBox(height: 14),
 
@@ -734,65 +734,74 @@ class _MonthlyBillsScreenState
             const SizedBox(height: 8),
 
             // ----------------------------------------------------------
-            // PAYMENT TOGGLE
+            // PAYMENT
+            //
+            // Only the newest, unlocked bill takes a payment here: its
+            // Remaining is the customer's Total Payable. An older bill's
+            // unpaid amount was carried into the next statement and is
+            // paid through that one (payments always clear the oldest
+            // month first).
             // ----------------------------------------------------------
 
-            Row(
-              children: [
-                Expanded(
-                  child: Row(
-                    children: [
-                      Icon(
-                        bill.isPaid
-                            ? Icons
-                            .check_circle_outline
-                            : Icons
-                            .radio_button_unchecked,
-                        size: 20,
-                        color:
-                        bill.isPaid
-                            ? AppColors
-                            .success
-                            : AppColors
-                            .textGrey,
-                      ),
-
-                      const SizedBox(
-                        width: 8,
-                      ),
-
-                      Text(
-                        bill.isPaid
-                            ? 'Paid'
-                            : bill.isPartiallyPaid
-                            ? 'Partially Paid'
-                            : 'Unpaid',
-                        style:
-                        AppTheme.body(
-                          size: 13,
-                          weight:
-                          FontWeight.w600,
+            if (bill.locked)
+              _buildCarriedForwardNote(bill)
+            else
+              Row(
+                children: [
+                  Expanded(
+                    child: Row(
+                      children: [
+                        Icon(
+                          bill.isPaid
+                              ? Icons
+                              .check_circle_outline
+                              : Icons
+                              .radio_button_unchecked,
+                          size: 20,
+                          color:
+                          bill.isPaid
+                              ? AppColors
+                              .success
+                              : AppColors
+                              .textGrey,
                         ),
-                      ),
-                    ],
-                  ),
-                ),
 
-                Switch(
-                  value: bill.isPaid,
-                  activeColor:
-                  AppColors.success,
-                  onChanged: bill.isPaid
-                      ? null
-                      : (value) {
-                    _togglePayment(
-                      bill,
-                      value,
-                    );
-                  },
-                ),
-              ],
-            ),
+                        const SizedBox(
+                          width: 8,
+                        ),
+
+                        Text(
+                          bill.isPaid
+                              ? 'Paid'
+                              : bill.isPartiallyPaid
+                              ? 'Partially Paid'
+                              : 'Unpaid',
+                          style:
+                          AppTheme.body(
+                            size: 13,
+                            weight:
+                            FontWeight.w600,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+
+                  Switch(
+                    value: bill.isPaid,
+                    activeColor:
+                    AppColors.success,
+                    onChanged: bill.isPaid
+                        ? null
+                        : (value) {
+                      _togglePayment(
+                        bill,
+                        value,
+                      );
+                    },
+                  ),
+                ],
+              ),
 
             const SizedBox(height: 8),
 
@@ -943,6 +952,220 @@ class _MonthlyBillsScreenState
   }
 
   // ========================================================================
+  // STATEMENT FIGURES
+  // ========================================================================
+
+  /// Statement bill: the month's own charges, what was carried forward,
+  /// the advance used, and the Total Payable the customer was shown.
+  Widget _buildStatementFigures(MonthlyBill bill, Color statusColor) {
+    final month = periodLabel(bill.billingPeriodKey);
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(13),
+      decoration: BoxDecoration(
+        color: AppColors.paleGreen,
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Column(
+        children: [
+          _figureRow(
+            '$month charges (${bill.goatCount} goat${bill.goatCount == 1 ? '' : 's'})',
+            _currency(bill.currentBillAmount),
+          ),
+          const SizedBox(height: 5),
+          _figureRow(
+            'Previous outstanding',
+            _currency(bill.previousOutstanding),
+          ),
+          for (final line in bill.previousBreakdown)
+            _figureRow(
+              '   ${periodLabel(line.periodKey)}',
+              _currency(line.amount),
+              muted: true,
+            ),
+          if (bill.earlierBalance > kMoneyEpsilon)
+            _figureRow(
+              '   Earlier balance',
+              _currency(bill.earlierBalance),
+              muted: true,
+            ),
+          if (bill.advanceApplied > kMoneyEpsilon) ...[
+            const SizedBox(height: 5),
+            _figureRow(
+              'Less: advance applied',
+              '− ${_currency(bill.advanceApplied)}',
+            ),
+          ],
+          const Divider(height: 18),
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  'Total payable',
+                  style: AppTheme.heading(size: 14),
+                ),
+              ),
+              Text(
+                _currency(bill.totalPayable),
+                style: AppTheme.heading(size: 17),
+              ),
+            ],
+          ),
+          if (bill.amountPaid > kMoneyEpsilon) ...[
+            const SizedBox(height: 4),
+            _figureRow('Paid on this bill', _currency(bill.amountPaid)),
+          ],
+          if (!bill.locked) ...[
+            const SizedBox(height: 4),
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    'Remaining',
+                    style: AppTheme.body(size: 12, color: AppColors.textGrey),
+                  ),
+                ),
+                Text(
+                  _currency(bill.remainingAmount),
+                  style: AppTheme.heading(size: 15, color: statusColor),
+                ),
+              ],
+            ),
+          ],
+          const SizedBox(height: 8),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: Text(
+              '$month charges: ${_ownStatusText(bill)}',
+              style: AppTheme.body(size: 11, color: AppColors.textGrey),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Bill made before statement billing: only that month's own charge.
+  Widget _buildLegacyFigures(MonthlyBill bill, Color statusColor) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(13),
+      decoration: BoxDecoration(
+        color: AppColors.paleGreen,
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Column(
+        children: [
+          _figureRow('Monthly bill', _currency(bill.currentBillAmount)),
+          if (bill.advanceApplied > kMoneyEpsilon)
+            _figureRow(
+              'Less: advance applied',
+              '− ${_currency(bill.advanceApplied)}',
+            ),
+          _figureRow('Paid', _currency(bill.effectiveOwnPaid)),
+          const Divider(height: 18),
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  'Remaining on this month',
+                  style: AppTheme.body(size: 12, color: AppColors.textGrey),
+                ),
+              ),
+              Text(
+                _currency(bill.effectiveOwnRemaining),
+                style: AppTheme.heading(size: 15, color: statusColor),
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: Text(
+              'Older-style bill. Previous outstanding at the time: '
+                  '${_currency(bill.previousOutstanding)} (not part of this '
+                  'month\'s amount).',
+              style: AppTheme.body(size: 10.5, color: AppColors.textGrey),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildCarriedForwardNote(MonthlyBill bill) {
+    final remaining = bill.effectiveOwnRemaining;
+    final text = remaining > kMoneyEpsilon
+        ? '${_currency(remaining)} of this month is still unpaid and is '
+        'included in the newer bill\'s Previous outstanding.'
+        : 'This month is fully paid.';
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 6),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(
+            remaining > kMoneyEpsilon
+                ? Icons.redo_rounded
+                : Icons.check_circle_outline,
+            size: 18,
+            color: remaining > kMoneyEpsilon
+                ? AppColors.warning
+                : AppColors.success,
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              text,
+              style: AppTheme.body(size: 12, color: AppColors.textDark),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  String _ownStatusText(MonthlyBill bill) {
+    switch (bill.effectiveOwnStatus) {
+      case 'paid':
+        return 'paid';
+      case 'partial':
+        return '${_currency(bill.effectiveOwnRemaining)} still unpaid';
+      default:
+        return 'unpaid';
+    }
+  }
+
+  Widget _figureRow(String label, String value, {bool muted = false}) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 1.5),
+      child: Row(
+        children: [
+          Expanded(
+            child: Text(
+              label,
+              style: AppTheme.body(
+                size: muted ? 11 : 12,
+                color: muted ? AppColors.textGrey : AppColors.textDark,
+              ),
+            ),
+          ),
+          Text(
+            value,
+            style: AppTheme.body(
+              size: muted ? 11 : 12,
+              color: muted ? AppColors.textGrey : AppColors.textDark,
+              weight: muted ? FontWeight.w400 : FontWeight.w600,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ========================================================================
   // STATUS BADGE
   // ========================================================================
 
@@ -979,39 +1202,6 @@ class _MonthlyBillsScreenState
           FontWeight.w800,
         ),
       ),
-    );
-  }
-
-  // ========================================================================
-  // DETAIL
-  // ========================================================================
-
-  Widget _detail(
-      String label,
-      String value,
-      ) {
-    return Column(
-      crossAxisAlignment:
-      CrossAxisAlignment.start,
-      children: [
-        Text(
-          label,
-          style: AppTheme.body(
-            size: 10,
-            color: AppColors.textGrey,
-          ),
-        ),
-        const SizedBox(height: 3),
-        Text(
-          value,
-          overflow:
-          TextOverflow.ellipsis,
-          style: AppTheme.body(
-            size: 11,
-            weight: FontWeight.w600,
-          ),
-        ),
-      ],
     );
   }
 
@@ -1063,8 +1253,8 @@ class _MonthlyBillsScreenState
           const SizedBox(height: 5),
 
           Text(
-            'Generate the first monthly bill '
-                'for this customer.',
+            'Bills are for the previous month. Generate one here, or for '
+                'every customer with Generate Bills on the Customers screen.',
             textAlign: TextAlign.center,
             style: AppTheme.body(
               size: 12,
@@ -1083,7 +1273,7 @@ class _MonthlyBillsScreenState
               Icons.add,
             ),
             label:
-            const Text('Create Monthly Bill'),
+            const Text('Generate bill'),
             style:
             ElevatedButton.styleFrom(
               backgroundColor:
@@ -1163,7 +1353,7 @@ class _MonthlyBillsScreenState
         actions: [
           IconButton(
             tooltip:
-            'Create Monthly Bill',
+            'Generate bill',
             onPressed:
             _creatingBill
                 ? null
@@ -1298,7 +1488,9 @@ class _MonthlyBillsScreenState
                           height: 3,
                         ),
                         Text(
-                          '${_bills.length} monthly bill${_bills.length == 1 ? '' : 's'}',
+                          '${_bills.length} monthly bill${_bills.length == 1 ? '' : 's'}'
+                              '${_livePending == null ? '' : ' · Total pending ${_currency(_livePending!)}'}'
+                              '${(_liveAdvance ?? 0) > kMoneyEpsilon ? ' · Advance ${_currency(_liveAdvance!)}' : ''}',
                           style:
                           AppTheme
                               .body(

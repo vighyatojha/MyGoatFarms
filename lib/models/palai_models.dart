@@ -397,6 +397,13 @@ class PalaiGoat {
   /// Set by DeathSettlementService.recordCustomerPalaiDeath. Null unless
   /// [status] is 'dead'.
   final DateTime? deathDate;
+
+  /// Last calendar day this goat has been charged Palai for — moved
+  /// forward by the monthly statement run, Final Checkout and death
+  /// settlement. Null for goats never billed under statement billing.
+  /// Written only by the billing services, never by toMap().
+  final DateTime? billedThroughDate;
+
   final String deathReason;
   final String deathNotes;
 
@@ -477,6 +484,7 @@ class PalaiGoat {
 
     // Death
     this.deathDate,
+    this.billedThroughDate,
     this.deathReason = '',
     this.deathNotes = '',
   }) : registrationDate =
@@ -712,6 +720,9 @@ class PalaiGoat {
       deathDate:
       _readDate(data['deathDate']),
 
+      billedThroughDate:
+      _readDate(data['billedThroughDate']),
+
       deathReason:
       _readString(data['deathReason']),
 
@@ -883,6 +894,9 @@ class PalaiGoat {
 
       nextHealthCheckDate:
       _readDate(data['nextHealthCheckDate']),
+
+      billedThroughDate:
+      _readDate(data['billedThroughDate']),
     );
   }
 
@@ -1301,6 +1315,13 @@ class PalaiGoat {
       nextHealthCheckDate:
       nextHealthCheckDate ??
           this.nextHealthCheckDate,
+
+      // Death and billing state are not editable through copyWith, but
+      // must survive a copy (Edit Goat Details copies the goat).
+      deathDate: deathDate,
+      deathReason: deathReason,
+      deathNotes: deathNotes,
+      billedThroughDate: billedThroughDate,
     );
   }
 

@@ -3105,13 +3105,12 @@ class _AddPaymentSheetState
       ) ??
           0;
 
-  double get _paymentLimit {
-    if (widget.bill != null) {
-      return widget.bill!.remainingAmount;
-    }
-
-    return widget.customer.pendingAmount;
-  }
+  /// STATEMENT BILLING: every payment, including one taken from a
+  /// monthly bill, clears the customer's unpaid months oldest first, so
+  /// the most that can go against dues is the customer's whole pending
+  /// balance (which is also the latest statement's Total Payable).
+  /// Anything above it becomes advance (or pays goat sales).
+  double get _paymentLimit => widget.customer.pendingAmount;
 
   double get _applied {
     return _amount
@@ -3141,7 +3140,7 @@ class _AddPaymentSheetState
     if (_paymentLimit <= 0) {
       _error(
         widget.bill != null
-            ? 'This monthly bill has no remaining amount.'
+            ? 'This customer has nothing pending on Palai.'
             : 'This customer has no outstanding amount.',
       );
       return;
@@ -3467,7 +3466,7 @@ class _AddPaymentSheetState
             _outlinedField(
               controller: _amountController,
               hint: widget.bill != null
-                  ? 'Maximum ₹${widget.bill!.remainingAmount.toStringAsFixed(0)}'
+                  ? 'Total pending ₹${_paymentLimit.toStringAsFixed(0)}'
                   : 'Enter amount',
               keyboardType:
               const TextInputType.numberWithOptions(

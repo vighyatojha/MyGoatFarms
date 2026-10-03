@@ -4,11 +4,15 @@ import 'package:intl/intl.dart';
 import '../../app_theme.dart';
 import '../../models/palai_models.dart';
 import '../../services/death_settlement_service.dart';
+import '../../services/monthly_statement_engine.dart';
+import '../../utils/palai_proration.dart';
 
 /// Record Death & Settlement for a Customer Palai goat.
 ///
-/// The farm owner enters two numbers: what was pending for this
-/// specific goat, and what the customer will actually be asked to pay.
+/// The farm owner enters what was already billed and still pending for
+/// this goat, confirms the Palai for its unbilled days (prefilled from
+/// the day after it was last charged up to the death date), and what the
+/// customer will actually be asked to pay.
 /// Whatever gap is waived between the two is recorded as a Goat Death
 /// Loss — see DeathSettlementService.recordCustomerPalaiDeath.
 class RecordCustomerGoatDeathScreen extends StatefulWidget {
@@ -35,6 +39,17 @@ class _RecordCustomerGoatDeathScreenState
   final _notesController = TextEditingController();
   final _pendingChargeController = TextEditingController();
   final _amountToPayController = TextEditingController();
+  final _unbilledController = TextEditingController();
+
+  /// Customer's last billed month, loaded once. Null when never billed.
+  String? _lastBilled;
+  bool _unbilledLoading = true;
+  String? _unbilledError;
+  PalaiRangeCharge? _unbilledCalc;
+
+  /// Set once the owner types their own unbilled figure, so changing the
+  /// death date no longer overwrites it.
+  bool _unbilledEdited = false;
 
   DateTime _deathDate = DateTime.now();
   bool _saving = false;
@@ -45,8 +60,20 @@ class _RecordCustomerGoatDeathScreenState
   double get _amountToPay =>
       double.tryParse(_amountToPayController.text.trim()) ?? 0;
 
+  double get _unbilledCharge =>
+      double.tryParse(_unbilledController.text.trim()) ?? 0;
+
+  /// Everything owed for this goat: already billed + unbilled days.
+  double get _goatTotal => _pendingCharge + _unbilledCharge;
+
   /// Waived amount — this is what gets recorded as a farm loss.
-  double get _loss => (_pendingCharge - _amountToPay).clamp(0, double.infinity);
+  double get _loss => (_goatTotal - _amountToPay).clamp(0, double.infinity);
+
+  /// Customer pending after saving (same formula the service uses).
+  double get _pendingAfter =>
+      (widget.customer.pendingAmount - _pendingCharge + _amountToPay)
+          .clamp(0, double.infinity)
+          .toDouble();
 
   @override
   void initState() {
@@ -57,6 +84,69 @@ class _RecordCustomerGoatDeathScreenState
     // point when this is their only goat — it's always editable, since
     // the app doesn't track a live per-goat balance.
     _amountToPayController.addListener(() {});
+    _loadUnbilled();
+  }
+
+  /// Loads the customer's last billed month once, then works out this
+  /// goat's unbilled days up to the death date.
+  Future<void> _loadUnbilled() async {
+    try {
+      _lastBilled = await MonthlyStatementEngine.instance.lastBilledPeriod(
+        farmId: widget.farmId,
+        customerId: widget.customer.id,
+      );
+      if (!mounted) return;
+      setState(() {
+        _unbilledLoading = false;
+        _unbilledError = null;
+      });
+      _recalculateUnbilled();
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _unbilledLoading = false;
+        _unbilledError =
+        'Could not work out unbilled days. Enter the amount yourself.';
+      });
+    }
+  }
+
+  void _recalculateUnbilled() {
+    if (_unbilledLoading || _unbilledError != null) return;
+    final calc = MonthlyStatementEngine.instance.unbilledChargeFor(
+      goat: widget.goat,
+      lastBilledKey: _lastBilled,
+      upTo: _deathDate,
+    );
+    setState(() {
+      _unbilledCalc = calc;
+      if (!_unbilledEdited) {
+        _unbilledController.text = calc.amount.toStringAsFixed(2);
+      }
+      _autoFillAmountToPay();
+    });
+  }
+
+  /// Keeps "Amount Customer Will Pay" equal to the goat's total until the
+  /// owner types their own figure (the common case is pay in full).
+  void _autoFillAmountToPay() {
+    final current = _amountToPayController.text.trim();
+    if (current.isEmpty || current == _lastAutoFilledPendingCharge) {
+      final auto = _goatTotal.toStringAsFixed(2);
+      _amountToPayController.text = auto;
+      _lastAutoFilledPendingCharge = auto;
+    }
+  }
+
+  String get _unbilledHelper {
+    final calc = _unbilledCalc;
+    if (calc == null || calc.isEmpty) {
+      return 'No unbilled days — this goat is already billed up to its death date.';
+    }
+    final f = DateFormat('dd MMM yyyy');
+    return '${calc.totalDays} day${calc.totalDays == 1 ? '' : 's'} '
+        '(${f.format(calc.fromDate!)} – ${f.format(calc.toDate!)}) '
+        'not yet on any monthly bill.';
   }
 
   @override
@@ -65,6 +155,7 @@ class _RecordCustomerGoatDeathScreenState
     _notesController.dispose();
     _pendingChargeController.dispose();
     _amountToPayController.dispose();
+    _unbilledController.dispose();
     super.dispose();
   }
 
@@ -93,6 +184,7 @@ class _RecordCustomerGoatDeathScreenState
     );
     if (picked != null) {
       setState(() => _deathDate = picked);
+      _recalculateUnbilled();
     }
   }
 
@@ -106,11 +198,14 @@ class _RecordCustomerGoatDeathScreenState
   Future<void> _confirmAndSave() async {
     if (!_formKey.currentState!.validate()) return;
 
+    if (_unbilledLoading) return;
+
     final pendingCharge = _pendingCharge;
+    final unbilledCharge = _unbilledCharge;
     final amountToPay = _amountToPay;
     final loss = _loss;
     final currentPending = widget.customer.pendingAmount;
-    final pendingAfter = currentPending - pendingCharge + amountToPay;
+    final pendingAfter = _pendingAfter;
 
     final confirmed = await showDialog<bool>(
       context: context,
@@ -126,7 +221,8 @@ class _RecordCustomerGoatDeathScreenState
               Text('Death Date: ${DateFormat('dd MMM yyyy').format(_deathDate)}'),
               Text('Reason: ${_reasonController.text.trim()}'),
               const SizedBox(height: 10),
-              Text('This Goat\'s Pending Charge: ₹${pendingCharge.toStringAsFixed(0)}'),
+              Text('Already Billed, Still Pending: ₹${pendingCharge.toStringAsFixed(0)}'),
+              Text('Unbilled Days: ₹${unbilledCharge.toStringAsFixed(0)}'),
               Text('Customer Will Pay: ₹${amountToPay.toStringAsFixed(0)}'),
               const SizedBox(height: 6),
               if (loss > 0)
@@ -187,6 +283,7 @@ class _RecordCustomerGoatDeathScreenState
         notes: _notesController.text.trim(),
         goatPendingCharge: pendingCharge,
         customerAmountToPay: amountToPay,
+        unbilledCharge: unbilledCharge,
       );
 
       if (!mounted) return;
@@ -301,16 +398,45 @@ class _RecordCustomerGoatDeathScreenState
             Text('This Goat\'s Settlement', style: AppTheme.heading(size: 13)),
             const SizedBox(height: 4),
             Text(
-              'Enter what was pending specifically for this goat, and what '
-                  'the customer will actually pay. Anything waived is '
-                  'recorded as a farm loss. Leave both blank if nothing was '
-                  'pending for this goat.',
+              'Unbilled days are charged up to the death date automatically. '
+                  'Add anything already billed for this goat that is still '
+                  'unpaid, then set what the customer will actually pay. '
+                  'Anything waived is recorded as a farm loss.',
               style: AppTheme.body(size: 11, color: AppColors.textGrey),
             ),
             const SizedBox(height: 10),
 
             Text(
-              'This Goat\'s Pending Charge (₹)',
+              'Unbilled Palai up to Death Date (₹)',
+              style: AppTheme.body(size: 11, weight: FontWeight.w600, color: AppColors.textDark),
+            ),
+            const SizedBox(height: 6),
+            TextFormField(
+              controller: _unbilledController,
+              enabled: !_unbilledLoading,
+              keyboardType: const TextInputType.numberWithOptions(decimal: true),
+              decoration: InputDecoration(
+                hintText: _unbilledLoading ? 'Calculating…' : 'e.g. 1500',
+                helperText: _unbilledLoading
+                    ? null
+                    : (_unbilledError ?? _unbilledHelper),
+                helperMaxLines: 3,
+                filled: true,
+                fillColor: Colors.white,
+                border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+              ),
+              validator: _validateAmount,
+              onChanged: (_) {
+                setState(() {
+                  _unbilledEdited = true;
+                  _autoFillAmountToPay();
+                });
+              },
+            ),
+            const SizedBox(height: 14),
+
+            Text(
+              'Already Billed for This Goat, Still Unpaid (₹)',
               style: AppTheme.body(size: 11, weight: FontWeight.w600, color: AppColors.textDark),
             ),
             const SizedBox(height: 6),
@@ -324,18 +450,10 @@ class _RecordCustomerGoatDeathScreenState
                 border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
               ),
               validator: _validateAmount,
-              onChanged: (v) {
-                setState(() {
-                  // Default the "will pay" field to match, so the common
-                  // case (pay in full, no loss) needs no second entry —
-                  // the farm owner only edits it when waiving something.
-                  if (_amountToPayController.text.trim().isEmpty ||
-                      _amountToPayController.text.trim() ==
-                          _lastAutoFilledPendingCharge) {
-                    _amountToPayController.text = v;
-                  }
-                  _lastAutoFilledPendingCharge = v;
-                });
+              onChanged: (_) {
+                // Default the "will pay" field to the goat's total, so the
+                // common case (pay in full, no loss) needs no second entry.
+                setState(_autoFillAmountToPay);
               },
             ),
             const SizedBox(height: 14),
@@ -384,7 +502,7 @@ class _RecordCustomerGoatDeathScreenState
                   const SizedBox(height: 4),
                   Text(
                     'Customer Pending: ₹${widget.customer.pendingAmount.toStringAsFixed(0)} → '
-                        '₹${(widget.customer.pendingAmount - _pendingCharge + _amountToPay).toStringAsFixed(0)}',
+                        '₹${_pendingAfter.toStringAsFixed(0)}',
                     style: AppTheme.body(size: 11, color: AppColors.textDark),
                   ),
                 ],
@@ -397,7 +515,8 @@ class _RecordCustomerGoatDeathScreenState
               width: double.infinity,
               height: 48,
               child: ElevatedButton.icon(
-                onPressed: _saving ? null : _confirmAndSave,
+                onPressed:
+                _saving || _unbilledLoading ? null : _confirmAndSave,
                 icon: _saving
                     ? const SizedBox(
                     width: 16,
@@ -419,10 +538,9 @@ class _RecordCustomerGoatDeathScreenState
     );
   }
 
-  // Tracks the last value we auto-filled into "amount to pay" from the
-  // pending-charge field, so we stop overwriting it the moment the farm
-  // owner types their own figure in — see the pending-charge onChanged
-  // above.
+  // Tracks the last value we auto-filled into "amount to pay", so we
+  // stop overwriting it the moment the farm owner types their own figure
+  // in — see _autoFillAmountToPay.
   String _lastAutoFilledPendingCharge = '';
 
   String? _validateAmount(String? v) {

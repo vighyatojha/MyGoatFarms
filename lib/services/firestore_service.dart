@@ -23,6 +23,8 @@ import '../models/supplier_model.dart';
 import '../models/goat_model.dart';
 import '../models/trading_goat_health_record.dart';
 import '../models/expense_categories.dart';
+import '../utils/palai_proration.dart';
+import 'payment_allocation_service.dart';
 import 'sales_service.dart';
 
 /// One upcoming/due health reminder for a Customer-Palai goat —
@@ -809,6 +811,12 @@ class FirestoreService {
             '-${billRef.id.substring(0, 6).toUpperCase()}';
 
     // Resolved once, before the transaction — see [addOutstandingAmount].
+    // STATEMENT BILLING: the customer's monthly bills are found here and
+    // re-read inside the transaction, so the money settled at checkout
+    // clears their unpaid months oldest first (see PalaiLedger).
+    final ledgerBillRefs =
+    await PalaiLedger.instance.monthlyBillRefs(farmId, customerId);
+
     final actor = await getCurrentActor();
 
     return _db.runTransaction<MonthlyBillResult>(
@@ -823,6 +831,9 @@ class FirestoreService {
         if (!customerSnapshot.exists) {
           throw StateError('Customer no longer exists.');
         }
+
+        final ledger =
+        await PalaiLedger.instance.read(transaction, ledgerBillRefs);
 
         final customerData =
             customerSnapshot.data() ?? {};
@@ -897,6 +908,26 @@ class FirestoreService {
             : 'pending';
 
         // ------------------------------------------------------------
+        // SETTLE MONTHLY BILLS (oldest unpaid month first)
+        //
+        // Advance used + money paid now both reduce what the customer
+        // owed before this checkout. That clears their unpaid monthly
+        // bills oldest first; whatever is left pays this checkout's own
+        // charges, which are not part of any monthly bill.
+        // ------------------------------------------------------------
+        final ledgerWriter = LedgerWriter();
+        final settlement = PalaiLedger.instance.reduceDues(
+          writer: ledgerWriter,
+          ledger: ledger,
+          amount: advanceApplied + amountAppliedToBill,
+          pendingBefore: totalBeforeAdvance,
+          paymentId: paymentRef?.id,
+          paymentMethod: paidAmount > 0 ? paymentMethod : null,
+        );
+        ledgerWriter.flush(transaction);
+
+
+        // ------------------------------------------------------------
         // WRITE BILL
         // ------------------------------------------------------------
 
@@ -938,6 +969,8 @@ class FirestoreService {
           'note': note.trim(),
 
           'status': status,
+          'monthlyAllocations':
+          settlement.allocations.map((a) => a.toMap()).toList(),
 
           'createdAt':
           FieldValue.serverTimestamp(),
@@ -1252,507 +1285,21 @@ class FirestoreService {
     required double paidAmount,
     required String paymentMethod,
     String note = '',
-  }) async {
-    if (paidAmount <= 0) {
-      throw ArgumentError('Payment amount must be greater than zero.');
-    }
-
-    if (paymentMethod.trim().isEmpty) {
-      throw ArgumentError('Please select a payment method.');
-    }
-
-    final customerRef = _customers(farmId).doc(customerId);
-
-    final paymentsCollection =
-    _farms.doc(farmId).collection('payments');
-
-    final transactionsCollection =
-    _farms.doc(farmId).collection('transactions');
-
-    final activitiesCollection =
-    _farms.doc(farmId).collection('activities');
-
-    // ------------------------------------------------------------------
-    // FIND OPEN MONTHLY BILLS
+  }) {
+    // STATEMENT BILLING: every Palai payment now goes through the one
+    // shared rule in PaymentAllocationService — unpaid months oldest
+    // first, then other Palai dues, then goat sales, then advance.
     //
-    // This "Add Payment" used to only touch the customer's pendingAmount
-    // — a general payment never updated any Monthly Bill document. That
-    // let the customer profile show "Account is settled" while Monthly
-    // Bills kept showing an old bill stuck on "Partial" with its old
-    // Remaining amount forever, because nothing had ever written to it.
-    //
-    // Firestore transactions can only re-read documents by reference, not
-    // run a query — so the open bills are found here, just before the
-    // transaction, and then re-read fresh (and updated) by reference
-    // inside it, oldest month first, same as how a customer would expect
-    // their payment to clear the oldest debt first.
-    // ------------------------------------------------------------------
-
-    final monthlyBillsCollection =
-    _farms.doc(farmId).collection('monthlyBills');
-
-    final openBillsSnapshot = await monthlyBillsCollection
-        .where('customerId', isEqualTo: customerId)
-        .get()
-        .timeout(timeout);
-
-    // Resolved once, before the transaction — see [addOutstandingAmount].
-    final actor = await getCurrentActor();
-
-    // ------------------------------------------------------------------
-    // FIND THE CUSTOMER'S OPEN GOAT SALES
-    //
-    // A customer can also owe money on goat sales (Trading). That debt is
-    // kept on the sale itself, not in pendingAmount, so a payment that is
-    // bigger than the Palai outstanding must be applied to those sales
-    // instead of being stored as advance while the sale still shows the
-    // customer owing. Like the monthly bills below, the sales are found
-    // here and re-read fresh, by reference, inside the transaction.
-    //
-    // Never allowed to block a Palai payment: if the lookup fails, the
-    // payment behaves exactly as it did before (excess becomes advance).
-    // ------------------------------------------------------------------
-
-    var goatSaleIds = const <String>[];
-
-    try {
-      final customerBeforeSnap =
-      await customerRef.get().timeout(timeout);
-      final customerBefore = customerBeforeSnap.data() ?? {};
-
-      final credit = await SalesService.instance.creditForPerson(
-        farmId,
-        customerId: customerId,
-        mobile: (customerBefore['mobileNumber'] ?? '').toString(),
-        name: (customerBefore['name'] ?? '').toString(),
-      );
-
-      goatSaleIds =
-          credit?.sales.map((sale) => sale.id).toList() ?? const <String>[];
-    } catch (_) {
-      goatSaleIds = const <String>[];
-    }
-
-    // ------------------------------------------------------------------
-    // FIND THE CUSTOMER'S CURRENT (LIVE) MONTHLY BILL
-    //
-    // A monthly bill's totalDue already folds every earlier bill's
-    // unpaid balance forward (see MonthlyBillingService), so the most
-    // recent open bill's remainingAmount already IS the customer's
-    // whole outstanding balance. Only that one bill should ever receive
-    // a payment.
-    //
-    // Anything else still open is stale left-over data — most likely
-    // from before bills were closed out on creation — and gets closed
-    // out below instead of paid, so it stops being double-counted
-    // anywhere (Monthly Bills, Reports, Sync with Monthly Bills).
-    // ------------------------------------------------------------------
-
-    final openBillDocs = openBillsSnapshot.docs.where((doc) {
-      final billData = doc.data();
-      if (billData['type']?.toString() != 'monthly') return false;
-      final remaining = (billData['remainingAmount'] ?? 0).toDouble();
-      return remaining > 0;
-    }).toList()
-      ..sort((a, b) {
-        final aMonth =
-            (a.data()['billingMonth'] as Timestamp?)?.toDate() ??
-                DateTime(0);
-        final bMonth =
-            (b.data()['billingMonth'] as Timestamp?)?.toDate() ??
-                DateTime(0);
-        return bMonth.compareTo(aMonth); // most recent first
-      });
-
-    final primaryBillRef =
-    openBillDocs.isEmpty ? null : openBillDocs.first.reference;
-
-    final staleBillRefs =
-    openBillDocs.skip(1).map((doc) => doc.reference).toList();
-
-    final paymentRef = paymentsCollection.doc();
-    final transactionRef = transactionsCollection.doc();
-    final activityRef = activitiesCollection.doc();
-
-    return _db.runTransaction<StandalonePaymentResult>(
-          (transaction) async {
-        // ============================================================
-        // READS FIRST
-        // ============================================================
-
-        final customerSnapshot =
-        await transaction.get(customerRef);
-
-        if (!customerSnapshot.exists) {
-          throw StateError('Customer no longer exists.');
-        }
-
-        final primaryBillSnapshot = primaryBillRef == null
-            ? null
-            : await transaction.get(primaryBillRef);
-
-        final staleBillSnapshots =
-        <DocumentSnapshot<Map<String, dynamic>>>[];
-        for (final ref in staleBillRefs) {
-          staleBillSnapshots.add(await transaction.get(ref));
-        }
-
-        // Goat sales are read here too — a transaction needs every read
-        // before its first write.
-        final goatSaleSnapshots =
-        await SalesService.instance.readSalesForSettlement(
-          transaction,
-          farmId,
-          goatSaleIds,
-        );
-
-        final data = customerSnapshot.data() ?? {};
-
-        final customerName =
-        (data['name'] ?? '').toString();
-
-        final pendingBefore =
-        (data['pendingAmount'] ?? 0).toDouble();
-
-        final advanceBefore =
-        (data['advanceAmount'] ?? 0).toDouble();
-
-        // ============================================================
-        // ONE CALCULATION, SHARED BY THE CUSTOMER AND THE BILL
-        //
-        // This used to be worked out twice — once for the customer,
-        // once inside a separate oldest-bill-first loop — and the two
-        // could disagree the moment more than one bill was open. Now
-        // there is exactly one number for how much of this payment
-        // reduces what the customer owes; the bill update below is
-        // derived from it instead of computed separately.
-        // ============================================================
-
-        final amountAppliedToPending =
-        paidAmount
-            .clamp(0, pendingBefore)
-            .toDouble();
-
-        final excessPayment =
-        (paidAmount - amountAppliedToPending)
-            .clamp(0, double.infinity)
-            .toDouble();
-
-        final pendingAfter =
-        (pendingBefore - amountAppliedToPending)
-            .clamp(0, double.infinity)
-            .toDouble();
-
-        final paymentNumber =
-            'PAY-${paymentRef.id.substring(0, 8).toUpperCase()}';
-
-        // ============================================================
-        // WHAT IS LEFT AFTER THE PALAI OUTSTANDING GOES TO GOAT SALES
-        //
-        // Palai outstanding first, then the customer's unpaid goat sales
-        // (oldest first), and only then advance. Each sale gets the
-        // payment through the same writes as a payment taken on the sale
-        // itself, so its balance, status and Sold Goat Revenue entry
-        // are all updated here — once. The Finance income for THIS
-        // payment below only counts what was not applied to a sale, so
-        // the same money is never counted as both Palai income and Sold
-        // Goat Revenue.
-        // ============================================================
-
-        final goatSaleSettlement = excessPayment > 0
-            ? SalesService.instance.settleSalesInTransaction(
-          transaction: transaction,
-          farmId: farmId,
-          saleSnapshots: goatSaleSnapshots,
-          amount: excessPayment,
-          paymentMethod: paymentMethod,
-          note: 'Received with Customer Palai payment $paymentNumber',
-        )
-            : const GoatSaleSettlement([]);
-
-        final amountAppliedToGoatSales = goatSaleSettlement.total;
-
-        final advanceAdded =
-        (excessPayment - amountAppliedToGoatSales)
-            .clamp(0, double.infinity)
-            .toDouble();
-
-        final advanceAfter =
-        (advanceBefore + advanceAdded)
-            .clamp(0, double.infinity)
-            .toDouble();
-
-        // Palai INCOME is only the part that cleared the customer's Palai
-        // outstanding. The part kept as advance is money held for the
-        // customer, not revenue; it turns into income when a bill uses it.
-        final palaiIncomeAmount = amountAppliedToPending;
-
-        // ============================================================
-        // APPLY THE SAME AMOUNT TO THE CUSTOMER'S CURRENT MONTHLY BILL
-        // ============================================================
-
-        var billsUpdatedCount = 0;
-
-        if (primaryBillSnapshot != null && primaryBillSnapshot.exists) {
-          final billData = primaryBillSnapshot.data() ?? {};
-          final billRemaining =
-          (billData['remainingAmount'] ?? 0).toDouble();
-
-          if (billRemaining > 0) {
-            final currentAmountPaid =
-            (billData['amountPaid'] ?? 0).toDouble();
-
-            // Clamped to the bill's own remaining amount only as a
-            // safety net — under normal operation (bill closed out
-            // correctly on creation) this always equals
-            // amountAppliedToPending exactly.
-            final appliedToBill =
-            amountAppliedToPending
-                .clamp(0, billRemaining)
-                .toDouble();
-
-            final newRemaining =
-            (billRemaining - appliedToBill)
-                .clamp(0, double.infinity)
-                .toDouble();
-
-            final newStatus =
-            newRemaining <= 0 ? 'paid' : 'partial';
-
-            transaction.update(primaryBillSnapshot.reference, {
-              'amountPaid': currentAmountPaid + appliedToBill,
-              'remainingAmount': newRemaining,
-              'status': newStatus,
-              'paymentStatus': newStatus,
-              'paymentId': paymentRef.id,
-              'paymentMethod': paymentMethod.trim(),
-              'paidAt': newRemaining <= 0
-                  ? FieldValue.serverTimestamp()
-                  : null,
-              'updatedAt': FieldValue.serverTimestamp(),
-            });
-
-            billsUpdatedCount = 1;
-          }
-        }
-
-        // ============================================================
-        // CLOSE OUT ANY STALE EXTRA OPEN BILLS
-        //
-        // Their balance is already folded into the primary bill above,
-        // so they don't get a share of this payment — they just get
-        // zeroed out so nothing keeps double-counting them.
-        // ============================================================
-
-        for (final snap in staleBillSnapshots) {
-          if (!snap.exists) continue;
-          final billData = snap.data() ?? {};
-          if ((billData['remainingAmount'] ?? 0).toDouble() <= 0) continue;
-
-          transaction.update(snap.reference, {
-            'remainingAmount': 0,
-            'status': 'paid',
-            'paymentStatus': 'paid',
-            if (primaryBillRef != null)
-              'carriedForwardIntoBillId': primaryBillRef.id,
-            'updatedAt': FieldValue.serverTimestamp(),
-          });
-        }
-
-        // ============================================================
-        // PAYMENT RECORD
-        // ============================================================
-
-        transaction.set(paymentRef, {
-          'paymentNumber': paymentNumber,
-
-          'type': 'standalone',
-
-          'customerId': customerId,
-          'customerName': customerName,
-
-          'amount': paidAmount,
-
-          'amountAppliedToPending':
-          amountAppliedToPending,
-
-          // Which goat sales this payment settled, so a sale's balance
-          // can always be traced back to the Palai payment that paid it.
-          'amountAppliedToGoatSales':
-          amountAppliedToGoatSales,
-
-          'goatSalesSettled':
-          goatSaleSettlement.lines
-              .map((line) => line.toMap())
-              .toList(),
-
-          'advanceAmount':
-          advanceAdded,
-
-          'pendingBefore':
-          pendingBefore,
-
-          'pendingAfter':
-          pendingAfter,
-
-          'advanceBefore':
-          advanceBefore,
-
-          'advanceAfter':
-          advanceAfter,
-
-          'billsUpdated': billsUpdatedCount,
-
-          'paymentMethod':
-          paymentMethod.trim(),
-
-          'note':
-          note.trim(),
-
-          'date':
-          FieldValue.serverTimestamp(),
-
-          'createdAt':
-          FieldValue.serverTimestamp(),
-        });
-
-        // ============================================================
-        // INCOME TRANSACTION
-        // ============================================================
-
-        // Only the part that stayed on the Palai side is Palai income.
-        // The part applied to a goat sale was already written above as
-        // Sold Goat Revenue on that sale; nothing is written here when
-        // the whole payment went to goat sales.
-        if (palaiIncomeAmount > 0) {
-          transaction.set(transactionRef, {
-            'amount': palaiIncomeAmount,
-
-            'isIncome': true,
-
-            'category': 'Payment Received',
-
-            'customerId': customerId,
-
-            'customerName': customerName,
-
-            'paymentId': paymentRef.id,
-
-            'paymentNumber': paymentNumber,
-
-            'amountAppliedToPending':
-            amountAppliedToPending,
-
-            'advanceAmount':
-            advanceAdded,
-
-            'paymentMethod':
-            paymentMethod.trim(),
-
-            'note': note.trim().isNotEmpty
-                ? note.trim()
-                : 'Payment received from $customerName',
-
-            'date':
-            FieldValue.serverTimestamp(),
-
-            'createdAt':
-            FieldValue.serverTimestamp(),
-          });
-        }
-
-        // ============================================================
-        // UPDATE CUSTOMER
-        // ============================================================
-
-        transaction.update(customerRef, {
-          'pendingAmount': pendingAfter,
-
-          'advanceAmount': advanceAfter,
-
-          'updatedAt':
-          FieldValue.serverTimestamp(),
-        });
-
-        // Audit trail for the advance: WHY the balance went up. Uses a
-        // deterministic id so a retried transaction cannot add it twice.
-        // Same shape as the Trading-sale excess entries, so the Customer
-        // Profile / Ledger can read every advance credit from one place.
-        if (advanceAdded > 0) {
-          transaction.set(
-            customerRef
-                .collection('advanceEntries')
-                .doc('payment_${paymentRef.id}'),
-            {
-              'amount': advanceAdded,
-              'type': 'credit',
-              'source': 'palaiPayment',
-              'paymentId': paymentRef.id,
-              'paymentNumber': paymentNumber,
-              'customerId': customerId,
-              'customerName': customerName,
-              'note': 'Extra amount received with payment $paymentNumber',
-              'date': FieldValue.serverTimestamp(),
-              'createdAt': FieldValue.serverTimestamp(),
-            },
-          );
-        }
-
-        // ============================================================
-        // ACTIVITY
-        // ============================================================
-
-        transaction.set(activityRef, {
-          'type': 'paymentReceived',
-
-          'title': 'Payment Received',
-
-          'subtitle':
-          '$customerName · ₹${paidAmount.toStringAsFixed(0)}',
-
-          'module': 'palai',
-
-          'timestamp':
-          FieldValue.serverTimestamp(),
-
-          if (actor != null) 'actorUid': actor.uid,
-          if (actor != null) 'actorName': actor.name,
-          if (actor != null) 'actorRole': actor.role,
-        });
-
-        // ============================================================
-        // RETURN RESULT
-        // ============================================================
-
-        return StandalonePaymentResult(
-          paymentId: paymentRef.id,
-          paymentNumber: paymentNumber,
-
-          customerName: customerName,
-
-          pendingBefore: pendingBefore,
-
-          amountReceived: paidAmount,
-
-          amountAppliedToPending:
-          amountAppliedToPending,
-
-          pendingAfter: pendingAfter,
-
-          amountAppliedToGoatSales: amountAppliedToGoatSales,
-
-          advanceBefore: advanceBefore,
-
-          advanceAdded: advanceAdded,
-
-          advanceAfter: advanceAfter,
-
-          paymentMethod: paymentMethod.trim(),
-
-          billsUpdated: billsUpdatedCount,
-        );
-      },
-    ).timeout(timeout);
+    // The old body treated the newest monthly bill as holding the whole
+    // balance and closed every older open bill as "stale" without
+    // recording a payment on it, which made unpaid months look paid.
+    return PaymentAllocationService.instance.receivePayment(
+      farmId: farmId,
+      customerId: customerId,
+      paidAmount: paidAmount,
+      paymentMethod: paymentMethod,
+      note: note,
+    );
   }
 
 
@@ -2557,6 +2104,10 @@ class FirestoreService {
     final data = <String, dynamic>{
       'isCheckedOut': true,
       'checkOutDate': FieldValue.serverTimestamp(),
+      // Final Checkout charges this goat's unbilled days up to today
+      // (see CheckoutChargesPaymentScreen), so the monthly statement run
+      // must never charge them again.
+      'billedThroughDate': Timestamp.fromDate(palaiDateOnly(DateTime.now())),
       'currentWeight': finalWeight,
       'healthStatus': healthStatus,
     };

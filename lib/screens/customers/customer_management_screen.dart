@@ -7,7 +7,10 @@ import '../../app_theme.dart';
 import '../../models/activity_model.dart';
 import '../../models/palai_models.dart';
 import '../../services/firestore_service.dart';
+import '../../services/monthly_statement_engine.dart';
+import '../../utils/billing_ledger.dart';
 import '../../widgets/fast_route.dart';
+import '../../widgets/generate_bills_flow.dart';
 import '../../widgets/goat_credit_cards.dart';
 import '../palai/add_customer_screen.dart';
 import '../../widgets/farm_not_linked_state.dart';
@@ -47,6 +50,10 @@ class _CustomerManagementScreenState
   TextEditingController();
 
   String _query = '';
+
+  /// True while the Generate Bills flow is open, so a second tap can't
+  /// start a second run.
+  bool _generatingBills = false;
 
   @override
   void initState() {
@@ -111,6 +118,63 @@ class _CustomerManagementScreenState
       return name.contains(_query) ||
           mobile.contains(_query);
     }).toList();
+  }
+
+  // ===========================================================================
+  // GENERATE BILLS (all customers, previous month)
+  // ===========================================================================
+
+  Future<void> _generateBills() async {
+    final farmId = _farmId;
+    if (farmId == null || _generatingBills) return;
+
+    setState(() => _generatingBills = true);
+    try {
+      await runGenerateBillsFlow(context, farmId: farmId);
+    } finally {
+      if (mounted) setState(() => _generatingBills = false);
+    }
+  }
+
+  Widget _buildGenerateBillsButton() {
+    final month = periodLabel(
+      MonthlyStatementEngine.instance.targetPeriodKey(),
+    );
+
+    return SizedBox(
+      width: double.infinity,
+      child: ElevatedButton.icon(
+        onPressed: _generatingBills ? null : _generateBills,
+        icon: _generatingBills
+            ? const SizedBox(
+          width: 18,
+          height: 18,
+          child: CircularProgressIndicator(
+            strokeWidth: 2,
+            color: Colors.white,
+          ),
+        )
+            : const Icon(Icons.receipt_long_outlined, size: 20),
+        label: Text(
+          'Generate $month bills',
+          style: const TextStyle(
+            fontSize: 13,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+        style: ElevatedButton.styleFrom(
+          backgroundColor: AppColors.darkGreen,
+          foregroundColor: Colors.white,
+          disabledBackgroundColor: AppColors.darkGreen.withValues(alpha: 0.6),
+          disabledForegroundColor: Colors.white,
+          elevation: 0,
+          padding: const EdgeInsets.symmetric(vertical: 14),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(14),
+          ),
+        ),
+      ),
+    );
   }
 
   Future<void> _openAddCustomer() async {
@@ -435,6 +499,16 @@ class _CustomerManagementScreenState
                     ),
                   ),
                 ),
+
+                // Generate Bills: bills every customer for the previous
+                // month, one by one (see widgets/generate_bills_flow.dart).
+                if (allCustomers.isNotEmpty)
+                  SliverToBoxAdapter(
+                    child: Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 10, 16, 0),
+                      child: _buildGenerateBillsButton(),
+                    ),
+                  ),
 
                 // Goat-sale credit: customers who still owe money on goat
                 // sales. Hidden when nobody does.

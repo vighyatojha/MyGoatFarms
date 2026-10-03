@@ -1,6 +1,7 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 
 import '../models/monthly_bill_model.dart';
+import 'payment_allocation_service.dart';
 
 /// Customer-level recurring monthly billing.
 ///
@@ -162,9 +163,15 @@ class MonthlyBillingService {
       ) {
     final monthText = month.toString().padLeft(2, '0');
 
-    final shortId = billId.length > 6
-        ? billId.substring(0, 6)
+    // Bill IDs are 'monthly_<customerId>_<YYYY-MM>'. Taking the first 6
+    // characters of the whole ID gave every bill the same 'MONTHL'
+    // suffix, so use the customer part instead.
+    final customerPart = billId.startsWith('monthly_')
+        ? billId.substring('monthly_'.length)
         : billId;
+    final shortId = customerPart.length > 6
+        ? customerPart.substring(0, 6)
+        : customerPart;
 
     return 'MB-$year$monthText-${shortId.toUpperCase()}';
   }
@@ -1989,15 +1996,11 @@ class MonthlyBillingService {
   // RECEIVE MONTHLY BILL PAYMENT
   // ===========================================================================
 
-  /// Receives a payment against a monthly bill.
+  /// Receives a payment taken from a monthly bill's screen.
   ///
-  /// If payment > bill remaining:
-  ///
-  ///   bill portion  -> bill payment
-  ///   extra portion -> customer advance
-  ///
-  /// Only the amount actually applied to the bill is recorded as revenue.
-  /// The extra amount is stored as advance.
+  /// Delegates to [PaymentAllocationService.receivePayment]: unpaid
+  /// months oldest first, then other Palai dues, then goat sales, then
+  /// advance. The bill is recorded on the payment for reference.
   Future<MonthlyBillPaymentResult>
   receiveMonthlyBillPayment({
     required String farmId,
@@ -2007,488 +2010,52 @@ class MonthlyBillingService {
     required String paymentMethod,
     String note = '',
   }) async {
-    if (paidAmount <= 0) {
-      throw ArgumentError(
-        'Payment amount must be greater than zero.',
+    // STATEMENT BILLING: a payment taken from a bill's screen follows the
+    // same oldest-first rule as every other Palai payment. The bill shows
+    // the customer's full Total Payable, so the money clears the oldest
+    // unpaid month first instead of pushing anything above this one
+    // month's charge into advance while older months stay unpaid.
+    final billSnapshot =
+    await _bills(farmId).doc(billId).get().timeout(_timeout);
+    final billData = billSnapshot.data() ?? {};
+
+    if (!billSnapshot.exists) {
+      throw StateError('Monthly bill no longer exists.');
+    }
+    if (billData['type']?.toString() != 'monthly') {
+      throw StateError('The selected document is not a monthly bill.');
+    }
+    if ((billData['customerId'] ?? '').toString() != customerId) {
+      throw StateError(
+        'This monthly bill does not belong to the selected customer.',
       );
     }
 
-    if (paymentMethod.trim().isEmpty) {
-      throw ArgumentError(
-        'Please select a payment method.',
-      );
-    }
-
-    final customerRef =
-    _customers(farmId).doc(customerId);
-
-    final billRef =
-    _bills(farmId).doc(billId);
-
-    final paymentRef =
-    _payments(farmId).doc();
-
-    final transactionRef =
-    _transactions(farmId).doc();
-
-    final activityRef =
-    _activities(farmId).doc();
-
-    final paymentNumber =
-    _generatePaymentNumber(
-      paymentRef.id,
+    final result = await PaymentAllocationService.instance.receivePayment(
+      farmId: farmId,
+      customerId: customerId,
+      paidAmount: paidAmount,
+      paymentMethod: paymentMethod,
+      note: note,
+      fromBillId: billId,
+      paymentType: 'monthlyBillPayment',
+      incomeCategory: 'Palai Monthly Bill Payment',
     );
 
-    return _db
-        .runTransaction<
-        MonthlyBillPaymentResult>(
-          (transaction) async {
-        final customerSnapshot =
-        await transaction.get(
-          customerRef,
-        );
-
-        final billSnapshot =
-        await transaction.get(
-          billRef,
-        );
-
-        if (!customerSnapshot.exists) {
-          throw StateError(
-            'Customer no longer exists.',
-          );
-        }
-
-        if (!billSnapshot.exists) {
-          throw StateError(
-            'Monthly bill no longer exists.',
-          );
-        }
-
-        final customerData =
-            customerSnapshot.data() ?? {};
-
-        final billData =
-            billSnapshot.data() ?? {};
-
-        if (billData['type']?.toString() !=
-            'monthly') {
-          throw StateError(
-            'The selected document is not a monthly bill.',
-          );
-        }
-
-        if ((billData['customerId'] ?? '')
-            .toString() !=
-            customerId) {
-          throw StateError(
-            'This monthly bill does not belong to the selected customer.',
-          );
-        }
-
-        final customerName =
-        (customerData['name'] ?? '')
-            .toString();
-
-        final billNumber =
-        (billData['billNumber'] ??
-            billId)
-            .toString();
-
-        final currentPending =
-        _money(
-          customerData['pendingAmount'],
-        );
-
-        final currentAdvance =
-        _money(
-          customerData['advanceAmount'],
-        );
-
-        final billRemaining =
-        _money(
-          billData['remainingAmount'],
-        );
-
-        final currentPaid =
-        _money(
-          billData['amountPaid'],
-        );
-
-        if (billRemaining <= _epsilon) {
-          throw StateError(
-            'This monthly bill is already paid.',
-          );
-        }
-
-        // ---------------------------------------------------------------------
-        // SPLIT PAYMENT
-        // ---------------------------------------------------------------------
-
-        final amountApplied =
-        _money(
-          paidAmount.clamp(
-            0,
-            billRemaining,
-          ),
-        );
-
-        final extraAmount =
-        _money(
-          paidAmount -
-              amountApplied,
-        );
-
-        if (amountApplied >
-            currentPending + _epsilon) {
-          throw StateError(
-            'Customer outstanding is lower than '
-                'the amount being applied to this bill.',
-          );
-        }
-
-        final newAmountPaid =
-        _money(
-          currentPaid +
-              amountApplied,
-        );
-
-        final newRemaining =
-        _money(
-          billRemaining -
-              amountApplied,
-        );
-
-        final newPending =
-        _money(
-          currentPending -
-              amountApplied,
-        );
-
-        final newAdvance =
-        _money(
-          currentAdvance +
-              extraAmount,
-        );
-
-        final isFullyPaid =
-            newRemaining <= _epsilon;
-
-        final newStatus =
-        isFullyPaid
-            ? 'paid'
-            : 'partial';
-
-        // ---------------------------------------------------------------------
-        // PAYMENT RECORD
-        // ---------------------------------------------------------------------
-
-        transaction.set(
-          paymentRef,
-          {
-            'paymentNumber':
-            paymentNumber,
-
-            'type':
-            'monthlyBillPayment',
-
-            'customerId':
-            customerId,
-
-            'customerName':
-            customerName,
-
-            'billId':
-            billId,
-
-            'billNumber':
-            billNumber,
-
-            'amount':
-            paidAmount,
-
-            'amountReceived':
-            paidAmount,
-
-            'amountAppliedToBill':
-            amountApplied,
-
-            'advanceAdded':
-            extraAmount,
-
-            'pendingBefore':
-            currentPending,
-
-            'pendingAfter':
-            newPending,
-
-            'advanceBefore':
-            currentAdvance,
-
-            'advanceAfter':
-            newAdvance,
-
-            'billRemainingBefore':
-            billRemaining,
-
-            'billRemainingAfter':
-            newRemaining,
-
-            'billAmountPaidBefore':
-            currentPaid,
-
-            'billAmountPaidAfter':
-            newAmountPaid,
-
-            'paymentMethod':
-            paymentMethod.trim(),
-
-            'note':
-            note.trim(),
-
-            'date':
-            FieldValue.serverTimestamp(),
-
-            'createdAt':
-            FieldValue.serverTimestamp(),
-
-            'updatedAt':
-            FieldValue.serverTimestamp(),
-          },
-        );
-
-        // ---------------------------------------------------------------------
-        // BILL UPDATE
-        // ---------------------------------------------------------------------
-
-        transaction.update(
-          billRef,
-          {
-            'amountPaid':
-            newAmountPaid,
-
-            'remainingAmount':
-            newRemaining,
-
-            'status':
-            newStatus,
-
-            'paymentStatus':
-            newStatus,
-
-            'lastPaymentId':
-            paymentRef.id,
-
-            'lastPaymentNumber':
-            paymentNumber,
-
-            'lastPaymentAmount':
-            paidAmount,
-
-            'lastPaymentMethod':
-            paymentMethod.trim(),
-
-            'paymentId':
-            isFullyPaid
-                ? paymentRef.id
-                : billData['paymentId'],
-
-            'paymentMethod':
-            isFullyPaid
-                ? paymentMethod.trim()
-                : billData['paymentMethod'],
-
-            'paidAt':
-            isFullyPaid
-                ? FieldValue.serverTimestamp()
-                : billData['paidAt'],
-
-            'updatedAt':
-            FieldValue.serverTimestamp(),
-          },
-        );
-
-        // ---------------------------------------------------------------------
-        // CUSTOMER UPDATE
-        // ---------------------------------------------------------------------
-
-        transaction.update(
-          customerRef,
-          {
-            'pendingAmount':
-            newPending,
-
-            'advanceAmount':
-            newAdvance,
-
-            'updatedAt':
-            FieldValue.serverTimestamp(),
-          },
-        );
-
-        // ---------------------------------------------------------------------
-        // ADVANCE CREDIT
-        // ---------------------------------------------------------------------
-
-        if (extraAmount > 0) {
-          _writeAdvanceCreditEntry(
-            transaction: transaction,
-            customerRef: customerRef,
-            customerId: customerId,
-            customerName: customerName,
-            paymentId: paymentRef.id,
-            paymentNumber: paymentNumber,
-            billId: billId,
-            billNumber: billNumber,
-            amount: extraAmount,
-            source:
-            'monthlyBillPayment',
-          );
-        }
-
-        // ---------------------------------------------------------------------
-        // INCOME TRANSACTION
-        // ---------------------------------------------------------------------
-        //
-        // IMPORTANT:
-        // Only amountAppliedToBill is revenue.
-        //
-        // Extra amount is advance and is NOT counted as revenue again when
-        // it is later applied to another bill.
-        // ---------------------------------------------------------------------
-
-        if (amountApplied > 0) {
-          transaction.set(
-            transactionRef,
-            {
-              'type':
-              'income',
-
-              'isIncome':
-              true,
-
-              'category':
-              'Palai Monthly Bill Payment',
-
-              'amount':
-              amountApplied,
-
-              'customerId':
-              customerId,
-
-              'customerName':
-              customerName,
-
-              'billId':
-              billId,
-
-              'billNumber':
-              billNumber,
-
-              'paymentId':
-              paymentRef.id,
-
-              'paymentNumber':
-              paymentNumber,
-
-              'amountAppliedToBill':
-              amountApplied,
-
-              'advanceAmount':
-              extraAmount,
-
-              'paymentMethod':
-              paymentMethod.trim(),
-
-              'note':
-              note.trim().isEmpty
-                  ? 'Monthly bill payment from '
-                  '$customerName'
-                  : note.trim(),
-
-              'date':
-              FieldValue.serverTimestamp(),
-
-              'createdAt':
-              FieldValue.serverTimestamp(),
-            },
-          );
-        }
-
-        // ---------------------------------------------------------------------
-        // ACTIVITY
-        // ---------------------------------------------------------------------
-
-        transaction.set(
-          activityRef,
-          {
-            'type':
-            'paymentReceived',
-
-            'title':
-            isFullyPaid
-                ? 'Monthly Bill Paid'
-                : 'Monthly Bill Partially Paid',
-
-            'subtitle':
-            '$customerName · '
-                '$billNumber · '
-                '₹${paidAmount.toStringAsFixed(0)}',
-
-            'module':
-            'palai',
-
-            'customerId':
-            customerId,
-
-            'billId':
-            billId,
-
-            'paymentId':
-            paymentRef.id,
-
-            'timestamp':
-            FieldValue.serverTimestamp(),
-
-            'createdAt':
-            FieldValue.serverTimestamp(),
-          },
-        );
-
-        return MonthlyBillPaymentResult(
-          paymentId:
-          paymentRef.id,
-
-          paymentNumber:
-          paymentNumber,
-
-          billId:
-          billId,
-
-          billNumber:
-          billNumber,
-
-          amountReceived:
-          paidAmount,
-
-          amountAppliedToBill:
-          amountApplied,
-
-          billRemainingAfter:
-          newRemaining,
-
-          pendingAfter:
-          newPending,
-
-          advanceAfter:
-          newAdvance,
-
-          paymentMethod:
-          paymentMethod.trim(),
-        );
-      },
-    )
-        .timeout(_timeout);
+    final after = await _bills(farmId).doc(billId).get().timeout(_timeout);
+
+    return MonthlyBillPaymentResult(
+      paymentId: result.paymentId,
+      paymentNumber: result.paymentNumber,
+      billId: billId,
+      billNumber: (billData['billNumber'] ?? billId).toString(),
+      amountReceived: result.amountReceived,
+      amountAppliedToBill: result.amountAppliedToPending,
+      billRemainingAfter: _money(after.data()?['remainingAmount']),
+      pendingAfter: result.pendingAfter,
+      advanceAfter: result.advanceAfter,
+      paymentMethod: result.paymentMethod,
+    );
   }
 
   // ===========================================================================
@@ -2692,232 +2259,81 @@ class MonthlyBillingService {
   // RECONCILE CUSTOMER OUTSTANDING
   // ===========================================================================
 
-  /// Non-destructive reconciliation.
+  /// READ-ONLY since statement billing.
   ///
-  /// It NEVER closes old bills and NEVER replaces customer pendingAmount
-  /// with the latest bill.
-  ///
-  /// If monthly bills contain more outstanding than customer.pendingAmount,
-  /// pendingAmount is raised to at least the total live monthly-bill balance.
-  ///
-  /// Any existing amount above the monthly-bill total is preserved because it
-  /// may belong to another source such as checkout/manual/other charges.
+  /// This used to RAISE pendingAmount to the total of open bill balances.
+  /// That silently re-charged amounts that had been waived (goat death)
+  /// or settled outside a bill, so it no longer writes anything. It
+  /// returns the customer's pendingAmount unchanged; use
+  /// [checkCustomerConsistency] to find customers whose figures disagree.
   Future<double> reconcileCustomerOutstanding({
     required String farmId,
     required String customerId,
   }) async {
-    final customerRef =
-    _customers(farmId).doc(customerId);
+    final snapshot = await _customers(farmId)
+        .doc(customerId)
+        .get()
+        .timeout(_timeout);
 
-    final bills =
-    await getMonthlyBills(
+    if (!snapshot.exists) {
+      throw StateError('Customer no longer exists.');
+    }
+
+    return _money(snapshot.data()?['pendingAmount']);
+  }
+
+  /// Flags (never fixes) a customer whose Palai figures disagree:
+  /// unpaid months adding up to more than pendingAmount, or a customer
+  /// holding both an outstanding balance and an unused advance.
+  Future<List<String>> checkCustomerConsistency({
+    required String farmId,
+    required String customerId,
+  }) async {
+    final customer = await _customers(farmId)
+        .doc(customerId)
+        .get()
+        .timeout(_timeout);
+    final data = customer.data() ?? {};
+    final pending = _money(data['pendingAmount']);
+    final advance = _money(data['advanceAmount']);
+
+    final bills = await getMonthlyBills(
       farmId: farmId,
       customerId: customerId,
     );
+    final openMonths = bills
+        .where((b) => !b.isVoid)
+        .fold<double>(0, (sum, b) => sum + b.effectiveOwnRemaining);
 
-    return _db
-        .runTransaction<double>(
-          (transaction) async {
-        final customerSnapshot =
-        await transaction.get(
-          customerRef,
-        );
-
-        if (!customerSnapshot.exists) {
-          throw StateError(
-            'Customer no longer exists.',
-          );
-        }
-
-        final currentPending =
-        _money(
-          customerSnapshot.data()?[
-          'pendingAmount'],
-        );
-
-        double liveBillTotal = 0;
-
-        for (final bill in bills) {
-          final billRef =
-          _bills(farmId).doc(
-            bill.id,
-          );
-
-          final billSnapshot =
-          await transaction.get(
-            billRef,
-          );
-
-          if (!billSnapshot.exists) {
-            continue;
-          }
-
-          final data =
-              billSnapshot.data() ?? {};
-
-          if (data['type']?.toString() !=
-              'monthly') {
-            continue;
-          }
-
-          liveBillTotal += _money(
-            data['remainingAmount'],
-          );
-        }
-
-        liveBillTotal =
-            _money(liveBillTotal);
-
-        final correctedPending =
-        currentPending <
-            liveBillTotal
-            ? liveBillTotal
-            : currentPending;
-
-        if ((correctedPending -
-            currentPending)
-            .abs() >
-            _epsilon) {
-          transaction.update(
-            customerRef,
-            {
-              'pendingAmount':
-              correctedPending,
-
-              'updatedAt':
-              FieldValue.serverTimestamp(),
-            },
-          );
-        }
-
-        return correctedPending;
-      },
-    )
-        .timeout(_timeout);
+    final issues = <String>[];
+    if (openMonths > pending + 0.5) {
+      issues.add(
+        'Unpaid months total ₹${openMonths.toStringAsFixed(2)} but the '
+            'customer\'s pending is ₹${pending.toStringAsFixed(2)}.',
+      );
+    }
+    if (pending > 0.5 && advance > 0.5) {
+      issues.add(
+        'Customer has both pending ₹${pending.toStringAsFixed(2)} and '
+            'advance ₹${advance.toStringAsFixed(2)}.',
+      );
+    }
+    return issues;
   }
 
   // ===========================================================================
   // CLOSE OPEN BILLS AFTER EXTERNAL SETTLEMENT
   // ===========================================================================
 
-  /// Synchronization helper for an external checkout/settlement flow.
-  ///
-  /// This method does not change customer.pendingAmount.
-  ///
-  /// It should only be called when the caller has genuinely settled the
-  /// customer's complete outstanding balance.
+  /// NO-OP since statement billing. Final Checkout now applies its
+  /// payment and advance to the customer's unpaid months itself (oldest
+  /// first), so there is nothing left to close here. Zeroing bills here
+  /// also left them with amountPaid + remainingAmount ≠ totalDue.
+  @Deprecated('Final Checkout settles monthly bills itself.')
   Future<void> closeOpenBillsIfCustomerSettled({
     required String farmId,
     required String customerId,
-  }) async {
-    final customerRef =
-    _customers(farmId).doc(customerId);
-
-    final customerSnapshot =
-    await customerRef
-        .get()
-        .timeout(_timeout);
-
-    if (!customerSnapshot.exists) {
-      return;
-    }
-
-    final pending =
-    _money(
-      customerSnapshot.data()?[
-      'pendingAmount'],
-    );
-
-    if (pending > _epsilon) {
-      return;
-    }
-
-    final snapshot =
-    await _bills(farmId)
-        .where(
-      'customerId',
-      isEqualTo: customerId,
-    )
-        .get()
-        .timeout(_timeout);
-
-    final refs = snapshot.docs
-        .where(
-          (d) =>
-      d.data()['type']
-          ?.toString() ==
-          'monthly' &&
-          _money(
-            d.data()[
-            'remainingAmount'],
-          ) >
-              _epsilon,
-    )
-        .map(
-          (d) => d.reference,
-    )
-        .toList();
-
-    if (refs.isEmpty) {
-      return;
-    }
-
-    await _db
-        .runTransaction<void>(
-          (transaction) async {
-        final documents =
-        <DocumentSnapshot<
-            Map<String, dynamic>>>[];
-
-        for (final ref in refs) {
-          documents.add(
-            await transaction.get(
-              ref,
-            ),
-          );
-        }
-
-        for (final document
-        in documents) {
-          if (!document.exists) {
-            continue;
-          }
-
-          final remaining =
-          _money(
-            document.data()?[
-            'remainingAmount'],
-          );
-
-          if (remaining <=
-              _epsilon) {
-            continue;
-          }
-
-          transaction.update(
-            document.reference,
-            {
-              'remainingAmount':
-              0.0,
-
-              'status':
-              'paid',
-
-              'paymentStatus':
-              'paid',
-
-              'closedByCheckout':
-              true,
-
-              'updatedAt':
-              FieldValue.serverTimestamp(),
-            },
-          );
-        }
-      },
-    )
-        .timeout(_timeout);
-  }
+  }) async {}
 
   // ===========================================================================
   // VOID UNPAID BILL

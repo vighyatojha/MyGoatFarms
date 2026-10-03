@@ -453,7 +453,9 @@ class CustomerGoatsReportPdfService {
           // breakdown existed.
           if (bill.goatBreakdown.isNotEmpty) ...[
             pw.Text(
-              'Current Month Palai (goat-wise)',
+              bill.isStatement
+                  ? '${bill.monthYear} Palai (goat-wise)'
+                  : 'Current Month Palai (goat-wise)',
               style: pw.TextStyle(fontSize: 8.5, fontWeight: pw.FontWeight.bold, color: PdfColors.grey800),
             ),
             pw.SizedBox(height: 3),
@@ -464,7 +466,9 @@ class CustomerGoatsReportPdfService {
             pw.SizedBox(height: 6),
           ] else if (goats.isNotEmpty) ...[
             pw.Text(
-              'Current Month Palai (goat-wise)',
+              bill.isStatement
+                  ? '${bill.monthYear} Palai (goat-wise)'
+                  : 'Current Month Palai (goat-wise)',
               style: pw.TextStyle(fontSize: 8.5, fontWeight: pw.FontWeight.bold, color: PdfColors.grey800),
             ),
             pw.SizedBox(height: 3),
@@ -495,17 +499,35 @@ class CustomerGoatsReportPdfService {
           // from old bills or payment history:
           //   Current Month Palai + Current Outstanding − Current Advance
           //   = Current Amount Due
-          _billRow('Current Month Palai', _currency(bill.palaiCharges)),
-          _billRow('Current Outstanding', _currency(bill.previousOutstanding)),
+          //
+          // Statement bills (billed for the previous month):
+          //   Month charges + Previous outstanding − Advance = Total payable
+          _billRow(
+            bill.isStatement ? '${bill.monthYear} Palai charges' : 'Current Month Palai',
+            _currency(bill.palaiCharges),
+          ),
+          _billRow(
+            bill.isStatement ? 'Previous Outstanding' : 'Current Outstanding',
+            _currency(bill.previousOutstanding),
+          ),
           if (bill.advanceApplied > 0)
-            _billRow('Current Advance', '- ${_currency(bill.advanceApplied)}'),
+            _billRow(
+              bill.isStatement ? 'Less: Advance Applied' : 'Current Advance',
+              '- ${_currency(bill.advanceApplied)}',
+            ),
           pw.SizedBox(height: 3),
           pw.Divider(color: PdfColors.grey300, height: 1),
           pw.SizedBox(height: 3),
-          _billRow('Current Amount Due', _currency(bill.totalDue), emphasize: true),
+          _billRow(
+            bill.isStatement ? 'Total Payable' : 'Current Amount Due',
+            _currency(bill.totalDue),
+            emphasize: true,
+          ),
           pw.SizedBox(height: 3),
           pw.Text(
-            'Current Month Calculation Only — previous monthly payments and historical transactions are not included above.',
+            bill.isStatement
+                ? 'Previous Outstanding is carried forward from earlier months and is not charged again.'
+                : 'Current Month Calculation Only — previous monthly payments and historical transactions are not included above.',
             style: const pw.TextStyle(fontSize: 6.5, color: PdfColors.grey600, fontStyle: pw.FontStyle.italic),
           ),
           // Goat Sale Credit (Trading) — what this customer still owes

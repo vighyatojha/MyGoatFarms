@@ -7,7 +7,7 @@ import '../../goat_icons.dart';
 import '../../models/bill_settings_model.dart';
 import '../../models/palai_models.dart';
 import '../../services/firestore_service.dart';
-import '../../services/monthly_billing_service.dart';
+import '../../services/monthly_statement_engine.dart';
 import '../../utils/palai_proration.dart';
 import 'final_checkout_report_screen.dart';
 
@@ -75,12 +75,8 @@ class _CheckoutChargesPaymentScreenState
   void initState() {
     super.initState();
 
-    // FIX: this used to default to each goat's FULL monthly `pricing`,
-    // even for a goat checking out mid-month — over-charging for days
-    // the goat was never here, and duplicating whatever that goat had
-    // already accrued on this month's live Monthly Bill. Pro-rate from
-    // the goat's joining date to TODAY (the checkout date) instead, the
-    // same way a mid-month check-in is already pro-rated.
+    // Starting value only; replaced in _loadCustomer by the exact
+    // unbilled-days charge once the customer's last billed month is known.
     final now = DateTime.now();
     final defaultCharges = widget.goats.fold<double>(
       0,
@@ -155,10 +151,39 @@ class _CheckoutChargesPaymentScreenState
 
       if (!mounted) return;
 
+      // STATEMENT BILLING: charge each goat for every day it has not
+      // been charged for yet — from the day after its last monthly
+      // statement (or its arrival) up to today — even across months.
+      // Days already on a monthly statement are never charged again,
+      // and a month not yet billed is charged here instead of by the
+      // next statement run (checkout moves the goat's billedThroughDate).
+      final lastBilled =
+      await MonthlyStatementEngine.instance.lastBilledPeriod(
+        farmId: widget.farmId,
+        customerId: widget.customerId,
+      );
+
+      if (!mounted) return;
+
+      final today = DateTime.now();
+      final unbilled = widget.goats.fold<double>(
+        0,
+            (sum, item) =>
+        sum +
+            MonthlyStatementEngine.instance
+                .unbilledChargeFor(
+              goat: item.goat,
+              lastBilledKey: lastBilled,
+              upTo: today,
+            )
+                .amount,
+      );
+
       setState(() {
         _customer = customer;
         _billSettings =
             farm?.billSettings ?? const BillSettings();
+        _chargesController.text = unbilled.toStringAsFixed(0);
         _loading = false;
       });
     } catch (e) {
@@ -480,23 +505,9 @@ class _CheckoutChargesPaymentScreenState
                     );
                   }
 
-                  // FIX: Final Checkout settles the customer through a
-                  // separate bill system (createMonthlyBill above) than
-                  // MonthlyBillingService's own live Monthly Bill. Without
-                  // this, that Monthly Bill kept showing its old
-                  // remainingAmount forever — still "counting" a goat
-                  // that had just been checked out and fully paid for —
-                  // and blocked future payments with a mismatch error.
-                  // This only closes them when the customer ended up fully
-                  // settled (pendingAmount == 0). If part of the checkout
-                  // amount was left unpaid, that balance now lives in
-                  // customer.pendingAmount (Customer Ledger + Finance
-                  // outstanding) and the helper leaves the bills alone.
-                  await MonthlyBillingService.instance
-                      .closeOpenBillsIfCustomerSettled(
-                    farmId: widget.farmId,
-                    customerId: widget.customerId,
-                  );
+                  // Monthly bills need no separate closing step any more:
+                  // createMonthlyBill above already applied the advance and
+                  // payment to the customer's unpaid months, oldest first.
                 },
               ),
         ),
