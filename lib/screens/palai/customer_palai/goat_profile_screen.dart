@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 
@@ -5,9 +6,11 @@ import '../../../app_theme.dart';
 import '../../../goat_icons.dart';
 import '../../../models/palai_models.dart';
 import '../../../services/firestore_service.dart';
+import '../../../services/health_reminder_scheduler.dart';
 import '../../../widgets/fast_route.dart';
 import '../../customers/record_customer_goat_death_screen.dart';
 import '../fullscreen_image_viewer.dart';
+import '../palai_goat_delete_helper.dart';
 import 'customer_goat_hair_screen.dart';
 import 'customer_goat_hoof_screen.dart';
 import 'customer_goat_medicine_screen.dart';
@@ -111,6 +114,46 @@ class _GoatProfileScreenState extends State<GoatProfileScreen>
       initialIndex: widget.initialTabIndex.clamp(0, _tabs.length - 1),
     );
     _loadCustomerName();
+    _ensureFarmReminders();
+  }
+
+  /// Puts this goat on the farm's Health Reminder Settings if it isn't
+  /// already — so a goat never needs its vaccination / hoof cutting /
+  /// hair trimming dates set by hand. Normally registration already did
+  /// this; this only repairs goats that were missed (see
+  /// [FirestoreService.ensureFarmHealthRemindersForGoat]). The tabs below
+  /// read live streams, so any records it adds appear on their own.
+  /// Best-effort and silent.
+  Future<void> _ensureFarmReminders() async {
+    try {
+      final seeded =
+      await FirestoreService.instance.ensureFarmHealthRemindersForGoat(
+        farmId: widget.farmId,
+        customerId: _goat.customerId,
+        goatId: _goat.id,
+      );
+
+      final goatCode = _goat.goatCode.trim().isNotEmpty
+          ? _goat.goatCode.trim()
+          : (_goat.tagNumber.trim().isNotEmpty
+          ? _goat.tagNumber.trim()
+          : _goat.id);
+
+      for (final reminder in seeded) {
+        await HealthReminderScheduler.instance.scheduleCustomerHealthReminder(
+          farmId: widget.farmId,
+          customerId: _goat.customerId,
+          goatId: _goat.id,
+          goatCode: goatCode,
+          recordType: reminder.recordType,
+          recordId: reminder.recordId,
+          label: reminder.label,
+          dueDate: reminder.dueDate,
+        );
+      }
+    } catch (e) {
+      debugPrint('GoatProfileScreen: could not apply farm reminders: $e');
+    }
   }
 
   Future<void> _loadCustomerName() async {
@@ -152,6 +195,18 @@ class _GoatProfileScreenState extends State<GoatProfileScreen>
     );
 
     if (recorded == true && mounted) {
+      Navigator.of(context).pop(true);
+    }
+  }
+
+  Future<void> _deleteGoat() async {
+    final deleted = await confirmAndDeletePalaiGoat(
+      context,
+      farmId: widget.farmId,
+      goat: _goat,
+    );
+
+    if (deleted && mounted) {
       Navigator.of(context).pop(true);
     }
   }
@@ -205,6 +260,15 @@ class _GoatProfileScreenState extends State<GoatProfileScreen>
             icon: const Icon(Icons.edit_outlined),
             onPressed: _openEditDetails,
           ),
+          if (!goat.isCheckedOut)
+            IconButton(
+              tooltip: 'Delete Goat',
+              icon: const Icon(
+                Icons.delete_outline_rounded,
+                color: AppColors.error,
+              ),
+              onPressed: _deleteGoat,
+            ),
         ],
       ),
       body: Column(

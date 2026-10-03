@@ -14,6 +14,7 @@ import 'health_records_screen.dart';
 import 'customer_palai/customer_goat_registration_screen.dart';
 import 'customer_palai/goat_profile_screen.dart';
 import 'health_reminders_screen.dart';
+import 'palai_goat_delete_helper.dart';
 
 /// Lists every goat currently boarded in Palai.
 ///
@@ -393,11 +394,7 @@ class _GoatListScreenState extends State<GoatListScreen> {
 
     try {
       for (final goat in selectedGoats) {
-        await FirestoreService.instance.deletePalaiGoat(
-          farmId,
-          goat.customerId,
-          goat.id,
-        );
+        await deletePalaiGoatEverywhere(farmId, goat);
       }
 
       if (!mounted) return;

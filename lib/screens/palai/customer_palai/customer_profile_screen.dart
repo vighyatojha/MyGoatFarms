@@ -1,14 +1,38 @@
+import 'dart:async';
+
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
-import '../../../goat_icons.dart';
-import 'customer_settings_screen.dart';
+import 'package:intl/intl.dart';
+
+import 'package:mygoatfarms/app_theme.dart';
+import 'package:mygoatfarms/goat_icons.dart';
+import 'package:mygoatfarms/models/monthly_bill_model.dart';
+import 'package:mygoatfarms/models/palai_models.dart';
+import 'package:mygoatfarms/services/firestore_service.dart';
+import 'package:mygoatfarms/services/monthly_billing_service.dart';
+import 'package:mygoatfarms/widgets/fast_route.dart';
+
+import 'package:mygoatfarms/widgets/finance/advance_history_section.dart';
+import 'package:mygoatfarms/widgets/goat_credit_cards.dart';
+import 'package:mygoatfarms/screens/finance/customer_ledger_screen.dart';
+import 'package:mygoatfarms/screens/palai/add_customer_screen.dart';
+import 'package:mygoatfarms/screens/palai/customer_palai/customer_goat_registration_screen.dart';
+import 'package:mygoatfarms/screens/palai/customer_palai/goat_profile_screen.dart';
+import 'package:mygoatfarms/screens/palai/fullscreen_image_viewer.dart';
+import 'package:mygoatfarms/screens/palai/palai_goat_delete_helper.dart';
+import 'package:mygoatfarms/screens/palai/multi_goat_checkout_screen.dart';
+import 'package:mygoatfarms/screens/customers/customer_goats_progress_report_pdf_screen.dart';
+import 'package:mygoatfarms/screens/customers/monthly_bills_screen.dart';
+import 'package:mygoatfarms/screens/customers/record_customer_goat_death_screen.dart';
 
 class CustomerProfileScreen extends StatefulWidget {
-  final String customerId;
+  final PalaiCustomer customer;
+  final String farmId;
 
   const CustomerProfileScreen({
     super.key,
-    required this.customerId,
+    required this.customer,
+    required this.farmId,
   });
 
   @override
@@ -16,367 +40,297 @@ class CustomerProfileScreen extends StatefulWidget {
       _CustomerProfileScreenState();
 }
 
-class _CustomerProfileScreenState
-    extends State<CustomerProfileScreen> {
-  final FirebaseFirestore _firestore =
-      FirebaseFirestore.instance;
+class _CustomerProfileScreenState extends State<CustomerProfileScreen> {
+  late PalaiCustomer _customer;
 
-  bool _loading = true;
-  String? _error;
+  bool _loadingCustomer = false;
+  bool _syncingOutstanding = false;
+  bool _showPreviousGoats = false;
 
-  Map<String, dynamic>? _customer;
+  StreamSubscription<DocumentSnapshot<Map<String, dynamic>>>? _farmSub;
 
   @override
   void initState() {
     super.initState();
-    _loadCustomer();
+
+    _customer = widget.customer;
+
+    // Keep the farm/customer screen lightweight.
+    // This listener is intentionally limited to the farm document.
+    _farmSub = FirebaseFirestore.instance
+        .collection('farms')
+        .doc(widget.farmId)
+        .snapshots()
+        .listen((_) {});
+  }
+
+  @override
+  void dispose() {
+    _farmSub?.cancel();
+    super.dispose();
   }
 
   // ===========================================================================
-  // LOAD CUSTOMER
+  // CUSTOMER ACTIONS
   // ===========================================================================
 
-  Future<void> _loadCustomer() async {
-    setState(() {
-      _loading = true;
-      _error = null;
-    });
-
-    try {
-      final doc = await _firestore
-          .collection('palaiCustomers')
-          .doc(widget.customerId)
-          .get();
-
-      if (!mounted) {
-        return;
-      }
-
-      if (!doc.exists) {
-        setState(() {
-          _loading = false;
-          _error = 'Customer not found.';
-        });
-        return;
-      }
-
-      setState(() {
-        _customer = doc.data();
-        _loading = false;
-      });
-    } catch (e) {
-      if (!mounted) {
-        return;
-      }
-
-      setState(() {
-        _loading = false;
-        _error = 'Unable to load customer.';
-      });
-    }
-  }
-
-  // ===========================================================================
-  // EDIT CUSTOMER
-  // ===========================================================================
-
-  Future<void> _editCustomer() async {
-    if (_customer == null) {
-      return;
-    }
-
-    final nameController = TextEditingController(
-      text: _customer?['name']?.toString() ?? '',
-    );
-
-    final mobileController = TextEditingController(
-      text:
-      _customer?['mobileNumber']?.toString() ?? '',
-    );
-
-    final addressController = TextEditingController(
-      text: _customer?['address']?.toString() ?? '',
-    );
-
-    final priceController = TextEditingController(
-      text: _customer?['price']?.toString() ?? '',
-    );
-
-    final formKey = GlobalKey<FormState>();
-
-    final result = await showDialog<bool>(
-      context: context,
-      builder: (dialogContext) {
-        bool saving = false;
-
-        return StatefulBuilder(
-          builder: (
-              context,
-              setDialogState,
-              ) {
-            return AlertDialog(
-              title: const Text(
-                'Edit Customer',
-              ),
-              content: SingleChildScrollView(
-                child: Form(
-                  key: formKey,
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      TextFormField(
-                        controller: nameController,
-                        textCapitalization:
-                        TextCapitalization.words,
-                        decoration:
-                        const InputDecoration(
-                          labelText: 'Customer Name',
-                          prefixIcon: Icon(
-                            Icons.person_outline,
-                          ),
-                          border:
-                          OutlineInputBorder(),
-                        ),
-                        validator: (value) {
-                          if (value == null ||
-                              value.trim().isEmpty) {
-                            return 'Enter customer name';
-                          }
-
-                          return null;
-                        },
-                      ),
-                      const SizedBox(height: 14),
-                      TextFormField(
-                        controller:
-                        mobileController,
-                        keyboardType:
-                        TextInputType.phone,
-                        maxLength: 10,
-                        decoration:
-                        const InputDecoration(
-                          labelText:
-                          'Mobile Number',
-                          prefixIcon: Icon(
-                            Icons.phone_outlined,
-                          ),
-                          border:
-                          OutlineInputBorder(),
-                          counterText: '',
-                        ),
-                        validator: (value) {
-                          if (value == null ||
-                              value.trim().isEmpty) {
-                            return null;
-                          }
-
-                          if (!RegExp(
-                            r'^[0-9]{10}$',
-                          ).hasMatch(
-                            value.trim(),
-                          )) {
-                            return 'Enter a valid 10-digit number';
-                          }
-
-                          return null;
-                        },
-                      ),
-                      const SizedBox(height: 14),
-                      TextFormField(
-                        controller:
-                        addressController,
-                        maxLines: 3,
-                        textCapitalization:
-                        TextCapitalization.sentences,
-                        decoration:
-                        const InputDecoration(
-                          labelText: 'Address',
-                          prefixIcon: Icon(
-                            Icons
-                                .location_on_outlined,
-                          ),
-                          border:
-                          OutlineInputBorder(),
-                        ),
-                      ),
-                      const SizedBox(height: 14),
-                      TextFormField(
-                        controller:
-                        priceController,
-                        keyboardType:
-                        const TextInputType
-                            .numberWithOptions(
-                          decimal: true,
-                        ),
-                        decoration:
-                        const InputDecoration(
-                          labelText:
-                          'Monthly Price',
-                          prefixIcon: Icon(
-                            Icons.currency_rupee,
-                          ),
-                          border:
-                          OutlineInputBorder(),
-                        ),
-                        validator: (value) {
-                          if (value == null ||
-                              value.trim().isEmpty) {
-                            return 'Enter monthly price';
-                          }
-
-                          final price =
-                          double.tryParse(
-                            value.trim(),
-                          );
-
-                          if (price == null ||
-                              price < 0) {
-                            return 'Enter a valid price';
-                          }
-
-                          return null;
-                        },
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-              actions: [
-                TextButton(
-                  onPressed: saving
-                      ? null
-                      : () {
-                    Navigator.of(
-                      dialogContext,
-                    ).pop(false);
-                  },
-                  child:
-                  const Text('Cancel'),
-                ),
-                FilledButton(
-                  onPressed: saving
-                      ? null
-                      : () async {
-                    if (!formKey
-                        .currentState!
-                        .validate()) {
-                      return;
-                    }
-
-                    setDialogState(() {
-                      saving = true;
-                    });
-
-                    try {
-                      final price =
-                          double.tryParse(
-                            priceController
-                                .text
-                                .trim(),
-                          ) ??
-                              0.0;
-
-                      await _firestore
-                          .collection(
-                        'palaiCustomers',
-                      )
-                          .doc(
-                        widget.customerId,
-                      )
-                          .update({
-                        'name':
-                        nameController
-                            .text
-                            .trim(),
-                        'mobileNumber':
-                        mobileController
-                            .text
-                            .trim(),
-                        'address':
-                        addressController
-                            .text
-                            .trim(),
-                        'price': price,
-                        'updatedAt':
-                        Timestamp.now(),
-                      });
-
-                      if (!dialogContext
-                          .mounted) {
-                        return;
-                      }
-
-                      Navigator.of(
-                        dialogContext,
-                      ).pop(true);
-                    } catch (e) {
-                      setDialogState(() {
-                        saving = false;
-                      });
-
-                      if (!dialogContext
-                          .mounted) {
-                        return;
-                      }
-
-                      ScaffoldMessenger.of(
-                        dialogContext,
-                      ).showSnackBar(
-                        const SnackBar(
-                          content: Text(
-                            'Unable to update customer.',
-                          ),
-                        ),
-                      );
-                    }
-                  },
-                  child: saving
-                      ? const SizedBox(
-                    width: 20,
-                    height: 20,
-                    child:
-                    CircularProgressIndicator(
-                      strokeWidth: 2,
-                    ),
-                  )
-                      : const Text('Save'),
-                ),
-              ],
-            );
-          },
-        );
-      },
-    );
-
-    nameController.dispose();
-    mobileController.dispose();
-    addressController.dispose();
-    priceController.dispose();
-
-    if (result == true) {
-      await _loadCustomer();
-    }
-  }
-
-  // ===========================================================================
-  // CUSTOMER SETTINGS
-  // ===========================================================================
-
-  Future<void> _openSettings() async {
+  Future<void> _openEdit() async {
     await Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (_) =>
-            CustomerSettingsScreen(
-              customerId: widget.customerId,
-            ),
+      fastRoute(
+        AddCustomerScreen(
+          customer: _customer,
+        ),
       ),
     );
 
-    if (!mounted) {
-      return;
+    if (!mounted) return;
+
+    await _refreshCustomer();
+  }
+
+  Future<void> _openRegisterGoat() async {
+    final goat = await Navigator.of(context).push<PalaiGoat>(
+      fastRoute(
+        CustomerGoatRegistrationScreen(
+          customerId: _customer.id,
+        ),
+      ),
+    );
+
+    if (!mounted || goat == null) return;
+
+    await _refreshCustomer();
+  }
+
+  Future<void> _openMultiGoatCheckout() async {
+    await Navigator.of(context).push(
+      fastRoute(
+        MultiGoatCheckoutScreen(
+          customerId: _customer.id,
+          initialSelectedGoats: const [],
+          allowSelection: true,
+        ),
+      ),
+    );
+
+    if (!mounted) return;
+
+    await _refreshCustomer();
+  }
+
+  Future<void> _checkoutGoat(PalaiGoat goat) async {
+    await Navigator.of(context).push(
+      fastRoute(
+        MultiGoatCheckoutScreen(
+          customerId: _customer.id,
+          initialSelectedGoats: [goat],
+          allowSelection: false,
+        ),
+      ),
+    );
+
+    if (!mounted) return;
+
+    await _refreshCustomer();
+  }
+
+  Future<void> _recordGoatDeath(PalaiGoat goat) async {
+    final recorded = await Navigator.of(context).push<bool>(
+      fastRoute(
+        RecordCustomerGoatDeathScreen(
+          farmId: widget.farmId,
+          customer: _customer,
+          goat: goat,
+        ),
+      ),
+    );
+
+    if (recorded == true && mounted) {
+      await _refreshCustomer();
+    }
+  }
+
+  Future<void> _deleteGoat(PalaiGoat goat) async {
+    final deleted = await confirmAndDeletePalaiGoat(
+      context,
+      farmId: widget.farmId,
+      goat: goat,
+    );
+
+    if (deleted && mounted) {
+      await _refreshCustomer();
+    }
+  }
+
+  Future<void> _openMonthlyBills() async {
+    await Navigator.of(context).push(
+      fastRoute(
+        MonthlyBillsScreen(
+          farmId: widget.farmId,
+          customerId: _customer.id,
+          customerName: _customer.name,
+          onAddPayment: (bill) async {
+            final result = await showModalBottomSheet<bool>(
+              context: context,
+              backgroundColor: Colors.transparent,
+              isScrollControlled: true,
+              useSafeArea: true,
+              builder: (_) {
+                return _AddPaymentSheet(
+                  farmId: widget.farmId,
+                  customer: _customer,
+                  bill: bill,
+                );
+              },
+            );
+
+            if (!mounted) return false;
+
+            if (result == true) {
+              await _refreshCustomer();
+              return true;
+            }
+
+            return false;
+          },
+        ),
+      ),
+    );
+
+    if (!mounted) return;
+
+    await _refreshCustomer();
+  }
+
+  Future<void> _openGoatsReport() async {
+    await Navigator.of(context).push(
+      fastRoute(
+        CustomerGoatsProgressReportScreen(
+          farmId: widget.farmId,
+          customer: _customer,
+        ),
+      ),
+    );
+  }
+
+  // ===========================================================================
+  // CUSTOMER REFRESH
+  // ===========================================================================
+
+  Future<void> _refreshCustomer() async {
+    if (_loadingCustomer) return;
+
+    if (mounted) {
+      setState(() {
+        _loadingCustomer = true;
+      });
     }
 
-    await _loadCustomer();
+    try {
+      final customer = await FirestoreService.instance.getCustomer(
+        widget.farmId,
+        _customer.id,
+      );
+
+      if (!mounted) return;
+
+      if (customer != null) {
+        setState(() {
+          _customer = customer;
+        });
+      }
+    } catch (e) {
+      debugPrint('Customer refresh error: $e');
+    } finally {
+      if (mounted) {
+        setState(() {
+          _loadingCustomer = false;
+        });
+      }
+    }
+  }
+
+  // ===========================================================================
+  // OUTSTANDING SYNC
+  // ===========================================================================
+
+  Future<void> _syncOutstandingWithBills() async {
+    if (_syncingOutstanding) return;
+
+    setState(() {
+      _syncingOutstanding = true;
+    });
+
+    try {
+      final trueOutstanding =
+      await MonthlyBillingService.instance.reconcileCustomerOutstanding(
+        farmId: widget.farmId,
+        customerId: _customer.id,
+      );
+
+      if (!mounted) return;
+
+      await _refreshCustomer();
+
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'Outstanding synced: ₹${trueOutstanding.toStringAsFixed(0)}',
+          ),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Could not sync outstanding: $e'),
+          backgroundColor: AppColors.error,
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _syncingOutstanding = false;
+        });
+      }
+    }
+  }
+
+  // ===========================================================================
+  // PAYMENT HISTORY
+  // ===========================================================================
+
+  Stream<QuerySnapshot<Map<String, dynamic>>> _paymentHistoryStream() {
+    return FirebaseFirestore.instance
+        .collection('farms')
+        .doc(widget.farmId)
+        .collection('payments')
+        .where(
+      'customerId',
+      isEqualTo: _customer.id,
+    )
+        .snapshots();
+  }
+
+  // ===========================================================================
+  // OPEN CUSTOMER LEDGER
+  // ===========================================================================
+
+  Future<void> _openCustomerLedger() async {
+    await Navigator.of(context).push(
+      fastRoute(
+        const CustomerLedgerScreen(),
+      ),
+    );
+
+    if (!mounted) return;
+
+    await _refreshCustomer();
   }
 
   // ===========================================================================
@@ -385,241 +339,340 @@ class _CustomerProfileScreenState
 
   @override
   Widget build(BuildContext context) {
+    final outstanding = _customer.pendingAmount;
+    final advance = _customer.advanceAmount;
+
     return Scaffold(
+      backgroundColor: AppColors.paleGreen,
+
       appBar: AppBar(
-        title: const Text(
-          'Customer Profile',
+        backgroundColor: AppColors.paleGreen,
+        elevation: 0,
+        foregroundColor: AppColors.textDark,
+        titleSpacing: 4,
+        title: Text(
+          _customer.name,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: AppTheme.heading(
+            size: 18,
+          ),
         ),
         actions: [
-          if (!_loading &&
-              _customer != null)
-            IconButton(
-              tooltip: 'Edit customer',
-              onPressed:
-              _editCustomer,
-              icon: const Icon(
-                Icons.edit_outlined,
-              ),
+          IconButton(
+            tooltip: 'Edit customer',
+            onPressed: _openEdit,
+            icon: const Icon(
+              Icons.edit_outlined,
             ),
-          if (!_loading &&
-              _customer != null)
-            PopupMenuButton<String>(
-              onSelected: (value) {
-                if (value ==
-                    'settings') {
-                  _openSettings();
-                }
-              },
-              itemBuilder:
-                  (context) => [
-                const PopupMenuItem(
-                  value: 'settings',
-                  child: ListTile(
-                    contentPadding:
-                    EdgeInsets.zero,
-                    leading: Icon(
-                      Icons
-                          .settings_outlined,
-                    ),
-                    title: Text(
-                      'Customer Settings',
-                    ),
-                  ),
-                ),
-              ],
-            ),
+          ),
         ],
       ),
-      body: _buildBody(),
-    );
-  }
 
-  Widget _buildBody() {
-    if (_loading) {
-      return const Center(
-        child:
-        CircularProgressIndicator(),
-      );
-    }
+      body: RefreshIndicator(
+        color: AppColors.primaryGreen,
+        onRefresh: _refreshCustomer,
 
-    if (_error != null) {
-      return _buildError();
-    }
-
-    if (_customer == null) {
-      return const Center(
-        child: Text(
-          'Customer information unavailable.',
-        ),
-      );
-    }
-
-    return RefreshIndicator(
-      onRefresh: _loadCustomer,
-      child: ListView(
-        padding:
-        const EdgeInsets.fromLTRB(
-          16,
-          16,
-          16,
-          32,
-        ),
-        children: [
-          _buildCustomerHeader(),
-
-          const SizedBox(
-            height: 20,
+        child: StreamBuilder<List<PalaiGoat>>(
+          stream: FirestoreService.instance.goatsForCustomerStream(
+            widget.farmId,
+            _customer.id,
           ),
 
-          _buildQuickSummary(),
+          builder: (context, goatSnapshot) {
+            final goats = goatSnapshot.data ?? const <PalaiGoat>[];
 
-          const SizedBox(
-            height: 24,
-          ),
+            final activeGoats = goats
+                .where(
+                  (goat) => !goat.isCheckedOut,
+            )
+                .length;
 
-          _buildSectionTitle(
-            'Customer Information',
-          ),
-
-          const SizedBox(
-            height: 12,
-          ),
-
-          _buildInformationCard(),
-
-          const SizedBox(
-            height: 24,
-          ),
-
-          _buildSectionTitle(
-            'Palai Management',
-          ),
-
-          const SizedBox(
-            height: 12,
-          ),
-
-          _buildManagementGrid(),
-
-          const SizedBox(
-            height: 24,
-          ),
-
-          _buildSectionTitle(
-            'Customer Settings',
-          ),
-
-          const SizedBox(
-            height: 12,
-          ),
-
-          _buildSettingsPreview(),
-        ],
-      ),
-    );
-  }
-
-  // ===========================================================================
-  // HEADER
-  // ===========================================================================
-
-  Widget _buildCustomerHeader() {
-    final name =
-    _customer?['name']
-        ?.toString()
-        .trim()
-        .isNotEmpty ==
-        true
-        ? _customer!['name']
-        .toString()
-        : 'Customer';
-
-    final package =
-        _customer?['package']
-            ?.toString() ??
-            'Palai';
-
-    final active =
-        _customer?['active'] == true;
-
-    return Container(
-      padding:
-      const EdgeInsets.all(20),
-      decoration:
-      BoxDecoration(
-        borderRadius:
-        BorderRadius.circular(20),
-        color: Theme.of(context)
-            .colorScheme
-            .primaryContainer,
-      ),
-      child: Row(
-        children: [
-          CircleAvatar(
-            radius: 34,
-            child: Text(
-              _initials(name),
-              style: const TextStyle(
-                fontSize: 20,
-                fontWeight:
-                FontWeight.w700,
+            return ListView(
+              physics: const AlwaysScrollableScrollPhysics(),
+              padding: const EdgeInsets.fromLTRB(
+                16,
+                8,
+                16,
+                32,
               ),
-            ),
-          ),
-          const SizedBox(
-            width: 16,
-          ),
-          Expanded(
-            child: Column(
-              crossAxisAlignment:
-              CrossAxisAlignment.start,
+
               children: [
-                Text(
-                  name,
-                  maxLines: 2,
-                  overflow:
-                  TextOverflow.ellipsis,
-                  style: Theme.of(context)
-                      .textTheme
-                      .titleLarge
-                      ?.copyWith(
-                    fontWeight:
-                    FontWeight.w700,
+                // ============================================================
+                // CUSTOMER INFORMATION
+                // ============================================================
+
+                _buildCustomerInformationSection(),
+
+                const SizedBox(height: 18),
+
+                // ============================================================
+                // FINANCIAL SUMMARY
+                // ============================================================
+
+                _buildSectionHeader(
+                  title: 'Payment Information',
+                  icon: Icons.account_balance_wallet_outlined,
+                ),
+
+                const SizedBox(height: 10),
+
+                _buildFinancialSummary(
+                  outstanding,
+                  advance,
+                ),
+
+                const SizedBox(height: 12),
+
+                _buildFinancialActions(),
+
+                // What this customer still owes on goat sales (sold on
+                // credit). Hidden when they owe nothing.
+                GoatCreditProfileCard(
+                  farmId: widget.farmId,
+                  customerId: _customer.id,
+                  mobile: _customer.mobileNumber,
+                  name: _customer.name,
+                ),
+
+                const SizedBox(height: 14),
+
+                _buildMonthlyBillingButton(),
+
+                const SizedBox(height: 10),
+
+                _buildGoatsReportButton(),
+
+                const SizedBox(height: 16),
+
+                // ============================================================
+                // GOAT LIST — CURRENT / PREVIOUS
+                // ============================================================
+
+                _buildSectionHeader(
+                  title: 'Goats',
+                  icon: GoatIcons.paw,
+                ),
+
+                const SizedBox(height: 10),
+
+                if (!goatSnapshot.hasData)
+                  const _GoatListSkeleton()
+                else ...[
+                  _buildGoatViewSlider(
+                    currentCount: activeGoats,
+                    previousCount: goats.length - activeGoats,
+                  ),
+
+                  const SizedBox(height: 12),
+
+                  if (!_showPreviousGoats)
+                    _buildCurrentGoatsSection(
+                      goats.where((goat) => !goat.isCheckedOut).toList(),
+                    )
+                  else
+                    _buildPreviousGoatsSection(
+                      goats.where((goat) => goat.isCheckedOut).toList(),
+                    ),
+                ],
+
+                const SizedBox(height: 22),
+
+                // ============================================================
+                // PAYMENT HISTORY — ALWAYS LAST SECTION
+                // ============================================================
+
+                _buildPaymentHistory(),
+
+                const SizedBox(height: 12),
+              ],
+            );
+          },
+        ),
+      ),
+    );
+  }
+
+  // ===========================================================================
+  // SECTION HEADER
+  // ===========================================================================
+
+  Widget _buildSectionHeader({
+    required String title,
+    required IconData icon,
+    Widget? trailing,
+  }) {
+    return Row(
+      children: [
+        Container(
+          width: 36,
+          height: 36,
+          decoration: const BoxDecoration(
+            color: AppColors.lightGreen,
+            shape: BoxShape.circle,
+          ),
+          child: Icon(
+            icon,
+            size: 19,
+            color: AppColors.primaryGreen,
+          ),
+        ),
+
+        const SizedBox(width: 10),
+
+        Expanded(
+          child: Text(
+            title,
+            style: AppTheme.heading(
+              size: 17,
+            ),
+          ),
+        ),
+
+        ?trailing,
+      ],
+    );
+  }
+
+  // ===========================================================================
+  // CUSTOMER INFORMATION
+  // ===========================================================================
+
+  Widget _buildCustomerInformationSection() {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(16),
+      decoration: AppTheme.card(
+        radius: 18,
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                width: 56,
+                height: 56,
+                decoration: const BoxDecoration(
+                  color: AppColors.lightGreen,
+                  shape: BoxShape.circle,
+                ),
+                alignment: Alignment.center,
+                child: Text(
+                  _customer.name.trim().isNotEmpty
+                      ? _customer.name.trim()[0].toUpperCase()
+                      : '?',
+                  style: AppTheme.heading(
+                    size: 21,
+                    color: AppColors.darkGreen,
                   ),
                 ),
-                const SizedBox(
-                  height: 5,
-                ),
-                Text(
-                  package,
-                  style: Theme.of(context)
-                      .textTheme
-                      .bodyMedium,
-                ),
-                const SizedBox(
-                  height: 8,
-                ),
-                Row(
+              ),
+
+              const SizedBox(width: 14),
+
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Icon(
-                      active
-                          ? Icons.check_circle
-                          : Icons
-                          .cancel_outlined,
-                      size: 16,
-                    ),
-                    const SizedBox(
-                      width: 5,
-                    ),
                     Text(
-                      active
-                          ? 'Active Customer'
-                          : 'Inactive Customer',
+                      _customer.name,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: AppTheme.heading(
+                        size: 17,
+                      ),
+                    ),
+
+                    const SizedBox(height: 3),
+
+                    Row(
+                      children: [
+                        const Icon(
+                          Icons.phone_outlined,
+                          size: 14,
+                          color: AppColors.textGrey,
+                        ),
+                        const SizedBox(width: 5),
+                        Expanded(
+                          child: Text(
+                            _customer.mobileNumber,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: AppTheme.body(
+                              size: 11,
+                              color: AppColors.textGrey,
+                            ),
+                          ),
+                        ),
+                      ],
                     ),
                   ],
                 ),
-              ],
+              ),
+
+              if (_loadingCustomer)
+                const SizedBox(
+                  width: 17,
+                  height: 17,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    color: AppColors.primaryGreen,
+                  ),
+                ),
+            ],
+          ),
+
+          if (_customer.address.trim().isNotEmpty) ...[
+            const SizedBox(height: 14),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(11),
+              decoration: BoxDecoration(
+                color: AppColors.paleGreen,
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Icon(
+                    Icons.location_on_outlined,
+                    size: 17,
+                    color: AppColors.primaryGreen,
+                  ),
+                  const SizedBox(width: 7),
+                  Expanded(
+                    child: Text(
+                      _customer.address,
+                      style: AppTheme.body(
+                        size: 11,
+                        color: AppColors.textDark,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
             ),
+          ],
+
+          const SizedBox(height: 13),
+
+          Row(
+            children: [
+              const Icon(
+                Icons.calendar_today_outlined,
+                size: 15,
+                color: AppColors.textGrey,
+              ),
+              const SizedBox(width: 7),
+              Text(
+                'Joined ${DateFormat('dd MMM yyyy').format(_customer.joiningDate)}',
+                style: AppTheme.body(
+                  size: 10,
+                  color: AppColors.textGrey,
+                ),
+              ),
+            ],
           ),
         ],
       ),
@@ -627,87 +680,440 @@ class _CustomerProfileScreenState
   }
 
   // ===========================================================================
-  // QUICK SUMMARY
+  // FINANCIAL SUMMARY
   // ===========================================================================
 
-  Widget _buildQuickSummary() {
-    final price =
-    _asDouble(
-      _customer?['price'],
-    );
-
-    final pending =
-    _asDouble(
-      _customer?['pendingAmount'],
-    );
-
-    return Row(
+  Widget _buildFinancialSummary(
+      double outstanding,
+      double advance,
+      ) {
+    return Column(
       children: [
-        Expanded(
-          child: _buildSummaryCard(
-            icon:
-            Icons.currency_rupee,
-            title:
-            'Monthly Price',
-            value:
-            '₹${_formatAmount(price)}',
+        Row(
+          children: [
+            Expanded(
+              child: _financialCard(
+                icon: Icons.receipt_long_outlined,
+                label: 'Outstanding',
+                value: _rupees(outstanding),
+                color: outstanding > 0
+                    ? AppColors.error
+                    : AppColors.success,
+              ),
+            ),
+
+            const SizedBox(width: 10),
+
+            Expanded(
+              child: _financialCard(
+                icon: Icons.account_balance_wallet_outlined,
+                label: 'Advance',
+                value: _rupees(advance),
+                color: AppColors.success,
+              ),
+            ),
+          ],
+        ),
+
+        const SizedBox(height: 10),
+
+        Container(
+          width: double.infinity,
+          padding: const EdgeInsets.symmetric(
+            horizontal: 14,
+            vertical: 12,
           ),
-        ),
-        const SizedBox(
-          width: 12,
-        ),
-        Expanded(
-          child: _buildSummaryCard(
-            icon:
-            Icons
-                .account_balance_wallet_outlined,
-            title:
-            'Pending',
-            value:
-            '₹${_formatAmount(pending)}',
+          decoration: AppTheme.card(
+            radius: 14,
+          ),
+          child: Row(
+            children: [
+              Container(
+                width: 40,
+                height: 40,
+                decoration: const BoxDecoration(
+                  color: AppColors.lightGreen,
+                  shape: BoxShape.circle,
+                ),
+                child: const Icon(
+                  Icons.account_balance_outlined,
+                  color: AppColors.primaryGreen,
+                  size: 20,
+                ),
+              ),
+
+              const SizedBox(width: 11),
+
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Current Balance',
+                      style: AppTheme.body(
+                        size: 10,
+                        color: AppColors.textGrey,
+                      ),
+                    ),
+
+                    const SizedBox(height: 2),
+
+                    Text(
+                      outstanding > 0
+                          ? 'Customer owes ${_rupees(outstanding)}'
+                          : advance > 0
+                          ? 'Customer has ${_rupees(advance)} advance'
+                          : 'Account is settled',
+                      style: AppTheme.heading(
+                        size: 12,
+                        color: outstanding > 0
+                            ? AppColors.error
+                            : AppColors.darkGreen,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+
+              IconButton(
+                tooltip: 'Sync with Monthly Bills',
+                onPressed: _syncingOutstanding
+                    ? null
+                    : _syncOutstandingWithBills,
+                icon: _syncingOutstanding
+                    ? const SizedBox(
+                  width: 18,
+                  height: 18,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                  ),
+                )
+                    : const Icon(
+                  Icons.sync_rounded,
+                  size: 20,
+                  color: AppColors.textGrey,
+                ),
+              ),
+            ],
           ),
         ),
       ],
     );
   }
 
-  Widget _buildSummaryCard({
+  Widget _financialCard({
+    required IconData icon,
+    required String label,
+    required String value,
+    required Color color,
+  }) {
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: AppTheme.card(
+        radius: 15,
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            width: 34,
+            height: 34,
+            decoration: BoxDecoration(
+              color: color.withValues(alpha: 0.12),
+              shape: BoxShape.circle,
+            ),
+            child: Icon(
+              icon,
+              size: 17,
+              color: color,
+            ),
+          ),
+
+          const SizedBox(height: 8),
+
+          Text(
+            value,
+            style: AppTheme.heading(
+              size: 18,
+              color: color,
+            ),
+          ),
+
+          const SizedBox(height: 2),
+
+          Text(
+            label,
+            style: AppTheme.body(
+              size: 10,
+              color: AppColors.textGrey,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ===========================================================================
+  // FINANCIAL ACTIONS
+  // ===========================================================================
+
+  Widget _buildFinancialActions() {
+    return Row(
+      children: [
+        Expanded(
+          child: ElevatedButton.icon(
+            onPressed: _openAddPayment,
+            icon: const Icon(
+              Icons.payments_outlined,
+              size: 18,
+            ),
+            label: const Text(
+              'Add Payment',
+            ),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppColors.primaryGreen,
+              foregroundColor: Colors.white,
+              elevation: 0,
+              padding: const EdgeInsets.symmetric(
+                vertical: 13,
+              ),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12),
+              ),
+            ),
+          ),
+        ),
+
+        const SizedBox(width: 9),
+
+        Expanded(
+          child: OutlinedButton.icon(
+            onPressed: _openAddOutstanding,
+            icon: const Icon(
+              Icons.add_card_outlined,
+              size: 18,
+            ),
+            label: const Text(
+              'Add Outstanding',
+            ),
+            style: OutlinedButton.styleFrom(
+              foregroundColor: AppColors.darkGreen,
+              side: const BorderSide(
+                color: AppColors.primaryGreen,
+              ),
+              padding: const EdgeInsets.symmetric(
+                vertical: 13,
+              ),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12),
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  // ===========================================================================
+  // MONTHLY BILLS
+  // ===========================================================================
+
+  Widget _buildMonthlyBillingButton() {
+    return _actionCard(
+      icon: Icons.receipt_long_outlined,
+      title: 'Monthly Bills',
+      subtitle: 'Generate and manage monthly bills',
+      onTap: _openMonthlyBills,
+    );
+  }
+
+  Widget _buildGoatsReportButton() {
+    return _actionCard(
+      icon: Icons.analytics_outlined,
+      title: 'Goats Report',
+      subtitle: 'Generate a progress report for this customer',
+      onTap: _openGoatsReport,
+    );
+  }
+
+  Widget _actionCard({
     required IconData icon,
     required String title,
-    required String value,
+    required String subtitle,
+    required VoidCallback onTap,
   }) {
-    return Card(
-      child: Padding(
-        padding:
-        const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment:
-          CrossAxisAlignment.start,
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(15),
+        child: Container(
+          padding: const EdgeInsets.all(13),
+          decoration: AppTheme.card(
+            radius: 15,
+          ),
+          child: Row(
+            children: [
+              Container(
+                width: 42,
+                height: 42,
+                decoration: const BoxDecoration(
+                  color: AppColors.lightGreen,
+                  shape: BoxShape.circle,
+                ),
+                child: Icon(
+                  icon,
+                  color: AppColors.primaryGreen,
+                  size: 20,
+                ),
+              ),
+
+              const SizedBox(width: 11),
+
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      title,
+                      style: AppTheme.heading(
+                        size: 13,
+                      ),
+                    ),
+
+                    const SizedBox(height: 2),
+
+                    Text(
+                      subtitle,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: AppTheme.body(
+                        size: 10,
+                        color: AppColors.textGrey,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+
+              const Icon(
+                Icons.chevron_right_rounded,
+                color: AppColors.textGrey,
+                size: 20,
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  // ===========================================================================
+  // GOAT VIEW SWITCHER
+  // ===========================================================================
+
+  Widget _buildGoatViewSlider({
+    required int currentCount,
+    required int previousCount,
+  }) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(4),
+      decoration: BoxDecoration(
+        color: AppColors.lightGreen,
+        borderRadius: BorderRadius.circular(13),
+        border: Border.all(
+          color: AppColors.primaryGreen.withValues(alpha: 0.12),
+        ),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: _goatViewTab(
+              label: 'Current Goats',
+              count: currentCount,
+              selected: !_showPreviousGoats,
+              icon: Icons.login_rounded,
+              onTap: () {
+                if (_showPreviousGoats) {
+                  setState(() => _showPreviousGoats = false);
+                }
+              },
+            ),
+          ),
+          Expanded(
+            child: _goatViewTab(
+              label: 'Previous Goats',
+              count: previousCount,
+              selected: _showPreviousGoats,
+              icon: Icons.history_rounded,
+              onTap: () {
+                if (!_showPreviousGoats) {
+                  setState(() => _showPreviousGoats = true);
+                }
+              },
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _goatViewTab({
+    required String label,
+    required int count,
+    required bool selected,
+    required IconData icon,
+    required VoidCallback onTap,
+  }) {
+    return GestureDetector(
+      onTap: onTap,
+      behavior: HitTestBehavior.opaque,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 180),
+        padding: const EdgeInsets.symmetric(
+          horizontal: 10,
+          vertical: 10,
+        ),
+        decoration: BoxDecoration(
+          color: selected ? Colors.white : Colors.transparent,
+          borderRadius: BorderRadius.circular(10),
+          boxShadow: selected
+              ? [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.06),
+              blurRadius: 5,
+              offset: const Offset(0, 2),
+            ),
+          ]
+              : null,
+        ),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
           children: [
             Icon(
               icon,
-              size: 24,
+              size: 16,
+              color: selected
+                  ? AppColors.primaryGreen
+                  : AppColors.textGrey,
             ),
-            const SizedBox(
-              height: 12,
-            ),
-            Text(
-              title,
-              style: Theme.of(context)
-                  .textTheme
-                  .bodySmall,
-            ),
-            const SizedBox(
-              height: 3,
-            ),
-            Text(
-              value,
-              style: Theme.of(context)
-                  .textTheme
-                  .titleMedium
-                  ?.copyWith(
-                fontWeight:
-                FontWeight.w700,
+            const SizedBox(width: 6),
+            Flexible(
+              child: Text(
+                '$label ($count)',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                textAlign: TextAlign.center,
+                style: AppTheme.body(
+                  size: 10,
+                  color: selected
+                      ? AppColors.darkGreen
+                      : AppColors.textGrey,
+                  weight: selected
+                      ? FontWeight.w700
+                      : FontWeight.w600,
+                ),
               ),
             ),
           ],
@@ -716,84 +1122,138 @@ class _CustomerProfileScreenState
     );
   }
 
-  // ===========================================================================
-  // INFORMATION
-  // ===========================================================================
-
-  Widget _buildInformationCard() {
-    final mobile =
-        _customer?['mobileNumber']
-            ?.toString() ??
-            '';
-
-    final address =
-        _customer?['address']
-            ?.toString() ??
-            '';
-
-    final package =
-        _customer?['package']
-            ?.toString() ??
-            '';
-
-    final joiningDate =
-    _asDate(
-      _customer?['joiningDate'],
+  Widget _buildCurrentGoatsSection(List<PalaiGoat> currentGoats) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Expanded(
+              child: Text(
+                currentGoats.isEmpty
+                    ? 'No current goats'
+                    : '${currentGoats.length} Currently Boarded',
+                style: AppTheme.heading(size: 13),
+              ),
+            ),
+            if (currentGoats.isNotEmpty)
+              TextButton.icon(
+                onPressed: _openMultiGoatCheckout,
+                icon: const Icon(Icons.logout_rounded, size: 17),
+                label: const Text('Checkout'),
+                style: TextButton.styleFrom(
+                  foregroundColor: AppColors.darkGreen,
+                  padding: const EdgeInsets.symmetric(horizontal: 5),
+                  minimumSize: Size.zero,
+                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                ),
+              ),
+            TextButton.icon(
+              onPressed: _openRegisterGoat,
+              icon: const Icon(Icons.add, size: 17),
+              label: const Text('Add Goat'),
+              style: TextButton.styleFrom(
+                foregroundColor: AppColors.primaryGreen,
+                padding: const EdgeInsets.symmetric(horizontal: 5),
+                minimumSize: Size.zero,
+                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 8),
+        if (currentGoats.isEmpty)
+          _emptyCurrentGoatsState()
+        else
+          for (final goat in currentGoats)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 9),
+              child: _goatHistoryCard(
+                goat,
+                showCheckout: true,
+              ),
+            ),
+      ],
     );
+  }
 
-    return Card(
+  Widget _buildPreviousGoatsSection(List<PalaiGoat> previousGoats) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Expanded(
+              child: Text(
+                previousGoats.isEmpty
+                    ? 'No previous goats'
+                    : '${previousGoats.length} Previous Goats',
+                style: AppTheme.heading(size: 13),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 8),
+        if (previousGoats.isEmpty)
+          _emptyPreviousGoatsState()
+        else
+          for (final goat in previousGoats)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 9),
+              child: _goatHistoryCard(goat),
+            ),
+      ],
+    );
+  }
+
+  Widget _emptyCurrentGoatsState() {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(
+        vertical: 22,
+        horizontal: 18,
+      ),
+      decoration: AppTheme.card(radius: 16),
       child: Column(
         children: [
-          _buildInfoRow(
-            icon:
-            Icons.phone_outlined,
-            label:
-            'Mobile Number',
-            value: mobile.isEmpty
-                ? 'Not provided'
-                : mobile,
+          Container(
+            width: 54,
+            height: 54,
+            decoration: const BoxDecoration(
+              color: AppColors.lightGreen,
+              shape: BoxShape.circle,
+            ),
+            child: const Icon(
+              GoatIcons.paw,
+              size: 25,
+              color: AppColors.primaryGreen,
+            ),
           ),
-          const Divider(
-            height: 1,
+          const SizedBox(height: 9),
+          Text(
+            'No current goats',
+            style: AppTheme.heading(size: 13),
           ),
-          _buildInfoRow(
-            icon:
-            Icons
-                .location_on_outlined,
-            label:
-            'Address',
-            value: address.isEmpty
-                ? 'Not provided'
-                : address,
+          const SizedBox(height: 3),
+          Text(
+            'Check in a goat to see it here.',
+            textAlign: TextAlign.center,
+            style: AppTheme.body(
+              size: 9,
+              color: AppColors.textGrey,
+            ),
           ),
-          const Divider(
-            height: 1,
-          ),
-          _buildInfoRow(
-            icon:
-            Icons
-                .inventory_2_outlined,
-            label:
-            'Palai Package',
-            value:
-            package.isEmpty
-                ? 'Not provided'
-                : package,
-          ),
-          const Divider(
-            height: 1,
-          ),
-          _buildInfoRow(
-            icon:
-            Icons
-                .calendar_today_outlined,
-            label:
-            'Joining Date',
-            value:
-            joiningDate == null
-                ? 'Not provided'
-                : _formatDate(
-              joiningDate,
+          const SizedBox(height: 11),
+          OutlinedButton.icon(
+            onPressed: _openRegisterGoat,
+            icon: const Icon(Icons.add, size: 16),
+            label: const Text('Check In Goat'),
+            style: OutlinedButton.styleFrom(
+              foregroundColor: AppColors.darkGreen,
+              side: const BorderSide(color: AppColors.primaryGreen),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(10),
+              ),
             ),
           ),
         ],
@@ -801,224 +1261,1267 @@ class _CustomerProfileScreenState
     );
   }
 
-  Widget _buildInfoRow({
-    required IconData icon,
-    required String label,
-    required String value,
-  }) {
-    return Padding(
-      padding:
-      const EdgeInsets.all(16),
-      child: Row(
-        crossAxisAlignment:
-        CrossAxisAlignment.start,
+  Widget _emptyPreviousGoatsState() {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(
+        vertical: 22,
+        horizontal: 18,
+      ),
+      decoration: AppTheme.card(radius: 16),
+      child: Column(
         children: [
-          Icon(
-            icon,
-            size: 22,
+          Container(
+            width: 54,
+            height: 54,
+            decoration: const BoxDecoration(
+              color: AppColors.lightGreen,
+              shape: BoxShape.circle,
+            ),
+            child: const Icon(
+              Icons.history_rounded,
+              size: 25,
+              color: AppColors.primaryGreen,
+            ),
           ),
-          const SizedBox(
-            width: 14,
+          const SizedBox(height: 9),
+          Text(
+            'No previous goats',
+            style: AppTheme.heading(size: 13),
           ),
-          Expanded(
-            child: Column(
-              crossAxisAlignment:
-              CrossAxisAlignment.start,
+          const SizedBox(height: 3),
+          Text(
+            'Checked-out goats will appear here.',
+            textAlign: TextAlign.center,
+            style: AppTheme.body(
+              size: 9,
+              color: AppColors.textGrey,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ===========================================================================
+  // GOAT CARD
+  // ===========================================================================
+
+  Widget _goatHistoryCard(
+      PalaiGoat goat, {
+        bool showCheckout = false,
+      }) {
+    final healthColor = _healthColor(goat.healthStatus);
+    final showActions = showCheckout && !goat.isCheckedOut;
+
+    Future<void> openProfile() async {
+      await Navigator.of(context).push(
+        fastRoute(
+          GoatProfileScreen(
+            farmId: widget.farmId,
+            goat: goat,
+          ),
+        ),
+      );
+
+      if (mounted) {
+        setState(() {});
+      }
+    }
+
+    final goatName = goat.name.trim().isNotEmpty
+        ? goat.name.trim()
+        : (goat.goatCode.trim().isNotEmpty ? goat.goatCode : 'Goat');
+
+    final gender = goat.gender.trim();
+    final package = goat.monthlyPackage.trim().isNotEmpty
+        ? goat.monthlyPackage.trim()
+        : (goat.pricing > 0
+        ? '₹${goat.pricing.toStringAsFixed(0)} / month'
+        : 'Standard Palai');
+
+    return Container(
+      width: double.infinity,
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(
+          color: AppColors.divider,
+          width: 1,
+        ),
+        boxShadow: const [
+          BoxShadow(
+            color: Color(0x0A000000),
+            blurRadius: 14,
+            offset: Offset(0, 5),
+          ),
+        ],
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: Column(
+        children: [
+          Material(
+            color: Colors.transparent,
+            child: InkWell(
+              onTap: openProfile,
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(14, 13, 14, 12),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Stack(
+                      clipBehavior: Clip.none,
+                      children: [
+                        _goatAvatar(goat, healthColor),
+                        if (goat.goatCode.trim().isNotEmpty)
+                          Positioned(
+                            top: -5,
+                            left: -4,
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 7,
+                                vertical: 3,
+                              ),
+                              decoration: BoxDecoration(
+                                color: AppColors.textDark,
+                                borderRadius: BorderRadius.circular(10),
+                              ),
+                              child: Text(
+                                goat.goatCode,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                  fontSize: 8.5,
+                                  color: Colors.white,
+                                  fontWeight: FontWeight.w800,
+                                ),
+                              ),
+                            ),
+                          ),
+                      ],
+                    ),
+
+                    const SizedBox(width: 12),
+
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            children: [
+                              Flexible(
+                                child: Text(
+                                  goatName,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: AppTheme.heading(size: 16),
+                                ),
+                              ),
+                              if (gender.isNotEmpty) ...[
+                                const SizedBox(width: 7),
+                                Container(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 8,
+                                    vertical: 4,
+                                  ),
+                                  decoration: BoxDecoration(
+                                    color: const Color(0xFFF1F5F9),
+                                    borderRadius: BorderRadius.circular(8),
+                                  ),
+                                  child: Text(
+                                    gender,
+                                    style: AppTheme.body(
+                                      size: 9,
+                                      color: AppColors.textDark,
+                                      weight: FontWeight.w600,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ],
+                          ),
+
+                          const SizedBox(height: 7),
+
+                          Row(
+                            children: [
+                              Icon(
+                                Icons.access_time_rounded,
+                                size: 17,
+                                color: AppColors.primaryGreen,
+                              ),
+                              const SizedBox(width: 6),
+                              Expanded(
+                                child: Text(
+                                  goat.isCheckedOut
+                                      ? 'Checked out · ${_boardedFor(goat.checkInDate, goat.checkOutDate)}'
+                                      : 'Boarded ${_boardedFor(goat.checkInDate, null)}',
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: AppTheme.body(
+                                    size: 10,
+                                    color: AppColors.darkGreen,
+                                    weight: FontWeight.w600,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ],
+                      ),
+                    ),
+
+                    const SizedBox(width: 8),
+
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 10,
+                        vertical: 7,
+                      ),
+                      decoration: BoxDecoration(
+                        color: goat.isCheckedOut
+                            ? AppColors.lightGreen
+                            : healthColor.withValues(alpha: 0.09),
+                        borderRadius: BorderRadius.circular(18),
+                        border: Border.all(
+                          color: goat.isCheckedOut
+                              ? AppColors.primaryGreen.withValues(alpha: 0.22)
+                              : healthColor.withValues(alpha: 0.45),
+                        ),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Container(
+                            width: 8,
+                            height: 8,
+                            decoration: BoxDecoration(
+                              color: goat.isCheckedOut
+                                  ? AppColors.primaryGreen
+                                  : healthColor,
+                              shape: BoxShape.circle,
+                            ),
+                          ),
+                          const SizedBox(width: 6),
+                          Text(
+                            goat.isCheckedOut ? 'Checked Out' : goat.healthStatus,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: AppTheme.body(
+                              size: 9,
+                              color: goat.isCheckedOut
+                                  ? AppColors.darkGreen
+                                  : healthColor,
+                              weight: FontWeight.w700,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 14),
+            child: const Divider(
+              height: 1,
+              color: AppColors.divider,
+            ),
+          ),
+
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 12, 12, 12),
+            child: Row(
               children: [
-                Text(
-                  label,
-                  style: Theme.of(context)
-                      .textTheme
-                      .bodySmall,
+                Expanded(
+                  child: _goatStatBox(
+                    'APPROX AGE',
+                    _ageLabel(goat.dateOfBirth),
+                  ),
                 ),
-                const SizedBox(
-                  height: 3,
+                const SizedBox(width: 8),
+                Expanded(
+                  child: _goatStatBox(
+                    'CURRENT WT.',
+                    _weightLabel(goat.currentWeight, goat.weightAtCheckIn),
+                  ),
                 ),
-                Text(
-                  value,
-                  style: Theme.of(context)
-                      .textTheme
-                      .bodyLarge
-                      ?.copyWith(
-                    fontWeight:
-                    FontWeight.w500,
+                const SizedBox(width: 8),
+                Expanded(
+                  child: _goatStatBox(
+                    'FEED DIET',
+                    package,
+                    valueColor: AppColors.darkGreen,
                   ),
                 ),
               ],
             ),
           ),
+
+          if (showActions)
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+              decoration: const BoxDecoration(
+                color: Color(0xFFF8FAFC),
+                border: Border(
+                  top: BorderSide(color: AppColors.divider),
+                ),
+              ),
+              child: Column(
+                children: [
+                  Row(
+                    children: [
+                      TextButton.icon(
+                        onPressed: () => _recordGoatDeath(goat),
+                        icon: const Icon(
+                          Icons.warning_amber_rounded,
+                          size: 17,
+                          color: AppColors.error,
+                        ),
+                        label: const Text(
+                          'Record Death',
+                          style: TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.w700,
+                            color: AppColors.error,
+                          ),
+                        ),
+                        style: TextButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(horizontal: 4),
+                          minimumSize: Size.zero,
+                          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                        ),
+                      ),
+                      const SizedBox(width: 5),
+                      OutlinedButton(
+                        onPressed: openProfile,
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: AppColors.textDark,
+                          side: const BorderSide(color: AppColors.divider),
+                          backgroundColor: Colors.white,
+                          padding: const EdgeInsets.symmetric(horizontal: 13),
+                          minimumSize: const Size(0, 40),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                        ),
+                        child: const Text(
+                          'Daily Log',
+                          style: TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 9),
+                      Expanded(
+                        child: SizedBox(
+                          height: 40,
+                          child: ElevatedButton.icon(
+                            onPressed: () => _checkoutGoat(goat),
+                            icon: const Icon(Icons.logout_rounded, size: 16),
+                            label: const Text(
+                              'Checkout',
+                              style: TextStyle(
+                                fontSize: 12,
+                                fontWeight: FontWeight.w800,
+                              ),
+                            ),
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: AppColors.textDark,
+                              foregroundColor: Colors.white,
+                              elevation: 0,
+                              padding: const EdgeInsets.symmetric(horizontal: 12),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  Align(
+                    alignment: Alignment.centerRight,
+                    child: TextButton.icon(
+                      onPressed: () => _deleteGoat(goat),
+                      icon: const Icon(
+                        Icons.delete_outline_rounded,
+                        size: 17,
+                        color: AppColors.error,
+                      ),
+                      label: const Text(
+                        'Delete Goat',
+                        style: TextStyle(
+                          fontSize: 11,
+                          fontWeight: FontWeight.w700,
+                          color: AppColors.error,
+                        ),
+                      ),
+                      style: TextButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 4,
+                          vertical: 2,
+                        ),
+                        minimumSize: Size.zero,
+                        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _goatStatBox(
+      String label,
+      String value, {
+        Color? valueColor,
+      }) {
+    return Container(
+      constraints: const BoxConstraints(minHeight: 70),
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 10),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF8FAFC),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(
+          color: AppColors.divider,
+        ),
+      ),
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Text(
+            label,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            textAlign: TextAlign.center,
+            style: AppTheme.body(
+              size: 8.5,
+              color: AppColors.textGrey,
+              weight: FontWeight.w700,
+            ),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            value,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            textAlign: TextAlign.center,
+            style: AppTheme.heading(
+              size: 12,
+              color: valueColor ?? AppColors.textDark,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _goatAvatar(
+      PalaiGoat goat,
+      Color healthColor,
+      ) {
+    final hasPhoto =
+        goat.beforeImage != null && goat.beforeImage!.isNotEmpty;
+
+    final avatar = Container(
+      width: 48,
+      height: 48,
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        color: AppColors.lightGreen,
+        border: Border.all(
+          color: healthColor.withValues(alpha: 0.55),
+          width: 2,
+        ),
+      ),
+      child: ClipOval(
+        child: goat.beforeImage != null &&
+            goat.beforeImage!.isNotEmpty
+            ? Image.memory(
+          goat.beforeImage!,
+          fit: BoxFit.cover,
+
+          // Decode the image close to its actual display size.
+          // This avoids decoding large camera images at full
+          // resolution just to show a 48px avatar.
+          cacheWidth: 96,
+          cacheHeight: 96,
+
+          errorBuilder: (_, _, _) {
+            return const Icon(
+              GoatIcons.paw,
+              color: AppColors.primaryGreen,
+              size: 22,
+            );
+          },
+        )
+            : const Icon(
+          GoatIcons.paw,
+          color: AppColors.primaryGreen,
+          size: 22,
+        ),
+      ),
+    );
+
+    // Tap the photo to view it full-screen (pinch to zoom). With no photo
+    // the paw logo is shown and is not tappable, so the tap falls through
+    // to the card and opens the goat profile as before.
+    if (!hasPhoto) return avatar;
+
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: () => Navigator.of(context).push(
+        fastRoute(
+          FullscreenImageViewer(
+            imageBytes: goat.beforeImage!,
+            title: goat.goatCode,
+          ),
+        ),
+      ),
+      child: avatar,
+    );
+  }
+
+  // ===========================================================================
+  // PAYMENT HISTORY
+  //
+  // IMPORTANT:
+  // This is deliberately the LAST section of the Customer Profile.
+  //
+  // The outer Customer Profile scroll does NOT control the payment list.
+  // Only the inner payment list scrolls.
+  // ===========================================================================
+
+  Widget _buildPaymentHistory() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Container(
+              width: 36,
+              height: 36,
+              decoration: const BoxDecoration(
+                color: AppColors.lightGreen,
+                shape: BoxShape.circle,
+              ),
+              child: const Icon(
+                Icons.history_rounded,
+                size: 19,
+                color: AppColors.primaryGreen,
+              ),
+            ),
+
+            const SizedBox(width: 10),
+
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Payment History',
+                    style: AppTheme.heading(
+                      size: 16,
+                    ),
+                  ),
+                  Text(
+                    'Recent payments and outstanding changes',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: AppTheme.body(
+                      size: 9,
+                      color: AppColors.textGrey,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+
+            // ================================================================
+            // ALL PAYMENTS → CUSTOMER LEDGER
+            // ================================================================
+
+            TextButton(
+              onPressed: _openCustomerLedger,
+              style: TextButton.styleFrom(
+                foregroundColor: AppColors.primaryGreen,
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 5,
+                  vertical: 4,
+                ),
+                minimumSize: Size.zero,
+                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    'All payments',
+                    style: AppTheme.body(
+                      size: 10,
+                      color: AppColors.primaryGreen,
+                      weight: FontWeight.w700,
+                    ),
+                  ),
+                  const SizedBox(width: 2),
+                  const Icon(
+                    Icons.arrow_forward_rounded,
+                    size: 15,
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+
+        const SizedBox(height: 10),
+
+        StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+          stream: _paymentHistoryStream(),
+
+          builder: (context, snapshot) {
+            // ================================================================
+            // ERROR
+            // ================================================================
+
+            if (snapshot.hasError) {
+              return _paymentErrorCard(
+                snapshot.error.toString(),
+              );
+            }
+
+            // ================================================================
+            // SKELETON
+            // ================================================================
+
+            if (snapshot.connectionState == ConnectionState.waiting) {
+              return const _PaymentHistorySkeleton();
+            }
+
+            final docs = snapshot.data?.docs ?? [];
+
+            // ================================================================
+            // EMPTY
+            // ================================================================
+
+            if (docs.isEmpty) {
+              return _emptyPaymentHistory();
+            }
+
+            // ================================================================
+            // SORT
+            //
+            // Firestore query intentionally does not require an index here.
+            // Sorting locally also supports old payment documents where
+            // `date` may be missing.
+            // ================================================================
+
+            final sorted = [...docs];
+
+            sorted.sort(
+                  (a, b) {
+                final aDate = _timestampToDate(
+                  a.data()['date'],
+                );
+
+                final bDate = _timestampToDate(
+                  b.data()['date'],
+                );
+
+                return bDate.compareTo(aDate);
+              },
+            );
+
+            // ================================================================
+            // FIXED HEIGHT
+            //
+            // This is the important part:
+            //
+            // Customer Profile scroll
+            //        ↓
+            // Goat list
+            //        ↓
+            // Payment History
+            //        ↓
+            // ┌─────────────────────────────┐
+            // │ payment 1                  │
+            // │ payment 2                  │  ← ONLY THIS AREA SCROLLS
+            // │ payment 3                  │
+            // │ payment 4                  │
+            // └─────────────────────────────┘
+            //
+            // The payment history can never push the rest of the screen
+            // indefinitely downward.
+            // ================================================================
+
+            return Container(
+              width: double.infinity,
+              height: 310,
+
+              decoration: AppTheme.card(
+                radius: 16,
+              ),
+
+              clipBehavior: Clip.antiAlias,
+
+              child: ListView.builder(
+                padding: const EdgeInsets.fromLTRB(
+                  10,
+                  10,
+                  10,
+                  10,
+                ),
+
+                physics: const ClampingScrollPhysics(),
+
+                itemCount: sorted.length,
+
+                itemBuilder: (context, index) {
+                  final doc = sorted[index];
+
+                  return Padding(
+                    padding: const EdgeInsets.only(
+                      bottom: 8,
+                    ),
+                    child: _paymentCard(
+                      doc,
+                    ),
+                  );
+                },
+              ),
+            );
+          },
+        ),
+
+        // Why the Advance balance moved: Trading-sale excess, extra amounts
+        // paid with bills, and advance used up by bills. Hidden when the
+        // customer has no advance history.
+        AdvanceHistorySection(
+          farmId: widget.farmId,
+          customerId: _customer.id,
+        ),
+      ],
+    );
+  }
+
+  DateTime _timestampToDate(dynamic value) {
+    if (value is Timestamp) {
+      return value.toDate();
+    }
+
+    return DateTime.fromMillisecondsSinceEpoch(0);
+  }
+
+  // ===========================================================================
+  // PAYMENT CARD
+  // ===========================================================================
+
+  Widget _paymentCard(
+      QueryDocumentSnapshot<Map<String, dynamic>> doc,
+      ) {
+    final data = doc.data();
+
+    final isOutstanding =
+        data['type'] == 'outstandingAdded';
+
+    final amount = data['amount'] ?? 0;
+
+    final method = isOutstanding
+        ? 'Outstanding Added'
+        : (data['paymentMethod'] ?? 'Unknown').toString();
+
+    final paymentNumber =
+    (data['paymentNumber'] ?? '').toString();
+
+    final note =
+    (data['note'] ?? '').toString();
+
+    final pendingAfter =
+        data['pendingAfter'] ?? 0;
+
+    final advance =
+        data['advanceAmount'] ?? 0;
+
+    final cardColor = isOutstanding
+        ? AppColors.error
+        : AppColors.success;
+
+    final cardIcon = isOutstanding
+        ? Icons.trending_up_rounded
+        : Icons.payments_outlined;
+
+    final amountText = isOutstanding
+        ? '+${_rupees(amount)}'
+        : _rupees(amount);
+
+    return Material(
+      color: Colors.transparent,
+
+      child: InkWell(
+        onTap: () {
+          _showPaymentDetails(data);
+        },
+
+        borderRadius: BorderRadius.circular(13),
+
+        child: Container(
+          padding: const EdgeInsets.all(11),
+
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(13),
+            border: Border.all(
+              color: AppColors.divider,
+              width: 0.8,
+            ),
+          ),
+
+          child: Row(
+            children: [
+              Container(
+                width: 39,
+                height: 39,
+                decoration: BoxDecoration(
+                  color: cardColor.withValues(alpha: 0.11),
+                  shape: BoxShape.circle,
+                ),
+                child: Icon(
+                  cardIcon,
+                  color: cardColor,
+                  size: 19,
+                ),
+              ),
+
+              const SizedBox(width: 10),
+
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      amountText,
+                      style: AppTheme.heading(
+                        size: 13,
+                        color: cardColor,
+                      ),
+                    ),
+
+                    const SizedBox(height: 2),
+
+                    Text(
+                      method,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: AppTheme.body(
+                        size: 10,
+                        color: AppColors.textDark,
+                        weight: FontWeight.w600,
+                      ),
+                    ),
+
+                    if (paymentNumber.isNotEmpty)
+                      Text(
+                        paymentNumber,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: AppTheme.body(
+                          size: 8,
+                          color: AppColors.textGrey,
+                        ),
+                      ),
+
+                    if (note.isNotEmpty)
+                      Padding(
+                        padding: const EdgeInsets.only(
+                          top: 2,
+                        ),
+                        child: Text(
+                          note,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: AppTheme.body(
+                            size: 8,
+                            color: AppColors.textGrey,
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+
+              const SizedBox(width: 7),
+
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  Text(
+                    _formatDate(data['date']),
+                    maxLines: 1,
+                    style: AppTheme.body(
+                      size: 8,
+                      color: AppColors.textGrey,
+                    ),
+                  ),
+
+                  if (pendingAfter is num &&
+                      pendingAfter > 0) ...[
+                    const SizedBox(height: 3),
+                    Text(
+                      'Pending ${_rupees(pendingAfter)}',
+                      style: AppTheme.body(
+                        size: 8,
+                        color: AppColors.error,
+                        weight: FontWeight.w700,
+                      ),
+                    ),
+                  ],
+
+                  if (advance is num &&
+                      advance > 0) ...[
+                    const SizedBox(height: 2),
+                    Text(
+                      'Advance ${_rupees(advance)}',
+                      style: AppTheme.body(
+                        size: 8,
+                        color: AppColors.darkGreen,
+                        weight: FontWeight.w700,
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+
+              const SizedBox(width: 3),
+
+              const Icon(
+                Icons.chevron_right_rounded,
+                size: 17,
+                color: AppColors.textGrey,
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  // ===========================================================================
+  // EMPTY PAYMENT HISTORY
+  // ===========================================================================
+
+  Widget _emptyPaymentHistory() {
+    return Container(
+      width: double.infinity,
+      height: 190,
+      padding: const EdgeInsets.all(20),
+      decoration: AppTheme.card(
+        radius: 16,
+      ),
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Container(
+            width: 50,
+            height: 50,
+            decoration: const BoxDecoration(
+              color: AppColors.lightGreen,
+              shape: BoxShape.circle,
+            ),
+            child: const Icon(
+              Icons.payments_outlined,
+              color: AppColors.primaryGreen,
+              size: 23,
+            ),
+          ),
+
+          const SizedBox(height: 9),
+
+          Text(
+            'No payments yet',
+            style: AppTheme.heading(
+              size: 13,
+            ),
+          ),
+
+          const SizedBox(height: 3),
+
+          Text(
+            'Payments received from this customer will appear here.',
+            textAlign: TextAlign.center,
+            style: AppTheme.body(
+              size: 9,
+              color: AppColors.textGrey,
+            ),
+          ),
         ],
       ),
     );
   }
 
   // ===========================================================================
-  // MANAGEMENT GRID
+  // PAYMENT ERROR
   // ===========================================================================
 
-  Widget _buildManagementGrid() {
-    final items = [
-      _ManagementItem(
-        icon:
-        GoatIcons.paw,
-        title: 'Goats',
-        subtitle:
-        'Register and manage goats',
-        onTap: () {
-          _showComingSoon(
-            'Goat management',
-          );
-        },
+  Widget _paymentErrorCard(
+      String error,
+      ) {
+    return Container(
+      width: double.infinity,
+      height: 190,
+      padding: const EdgeInsets.all(16),
+      decoration: AppTheme.card(
+        radius: 16,
       ),
-      _ManagementItem(
-        icon:
-        Icons.receipt_long_outlined,
-        title: 'Billing',
-        subtitle:
-        'Monthly bills and payments',
-        onTap: () {
-          _showComingSoon(
-            'Billing',
-          );
-        },
-      ),
-      _ManagementItem(
-        icon:
-        Icons.medical_services_outlined,
-        title: 'Health',
-        subtitle:
-        'Health and medicine records',
-        onTap: () {
-          _showComingSoon(
-            'Health records',
-          );
-        },
-      ),
-      _ManagementItem(
-        icon:
-        Icons.vaccines_outlined,
-        title: 'Vaccination',
-        subtitle:
-        'Schedule and history',
-        onTap: () {
-          _showComingSoon(
-            'Vaccination',
-          );
-        },
-      ),
-      _ManagementItem(
-        icon:
-        Icons.content_cut_outlined,
-        title: 'Hoof & Hair',
-        subtitle:
-        'Care records and reminders',
-        onTap: () {
-          _showComingSoon(
-            'Hoof and hair management',
-          );
-        },
-      ),
-      _ManagementItem(
-        icon:
-        Icons.photo_library_outlined,
-        title: 'Photos',
-        subtitle:
-        'Monthly goat photos',
-        onTap: () {
-          _showComingSoon(
-            'Monthly photos',
-          );
-        },
-      ),
-      _ManagementItem(
-        icon:
-        Icons.assessment_outlined,
-        title: 'Reports',
-        subtitle:
-        'Monthly customer reports',
-        onTap: () {
-          _showComingSoon(
-            'Reports',
-          );
-        },
-      ),
-      _ManagementItem(
-        icon:
-        Icons.settings_outlined,
-        title: 'Settings',
-        subtitle:
-        'Reminder preferences',
-        onTap: _openSettings,
-      ),
-    ];
-
-    return GridView.builder(
-      shrinkWrap: true,
-      physics:
-      const NeverScrollableScrollPhysics(),
-      itemCount: items.length,
-      gridDelegate:
-      const SliverGridDelegateWithFixedCrossAxisCount(
-        crossAxisCount: 2,
-        crossAxisSpacing: 12,
-        mainAxisSpacing: 12,
-        childAspectRatio: 1.15,
-      ),
-      itemBuilder:
-          (context, index) {
-        final item =
-        items[index];
-
-        return InkWell(
-          onTap: item.onTap,
-          borderRadius:
-          BorderRadius.circular(
-            16,
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          const Icon(
+            Icons.error_outline_rounded,
+            color: AppColors.error,
+            size: 28,
           ),
-          child: Card(
-            child: Padding(
-              padding:
-              const EdgeInsets.all(
-                14,
-              ),
-              child: Column(
-                crossAxisAlignment:
-                CrossAxisAlignment.start,
-                children: [
-                  CircleAvatar(
-                    child: Icon(
-                      item.icon,
-                    ),
-                  ),
-                  const Spacer(),
-                  Text(
-                    item.title,
-                    style: Theme.of(
-                      context,
-                    )
-                        .textTheme
-                        .titleMedium
-                        ?.copyWith(
-                      fontWeight:
-                      FontWeight.w700,
-                    ),
-                  ),
-                  const SizedBox(
+
+          const SizedBox(height: 7),
+
+          Text(
+            'Could not load payment history.',
+            style: AppTheme.heading(
+              size: 12,
+              color: AppColors.error,
+            ),
+          ),
+
+          const SizedBox(height: 4),
+
+          Text(
+            error,
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            textAlign: TextAlign.center,
+            style: AppTheme.body(
+              size: 8,
+              color: AppColors.textGrey,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ===========================================================================
+  // PAYMENT DETAILS
+  // ===========================================================================
+
+  void _showPaymentDetails(
+      Map<String, dynamic> data,
+      ) {
+    final amount = data['amount'] ?? 0;
+
+    final method =
+    (data['paymentMethod'] ?? '').toString();
+
+    final paymentNumber =
+    (data['paymentNumber'] ?? '').toString();
+
+    final note =
+    (data['note'] ?? '').toString();
+
+    final isOutstanding =
+        data['type'] == 'outstandingAdded';
+
+    final pendingBefore =
+        data['pendingBefore'] ?? 0;
+
+    final applied = isOutstanding
+        ? (data['pendingAdded'] ?? 0)
+        : (data['amountAppliedToPending'] ??
+        data['amountAppliedToBill'] ??
+        0);
+
+    final pendingAfter =
+        data['pendingAfter'] ?? 0;
+
+    final advanceBefore =
+        data['advanceBefore'] ?? 0;
+
+    final advanceAdded = isOutstanding
+        ? (data['advanceUsed'] ?? 0)
+        : (data['advanceAmount'] ?? 0);
+
+    final advanceAfter =
+        data['advanceAfter'] ?? 0;
+
+    showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      useSafeArea: true,
+      builder: (_) {
+        return Container(
+          constraints: BoxConstraints(
+            maxHeight:
+            MediaQuery.of(context).size.height * 0.82,
+          ),
+
+          padding: const EdgeInsets.fromLTRB(
+            20,
+            12,
+            20,
+            20,
+          ),
+
+          decoration: const BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.vertical(
+              top: Radius.circular(24),
+            ),
+          ),
+
+          child: SingleChildScrollView(
+            child: Column(
+              crossAxisAlignment:
+              CrossAxisAlignment.start,
+
+              children: [
+                Center(
+                  child: Container(
+                    width: 42,
                     height: 4,
+                    decoration: BoxDecoration(
+                      color: Colors.grey.shade300,
+                      borderRadius:
+                      BorderRadius.circular(10),
+                    ),
                   ),
+                ),
+
+                const SizedBox(height: 17),
+
+                Text(
+                  isOutstanding
+                      ? 'Outstanding Details'
+                      : 'Payment Details',
+                  style: AppTheme.heading(
+                    size: 18,
+                  ),
+                ),
+
+                const SizedBox(height: 15),
+
+                _detailRow(
+                  isOutstanding
+                      ? 'Reference Number'
+                      : 'Payment Number',
+                  paymentNumber.isEmpty
+                      ? '—'
+                      : paymentNumber,
+                ),
+
+                _detailRow(
+                  isOutstanding
+                      ? 'Amount Added'
+                      : 'Amount Received',
+                  _rupees(amount),
+                ),
+
+                if (!isOutstanding)
+                  _detailRow(
+                    'Payment Method',
+                    method.isEmpty
+                        ? '—'
+                        : method,
+                  ),
+
+                _detailRow(
+                  'Pending Before',
+                  _rupees(pendingBefore),
+                ),
+
+                _detailRow(
+                  isOutstanding
+                      ? 'Added to Pending'
+                      : 'Applied to Pending',
+                  _rupees(applied),
+                ),
+
+                _detailRow(
+                  'Pending After',
+                  _rupees(pendingAfter),
+                ),
+
+                _detailRow(
+                  'Advance Before',
+                  _rupees(advanceBefore),
+                ),
+
+                _detailRow(
+                  isOutstanding
+                      ? 'Advance Used'
+                      : 'Advance Added',
+                  _rupees(advanceAdded),
+                ),
+
+                _detailRow(
+                  'Advance After',
+                  _rupees(advanceAfter),
+                ),
+
+                if (note.isNotEmpty) ...[
+                  const SizedBox(height: 8),
+
                   Text(
-                    item.subtitle,
-                    maxLines: 2,
-                    overflow:
-                    TextOverflow.ellipsis,
-                    style: Theme.of(
-                      context,
-                    )
-                        .textTheme
-                        .bodySmall,
+                    'Note',
+                    style: AppTheme.heading(
+                      size: 12,
+                    ),
+                  ),
+
+                  const SizedBox(height: 3),
+
+                  Text(
+                    note,
+                    style: AppTheme.body(
+                      size: 11,
+                      color: AppColors.textDark,
+                    ),
                   ),
                 ],
-              ),
+
+                const SizedBox(height: 17),
+
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton(
+                    onPressed: () {
+                      Navigator.pop(context);
+                    },
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor:
+                      AppColors.primaryGreen,
+                      foregroundColor: Colors.white,
+                      padding:
+                      const EdgeInsets.symmetric(
+                        vertical: 13,
+                      ),
+                      shape:
+                      RoundedRectangleBorder(
+                        borderRadius:
+                        BorderRadius.circular(12),
+                      ),
+                    ),
+                    child: const Text('Close'),
+                  ),
+                ),
+              ],
             ),
           ),
         );
@@ -1026,162 +2529,40 @@ class _CustomerProfileScreenState
     );
   }
 
-  // ===========================================================================
-  // SETTINGS PREVIEW
-  // ===========================================================================
-
-  Widget _buildSettingsPreview() {
-    final settings =
-    Map<String, dynamic>.from(
-      (_customer?['settings']
-      as Map?) ??
-          {},
-    );
-
-    final vaccination =
-        (settings[
-        'vaccinationReminderDays']
-        as num?)
-            ?.toInt() ??
-            30;
-
-    final hoof =
-        (settings[
-        'hoofCuttingReminderDays']
-        as num?)
-            ?.toInt() ??
-            30;
-
-    final hair =
-        (settings[
-        'hairTrimmingReminderDays']
-        as num?)
-            ?.toInt() ??
-            30;
-
-    return Card(
-      child: Column(
+  Widget _detailRow(
+      String label,
+      String value,
+      ) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(
+        vertical: 5,
+      ),
+      child: Row(
+        crossAxisAlignment:
+        CrossAxisAlignment.start,
         children: [
-          _buildSettingRow(
-            icon:
-            Icons.vaccines_outlined,
-            title:
-            'Vaccination',
-            value:
-            'Every $vaccination days',
+          Expanded(
+            child: Text(
+              label,
+              style: AppTheme.body(
+                size: 10,
+                color: AppColors.textGrey,
+              ),
+            ),
           ),
-          const Divider(
-            height: 1,
-          ),
-          _buildSettingRow(
-            icon:
-            Icons.content_cut_outlined,
-            title:
-            'Hoof Cutting',
-            value:
-            'Every $hoof days',
-          ),
-          const Divider(
-            height: 1,
-          ),
-          _buildSettingRow(
-            icon:
-            Icons.content_cut_outlined,
-            title:
-            'Hair Trimming',
-            value:
-            'Every $hair days',
+
+          const SizedBox(width: 12),
+
+          Flexible(
+            child: Text(
+              value,
+              textAlign: TextAlign.end,
+              style: AppTheme.heading(
+                size: 10,
+              ),
+            ),
           ),
         ],
-      ),
-    );
-  }
-
-  Widget _buildSettingRow({
-    required IconData icon,
-    required String title,
-    required String value,
-  }) {
-    return ListTile(
-      leading:
-      Icon(icon),
-      title:
-      Text(title),
-      trailing:
-      Text(
-        value,
-        style: Theme.of(context)
-            .textTheme
-            .bodyMedium
-            ?.copyWith(
-          fontWeight:
-          FontWeight.w600,
-        ),
-      ),
-    );
-  }
-
-  // ===========================================================================
-  // ERROR
-  // ===========================================================================
-
-  Widget _buildError() {
-    return Center(
-      child: Padding(
-        padding:
-        const EdgeInsets.all(24),
-        child: Column(
-          mainAxisSize:
-          MainAxisSize.min,
-          children: [
-            const Icon(
-              Icons
-                  .error_outline,
-              size: 48,
-            ),
-            const SizedBox(
-              height: 16,
-            ),
-            Text(
-              _error ??
-                  'Something went wrong.',
-              textAlign:
-              TextAlign.center,
-              style: Theme.of(context)
-                  .textTheme
-                  .titleMedium,
-            ),
-            const SizedBox(
-              height: 16,
-            ),
-            FilledButton.icon(
-              onPressed:
-              _loadCustomer,
-              icon: const Icon(
-                Icons.refresh,
-              ),
-              label:
-              const Text('Retry'),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  // ===========================================================================
-  // COMING SOON
-  // ===========================================================================
-
-  void _showComingSoon(
-      String feature,
-      ) {
-    ScaffoldMessenger.of(context)
-        .showSnackBar(
-      SnackBar(
-        content: Text(
-          '$feature will be connected next.',
-        ),
       ),
     );
   }
@@ -1190,118 +2571,1981 @@ class _CustomerProfileScreenState
   // HELPERS
   // ===========================================================================
 
-  String _initials(
-      String name,
+  Color _healthColor(
+      String status,
       ) {
-    final parts =
-    name.trim().split(
-      RegExp(r'\s+'),
+    switch (status) {
+      case 'Sick':
+        return AppColors.error;
+
+      case 'Under Observation':
+        return AppColors.warning;
+
+      default:
+        return AppColors.success;
+    }
+  }
+
+  String _boardedFor(
+      DateTime checkInDate,
+      DateTime? checkOutDate,
+      ) {
+    final end = checkOutDate ?? DateTime.now();
+
+    int months =
+        (end.year - checkInDate.year) * 12 +
+            (end.month - checkInDate.month);
+
+    DateTime monthsAgo = DateTime(
+      checkInDate.year,
+      checkInDate.month + months,
+      checkInDate.day,
     );
 
-    if (parts.isEmpty) {
-      return 'C';
+    if (monthsAgo.isAfter(end)) {
+      months -= 1;
+
+      monthsAgo = DateTime(
+        checkInDate.year,
+        checkInDate.month + months,
+        checkInDate.day,
+      );
     }
 
-    if (parts.length == 1) {
-      return parts.first
-          .substring(
-        0,
-        parts.first.length > 2
-            ? 2
-            : parts.first.length,
-      )
-          .toUpperCase();
+    final days = end.difference(monthsAgo).inDays;
+
+    if (months <= 0) {
+      return '$days day${days == 1 ? '' : 's'}';
     }
 
-    return '${parts.first[0]}${parts.last[0]}'
-        .toUpperCase();
-  }
-
-  double _asDouble(
-      dynamic value,
-      ) {
-    if (value is num) {
-      return value.toDouble();
+    if (days <= 0) {
+      return '$months month${months == 1 ? '' : 's'}';
     }
 
-    return double.tryParse(
-      value?.toString() ?? '',
-    ) ??
-        0.0;
-  }
-
-  DateTime? _asDate(
-      dynamic value,
-      ) {
-    if (value is Timestamp) {
-      return value.toDate();
-    }
-
-    if (value is DateTime) {
-      return value;
-    }
-
-    return null;
-  }
-
-  String _formatAmount(
-      double amount,
-      ) {
-    if (amount == amount.roundToDouble()) {
-      return amount
-          .toInt()
-          .toString();
-    }
-
-    return amount
-        .toStringAsFixed(2);
+    return '$months mo $days d';
   }
 
   String _formatDate(
-      DateTime date,
+      dynamic value,
       ) {
-    final day =
-    date.day.toString().padLeft(
-      2,
-      '0',
-    );
+    DateTime? date;
 
-    final month =
-    date.month.toString().padLeft(
-      2,
-      '0',
-    );
+    if (value is Timestamp) {
+      date = value.toDate();
+    } else if (value is DateTime) {
+      date = value;
+    }
 
-    return '$day/$month/${date.year}';
+    if (date == null) {
+      return 'Date unavailable';
+    }
+
+    return DateFormat(
+      'dd MMM yyyy · hh:mm a',
+    ).format(date);
   }
 
-  Widget _buildSectionTitle(String title) {
-    return Text(
-      title,
-      style: Theme.of(context)
-          .textTheme
-          .titleLarge
-          ?.copyWith(
-        fontWeight: FontWeight.w800,
+  String _rupees(
+      dynamic value,
+      ) {
+    double amount = 0;
+
+    if (value is num) {
+      amount = value.toDouble();
+    } else {
+      amount = double.tryParse(
+        value?.toString() ?? '',
+      ) ??
+          0;
+    }
+
+    return '₹${amount.toStringAsFixed(0)}';
+  }
+
+  // ===========================================================================
+  // AGE / WEIGHT LABEL HELPERS
+  //
+  // These are used by `_goatHistoryCard` above, so they must live on
+  // _CustomerProfileScreenState (not on _AddPaymentSheetState).
+  // ===========================================================================
+
+  String _ageLabel(dynamic dateOfBirth) {
+    DateTime? birthDate;
+
+    if (dateOfBirth is DateTime) {
+      birthDate = dateOfBirth;
+    } else if (dateOfBirth is Timestamp) {
+      birthDate = dateOfBirth.toDate();
+    } else if (dateOfBirth is String) {
+      birthDate = DateTime.tryParse(dateOfBirth);
+    }
+
+    if (birthDate == null) {
+      return 'Age N/A';
+    }
+
+    final now = DateTime.now();
+    if (birthDate.isAfter(now)) {
+      return 'Age N/A';
+    }
+
+    var years = now.year - birthDate.year;
+    var months = now.month - birthDate.month;
+
+    if (now.day < birthDate.day) {
+      months--;
+    }
+    if (months < 0) {
+      years--;
+      months += 12;
+    }
+
+    if (years > 0) {
+      return years == 1 ? '1 year' : '$years years';
+    }
+    if (months > 0) {
+      return months == 1 ? '1 month' : '$months months';
+    }
+
+    return 'Under 1 month';
+  }
+
+  String _weightLabel(dynamic currentWeight, dynamic weightAtCheckIn) {
+    double? current;
+    double? checkIn;
+
+    if (currentWeight is num) {
+      current = currentWeight.toDouble();
+    } else if (currentWeight is String) {
+      current = double.tryParse(currentWeight);
+    }
+
+    if (weightAtCheckIn is num) {
+      checkIn = weightAtCheckIn.toDouble();
+    } else if (weightAtCheckIn is String) {
+      checkIn = double.tryParse(weightAtCheckIn);
+    }
+
+    final weight = current ?? checkIn;
+    if (weight == null) {
+      return 'N/A';
+    }
+
+    final formatted = weight % 1 == 0
+        ? weight.toStringAsFixed(0)
+        : weight.toStringAsFixed(1);
+    return '$formatted kg';
+  }
+
+  // ===========================================================================
+  // ADD PAYMENT
+  // ===========================================================================
+
+  Future<void> _openAddPayment() async {
+    final result = await showModalBottomSheet<bool>(
+      context: context,
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      useSafeArea: true,
+      builder: (_) {
+        return _AddPaymentSheet(
+          farmId: widget.farmId,
+          customer: _customer,
+        );
+      },
+    );
+
+    if (!mounted) return;
+
+    if (result == true) {
+      await _refreshCustomer();
+    }
+  }
+
+  // ===========================================================================
+  // ADD OUTSTANDING
+  // ===========================================================================
+
+  Future<void> _openAddOutstanding() async {
+    final result = await showModalBottomSheet<bool>(
+      context: context,
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      useSafeArea: true,
+      builder: (_) {
+        return _AddOutstandingSheet(
+          farmId: widget.farmId,
+          customer: _customer,
+        );
+      },
+    );
+
+    if (!mounted) return;
+
+    if (result == true) {
+      await _refreshCustomer();
+    }
+  }
+}
+
+// ============================================================================
+// GOAT LIST SKELETON
+// ============================================================================
+
+class _GoatListSkeleton extends StatelessWidget {
+  const _GoatListSkeleton();
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      children: [
+        Row(
+          children: const [
+            Expanded(
+              child: _SkeletonBox(
+                height: 66,
+                radius: 14,
+              ),
+            ),
+            SizedBox(width: 10),
+            Expanded(
+              child: _SkeletonBox(
+                height: 66,
+                radius: 14,
+              ),
+            ),
+          ],
+        ),
+
+        SizedBox(height: 10),
+
+        _SkeletonGoatCard(),
+        SizedBox(height: 9),
+        _SkeletonGoatCard(),
+        SizedBox(height: 9),
+        _SkeletonGoatCard(),
+      ],
+    );
+  }
+}
+
+class _SkeletonGoatCard extends StatelessWidget {
+  const _SkeletonGoatCard();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      height: 76,
+      padding: const EdgeInsets.all(12),
+      decoration: AppTheme.card(
+        radius: 16,
+      ),
+      child: Row(
+        children: const [
+          _SkeletonBox(
+            width: 48,
+            height: 48,
+            radius: 24,
+          ),
+          SizedBox(width: 11),
+          Expanded(
+            child: Column(
+              mainAxisAlignment:
+              MainAxisAlignment.center,
+              crossAxisAlignment:
+              CrossAxisAlignment.start,
+              children: [
+                _SkeletonBox(
+                  width: 105,
+                  height: 12,
+                  radius: 5,
+                ),
+                SizedBox(height: 7),
+                _SkeletonBox(
+                  width: 145,
+                  height: 9,
+                  radius: 4,
+                ),
+                SizedBox(height: 6),
+                _SkeletonBox(
+                  width: 115,
+                  height: 8,
+                  radius: 4,
+                ),
+              ],
+            ),
+          ),
+          SizedBox(width: 10),
+          _SkeletonBox(
+            width: 58,
+            height: 22,
+            radius: 7,
+          ),
+        ],
       ),
     );
   }
 }
 
-// ==============================================================================
-// MANAGEMENT ITEM
-// ==============================================================================
+// ============================================================================
+// PAYMENT HISTORY SKELETON
+// ============================================================================
 
-class _ManagementItem {
-  final IconData icon;
-  final String title;
-  final String subtitle;
-  final VoidCallback onTap;
+class _PaymentHistorySkeleton extends StatelessWidget {
+  const _PaymentHistorySkeleton();
 
-  const _ManagementItem({
-    required this.icon,
-    required this.title,
-    required this.subtitle,
-    required this.onTap,
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      height: 310,
+      padding: const EdgeInsets.all(10),
+      decoration: AppTheme.card(
+        radius: 16,
+      ),
+      child: Column(
+        children: const [
+          Expanded(
+            child: _SkeletonPaymentCard(),
+          ),
+          SizedBox(height: 8),
+          Expanded(
+            child: _SkeletonPaymentCard(),
+          ),
+          SizedBox(height: 8),
+          Expanded(
+            child: _SkeletonPaymentCard(),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _SkeletonPaymentCard extends StatelessWidget {
+  const _SkeletonPaymentCard();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(11),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(13),
+        border: Border.all(
+          color: AppColors.divider,
+          width: 0.8,
+        ),
+      ),
+      child: Row(
+        children: const [
+          _SkeletonBox(
+            width: 39,
+            height: 39,
+            radius: 20,
+          ),
+          SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              mainAxisAlignment:
+              MainAxisAlignment.center,
+              crossAxisAlignment:
+              CrossAxisAlignment.start,
+              children: [
+                _SkeletonBox(
+                  width: 75,
+                  height: 12,
+                  radius: 4,
+                ),
+                SizedBox(height: 6),
+                _SkeletonBox(
+                  width: 100,
+                  height: 9,
+                  radius: 4,
+                ),
+                SizedBox(height: 5),
+                _SkeletonBox(
+                  width: 70,
+                  height: 7,
+                  radius: 3,
+                ),
+              ],
+            ),
+          ),
+          SizedBox(width: 10),
+          Column(
+            mainAxisAlignment:
+            MainAxisAlignment.center,
+            crossAxisAlignment:
+            CrossAxisAlignment.end,
+            children: [
+              _SkeletonBox(
+                width: 70,
+                height: 8,
+                radius: 3,
+              ),
+              SizedBox(height: 6),
+              _SkeletonBox(
+                width: 65,
+                height: 8,
+                radius: 3,
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ============================================================================
+// SIMPLE SKELETON BOX
+// ============================================================================
+
+class _SkeletonBox extends StatefulWidget {
+  final double? width;
+  final double height;
+  final double radius;
+
+  const _SkeletonBox({
+    this.width,
+    required this.height,
+    required this.radius,
   });
+
+  @override
+  State<_SkeletonBox> createState() =>
+      _SkeletonBoxState();
+}
+
+class _SkeletonBoxState
+    extends State<_SkeletonBox>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller;
+
+  @override
+  void initState() {
+    super.initState();
+
+    _controller = AnimationController(
+      vsync: this,
+      duration: const Duration(
+        milliseconds: 1200,
+      ),
+    )..repeat();
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: _controller,
+      builder: (context, _) {
+        final opacity =
+            0.45 +
+                (_controller.value * 0.25);
+
+        return Container(
+          width: widget.width,
+          height: widget.height,
+          decoration: BoxDecoration(
+            color: Colors.grey.withValues(alpha: opacity),
+            borderRadius:
+            BorderRadius.circular(widget.radius),
+          ),
+        );
+      },
+    );
+  }
+}
+
+// ============================================================================
+// ADD PAYMENT SHEET
+// ============================================================================
+
+class _AddPaymentSheet extends StatefulWidget {
+  final String farmId;
+  final PalaiCustomer customer;
+  final MonthlyBill? bill;
+
+  const _AddPaymentSheet({
+    required this.farmId,
+    required this.customer,
+    this.bill,
+  });
+
+  @override
+  State<_AddPaymentSheet> createState() =>
+      _AddPaymentSheetState();
+}
+
+class _AddPaymentSheetState
+    extends State<_AddPaymentSheet> {
+  final TextEditingController _amountController =
+  TextEditingController();
+
+  final TextEditingController _referenceController =
+  TextEditingController();
+
+  final TextEditingController _noteController =
+  TextEditingController();
+
+  String _paymentMethod = 'Cash';
+
+  bool _saving = false;
+
+  double get _amount =>
+      double.tryParse(
+        _amountController.text.trim(),
+      ) ??
+          0;
+
+  double get _paymentLimit {
+    if (widget.bill != null) {
+      return widget.bill!.remainingAmount;
+    }
+
+    return widget.customer.pendingAmount;
+  }
+
+  double get _applied {
+    return _amount
+        .clamp(
+      0,
+      _paymentLimit,
+    )
+        .toDouble();
+  }
+
+  @override
+  void dispose() {
+    _amountController.dispose();
+    _referenceController.dispose();
+    _noteController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _save() async {
+    if (_amount <= 0) {
+      _error(
+        'Enter a payment amount greater than ₹0.',
+      );
+      return;
+    }
+
+    if (_paymentLimit <= 0) {
+      _error(
+        widget.bill != null
+            ? 'This monthly bill has no remaining amount.'
+            : 'This customer has no outstanding amount.',
+      );
+      return;
+    }
+
+    if (_saving) return;
+
+    setState(() {
+      _saving = true;
+    });
+
+    try {
+      if (widget.bill != null) {
+        final result =
+        await MonthlyBillingService.instance
+            .receiveMonthlyBillPayment(
+          farmId: widget.farmId,
+          customerId: widget.customer.id,
+          billId: widget.bill!.id,
+          paidAmount: _amount,
+          paymentMethod: _paymentMethod,
+          note: _buildNote(),
+        );
+
+        if (!mounted) return;
+
+        await showDialog<void>(
+          context: context,
+          barrierDismissible: false,
+          builder: (dialogContext) {
+            return AlertDialog(
+              title: const Text(
+                'Payment Recorded',
+              ),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(
+                    Icons.check_circle,
+                    color: AppColors.success,
+                    size: 52,
+                  ),
+                  const SizedBox(height: 12),
+                  Text(
+                    result.paymentNumber,
+                    style: AppTheme.heading(
+                      size: 14,
+                    ),
+                  ),
+                  const SizedBox(height: 13),
+                  _resultRow(
+                    'Bill',
+                    result.billNumber,
+                  ),
+                  _resultRow(
+                    'Amount',
+                    '₹${result.amountReceived.toStringAsFixed(0)}',
+                  ),
+                  _resultRow(
+                    'Bill Remaining',
+                    '₹${result.billRemainingAfter.toStringAsFixed(0)}',
+                  ),
+                  _resultRow(
+                    'Customer Pending',
+                    '₹${result.pendingAfter.toStringAsFixed(0)}',
+                  ),
+                  if (result.advanceAfter > 0)
+                    _resultRow(
+                      'Customer Advance',
+                      '₹${result.advanceAfter.toStringAsFixed(0)}',
+                    ),
+                ],
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () {
+                    Navigator.pop(
+                      dialogContext,
+                    );
+                  },
+                  child: const Text('Done'),
+                ),
+              ],
+            );
+          },
+        );
+
+        if (!mounted) return;
+
+        Navigator.pop(
+          context,
+          true,
+        );
+
+        return;
+      }
+
+      final result =
+      await FirestoreService.instance
+          .receivePalaiPayment(
+        farmId: widget.farmId,
+        customerId: widget.customer.id,
+        paidAmount: _amount,
+        paymentMethod: _paymentMethod,
+        note: _buildNote(),
+      );
+
+      if (!mounted) return;
+
+      await showDialog<void>(
+        context: context,
+        barrierDismissible: false,
+        builder: (dialogContext) {
+          return AlertDialog(
+            title: const Text(
+              'Payment Recorded',
+            ),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Icon(
+                  Icons.check_circle,
+                  color: AppColors.success,
+                  size: 52,
+                ),
+                const SizedBox(height: 12),
+                Text(
+                  result.paymentNumber,
+                  style: AppTheme.heading(
+                    size: 14,
+                  ),
+                ),
+                const SizedBox(height: 13),
+                _resultRow(
+                  'Amount',
+                  '₹${result.amountReceived.toStringAsFixed(0)}',
+                ),
+                _resultRow(
+                  'Applied to Pending',
+                  '₹${result.amountAppliedToPending.toStringAsFixed(0)}',
+                ),
+                _resultRow(
+                  'Pending After',
+                  '₹${result.pendingAfter.toStringAsFixed(0)}',
+                ),
+                if (result.advanceAdded > 0)
+                  _resultRow(
+                    'Advance Added',
+                    '₹${result.advanceAdded.toStringAsFixed(0)}',
+                  ),
+                _resultRow(
+                  'Total Advance',
+                  '₹${result.advanceAfter.toStringAsFixed(0)}',
+                ),
+              ],
+            ),
+            actions: [
+              TextButton(
+                onPressed: () {
+                  Navigator.pop(
+                    dialogContext,
+                  );
+                },
+                child: const Text('Done'),
+              ),
+            ],
+          );
+        },
+      );
+
+      if (!mounted) return;
+
+      Navigator.pop(
+        context,
+        true,
+      );
+    } catch (e) {
+      if (!mounted) return;
+
+      _error(
+        FirestoreService.instance.describeError(e),
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _saving = false;
+        });
+      }
+    }
+  }
+
+  String _buildNote() {
+    final note =
+    _noteController.text.trim();
+
+    final reference =
+    _referenceController.text.trim();
+
+    if (reference.isEmpty) {
+      return note;
+    }
+
+    if (note.isEmpty) {
+      return 'Reference: $reference';
+    }
+
+    return '$note · Reference: $reference';
+  }
+
+  void _error(
+      String message,
+      ) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        backgroundColor: AppColors.error,
+        behavior: SnackBarBehavior.floating,
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: EdgeInsets.fromLTRB(
+        20,
+        12,
+        20,
+        20 +
+            MediaQuery.of(context)
+                .viewInsets
+                .bottom,
+      ),
+      decoration: const BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.vertical(
+          top: Radius.circular(26),
+        ),
+      ),
+      child: SingleChildScrollView(
+        child: Column(
+          crossAxisAlignment:
+          CrossAxisAlignment.start,
+          children: [
+            _sheetHandle(),
+
+            const SizedBox(height: 18),
+
+            Text(
+              widget.bill != null
+                  ? 'Pay Monthly Bill'
+                  : 'Add New Payment',
+              style: AppTheme.heading(
+                size: 20,
+              ),
+            ),
+
+            const SizedBox(height: 3),
+
+            Text(
+              widget.customer.name,
+              style: AppTheme.body(
+                size: 11,
+                color: AppColors.textGrey,
+              ),
+            ),
+
+            if (widget.bill != null) ...[
+              const SizedBox(height: 9),
+
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: AppColors.lightGreen,
+                  borderRadius:
+                  BorderRadius.circular(12),
+                ),
+                child: Column(
+                  crossAxisAlignment:
+                  CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      widget.bill!.billNumber,
+                      style: AppTheme.heading(
+                        size: 13,
+                        color: AppColors.darkGreen,
+                      ),
+                    ),
+                    const SizedBox(height: 3),
+                    Text(
+                      DateFormat('MMMM yyyy').format(
+                        widget.bill!.billingMonth,
+                      ),
+                      style: AppTheme.body(
+                        size: 10,
+                        color: AppColors.textGrey,
+                      ),
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      'Bill Remaining: ₹${widget.bill!.remainingAmount.toStringAsFixed(0)}',
+                      style: AppTheme.heading(
+                        size: 12,
+                        color: AppColors.error,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+
+            const SizedBox(height: 17),
+
+            _balancePreview(),
+
+            const SizedBox(height: 18),
+
+            _fieldLabel(
+              'Payment Amount',
+            ),
+
+            _outlinedField(
+              controller: _amountController,
+              hint: widget.bill != null
+                  ? 'Maximum ₹${widget.bill!.remainingAmount.toStringAsFixed(0)}'
+                  : 'Enter amount',
+              keyboardType:
+              const TextInputType.numberWithOptions(
+                decimal: true,
+              ),
+              prefix: const Text('₹ '),
+              onChanged: (_) {
+                setState(() {});
+              },
+            ),
+
+            const SizedBox(height: 15),
+
+            _fieldLabel(
+              'Payment Method',
+            ),
+
+            _paymentMethodField(),
+
+            const SizedBox(height: 15),
+
+            _fieldLabel(
+              'Reference Number (optional)',
+            ),
+
+            _outlinedField(
+              controller: _referenceController,
+              hint:
+              'UPI / transaction / cheque number',
+            ),
+
+            const SizedBox(height: 15),
+
+            _fieldLabel(
+              'Note (optional)',
+            ),
+
+            _outlinedField(
+              controller: _noteController,
+              hint: 'Add a note',
+              maxLines: 3,
+            ),
+
+            const SizedBox(height: 20),
+
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton(
+                onPressed:
+                _saving ? null : _save,
+                style:
+                ElevatedButton.styleFrom(
+                  backgroundColor:
+                  AppColors.primaryGreen,
+                  foregroundColor: Colors.white,
+                  padding:
+                  const EdgeInsets.symmetric(
+                    vertical: 14,
+                  ),
+                  shape:
+                  RoundedRectangleBorder(
+                    borderRadius:
+                    BorderRadius.circular(12),
+                  ),
+                ),
+                child: _saving
+                    ? const SizedBox(
+                  width: 20,
+                  height: 20,
+                  child:
+                  CircularProgressIndicator(
+                    color: Colors.white,
+                    strokeWidth: 2,
+                  ),
+                )
+                    : Text(
+                  widget.bill != null
+                      ? 'Pay Monthly Bill'
+                      : 'Receive Payment',
+                  style:
+                  const TextStyle(
+                    fontWeight:
+                    FontWeight.w700,
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _sheetHandle() {
+    return Center(
+      child: Container(
+        width: 42,
+        height: 4,
+        decoration: BoxDecoration(
+          color: Colors.grey.shade300,
+          borderRadius:
+          BorderRadius.circular(10),
+        ),
+      ),
+    );
+  }
+
+  Widget _balancePreview() {
+    final outstanding =
+        widget.customer.pendingAmount;
+
+    final advance =
+        widget.customer.advanceAmount;
+
+    return Container(
+      padding: const EdgeInsets.all(13),
+      decoration: BoxDecoration(
+        color: AppColors.lightGreen,
+        borderRadius:
+        BorderRadius.circular(14),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment:
+              CrossAxisAlignment.start,
+              children: [
+                Text(
+                  widget.bill != null
+                      ? 'Bill Remaining'
+                      : 'Outstanding',
+                  style: AppTheme.body(
+                    size: 9,
+                    color: AppColors.textGrey,
+                  ),
+                ),
+                const SizedBox(height: 3),
+                Text(
+                  '₹${_paymentLimit.toStringAsFixed(0)}',
+                  style: AppTheme.heading(
+                    size: 16,
+                    color: _paymentLimit > 0
+                        ? AppColors.error
+                        : AppColors.success,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          Expanded(
+            child: Column(
+              crossAxisAlignment:
+              CrossAxisAlignment.end,
+              children: [
+                Text(
+                  'Customer Pending',
+                  style: AppTheme.body(
+                    size: 9,
+                    color: AppColors.textGrey,
+                  ),
+                ),
+                const SizedBox(height: 3),
+                Text(
+                  '₹${outstanding.toStringAsFixed(0)}',
+                  style: AppTheme.heading(
+                    size: 16,
+                    color: outstanding > 0
+                        ? AppColors.error
+                        : AppColors.success,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  'Advance ₹${advance.toStringAsFixed(0)}',
+                  style: AppTheme.body(
+                    size: 8,
+                    color: AppColors.success,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _paymentMethodField() {
+    return Container(
+      padding:
+      const EdgeInsets.symmetric(
+        horizontal: 13,
+      ),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius:
+        BorderRadius.circular(12),
+        border: Border.all(
+          color: AppColors.divider,
+        ),
+      ),
+      child:
+      DropdownButtonHideUnderline(
+        child: DropdownButton<String>(
+          value: _paymentMethod,
+          isExpanded: true,
+          items: const [
+            DropdownMenuItem(
+              value: 'Cash',
+              child: Text('Cash'),
+            ),
+            DropdownMenuItem(
+              value: 'UPI',
+              child: Text('UPI'),
+            ),
+            DropdownMenuItem(
+              value: 'Bank Transfer',
+              child: Text('Bank Transfer'),
+            ),
+            DropdownMenuItem(
+              value: 'Cheque',
+              child: Text('Cheque'),
+            ),
+            DropdownMenuItem(
+              value: 'Other',
+              child: Text('Other'),
+            ),
+          ],
+          onChanged: _saving
+              ? null
+              : (value) {
+            if (value == null) return;
+
+            setState(() {
+              _paymentMethod =
+                  value;
+            });
+          },
+        ),
+      ),
+    );
+  }
+
+  Widget _outlinedField({
+    required TextEditingController controller,
+    String? hint,
+    Widget? prefix,
+    TextInputType? keyboardType,
+    int maxLines = 1,
+    ValueChanged<String>? onChanged,
+  }) {
+    return TextField(
+      controller: controller,
+      keyboardType: keyboardType,
+      maxLines: maxLines,
+      onChanged: onChanged,
+      decoration: InputDecoration(
+        hintText: hint,
+        prefix: prefix,
+        filled: true,
+        fillColor: Colors.white,
+        contentPadding:
+        const EdgeInsets.symmetric(
+          horizontal: 14,
+          vertical: 12,
+        ),
+        border: OutlineInputBorder(
+          borderRadius:
+          BorderRadius.circular(12),
+          borderSide: const BorderSide(
+            color: AppColors.divider,
+          ),
+        ),
+        enabledBorder:
+        OutlineInputBorder(
+          borderRadius:
+          BorderRadius.circular(12),
+          borderSide: const BorderSide(
+            color: AppColors.divider,
+          ),
+        ),
+        focusedBorder:
+        OutlineInputBorder(
+          borderRadius:
+          BorderRadius.circular(12),
+          borderSide: const BorderSide(
+            color: AppColors.primaryGreen,
+            width: 1.5,
+          ),
+        ),
+      ),
+      style: AppTheme.body(
+        size: 12,
+        color: AppColors.textDark,
+      ),
+    );
+  }
+
+  Widget _fieldLabel(
+      String text,
+      ) {
+    return Padding(
+      padding:
+      const EdgeInsets.only(
+        bottom: 6,
+      ),
+      child: Text(
+        text,
+        style: AppTheme.body(
+          size: 10,
+          color: AppColors.textDark,
+          weight: FontWeight.w600,
+        ),
+      ),
+    );
+  }
+
+  Widget _resultRow(
+      String label,
+      String value,
+      ) {
+    return Padding(
+      padding:
+      const EdgeInsets.symmetric(
+        vertical: 4,
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: Text(
+              label,
+              style: AppTheme.body(
+                size: 10,
+                color: AppColors.textGrey,
+              ),
+            ),
+          ),
+          const SizedBox(width: 10),
+          Flexible(
+            child: Text(
+              value,
+              textAlign: TextAlign.end,
+              style: AppTheme.heading(
+                size: 10,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ============================================================================
+// ADD OUTSTANDING SHEET
+// ============================================================================
+
+class _AddOutstandingSheet
+    extends StatefulWidget {
+  final String farmId;
+  final PalaiCustomer customer;
+
+  const _AddOutstandingSheet({
+    required this.farmId,
+    required this.customer,
+  });
+
+  @override
+  State<_AddOutstandingSheet> createState() =>
+      _AddOutstandingSheetState();
+}
+
+class _AddOutstandingSheetState
+    extends State<_AddOutstandingSheet> {
+  final TextEditingController
+  _amountController =
+  TextEditingController();
+
+  final TextEditingController
+  _noteController =
+  TextEditingController();
+
+  bool _saving = false;
+
+  double get _amount =>
+      double.tryParse(
+        _amountController.text.trim(),
+      ) ??
+          0;
+
+  @override
+  void dispose() {
+    _amountController.dispose();
+    _noteController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _save() async {
+    if (_amount <= 0) {
+      _error(
+        'Enter an outstanding amount greater than ₹0.',
+      );
+      return;
+    }
+
+    if (_saving) return;
+
+    setState(() {
+      _saving = true;
+    });
+
+    try {
+      final db =
+          FirebaseFirestore.instance;
+
+      final farmRef =
+      db.collection('farms').doc(
+        widget.farmId,
+      );
+
+      final customerRef = farmRef
+          .collection('palaiCustomers')
+          .doc(widget.customer.id);
+
+      final billRef =
+      farmRef.collection('bills').doc();
+
+      final activityRef = farmRef
+          .collection('activities')
+          .doc();
+
+      final paymentRef = farmRef
+          .collection('payments')
+          .doc();
+
+      final now = DateTime.now();
+
+      final billNumber =
+          'OPEN-${now.year}'
+          '${now.month.toString().padLeft(2, '0')}'
+          '${now.day.toString().padLeft(2, '0')}'
+          '-${billRef.id.substring(0, 6).toUpperCase()}';
+
+      await db.runTransaction(
+            (transaction) async {
+          final snapshot =
+          await transaction.get(
+            customerRef,
+          );
+
+          if (!snapshot.exists) {
+            throw StateError(
+              'Customer no longer exists.',
+            );
+          }
+
+          final data =
+              snapshot.data() ?? {};
+
+          final oldPending =
+          (data['pendingAmount'] ?? 0)
+              .toDouble();
+
+          final oldAdvance =
+          (data['advanceAmount'] ?? 0)
+              .toDouble();
+
+          final advanceUsed =
+          _amount
+              .clamp(0, oldAdvance)
+              .toDouble();
+
+          final remainingOutstanding =
+              _amount - advanceUsed;
+
+          final newAdvance =
+              oldAdvance - advanceUsed;
+
+          final newPending =
+              oldPending +
+                  remainingOutstanding;
+
+          transaction.update(
+            customerRef,
+            {
+              'pendingAmount':
+              newPending,
+              'advanceAmount':
+              newAdvance,
+              'updatedAt':
+              FieldValue.serverTimestamp(),
+            },
+          );
+
+          transaction.set(
+            billRef,
+            {
+              'billNumber':
+              billNumber,
+              'type':
+              'opening_balance',
+              'customerId':
+              widget.customer.id,
+              'customerName':
+              widget.customer.name,
+              'description':
+              'Outstanding amount added',
+              'newCharges':
+              _amount,
+              'previousPending':
+              oldPending,
+              'advanceBefore':
+              oldAdvance,
+              'advanceUsed':
+              advanceUsed,
+              'totalDue':
+              newPending,
+              'amountPaid':
+              0,
+              'pendingAfter':
+              newPending,
+              'advanceAfter':
+              newAdvance,
+              'note':
+              _noteController.text
+                  .trim(),
+              'status':
+              'pending',
+              'createdAt':
+              FieldValue.serverTimestamp(),
+              'updatedAt':
+              FieldValue.serverTimestamp(),
+            },
+          );
+
+          transaction.set(
+            paymentRef,
+            {
+              'customerId':
+              widget.customer.id,
+              'customerName':
+              widget.customer.name,
+              'type':
+              'outstandingAdded',
+              'amount':
+              _amount,
+              'paymentMethod':
+              'Outstanding Added',
+              'paymentNumber':
+              billNumber,
+              'note':
+              _noteController.text
+                  .trim(),
+              'pendingBefore':
+              oldPending,
+              'pendingAdded':
+              remainingOutstanding,
+              'pendingAfter':
+              newPending,
+              'advanceBefore':
+              oldAdvance,
+              'advanceUsed':
+              advanceUsed,
+              'advanceAmount':
+              0,
+              'advanceAfter':
+              newAdvance,
+              'date':
+              FieldValue.serverTimestamp(),
+              'createdAt':
+              FieldValue.serverTimestamp(),
+            },
+          );
+
+          transaction.set(
+            activityRef,
+            {
+              'type':
+              'paymentReceived',
+              'title':
+              'Outstanding Added',
+              'subtitle':
+              '${widget.customer.name} · ₹${_amount.toStringAsFixed(0)}',
+              'module':
+              'palai',
+              'timestamp':
+              FieldValue.serverTimestamp(),
+            },
+          );
+        },
+      );
+
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context)
+          .showSnackBar(
+        SnackBar(
+          content: Text(
+            '₹${_amount.toStringAsFixed(0)} outstanding added.',
+          ),
+          backgroundColor:
+          AppColors.primaryGreen,
+          behavior:
+          SnackBarBehavior.floating,
+        ),
+      );
+
+      Navigator.pop(
+        context,
+        true,
+      );
+    } catch (e) {
+      if (!mounted) return;
+
+      setState(() {
+        _saving = false;
+      });
+
+      _error(
+        FirestoreService.instance
+            .describeError(e),
+      );
+    }
+  }
+
+  void _error(
+      String message,
+      ) {
+    ScaffoldMessenger.of(context)
+        .showSnackBar(
+      SnackBar(
+        content: Text(message),
+        backgroundColor:
+        AppColors.error,
+        behavior:
+        SnackBarBehavior.floating,
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final current =
+        widget.customer.pendingAmount;
+
+    final after =
+        current + _amount;
+
+    return Container(
+      padding: EdgeInsets.fromLTRB(
+        20,
+        12,
+        20,
+        20 +
+            MediaQuery.of(context)
+                .viewInsets
+                .bottom,
+      ),
+      decoration: const BoxDecoration(
+        color: Colors.white,
+        borderRadius:
+        BorderRadius.vertical(
+          top: Radius.circular(26),
+        ),
+      ),
+      child: SingleChildScrollView(
+        child: Column(
+          crossAxisAlignment:
+          CrossAxisAlignment.start,
+          children: [
+            Center(
+              child: Container(
+                width: 42,
+                height: 4,
+                decoration:
+                BoxDecoration(
+                  color:
+                  Colors.grey.shade300,
+                  borderRadius:
+                  BorderRadius.circular(
+                    10,
+                  ),
+                ),
+              ),
+            ),
+
+            const SizedBox(height: 18),
+
+            Text(
+              'Add Outstanding',
+              style: AppTheme.heading(
+                size: 20,
+              ),
+            ),
+
+            const SizedBox(height: 3),
+
+            Text(
+              widget.customer.name,
+              style: AppTheme.body(
+                size: 11,
+                color:
+                AppColors.textGrey,
+              ),
+            ),
+
+            const SizedBox(height: 17),
+
+            Container(
+              width: double.infinity,
+              padding:
+              const EdgeInsets.all(15),
+              decoration:
+              BoxDecoration(
+                color: Colors.white,
+                borderRadius:
+                BorderRadius.circular(
+                  16,
+                ),
+                border: Border.all(
+                  color:
+                  AppColors.divider,
+                ),
+              ),
+              child: Column(
+                crossAxisAlignment:
+                CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          'OUTSTANDING SUMMARY',
+                          style:
+                          AppTheme.heading(
+                            size: 13,
+                            color: AppColors
+                                .primaryGreen,
+                          ),
+                        ),
+                      ),
+                      Container(
+                        padding:
+                        const EdgeInsets
+                            .symmetric(
+                          horizontal: 8,
+                          vertical: 4,
+                        ),
+                        decoration:
+                        BoxDecoration(
+                          color: AppColors
+                              .error
+                              .withValues(alpha:
+                          0.10,
+                          ),
+                          borderRadius:
+                          BorderRadius
+                              .circular(
+                            7,
+                          ),
+                        ),
+                        child: Text(
+                          'OUTSTANDING',
+                          style: AppTheme
+                              .body(
+                            size: 8,
+                            color: AppColors
+                                .error,
+                            weight:
+                            FontWeight.w800,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+
+                  const SizedBox(height: 11),
+
+                  const Divider(
+                    height: 1,
+                  ),
+
+                  const SizedBox(height: 11),
+
+                  _summaryRow(
+                    'Current Outstanding',
+                    '₹${current.toStringAsFixed(0)}',
+                  ),
+
+                  const SizedBox(height: 8),
+
+                  _summaryRow(
+                    'Amount Being Added',
+                    '₹${_amount.toStringAsFixed(0)}',
+                  ),
+
+                  const SizedBox(height: 11),
+
+                  const Divider(
+                    height: 1,
+                  ),
+
+                  const SizedBox(height: 11),
+
+                  _summaryRow(
+                    'Total Outstanding',
+                    '₹${after.toStringAsFixed(0)}',
+                    bold: true,
+                  ),
+                ],
+              ),
+            ),
+
+            const SizedBox(height: 19),
+
+            _fieldLabel(
+              'Outstanding Amount',
+            ),
+
+            TextField(
+              controller:
+              _amountController,
+              keyboardType:
+              const TextInputType
+                  .numberWithOptions(
+                decimal: true,
+              ),
+              onChanged: (_) {
+                setState(() {});
+              },
+              decoration:
+              InputDecoration(
+                hintText:
+                'Enter amount',
+                prefixText: '₹ ',
+                filled: true,
+                fillColor:
+                Colors.white,
+                contentPadding:
+                const EdgeInsets
+                    .symmetric(
+                  horizontal: 14,
+                  vertical: 12,
+                ),
+                border:
+                OutlineInputBorder(
+                  borderRadius:
+                  BorderRadius
+                      .circular(
+                    12,
+                  ),
+                  borderSide:
+                  const BorderSide(
+                    color:
+                    AppColors.divider,
+                  ),
+                ),
+                enabledBorder:
+                OutlineInputBorder(
+                  borderRadius:
+                  BorderRadius
+                      .circular(
+                    12,
+                  ),
+                  borderSide:
+                  const BorderSide(
+                    color:
+                    AppColors.divider,
+                  ),
+                ),
+                focusedBorder:
+                OutlineInputBorder(
+                  borderRadius:
+                  BorderRadius
+                      .circular(
+                    12,
+                  ),
+                  borderSide:
+                  const BorderSide(
+                    color: AppColors
+                        .primaryGreen,
+                    width: 1.5,
+                  ),
+                ),
+              ),
+              style: AppTheme.body(
+                size: 12,
+                color:
+                AppColors.textDark,
+              ),
+            ),
+
+            const SizedBox(height: 15),
+
+            _fieldLabel(
+              'Note (optional)',
+            ),
+
+            TextField(
+              controller:
+              _noteController,
+              maxLines: 3,
+              decoration:
+              InputDecoration(
+                hintText:
+                'Why was this outstanding amount added?',
+                filled: true,
+                fillColor:
+                Colors.white,
+                contentPadding:
+                const EdgeInsets.all(
+                  14,
+                ),
+                border:
+                OutlineInputBorder(
+                  borderRadius:
+                  BorderRadius
+                      .circular(
+                    12,
+                  ),
+                  borderSide:
+                  const BorderSide(
+                    color:
+                    AppColors.divider,
+                  ),
+                ),
+                enabledBorder:
+                OutlineInputBorder(
+                  borderRadius:
+                  BorderRadius
+                      .circular(
+                    12,
+                  ),
+                  borderSide:
+                  const BorderSide(
+                    color:
+                    AppColors.divider,
+                  ),
+                ),
+                focusedBorder:
+                OutlineInputBorder(
+                  borderRadius:
+                  BorderRadius
+                      .circular(
+                    12,
+                  ),
+                  borderSide:
+                  const BorderSide(
+                    color: AppColors
+                        .primaryGreen,
+                    width: 1.5,
+                  ),
+                ),
+              ),
+              style: AppTheme.body(
+                size: 12,
+                color:
+                AppColors.textDark,
+              ),
+            ),
+
+            const SizedBox(height: 20),
+
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton(
+                onPressed:
+                _saving ? null : _save,
+                style:
+                ElevatedButton.styleFrom(
+                  backgroundColor:
+                  AppColors
+                      .primaryGreen,
+                  foregroundColor:
+                  Colors.white,
+                  padding:
+                  const EdgeInsets
+                      .symmetric(
+                    vertical: 14,
+                  ),
+                  shape:
+                  RoundedRectangleBorder(
+                    borderRadius:
+                    BorderRadius
+                        .circular(
+                      12,
+                    ),
+                  ),
+                ),
+                child: _saving
+                    ? const SizedBox(
+                  height: 20,
+                  width: 20,
+                  child:
+                  CircularProgressIndicator(
+                    color:
+                    Colors.white,
+                    strokeWidth: 2,
+                  ),
+                )
+                    : const Text(
+                  'Add Outstanding',
+                  style:
+                  TextStyle(
+                    fontWeight:
+                    FontWeight.w700,
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _summaryRow(
+      String label,
+      String value, {
+        bool bold = false,
+      }) {
+    return Row(
+      mainAxisAlignment:
+      MainAxisAlignment.spaceBetween,
+      children: [
+        Expanded(
+          child: Text(
+            label,
+            style: bold
+                ? AppTheme.heading(
+              size: 13,
+            )
+                : AppTheme.body(
+              size: 10,
+              color:
+              AppColors.textGrey,
+            ),
+          ),
+        ),
+        Text(
+          value,
+          style: bold
+              ? AppTheme.heading(
+            size: 16,
+            color:
+            AppColors.primaryGreen,
+          )
+              : AppTheme.body(
+            size: 11,
+            color:
+            AppColors.textDark,
+            weight:
+            FontWeight.w700,
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _fieldLabel(
+      String text,
+      ) {
+    return Padding(
+      padding:
+      const EdgeInsets.only(
+        bottom: 6,
+      ),
+      child: Text(
+        text,
+        style: AppTheme.body(
+          size: 10,
+          color:
+          AppColors.textDark,
+          weight:
+          FontWeight.w600,
+        ),
+      ),
+    );
+  }
 }

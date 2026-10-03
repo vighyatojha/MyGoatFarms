@@ -2441,6 +2441,7 @@ class FirestoreService {
       'monthlyPhotos',
       'reports',
       'medicineRecords',
+      'palaiWeightRecords',
     ];
 
     for (final collectionName in subcollections) {
@@ -3705,6 +3706,11 @@ class FirestoreService {
     /// before arrival, so counting from arrival is the best available
     /// estimate.
     DateTime? hoofCuttingBaselineDate,
+
+    /// When true, a record type the goat already has at least one record
+    /// of is left alone — used by [ensureFarmHealthRemindersForGoat] so
+    /// repairing a goat never duplicates or overrides records it has.
+    bool skipTypesWithRecords = false,
   }) async {
     final settings = await getHealthReminderSettings(farmId);
 
@@ -3716,6 +3722,16 @@ class FirestoreService {
     final goatRef = _goats(farmId, customerId).doc(goatId);
     final seeded = <SeededHealthReminder>[];
 
+    Future<bool> alreadyHasRecords(String collectionName) async {
+      if (!skipTypesWithRecords) return false;
+      final snap = await goatRef
+          .collection(collectionName)
+          .limit(1)
+          .get()
+          .timeout(timeout);
+      return snap.docs.isNotEmpty;
+    }
+
     const autoNote =
         'Auto-scheduled at registration from farm Health Reminder Settings.';
 
@@ -3724,7 +3740,8 @@ class FirestoreService {
     // back to baselineDate, i.e. farm arrival, when not given).
     // ------------------------------------------------------------------
     final hoofCuttingReminderDays = settings.hoofCuttingReminderDays;
-    if (hoofCuttingReminderDays != null) {
+    if (hoofCuttingReminderDays != null &&
+        !await alreadyHasRecords('hoofCuttingRecords')) {
       final cuttingDate = hoofCuttingBaselineDate ?? baselineDate;
       final nextDueDate =
       cuttingDate.add(Duration(days: hoofCuttingReminderDays));
@@ -3754,7 +3771,8 @@ class FirestoreService {
     // Vaccination — fixed farm-wide date.
     // ------------------------------------------------------------------
     final vaccinationNextDueDate = settings.vaccinationNextDueDate;
-    if (vaccinationNextDueDate != null) {
+    if (vaccinationNextDueDate != null &&
+        !await alreadyHasRecords('vaccinationRecords')) {
       final reference = goatRef.collection('vaccinationRecords').doc();
 
       final record = VaccinationRecord(
@@ -3782,7 +3800,8 @@ class FirestoreService {
     // Hair Trimming — fixed farm-wide date.
     // ------------------------------------------------------------------
     final hairTrimmingNextDueDate = settings.hairTrimmingNextDueDate;
-    if (hairTrimmingNextDueDate != null) {
+    if (hairTrimmingNextDueDate != null &&
+        !await alreadyHasRecords('hairTrimmingRecords')) {
       final reference = goatRef.collection('hairTrimmingRecords').doc();
 
       final record = HairTrimmingRecord(
@@ -3805,7 +3824,63 @@ class FirestoreService {
       ));
     }
 
+    // Remember that this goat has been put on the farm schedule, so the
+    // self-repair in [ensureFarmHealthRemindersForGoat] never re-adds a
+    // record the owner later deletes on purpose. Best-effort.
+    try {
+      await goatRef.update({'farmRemindersSeeded': true}).timeout(timeout);
+    } catch (e) {
+      debugPrint('FirestoreService: could not flag goat $goatId as '
+          'reminder-seeded: $e');
+    }
+
     return seeded;
+  }
+
+  /// Goats currently being repaired by [ensureFarmHealthRemindersForGoat],
+  /// so opening the same profile twice quickly can't seed it twice.
+  final Set<String> _reminderRepairsInFlight = <String>{};
+
+  /// Self-repair for a Customer Palai goat that never got onto the farm's
+  /// Health Reminder Settings — e.g. a goat transferred from Trading
+  /// before automatic seeding existed, or one whose seeding failed
+  /// quietly after the transfer was saved.
+  ///
+  /// Does nothing when the goat is checked out, has already been seeded
+  /// (`farmRemindersSeeded`), or the farm has no reminders turned on.
+  /// Otherwise it seeds exactly what is missing — a reminder type the
+  /// goat already has a record of is left alone — counted from the goat's
+  /// farm arrival (or check-in) date, and returns the new records so the
+  /// caller can schedule their phone notifications.
+  Future<List<SeededHealthReminder>> ensureFarmHealthRemindersForGoat({
+    required String farmId,
+    required String customerId,
+    required String goatId,
+  }) async {
+    final key = '$farmId|$customerId|$goatId';
+    if (!_reminderRepairsInFlight.add(key)) return const [];
+
+    try {
+      final snap =
+      await _goats(farmId, customerId).doc(goatId).get().timeout(timeout);
+      if (!snap.exists) return const [];
+
+      final data = snap.data() ?? <String, dynamic>{};
+      if (data['isCheckedOut'] == true) return const [];
+      if (data['farmRemindersSeeded'] == true) return const [];
+
+      final goat = PalaiGoat.fromDoc(snap);
+
+      return await seedHealthRemindersForNewGoat(
+        farmId: farmId,
+        customerId: customerId,
+        goatId: goatId,
+        baselineDate: goat.farmArrivalDate ?? goat.checkInDate,
+        skipTypesWithRecords: true,
+      );
+    } finally {
+      _reminderRepairsInFlight.remove(key);
+    }
   }
 
   // ---------------------------------------------------------------------
