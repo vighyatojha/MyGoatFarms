@@ -349,35 +349,88 @@ class _EditLotScreenState extends State<EditLotScreen> {
 
   /// Purchase amount, grand total, paid and balance due — recalculated on
   /// every keystroke.
+  /// Purchase amount, grand total, paid and balance due — recalculated on
+  /// every keystroke.
+  ///
+  /// The four figures intentionally use a 2x2 layout on phones instead of
+  /// forcing four columns into one narrow row. This prevents currency values
+  /// from visually touching each other on small screens.
   Widget _liveSummary() {
     final costing = _costing;
     final amount = costing.purchaseAmount;
     final paid = _lot.paidAmount;
+
     final dueRaw = PurchaseCosting.round2(amount - paid);
     final overpaid = dueRaw < -0.005;
     final due = dueRaw < 0 ? 0.0 : dueRaw;
+
     final changed = (amount - _lot.purchaseAmount).abs() >= 0.005;
 
-    Widget cell(String label, String value, {Color? color}) {
-      return Expanded(
-        child: Column(
+    Widget cell(
+        String label,
+        String value, {
+          Color? color,
+          IconData? icon,
+        }) {
+      return Container(
+        padding: const EdgeInsets.symmetric(
+          horizontal: 12,
+          vertical: 10,
+        ),
+        decoration: BoxDecoration(
+          color: AppColors.paleGreen.withValues(alpha: 0.42),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(
+            color: AppColors.divider,
+          ),
+        ),
+        child: Row(
           children: [
-            FittedBox(
-              fit: BoxFit.scaleDown,
-              child: Text(
-                value,
-                style: AppTheme.heading(
-                  size: 16,
-                  color: color ?? AppColors.textDark,
+            if (icon != null) ...[
+              Container(
+                width: 30,
+                height: 30,
+                decoration: BoxDecoration(
+                  color: (color ?? AppColors.primaryGreen)
+                      .withValues(alpha: 0.10),
+                  shape: BoxShape.circle,
+                ),
+                child: Icon(
+                  icon,
+                  size: 15,
+                  color: color ?? AppColors.primaryGreen,
                 ),
               ),
-            ),
-            const SizedBox(height: 2),
-            Text(
-              label,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: AppTheme.body(size: 10),
+              const SizedBox(width: 8),
+            ],
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    label,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: AppTheme.body(
+                      size: 10,
+                      color: AppColors.textGrey,
+                      weight: FontWeight.w500,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  FittedBox(
+                    alignment: Alignment.centerLeft,
+                    fit: BoxFit.scaleDown,
+                    child: Text(
+                      value,
+                      style: AppTheme.heading(
+                        size: 15,
+                        color: color ?? AppColors.textDark,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
             ),
           ],
         ),
@@ -390,41 +443,114 @@ class _EditLotScreenState extends State<EditLotScreen> {
       shadowColor: Colors.black26,
       child: Container(
         width: double.infinity,
-        padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
+        padding: const EdgeInsets.fromLTRB(
+          16,
+          12,
+          16,
+          14,
+        ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Row(
               children: [
-                Text('Live totals', style: AppTheme.heading(size: 13)),
+                Text(
+                  'Live totals',
+                  style: AppTheme.heading(size: 13),
+                ),
                 const Spacer(),
                 if (changed)
-                  Text(
-                    'was ${wizardCurrency(_lot.purchaseAmount)}',
-                    style: AppTheme.body(size: 11),
+                  Flexible(
+                    child: Text(
+                      'was ${wizardCurrency(_lot.purchaseAmount)}',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      textAlign: TextAlign.right,
+                      style: AppTheme.body(
+                        size: 10.5,
+                        color: AppColors.textGrey,
+                      ),
+                    ),
                   ),
               ],
             ),
+
             const SizedBox(height: 10),
+
+            // 2 x 2 layout keeps each financial figure readable on
+            // small phone screens.
             Row(
               children: [
-                cell('Purchase amount', wizardCurrency(amount),
-                    color: AppColors.primaryGreen),
-                cell('Grand total', wizardCurrency(costing.grandTotal)),
-                cell('Paid', wizardCurrency(paid)),
-                cell(
-                  'Balance due',
-                  wizardCurrency(due),
-                  color: due >= 0.01 ? AppColors.error : AppColors.success,
+                Expanded(
+                  child: cell(
+                    'Purchase amount',
+                    wizardCurrency(amount),
+                    color: AppColors.primaryGreen,
+                    icon: Icons.shopping_cart_outlined,
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: cell(
+                    'Grand total',
+                    wizardCurrency(costing.grandTotal),
+                    icon: Icons.receipt_long_outlined,
+                  ),
                 ),
               ],
             ),
+
+            const SizedBox(height: 8),
+
+            Row(
+              children: [
+                Expanded(
+                  child: cell(
+                    'Paid',
+                    wizardCurrency(paid),
+                    color: AppColors.textDark,
+                    icon: Icons.payments_outlined,
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: cell(
+                    'Balance due',
+                    wizardCurrency(due),
+                    color: due >= 0.01
+                        ? AppColors.error
+                        : AppColors.success,
+                    icon: due >= 0.01
+                        ? Icons.account_balance_wallet_outlined
+                        : Icons.check_circle_outline,
+                  ),
+                ),
+              ],
+            ),
+
             if (overpaid) ...[
-              const SizedBox(height: 8),
-              Text(
-                'New amount is ${wizardCurrency(-dueRaw)} less than already '
-                    'paid — raise the weight / price or void a payment.',
-                style: AppTheme.body(size: 11, color: AppColors.error),
+              const SizedBox(height: 10),
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 8,
+                ),
+                decoration: BoxDecoration(
+                  color: AppColors.error.withValues(alpha: 0.07),
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(
+                    color: AppColors.error.withValues(alpha: 0.20),
+                  ),
+                ),
+                child: Text(
+                  'New amount is ${wizardCurrency(-dueRaw)} less than '
+                      'already paid — raise the weight / price or void a payment.',
+                  style: AppTheme.body(
+                    size: 10.5,
+                    color: AppColors.error,
+                  ),
+                ),
               ),
             ],
           ],
