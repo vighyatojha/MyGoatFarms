@@ -126,6 +126,38 @@ class FinalPaymentHistoryRow {
   });
 }
 
+/// One line of the "Palai charges for the unbilled days" breakdown, for
+/// example: 'G-101 • Oct 1–3' / '3 of 31 days × ₹7,000 per month'.
+class FinalCheckoutChargeRow {
+  final String label;
+  final String detail;
+  final double amount;
+
+  const FinalCheckoutChargeRow({
+    required this.label,
+    required this.detail,
+    required this.amount,
+  });
+}
+
+/// One line of the month-wise bills table on the Final Settlement page
+/// ('September Bill (2026)', 'Pending before September 2026', ...).
+class FinalBillSummaryRow {
+  final String label;
+  final double charges;
+  final double paid;
+  final double remaining;
+  final String status; // paid / partial / unpaid
+
+  const FinalBillSummaryRow({
+    required this.label,
+    required this.charges,
+    required this.paid,
+    required this.remaining,
+    required this.status,
+  });
+}
+
 /// Customer-level financial settlement shown on the Final Checkout
 /// Report's closing page.
 ///
@@ -164,6 +196,18 @@ class FinalSettlementData {
   /// informational history only, never re-summed into the balance.
   final List<FinalPaymentHistoryRow> paymentHistory;
 
+  /// Day-wise (per goat, per month) breakdown of the Palai charges
+  /// billed at this checkout. Adds up to [totalMonthlyCharges].
+  final List<FinalCheckoutChargeRow> checkoutCharges;
+
+  /// Every earlier monthly bill of this customer, oldest first.
+  final List<FinalBillSummaryRow> monthlyBills;
+
+  /// Previous Outstanding that is NOT explained by [monthlyBills]
+  /// (manual outstanding, waived amounts, ...). Signed. Keeps the
+  /// bills table adding up to [previousOutstanding].
+  final double otherBalance;
+
   bool get isFullySettled => finalOutstanding <= 0;
 
   double get totalPaidHistorical =>
@@ -186,6 +230,9 @@ class FinalSettlementData {
     required this.finalOutstanding,
     required this.finalAdvance,
     required this.paymentHistory,
+    this.checkoutCharges = const [],
+    this.monthlyBills = const [],
+    this.otherBalance = 0,
     this.periodStart,
   });
 }

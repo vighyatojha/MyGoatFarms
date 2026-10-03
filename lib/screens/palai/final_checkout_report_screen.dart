@@ -8,12 +8,16 @@ import '../../goat_icons.dart';
 import '../../models/bill_settings_model.dart';
 import '../../models/farm_model.dart';
 import '../../models/final_checkout_report_model.dart';
+import '../../models/monthly_bill_model.dart';
 import '../../models/palai_models.dart';
 import '../../services/finance_service.dart';
 import '../../services/firestore_service.dart';
 import '../../services/final_checkout_report_pdf_service.dart';
+import '../../services/monthly_billing_service.dart';
+import '../../services/monthly_statement_engine.dart';
 import '../../services/monthly_report_service.dart';
 import '../../utils/palai_proration.dart';
+import '../../utils/pdf_download.dart';
 import 'checkout_charges_payment_screen.dart' show GoatCheckoutDraft;
 
 /// Final stage of the Palai checkout flow.
@@ -53,6 +57,14 @@ class FinalCheckoutReportScreen extends StatefulWidget {
   /// therefore read from [PalaiGoat.checkInTransportCharge].
   final double checkOutTransport;
 
+  /// Palai charges actually billed at this checkout (the amount typed
+  /// on the Payment Details screen — NOT the goats' monthly package
+  /// price, which is wrong for a part month).
+  final double palaiCharges;
+
+  /// Discount entered on the Payment Details screen.
+  final double discount;
+
   /// Called only after the user successfully downloads or shares the
   /// final PDF and presses Done.
   ///
@@ -68,6 +80,8 @@ class FinalCheckoutReportScreen extends StatefulWidget {
     required this.billResult,
     required this.billSettings,
     this.checkOutTransport = 0,
+    this.palaiCharges = 0,
+    this.discount = 0,
     this.onDone,
   });
 
@@ -526,24 +540,121 @@ class _FinalCheckoutReportScreenState
     final report = _report!;
     final billResult = widget.billResult;
 
-    final totalMonthlyCharges =
-    report.goats.fold<double>(0, (sum, g) => sum + g.charges);
-    final totalTransport = report.checkInTransport + report.checkOutTransport;
-
-    // No source for these two in this screen's data today — see the
-    // KNOWN GAPS note above. Left explicit rather than guessed.
+    // Same figures createMonthlyBill() uses, so the report always
+    // agrees with the bill that is written on Done:
+    //   new charges = Palai charges + check-out transport - discount
+    // Check-in transport was billed when the goats arrived, so it is
+    // NOT part of this checkout's charges.
+    final totalMonthlyCharges = widget.palaiCharges;
+    final totalTransport = widget.checkOutTransport;
     const totalOtherCharges = 0.0;
-    const totalDiscount = 0.0;
+    final totalDiscount = widget.discount;
 
-    final grossCharges = totalMonthlyCharges +
+    final grossCharges = (totalMonthlyCharges +
         totalTransport +
         totalOtherCharges -
-        totalDiscount;
+        totalDiscount)
+        .clamp(0, double.infinity)
+        .toDouble();
 
-    // report.paymentHistory was already fetched once, in
-    // _loadReportData, via FinanceService.instance
-    // .getCustomerPaymentHistory(farmId: ..., customerId: ...) —
-    // reused here rather than firing that same Firestore query again.
+    // --------------------------------------------------------------
+    // CHECKOUT DAYS (e.g. 3 days of October) — same calculation the
+    // Payment Details screen used: every day not yet on a monthly
+    // statement, prorated from each goat's monthly price.
+    // --------------------------------------------------------------
+    final checkoutRows = <FinalCheckoutChargeRow>[];
+    try {
+      final lastBilled =
+      await MonthlyStatementEngine.instance.lastBilledPeriod(
+        farmId: widget.farmId,
+        customerId: widget.customerId,
+      );
+      final today = DateTime.now();
+      final money = NumberFormat('#,##0.##', 'en_IN');
+      var computed = 0.0;
+
+      for (final draft in widget.goats) {
+        final range = MonthlyStatementEngine.instance.unbilledChargeFor(
+          goat: draft.goat,
+          lastBilledKey: lastBilled,
+          upTo: today,
+        );
+        for (final seg in range.segments) {
+          final from = DateFormat('MMM d').format(seg.fromDate);
+          final to = seg.fromDate.day == seg.toDate.day
+              ? ''
+              : '–${seg.toDate.day}';
+          checkoutRows.add(
+            FinalCheckoutChargeRow(
+              label: '${draft.goat.goatCode} • $from$to',
+              detail: '${seg.days} of ${seg.daysInMonth} days × '
+                  '₹${money.format(range.monthlyCharge)} per month',
+              amount: seg.amount,
+            ),
+          );
+          computed += seg.amount;
+        }
+      }
+
+      // The charge field on the Payment screen is editable and is
+      // rounded to whole rupees, so show any difference explicitly —
+      // the rows then always add up to the amount actually billed.
+      final diff = totalMonthlyCharges - computed;
+      if (checkoutRows.isNotEmpty && diff.abs() >= 0.5) {
+        checkoutRows.add(
+          FinalCheckoutChargeRow(
+            label: diff > 0
+                ? 'Additional charge (edited at checkout)'
+                : 'Reduction (edited at checkout)',
+            detail: '',
+            amount: diff,
+          ),
+        );
+      }
+    } catch (e) {
+      debugPrint('Final Checkout Report: could not build day-wise charges — $e');
+      checkoutRows.clear();
+    }
+
+    // --------------------------------------------------------------
+    // MONTH-WISE BILLS (all earlier bills, oldest first)
+    // --------------------------------------------------------------
+    // Best effort: a failed read must not block the report.
+    final billRows = <FinalBillSummaryRow>[];
+    var billsRemaining = 0.0;
+    try {
+      final bills = await MonthlyBillingService.instance.getMonthlyBills(
+        farmId: widget.farmId,
+        customerId: widget.customerId,
+      );
+      final ordered = bills.reversed.toList(); // oldest first
+      for (final bill in ordered) {
+        final special = bill.isOpeningBalance || bill.isAdjustment;
+        final label = special
+            ? bill.displayTitle
+            : '${DateFormat('MMMM').format(bill.billingMonth)} Bill '
+            '(${bill.billingMonth.year})';
+        billRows.add(
+          FinalBillSummaryRow(
+            label: label,
+            charges: bill.effectiveOwnCharges,
+            paid: bill.effectiveOwnPaid,
+            remaining: bill.effectiveOwnRemaining,
+            status: bill.effectiveOwnStatus,
+          ),
+        );
+        billsRemaining += bill.effectiveOwnRemaining;
+      }
+    } catch (e) {
+      debugPrint('Final Checkout Report: could not load bills — $e');
+    }
+
+    // Whatever part of Previous Outstanding the bills do not explain.
+    var otherBalance = billResult.previousPending - billsRemaining;
+    if (billRows.isEmpty || otherBalance.abs() < 0.5) {
+      otherBalance = 0;
+    }
+
     return FinalSettlementData(
       customerName: report.customerName,
       goatCount: report.goats.length,
@@ -562,6 +673,9 @@ class _FinalCheckoutReportScreenState
       finalOutstanding: billResult.pendingAfter,
       finalAdvance: billResult.advanceAfter,
       paymentHistory: report.paymentHistory,
+      checkoutCharges: checkoutRows,
+      monthlyBills: billRows,
+      otherBalance: otherBalance,
     );
   }
 
@@ -617,6 +731,12 @@ class _FinalCheckoutReportScreenState
   String _safeFileName(String value) =>
       value.trim().replaceAll(RegExp(r'[\\/:*?"<>|\s]+'), '_');
 
+  /// Same file name for Download and Share:
+  /// 'Final_Checkout_Report_<Customer>_<Bill No>.pdf'
+  String get _reportFileName =>
+      'Final_Checkout_Report_${_safeFileName(_report!.customerName)}'
+          '_${_safeFileName(_report!.reportId)}.pdf';
+
   Future<void> _downloadPdf() async {
     if (_busy || _report == null || _pdfBytes == null) return;
 
@@ -625,28 +745,43 @@ class _FinalCheckoutReportScreenState
     });
 
     try {
-      final path =
-      await FinalCheckoutReportPdfService.instance.saveBytes(
+      // Opens the phone's own "Save as" screen — same as the Monthly
+      // Bill download: the name can be changed and any folder
+      // (Downloads, Drive...) chosen.
+      final result =
+      await FinalCheckoutReportPdfService.instance.saveBytesAs(
         _pdfBytes!,
-        '${_safeFileName(_report!.customerName)}_${_safeFileName(_report!.reportId)}_final_report_${DateTime.now().millisecondsSinceEpoch}.pdf',
+        _reportFileName,
       );
 
       if (!mounted) return;
 
-      setState(() {
-        _busy = false;
-        _doneUnlocked = true;
-      });
-
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            'Final report saved successfully.\n$path',
-          ),
-          backgroundColor: AppColors.primaryGreen,
-          duration: const Duration(seconds: 4),
-        ),
-      );
+      switch (result.status) {
+        case PdfSaveStatus.saved:
+          setState(() {
+            _busy = false;
+            _doneUnlocked = true;
+          });
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Saved: ${result.fileName}'),
+              backgroundColor: AppColors.primaryGreen,
+              duration: const Duration(seconds: 4),
+            ),
+          );
+        case PdfSaveStatus.shared:
+        // Platform without a save screen: the share sheet was shown.
+          setState(() {
+            _busy = false;
+            _doneUnlocked = true;
+          });
+        case PdfSaveStatus.cancelled:
+        // Closed the save screen without saving: nothing was saved,
+        // so Done stays locked.
+          setState(() {
+            _busy = false;
+          });
+      }
     } catch (e) {
       if (!mounted) return;
 
@@ -655,7 +790,7 @@ class _FinalCheckoutReportScreenState
       });
 
       _showError(
-        'Could not download the report.\n\n$e',
+        'Unable to save the final report PDF.\n\n$e',
       );
     }
   }
@@ -674,7 +809,7 @@ class _FinalCheckoutReportScreenState
     try {
       await FinalCheckoutReportPdfService.instance.shareBytes(
         _pdfBytes!,
-        '${_safeFileName(_report!.customerName)}_${_safeFileName(_report!.reportId)}_final_report.pdf',
+        _reportFileName,
       );
 
       if (!mounted) return;
@@ -1262,13 +1397,22 @@ class _FinalCheckoutReportScreenState
           _currency(report.advanceBefore),
         ),
         _infoRow(
-          'Check-in transport',
+          'Check-in transport (already billed)',
           _currency(report.checkInTransport),
+        ),
+        _infoRow(
+          'Palai charges (this checkout)',
+          _currency(widget.palaiCharges),
         ),
         _infoRow(
           'Check-out transport',
           _currency(report.checkOutTransport),
         ),
+        if (widget.discount > 0)
+          _infoRow(
+            'Discount',
+            '- ${_currency(widget.discount)}',
+          ),
         const Divider(height: 18),
         _infoRow(
           'Total due',

@@ -151,6 +151,7 @@ class MonthlyBillPdfService {
         footer: (context) {
           return _buildPageFooter(
             context,
+            bill,
           );
         },
 
@@ -458,7 +459,7 @@ class MonthlyBillPdfService {
       child: pw.Column(
         children: [
           pw.Text(
-            'MONTHLY BILL',
+            _billHeading(bill).toUpperCase(),
             style: pw.TextStyle(
               fontSize: 18,
               fontWeight: pw.FontWeight.bold,
@@ -1420,7 +1421,7 @@ class MonthlyBillPdfService {
   // PAGE FOOTER
   // ===========================================================================
 
-  pw.Widget _buildPageFooter(pw.Context context,) {
+  pw.Widget _buildPageFooter(pw.Context context, MonthlyBill bill,) {
     return pw.Container(
       margin: const pw.EdgeInsets.only(
         top: 8,
@@ -1439,7 +1440,7 @@ class MonthlyBillPdfService {
       child: pw.Row(
         children: [
           pw.Text(
-            'Monthly Bill',
+            _billHeading(bill),
             style: const pw.TextStyle(
               fontSize: 7,
               color: PdfColors.grey600,
@@ -1479,9 +1480,18 @@ class MonthlyBillPdfService {
     ).format(date);
   }
 
+  /// Month-wise heading: 'September Bill', 'October Bill', ...
+  String _billHeading(MonthlyBill bill,) {
+    final monthName = DateFormat('MMMM').format(
+      DateTime(bill.year, bill.month),
+    );
+    return '$monthName Bill';
+  }
+
+  /// File name: '<Month>_Bill_<Customer Name>_<Year>.pdf'
   String _safeFileName(MonthlyBill bill,) {
     final raw =
-        '${bill.billNumber}_${bill.customerName}_${bill.monthYear}';
+        '${_billHeading(bill)}_${bill.customerName}_${bill.year}';
 
     final cleaned = raw
         .replaceAll(

@@ -470,6 +470,12 @@ class _CheckoutChargesPaymentScreenState
                 checkOutTransport:
                 _checkOutTransport,
 
+                /// Real amounts billed at this checkout (editable
+                /// unbilled-days charge and discount), so the report
+                /// matches the bill exactly.
+                palaiCharges: _palaiCharges,
+                discount: _discount,
+
                 /// The final report screen calls this only after
                 /// Generate PDF -> Download/Share -> Done.
                 onDone: () async {

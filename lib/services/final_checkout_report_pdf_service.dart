@@ -7,6 +7,7 @@ import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
 
+import '../utils/pdf_download.dart';
 import '../models/bill_settings_model.dart';
 import '../models/final_checkout_report_model.dart';
 import '../models/goat_history_models.dart';
@@ -165,6 +166,17 @@ class FinalCheckoutReportPdfService {
     );
   }
 
+  /// Download: opens the phone's "Save as" screen (file name can be
+  /// changed, any folder can be picked) — exactly like the Monthly
+  /// Bill download. See [savePdfAs].
+  Future<PdfSaveResult> saveBytesAs(
+      Uint8List bytes,
+      String filename,
+      ) {
+    return savePdfAs(bytes, filename);
+  }
+
+  /// App-private copy (not visible in the Files app). Kept for internal use.
   Future<String> saveBytes(
       Uint8List bytes,
       String filename,
@@ -1494,6 +1506,11 @@ class FinalCheckoutReportPdfService {
 
         pw.SizedBox(height: 10),
 
+        if (s.monthlyBills.isNotEmpty) ...[
+          _buildMonthlyBillsTable(s),
+          pw.SizedBox(height: 10),
+        ],
+
         _buildChargesBreakdown(s),
 
         pw.SizedBox(height: 10),
@@ -1547,6 +1564,125 @@ class FinalCheckoutReportPdfService {
   }
 
   // ==========================================================================
+  // MONTH-WISE BILLS (every earlier bill -> Previous Outstanding)
+  // ==========================================================================
+
+  pw.Widget _buildMonthlyBillsTable(
+      FinalSettlementData s,
+      ) {
+    pw.Widget cell(
+        String text, {
+          bool bold = false,
+          pw.TextAlign align = pw.TextAlign.right,
+        }) {
+      return pw.Padding(
+        padding: const pw.EdgeInsets.symmetric(
+          vertical: 4,
+          horizontal: 5,
+        ),
+        child: pw.Text(
+          text,
+          textAlign: align,
+          style: pw.TextStyle(
+            fontSize: 8,
+            fontWeight:
+            bold ? pw.FontWeight.bold : pw.FontWeight.normal,
+          ),
+        ),
+      );
+    }
+
+    pw.TableRow row(
+        List<String> v, {
+          bool bold = false,
+          PdfColor? color,
+        }) {
+      return pw.TableRow(
+        decoration: color == null
+            ? null
+            : pw.BoxDecoration(color: color),
+        children: [
+          cell(v[0], bold: bold, align: pw.TextAlign.left),
+          cell(v[1], bold: bold),
+          cell(v[2], bold: bold),
+          cell(v[3], bold: bold),
+        ],
+      );
+    }
+
+    final totalCharges =
+    s.monthlyBills.fold<double>(0, (a, b) => a + b.charges);
+    final totalPaid =
+    s.monthlyBills.fold<double>(0, (a, b) => a + b.paid);
+    final totalRemaining =
+    s.monthlyBills.fold<double>(0, (a, b) => a + b.remaining);
+
+    final rows = <pw.TableRow>[
+      row(
+        ['BILL', 'AMOUNT', 'PAID', 'REMAINING'],
+        bold: true,
+        color: PdfColors.green100,
+      ),
+      for (final b in s.monthlyBills)
+        row([
+          b.label,
+          _currency(b.charges),
+          _currency(b.paid),
+          _currency(b.remaining),
+        ]),
+      if (s.otherBalance.abs() >= 0.5)
+        row([
+          s.otherBalance > 0
+              ? 'Other balance (not on a monthly bill)'
+              : 'Adjustment (waived / settled outside bills)',
+          '',
+          '',
+          _currency(s.otherBalance),
+        ]),
+      row(
+        [
+          'PREVIOUS OUTSTANDING',
+          _currency(totalCharges),
+          _currency(totalPaid),
+          _currency(totalRemaining + s.otherBalance),
+        ],
+        bold: true,
+        color: PdfColors.green50,
+      ),
+    ];
+
+    return pw.Container(
+      width: double.infinity,
+      padding: const pw.EdgeInsets.all(10),
+      decoration: pw.BoxDecoration(
+        border: pw.Border.all(color: PdfColors.green200),
+        borderRadius:
+        const pw.BorderRadius.all(pw.Radius.circular(8)),
+      ),
+      child: pw.Column(
+        crossAxisAlignment: pw.CrossAxisAlignment.start,
+        children: [
+          _sectionLabel('MONTH-WISE BILLS'),
+          pw.SizedBox(height: 6),
+          pw.Table(
+            border: pw.TableBorder.all(
+              color: PdfColors.grey400,
+              width: 0.4,
+            ),
+            columnWidths: const {
+              0: pw.FlexColumnWidth(3.2),
+              1: pw.FlexColumnWidth(1.6),
+              2: pw.FlexColumnWidth(1.6),
+              3: pw.FlexColumnWidth(1.8),
+            },
+            children: rows,
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ==========================================================================
   // CHARGES BREAKDOWN
   // ==========================================================================
 
@@ -1574,15 +1710,36 @@ class FinalCheckoutReportPdfService {
 
           pw.SizedBox(height: 6),
 
+          if (s.checkoutCharges.isNotEmpty) ...[
+            pw.Text(
+              'Palai charges for the days not yet billed',
+              style: pw.TextStyle(
+                fontSize: 8,
+                fontWeight: pw.FontWeight.bold,
+                color: PdfColors.grey800,
+              ),
+            ),
+            pw.SizedBox(height: 4),
+            for (final c in s.checkoutCharges)
+              _billingRow(
+                c.detail.isEmpty ? c.label : '${c.label}  (${c.detail})',
+                c.amount < 0
+                    ? '- ${_currency(-c.amount)}'
+                    : _currency(c.amount),
+              ),
+          ],
+
           _billingRow(
-            'Monthly Palai Charges',
+            s.checkoutCharges.isNotEmpty
+                ? 'Palai Charges (checkout days)'
+                : 'Monthly Palai Charges',
             _currency(
               s.totalMonthlyCharges,
             ),
           ),
 
           _billingRow(
-            'Transport',
+            'Transport (check-out)',
             _currency(
               s.totalTransport,
             ),
@@ -1615,7 +1772,7 @@ class FinalCheckoutReportPdfService {
           pw.SizedBox(height: 6),
 
           _billingRow(
-            'Previous Outstanding',
+            'Previous Outstanding (all earlier bills)',
             _currency(
               s.previousOutstanding,
             ),
