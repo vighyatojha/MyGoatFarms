@@ -218,7 +218,7 @@ class _GenerateReportScreenState extends State<GenerateReportScreen> {
       final report = GoatReport(
         id: '',
         type: _selectedType!,
-        fromDate: widget.goat.checkInDate,
+        fromDate: widget.goat.billingStartDate,
         toDate: DateTime.now(),
         generatedAt: DateTime.now(),
         startWeight: _startWeight,
@@ -509,7 +509,7 @@ class _GenerateReportScreenState extends State<GenerateReportScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              _summaryRow('From', _fmt(widget.goat.checkInDate)),
+              _summaryRow('From', _fmt(widget.goat.billingStartDate)),
               const Divider(height: 20),
               _summaryRow('To (today)', _fmt(DateTime.now())),
               const Divider(height: 20),
@@ -665,7 +665,7 @@ class _GenerateReportScreenState extends State<GenerateReportScreen> {
               const Divider(height: 20),
               _summaryRow('Goat', '${widget.goat.goatCode} · ${widget.goat.breed}'),
               const Divider(height: 20),
-              _summaryRow('Period', '${_fmt(widget.goat.checkInDate)}  →  ${_fmt(DateTime.now())}'),
+              _summaryRow('Period', '${_fmt(widget.goat.billingStartDate)}  →  ${_fmt(DateTime.now())}'),
               const Divider(height: 20),
               _summaryRow('Weight gain', gain != null ? '${gain >= 0 ? '+' : ''}${gain.toStringAsFixed(1)} kg' : '—'),
               const Divider(height: 20),

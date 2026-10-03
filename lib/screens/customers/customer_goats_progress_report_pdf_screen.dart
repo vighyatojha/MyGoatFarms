@@ -291,7 +291,7 @@ class _CustomerGoatsProgressReportScreenState
     return _PreviousInfo(
       bytes: goat.beforeImage ?? Uint8List(0),
       label: 'Check-In Photo',
-      date: goat.checkInDate,
+      date: goat.billingStartDate,
       weight: goat.weightAtCheckIn,
       latestHealthRecord: latestHealth,
       weightChain: weightChain,

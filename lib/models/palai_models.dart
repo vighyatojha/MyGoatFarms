@@ -2,6 +2,8 @@ import 'dart:typed_data';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 
+import '../utils/palai_proration.dart';
+
 // ============================================================================
 // PALAI CUSTOMER
 // ============================================================================
@@ -497,6 +499,79 @@ class PalaiGoat {
   /// the moment the goat was registered in the app, so it is used as a
   /// fallback for older goats that have no arrival date saved.
   DateTime get billingStartDate => farmArrivalDate ?? checkInDate;
+
+  // --------------------------------------------------------------------------
+  // BOARDING DURATION
+  // --------------------------------------------------------------------------
+  //
+  // Every "days at farm" / "boarded for" figure in the app is counted from
+  // [billingStartDate] (the date the goat came into the farm), never from
+  // [checkInDate]. The arrival day counts as day 1 and the last day (checkout,
+  // death, or today) is counted too — exactly the same inclusive rule the
+  // billing uses (see palaiDaysInclusive), so the days shown to the customer
+  // always match the days they are billed for.
+
+  /// The last day this goat counts as boarded: its checkout date, else its
+  /// death date, else today.
+  DateTime get boardingEndDate => checkOutDate ?? deathDate ?? DateTime.now();
+
+  /// Whole days boarded, arrival day and last day both included.
+  ///
+  /// [asOf] overrides the last day (defaults to [boardingEndDate]). Returns 0
+  /// when the arrival date is after the last day.
+  int boardedDays({DateTime? asOf}) {
+    final start = palaiDateOnly(billingStartDate);
+    final end = palaiDateOnly(asOf ?? boardingEndDate);
+    if (end.isBefore(start)) return 0;
+    return palaiDaysInclusive(start, end);
+  }
+
+  /// [boardedDays] as of [boardingEndDate].
+  int get daysAtFarm => boardedDays();
+
+  /// Boarding time as a label: "12 days", "2 months", "1 mo 3 d".
+  ///
+  /// Counted in calendar months from [billingStartDate], then the remaining
+  /// days, with the last day included. A month-end arrival never overflows
+  /// into the next month (31 Jan + 1 month is 28/29 Feb, not 3 Mar).
+  String boardedForLabel({DateTime? asOf}) {
+    final start = palaiDateOnly(billingStartDate);
+    final last = palaiDateOnly(asOf ?? boardingEndDate);
+    if (last.isBefore(start)) return '0 days';
+
+    // Last day included -> measure up to the day after it.
+    final endExclusive = DateTime(last.year, last.month, last.day + 1);
+
+    DateTime addMonths(int months) {
+      final target = DateTime(start.year, start.month + months, 1);
+      final lastDayOfTarget =
+          DateTime(target.year, target.month + 1, 0).day;
+      return DateTime(
+        target.year,
+        target.month,
+        start.day > lastDayOfTarget ? lastDayOfTarget : start.day,
+      );
+    }
+
+    var months = (endExclusive.year - start.year) * 12 +
+        (endExclusive.month - start.month);
+    if (months < 0) months = 0;
+    if (addMonths(months).isAfter(endExclusive)) months -= 1;
+    if (months < 0) months = 0;
+
+    final anchor = addMonths(months);
+    final days = DateTime.utc(
+      endExclusive.year,
+      endExclusive.month,
+      endExclusive.day,
+    ).difference(
+      DateTime.utc(anchor.year, anchor.month, anchor.day),
+    ).inDays;
+
+    if (months <= 0) return '$days day${days == 1 ? '' : 's'}';
+    if (days <= 0) return '$months month${months == 1 ? '' : 's'}';
+    return '$months mo $days d';
+  }
 
   // ==========================================================================
   // FIRESTORE

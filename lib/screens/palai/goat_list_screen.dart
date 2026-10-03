@@ -1675,7 +1675,7 @@ class _GoatListScreenState extends State<GoatListScreen> {
 
   Widget _boardingBadge(PalaiGoat goat) {
     final duration = _boardedFor(
-      goat.farmArrivalDate ?? goat.checkInDate,
+      goat.billingStartDate,
     );
 
     return Container(

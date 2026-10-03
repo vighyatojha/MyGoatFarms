@@ -314,7 +314,7 @@ class CustomerGoatsReportPdfService {
                 _tableHeader('BREED'),
                 _tableHeader('WEIGHT'),
                 _tableHeader('HEALTH'),
-                _tableHeader('CHECK-IN', alignRight: true),
+                _tableHeader('ARRIVAL', alignRight: true),
               ],
             ),
             ...goats.map(
@@ -324,7 +324,7 @@ class CustomerGoatsReportPdfService {
                   _tableCell(goat.breed.trim().isNotEmpty ? goat.breed : '-'),
                   _tableCell(_weightLabel(goat)),
                   _tableCell(goat.healthStatus.trim().isNotEmpty ? goat.healthStatus : '-'),
-                  _tableCell(_formatDate(goat.checkInDate), alignRight: true),
+                  _tableCell(_formatDate(goat.billingStartDate), alignRight: true),
                 ],
               ),
             ),

@@ -1454,8 +1454,8 @@ class _CustomerProfileScreenState extends State<CustomerProfileScreen> {
                               Expanded(
                                 child: Text(
                                   goat.isCheckedOut
-                                      ? 'Checked out · ${_boardedFor(goat.checkInDate, goat.checkOutDate)}'
-                                      : 'Boarded ${_boardedFor(goat.checkInDate, null)}',
+                                      ? 'Checked out · ${_boardedFor(goat.billingStartDate, goat.checkOutDate)}'
+                                      : 'Boarded ${_boardedFor(goat.billingStartDate, null)}',
                                   maxLines: 1,
                                   overflow: TextOverflow.ellipsis,
                                   style: AppTheme.body(

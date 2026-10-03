@@ -456,7 +456,7 @@ class MonthlyReportService {
           breed: goat.breed,
           gender: goat.gender,
           color: goat.color,
-          checkInDate: goat.checkInDate,
+          checkInDate: goat.billingStartDate,
           previousWeight: previousWeight,
           currentWeight: currentWeight,
           // Pro-rated: the goat's first month is charged only from its

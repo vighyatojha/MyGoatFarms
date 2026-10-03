@@ -134,7 +134,7 @@ class _GoatFinalReportTabState extends State<GoatFinalReportTab> {
     final goat = widget.goat;
     final arrivalDate = goat.farmArrivalDate ?? goat.checkInDate;
     final endDate = goat.checkOutDate ?? DateTime.now();
-    final totalDays = endDate.difference(arrivalDate).inDays;
+    final totalDays = goat.boardedDays(asOf: endDate);
     final finalWeight = goat.currentWeight ?? goat.weightAtCheckIn;
     final totalGain = finalWeight - goat.weightAtCheckIn;
     final issues = _healthRecords.where((r) => r.healthStatus == 'Sick' || r.diseaseOrProblem.trim().isNotEmpty).length;

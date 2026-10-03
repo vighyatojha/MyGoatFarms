@@ -55,7 +55,7 @@ class ReportPdfService {
           pw.SizedBox(height: 14),
           pw.Row(
             children: [
-              _statCard('Boarded For', _boardedFor(goat.checkInDate)),
+              _statCard('Boarded For', _boardedFor(goat.billingStartDate)),
               _statCard(
                 'Weight Gain',
                 gain != null ? '${gain >= 0 ? '+' : ''}${gain.toStringAsFixed(1)} kg' : '—',
@@ -214,8 +214,8 @@ class ReportPdfService {
         _pdfRow('Breed', goat.breed),
         _pdfRow('Gender', goat.gender),
         _pdfRow('Color', goat.color),
-        _pdfRow('Date of Join', _fmt(goat.checkInDate)),
-        _pdfRow('Boarded For', _boardedFor(goat.checkInDate)),
+        _pdfRow('Date of Join', _fmt(goat.billingStartDate)),
+        _pdfRow('Boarded For', _boardedFor(goat.billingStartDate)),
         if (goat.monthlyPackage.trim().isNotEmpty) _pdfRow('Monthly Package', goat.monthlyPackage),
       ],
     );

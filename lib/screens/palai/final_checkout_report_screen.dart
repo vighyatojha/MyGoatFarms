@@ -13,6 +13,7 @@ import '../../services/finance_service.dart';
 import '../../services/firestore_service.dart';
 import '../../services/final_checkout_report_pdf_service.dart';
 import '../../services/monthly_report_service.dart';
+import '../../utils/palai_proration.dart';
 import 'checkout_charges_payment_screen.dart' show GoatCheckoutDraft;
 
 /// Final stage of the Palai checkout flow.
@@ -925,8 +926,10 @@ class _FinalCheckoutReportScreenState
   }
 
   Widget _periodCard(FinalCheckoutReportData report) {
-    final duration =
-        report.checkOutDate.difference(report.checkInDate).inDays;
+    // Arrival day and checkout day both count — the same rule billing uses.
+    final rawDuration =
+    palaiDaysInclusive(report.checkInDate, report.checkOutDate);
+    final duration = rawDuration < 0 ? 0 : rawDuration;
 
     return _card(
       children: [

@@ -372,7 +372,7 @@ class _GoatProfileScreenState extends State<GoatProfileScreen>
     final currentWeight = goat.currentWeight ?? goat.weightAtCheckIn;
     final gain = currentWeight - goat.weightAtCheckIn;
     final arrivalDate = goat.farmArrivalDate ?? goat.checkInDate;
-    final daysAtFarm = DateTime.now().difference(arrivalDate).inDays;
+    final daysAtFarm = goat.daysAtFarm;
     final hasPhoto = goat.beforeImage != null && goat.beforeImage!.isNotEmpty;
 
     return Container(
@@ -473,7 +473,7 @@ class _GoatOverviewTab extends StatelessWidget {
     final arrivalDate = goat.farmArrivalDate ?? goat.checkInDate;
     final currentWeight = goat.currentWeight ?? goat.weightAtCheckIn;
     final gain = currentWeight - goat.weightAtCheckIn;
-    final daysAtFarm = DateTime.now().difference(arrivalDate).inDays;
+    final daysAtFarm = goat.daysAtFarm;
 
     return ListView(
       padding: const EdgeInsets.fromLTRB(14, 12, 14, 24),
