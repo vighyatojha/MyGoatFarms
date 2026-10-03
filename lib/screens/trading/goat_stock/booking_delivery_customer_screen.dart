@@ -9,6 +9,7 @@ import 'package:mygoatfarms/models/expense_categories.dart';
 import 'package:mygoatfarms/models/goat_model.dart';
 import 'package:mygoatfarms/models/sale_model.dart';
 import 'package:mygoatfarms/models/sale_settlement.dart';
+import 'package:mygoatfarms/models/wait_delivery_group.dart';
 import 'package:mygoatfarms/services/booking_delivery_service.dart';
 import 'package:mygoatfarms/services/goat_service.dart';
 import 'package:mygoatfarms/widgets/edit_wait_booking_sheet.dart';
@@ -129,6 +130,11 @@ class _BookingDeliveryCustomerScreenState
   /// are known (never before the latest holding-start among them).
   DateTime? _deliveryDate;
 
+  /// The customer's bookings in the order they are shown. Dues are
+  /// covered in this order when the ticked bookings are netted against
+  /// each other.
+  List<BookingDeliverySale> _ordered = const <BookingDeliverySale>[];
+
   /// Sell on Credit for this batch. Whatever is left after the amount
   /// received goes onto the customer's outstanding balance instead of
   /// blocking the delivery.
@@ -190,7 +196,15 @@ class _BookingDeliveryCustomerScreenState
     return today.isBefore(earliestStart) ? earliestStart : today;
   }
 
+  /// Final Amount Due for a booking. For a ticked booking this is the
+  /// figure AFTER extra booking amount from the other ticked bookings has
+  /// been applied (see [_allocation]) — the same netting the service
+  /// re-runs before saving.
   double _finalAmountOf(BookingDeliveryCustomer customer, BookingDeliverySale entry) {
+    final alloc = _allocation(customer).bySale[entry.id];
+
+    if (alloc != null) return alloc.toCollect;
+
     return entry.finalAmountAt(
       _deliveryDateOr(customer),
       transport: _transportOf(entry),
@@ -199,9 +213,63 @@ class _BookingDeliveryCustomerScreenState
     );
   }
 
+  /// The ticked bookings treated as ONE customer settlement: a booking
+  /// whose booking amount is more than its bill pays part of another
+  /// booking's due.
+  WaitDeliveryAllocation _allocation(BookingDeliveryCustomer customer) {
+    final bills = <WaitDeliveryBill>[];
+    final date = _deliveryDateOr(customer);
+
+    for (final entry in _ordered) {
+      if (!_selected.contains(entry.id)) continue;
+
+      final settlement = entry.settlementAt(
+        date,
+        transport: _transportOf(entry),
+        discount: _discountOf(entry),
+        holdingRate: _holdingRateOf(entry),
+      );
+
+      bills.add(
+        WaitDeliveryBill(
+          saleId: entry.id,
+          payable: settlement.payable,
+          advancePaid: entry.bookingAmount,
+        ),
+      );
+    }
+
+    return WaitDeliveryAllocator.allocate(bills);
+  }
+
+  List<WaitDeliveryTransfer> _transfersInto(
+      BookingDeliveryCustomer customer, BookingDeliverySale entry) =>
+      _allocation(customer).transfersInto(entry.id);
+
+  List<WaitDeliveryTransfer> _transfersFrom(
+      BookingDeliveryCustomer customer, BookingDeliverySale entry) =>
+      _allocation(customer).transfersFrom(entry.id);
+
+  double _totalTransferred(BookingDeliveryCustomer customer) {
+    return Sale.roundMoney(
+      _allocation(customer).transfers.fold<double>(
+        0,
+            (sum, t) => sum + t.amount,
+      ),
+    );
+  }
+
   /// What the booking amount covered beyond this booking's final bill (0
   /// when it did not). Same maths as SalesService.completeBookingDelivery.
+  ///
+  /// For a ticked booking only the extra LEFT after the other bookings'
+  /// dues were covered counts — that is the part that still needs the
+  /// Add to advance / Return to customer choice.
   double _excessOf(BookingDeliveryCustomer customer, BookingDeliverySale entry) {
+    final alloc = _allocation(customer).bySale[entry.id];
+
+    if (alloc != null) return alloc.leftoverExcess;
+
     return entry.excessAt(
       _deliveryDateOr(customer),
       transport: _transportOf(entry),
@@ -355,6 +423,8 @@ class _BookingDeliveryCustomerScreenState
   /// keeps every selected booking's amount field following its final
   /// amount while Sell on Credit is off.
   void _syncSelection(BookingDeliveryCustomer customer) {
+    _ordered = customer.sales;
+
     final ids = customer.sales.map((entry) => entry.id).toSet();
 
     for (final id in ids) {
@@ -568,17 +638,14 @@ class _BookingDeliveryCustomerScreenState
     final excessById = <String, double>{
       for (final entry in picked) entry.id: _excessOf(customer, entry),
     };
+    final transferred = _totalTransferred(customer);
 
     for (final entry in picked) {
       final transport = _transportOf(entry);
       final discount = _discountOf(entry);
       final holdingRate = _holdingRateOf(entry);
-      final due = entry.finalAmountAt(
-        deliveryDate,
-        transport: transport,
-        discount: discount,
-        holdingRate: holdingRate,
-      );
+      // After the bookings were netted against each other.
+      final due = _finalAmountOf(customer, entry);
 
       payments[entry.id] = BookingDeliveryPayment(
         transportCharges: transport,
@@ -616,10 +683,15 @@ class _BookingDeliveryCustomerScreenState
       final left = result.totalRemainingDelivered;
       final extra = _extraDelivered(excessById, result);
 
-      final base = left > 0
+      var base = left > 0
           ? '${_goats(delivered)} delivered — '
           '${_money.format(left)} added to outstanding balance.'
           : '${_goats(delivered)} delivered — paid in full.';
+
+      if (transferred > 0) {
+        base = '$base ${_money.format(transferred)} of extra booking '
+            'amount was applied to another booking.';
+      }
 
       messenger.showSnackBar(
         SnackBar(
@@ -806,6 +878,25 @@ class _BookingDeliveryCustomerScreenState
                   ],
                   const Divider(height: 1, color: AppColors.divider),
                   const SizedBox(height: 10),
+                  if (_allocation(customer).hasTransfers) ...[
+                    for (final transfer in _allocation(customer).transfers) ...[
+                      _confirmTotalRow(
+                        '${transfer.fromSaleId} extra settles part of '
+                            '${transfer.toSaleId}',
+                        transfer.amount,
+                      ),
+                      const SizedBox(height: 6),
+                    ],
+                    Text(
+                      'No new money changes hands for this part — it was '
+                          'already received as the extra booking amount.',
+                      style: AppTheme.body(
+                        size: 10,
+                        color: AppColors.darkGreen,
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                  ],
                   _confirmTotalRow('Goat value + holding charges total', due),
                   const SizedBox(height: 6),
                   _confirmTotalRow('Received now', receivedNow),
@@ -945,6 +1036,26 @@ class _BookingDeliveryCustomerScreenState
               if (due > 0)
                 Text(
                   'Received now: ${_money.format(receivedNow)}',
+                  style: AppTheme.body(
+                    size: 10,
+                    color: AppColors.darkGreen,
+                    weight: FontWeight.w600,
+                  ),
+                ),
+              for (final t in _transfersInto(customer, entry))
+                Text(
+                  'Covered by extra from ${t.fromSaleId}: '
+                      '−${_money.format(t.amount)}',
+                  style: AppTheme.body(
+                    size: 10,
+                    color: AppColors.darkGreen,
+                    weight: FontWeight.w600,
+                  ),
+                ),
+              for (final t in _transfersFrom(customer, entry))
+                Text(
+                  'Extra ${_money.format(t.amount)} → applied to '
+                      '${t.toSaleId}',
                   style: AppTheme.body(
                     size: 10,
                     color: AppColors.darkGreen,
@@ -1923,11 +2034,26 @@ class _BookingDeliveryCustomerScreenState
           ],
           const SizedBox(height: 6),
           _calcRow('Booking Amount Paid', '− ${_money.format(entry.bookingAmount)}'),
+          for (final t in _transfersInto(customer, entry)) ...[
+            const SizedBox(height: 6),
+            _calcRow(
+              'Covered by extra from ${t.fromSaleId}',
+              '− ${_money.format(t.amount)}',
+            ),
+          ],
           const Padding(
             padding: EdgeInsets.symmetric(vertical: 7),
             child: Divider(height: 1, color: AppColors.divider),
           ),
           _calcRow('Final Amount Due', _money.format(due), emphasized: true),
+          for (final t in _transfersFrom(customer, entry)) ...[
+            const SizedBox(height: 6),
+            _calcRow(
+              'Extra applied to ${t.toSaleId}',
+              _money.format(t.amount),
+              emphasized: true,
+            ),
+          ],
           if (excess > 0) ...[
             const SizedBox(height: 6),
             _calcRow(

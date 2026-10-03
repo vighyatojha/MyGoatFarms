@@ -693,8 +693,12 @@ class _SaleReceiptScreenState extends State<SaleReceiptScreen> {
     final hasExcessToAdvance = excessToAdvance > 0;
     final hasExcessRefunded = excessRefunded > 0;
 
-    final hasExcessHandling =
-        hasExcessToAdvance || hasExcessRefunded;
+    final excessTransferred = sale.excessTransferred ?? 0;
+    final hasExcessTransferred = excessTransferred > 0;
+
+    final hasExcessHandling = hasExcessToAdvance ||
+        hasExcessRefunded ||
+        hasExcessTransferred;
 
     return _section(
       'Payment Summary',
@@ -715,7 +719,19 @@ class _SaleReceiptScreenState extends State<SaleReceiptScreen> {
         // ------------------------------------------------------------------
         // EXCESS PAYMENT HANDLING
         // ------------------------------------------------------------------
-        if (hasExcessHandling) ...[
+        if (hasExcessTransferred) ...[
+          const SizedBox(height: 2),
+          _excessPaymentRow(
+            label: sale.excessTransferredTo.trim().isEmpty
+                ? 'Extra Applied to Another Booking'
+                : 'Extra Applied to ${sale.excessTransferredTo.trim()}',
+            amount: excessTransferred,
+            isAdvance: true,
+            subtitleOverride:
+            'Moved to the customer\'s other booking at delivery',
+          ),
+        ],
+        if (hasExcessToAdvance || hasExcessRefunded) ...[
           const SizedBox(height: 2),
           _excessPaymentRow(
             label: hasExcessToAdvance
@@ -837,14 +853,16 @@ class _SaleReceiptScreenState extends State<SaleReceiptScreen> {
     required String label,
     required double amount,
     required bool isAdvance,
+    String? subtitleOverride,
   }) {
     final icon = isAdvance
         ? Icons.account_balance_wallet_outlined
         : Icons.keyboard_return_rounded;
 
-    final subtitle = isAdvance
-        ? 'Kept in the customer Advance balance'
-        : 'Returned to the customer and recorded as a cash outflow';
+    final subtitle = subtitleOverride ??
+        (isAdvance
+            ? 'Kept in the customer Advance balance'
+            : 'Returned to the customer and recorded as a cash outflow');
 
     return Container(
       width: double.infinity,
@@ -915,6 +933,7 @@ class _SaleReceiptScreenState extends State<SaleReceiptScreen> {
 
     final canVoid = !payment.voided &&
         !payment.isPalaiSettlement &&
+        !payment.isBookingTransfer &&
         index == sale.latestActivePaymentIndex &&
         PartnerAccessService.instance
             .allows(PartnerPermissionKeys.financeRevenueVoid);
@@ -944,7 +963,9 @@ class _SaleReceiptScreenState extends State<SaleReceiptScreen> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  'Balance Payment',
+                  payment.isBookingTransfer
+                      ? 'Extra Advance Adjusted'
+                      : 'Balance Payment',
                   style: AppTheme.body(
                     size: 11,
                     color: AppColors.textGrey,

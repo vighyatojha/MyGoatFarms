@@ -119,6 +119,215 @@ class WaitDeliverySale {
   double get estimatedRemaining => remainingAt(bookedWeight);
 }
 
+/// What one ticked booking owes and has already paid, as the input to
+/// [WaitDeliveryAllocator.allocate].
+///
+/// [payable] is the final bill at pickup: goat value - discount +
+/// transport (exactly [SaleSettlement.payable]). [advancePaid] is the
+/// advance already received on this booking.
+class WaitDeliveryBill {
+  final String saleId;
+  final double payable;
+  final double advancePaid;
+
+  const WaitDeliveryBill({
+    required this.saleId,
+    required this.payable,
+    required this.advancePaid,
+  });
+}
+
+/// Part of one booking's extra advance that pays another booking's due.
+class WaitDeliveryTransfer {
+  final String fromSaleId;
+  final String toSaleId;
+  final double amount;
+
+  const WaitDeliveryTransfer({
+    required this.fromSaleId,
+    required this.toSaleId,
+    required this.amount,
+  });
+}
+
+/// The result for one booking after the shared pool has been applied.
+class WaitDeliverySaleAllocation {
+  final String saleId;
+  final double payable;
+  final double advancePaid;
+
+  /// Extra advance this booking handed to other bookings.
+  final double givenOut;
+
+  /// Extra advance this booking received from other bookings.
+  final double takenIn;
+
+  /// What is still to collect after the transfers (never below 0).
+  final double toCollect;
+
+  /// Extra of THIS booking left after the transfers. Only this part goes
+  /// to the "Add to advance / Return to customer" choice.
+  final double leftoverExcess;
+
+  const WaitDeliverySaleAllocation({
+    required this.saleId,
+    required this.payable,
+    required this.advancePaid,
+    required this.givenOut,
+    required this.takenIn,
+    required this.toCollect,
+    required this.leftoverExcess,
+  });
+
+  bool get isDonor => givenOut > 0;
+
+  bool get isReceiver => takenIn > 0;
+}
+
+/// Everything the screen and the service need from one allocation run.
+class WaitDeliveryAllocation {
+  final List<WaitDeliveryTransfer> transfers;
+  final Map<String, WaitDeliverySaleAllocation> bySale;
+
+  const WaitDeliveryAllocation({
+    required this.transfers,
+    required this.bySale,
+  });
+
+  /// Total still to collect across every booking.
+  double get totalToCollect {
+    return Sale.roundMoney(
+      bySale.values.fold<double>(0, (sum, a) => sum + a.toCollect),
+    );
+  }
+
+  /// Total extra left for the advance / refund choice.
+  double get totalLeftoverExcess {
+    return Sale.roundMoney(
+      bySale.values.fold<double>(0, (sum, a) => sum + a.leftoverExcess),
+    );
+  }
+
+  bool get hasTransfers => transfers.isNotEmpty;
+
+  /// Transfers that go INTO [saleId].
+  List<WaitDeliveryTransfer> transfersInto(String saleId) =>
+      transfers.where((t) => t.toSaleId == saleId).toList();
+
+  /// Transfers that come OUT OF [saleId].
+  List<WaitDeliveryTransfer> transfersFrom(String saleId) =>
+      transfers.where((t) => t.fromSaleId == saleId).toList();
+}
+
+/// Treats every ticked booking as ONE customer settlement.
+///
+/// A booking whose advance is more than its bill is a donor; its extra
+/// goes into a pool that covers the dues of bookings whose advance is
+/// less than their bill (receivers). Only what is left in the pool after
+/// every due is covered goes to the advance / refund choice.
+///
+/// Pure and deterministic: the screen shows its result and the service
+/// re-runs it before saving, so the preview and the saved data cannot
+/// disagree. Works in whole paise, so there is never a rounding gap.
+///
+/// Example: S-0024 bill 13,740 / advance 20,000 (extra 6,260) and
+/// S-0023 bill 34,100 / advance 20,000 (due 14,100) -> S-0024 gives
+/// 6,260 to S-0023, which then collects 7,840.
+class WaitDeliveryAllocator {
+  WaitDeliveryAllocator._();
+
+  static int _paise(double rupees) {
+    if (rupees.isNaN || rupees.isInfinite) return 0;
+
+    final nudge = rupees >= 0 ? 1e-9 : -1e-9;
+
+    return ((rupees + nudge) * 100).round();
+  }
+
+  static double _rupees(int paise) => paise / 100.0;
+
+  /// [bills] must be in the order the bookings appear on screen: donors
+  /// are drawn on, and receivers are covered, in that order.
+  static WaitDeliveryAllocation allocate(List<WaitDeliveryBill> bills) {
+    final payable = <String, int>{};
+    final advance = <String, int>{};
+    final pool = <String, int>{}; // donor -> extra still unspent
+    final extra = <String, int>{};
+    final givenOut = <String, int>{};
+    final takenIn = <String, int>{};
+    final due = <String, int>{};
+
+    for (final bill in bills) {
+      final p = _paise(bill.payable);
+      final a = _paise(bill.advancePaid);
+
+      payable[bill.saleId] = p;
+      advance[bill.saleId] = a;
+      givenOut[bill.saleId] = 0;
+      takenIn[bill.saleId] = 0;
+
+      if (a > p) {
+        extra[bill.saleId] = a - p;
+        pool[bill.saleId] = a - p;
+      } else {
+        extra[bill.saleId] = 0;
+      }
+
+      due[bill.saleId] = a < p ? p - a : 0;
+    }
+
+    final transfers = <WaitDeliveryTransfer>[];
+
+    for (final receiver in bills) {
+      var need = due[receiver.saleId] ?? 0;
+
+      if (need <= 0) continue;
+
+      for (final donor in bills) {
+        if (need <= 0) break;
+
+        final available = pool[donor.saleId] ?? 0;
+
+        if (available <= 0 || donor.saleId == receiver.saleId) continue;
+
+        final take = available < need ? available : need;
+
+        pool[donor.saleId] = available - take;
+        need -= take;
+        givenOut[donor.saleId] = (givenOut[donor.saleId] ?? 0) + take;
+        takenIn[receiver.saleId] = (takenIn[receiver.saleId] ?? 0) + take;
+
+        transfers.add(
+          WaitDeliveryTransfer(
+            fromSaleId: donor.saleId,
+            toSaleId: receiver.saleId,
+            amount: _rupees(take),
+          ),
+        );
+      }
+    }
+
+    final bySale = <String, WaitDeliverySaleAllocation>{};
+
+    for (final bill in bills) {
+      final id = bill.saleId;
+      final collect = (due[id] ?? 0) - (takenIn[id] ?? 0);
+
+      bySale[id] = WaitDeliverySaleAllocation(
+        saleId: id,
+        payable: _rupees(payable[id] ?? 0),
+        advancePaid: _rupees(advance[id] ?? 0),
+        givenOut: _rupees(givenOut[id] ?? 0),
+        takenIn: _rupees(takenIn[id] ?? 0),
+        toCollect: _rupees(collect < 0 ? 0 : collect),
+        leftoverExcess: _rupees(pool[id] ?? 0),
+      );
+    }
+
+    return WaitDeliveryAllocation(transfers: transfers, bySale: bySale);
+  }
+}
+
 /// A customer who has goats waiting for delivery, with every open booking
 /// they have. This is what the "Wait on Delivery" tab lists.
 class WaitDeliveryCustomer {

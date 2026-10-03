@@ -3,6 +3,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import '../models/expense_categories.dart';
 import '../models/sale_model.dart';
 import '../models/sale_settlement.dart';
+import '../models/wait_delivery_group.dart';
 import 'firestore_service.dart';
 import 'sales_service.dart';
 
@@ -98,11 +99,12 @@ class BookingDeliveryBatchResult {
 /// Deliberately thin, exactly like [WaitDeliveryService]: the actual
 /// delivery accounting (holding-charge settlement, payment received,
 /// credit handling, goats -> Sold, dashboard counters, Finance revenue)
-/// stays in SalesService.completeBookingDelivery, so the single-goat path
-/// (CompleteBookingDeliveryScreen) and this batch path can never drift
-/// apart — every rule enforced there (full payment required unless Sell
-/// on Credit, amount can't exceed what's due, delivery date can't be
-/// before holding started, ...) applies here too, one booking at a time.
+/// stays in SalesService.completeBookingDeliveryGroup, which the single-goat
+/// path (completeBookingDelivery, used by CompleteBookingDeliveryScreen)
+/// also goes through, so the two can never drift apart — every rule
+/// enforced there (full payment required unless Sell on Credit, amount
+/// can't exceed what's due, delivery date can't be before holding
+/// started, ...) applies here too.
 class BookingDeliveryService {
   BookingDeliveryService._();
 
@@ -128,65 +130,169 @@ class BookingDeliveryService {
   }
 
   /// Delivers every booking in [payments] (saleId -> what to record for
-  /// that booking) against the one shared [deliveryDate], one after the
-  /// other.
+  /// that booking) against the one shared [deliveryDate]. [payments] must
+  /// be in the order the bookings are shown on screen: that is the order
+  /// dues are covered in.
   ///
-  /// Each booking is its own Firestore transaction — exactly as when it
-  /// is delivered from the single-goat screen — so this is NOT one
-  /// atomic write across bookings. If one booking fails (for example it
-  /// was already delivered from another device, or the amount no longer
-  /// matches what is due) the others are still delivered, and the
-  /// failure is reported back in the result instead of being thrown.
+  /// The ticked bookings are one customer settlement: a booking whose
+  /// booking amount is more than its bill pays part of another booking's
+  /// due (see [WaitDeliveryAllocator]). Bookings that exchange money are
+  /// saved TOGETHER, in one Firestore transaction
+  /// (SalesService.completeBookingDeliveryGroup), so a failure can never
+  /// leave the extra recorded as used but not applied. Bookings with no
+  /// transfer between them stay independent, one transaction each.
+  ///
+  /// A failure is reported back in the result instead of being thrown:
+  /// every booking of a failed group is listed as failed with the same
+  /// message, and the other groups are still delivered.
   Future<BookingDeliveryBatchResult> deliverSales({
     required String farmId,
     required DateTime deliveryDate,
     required Map<String, BookingDeliveryPayment> payments,
     required String paymentMethod,
   }) async {
-    final outcomes = <BookingDeliveryOutcome>[];
+    final ids = payments.keys.toList();
 
-    for (final entry in payments.entries) {
-      final saleId = entry.key;
-      final payment = entry.value;
+    final deliveryDay = DateTime(
+      deliveryDate.year,
+      deliveryDate.month,
+      deliveryDate.day,
+    );
 
-      final remaining = Sale.roundMoney(
-        payment.expectedRemaining - payment.amountReceivedNow,
-      );
+    // Read each booking once, outside a transaction, only to find which
+    // bookings exchange money. The transaction re-reads and re-checks
+    // everything it saves.
+    final bills = <WaitDeliveryBill>[];
+
+    for (final saleId in ids) {
+      final payment = payments[saleId]!;
 
       try {
-        await SalesService.instance.completeBookingDelivery(
-          farmId: farmId,
-          saleId: saleId,
-          deliveryDate: deliveryDate,
-          transportCharges: payment.transportCharges,
-          amountReceivedNow: payment.amountReceivedNow,
-          paymentMethod: paymentMethod,
-          onCredit: payment.onCredit,
-          discount: payment.discount,
-          holdingChargePerDay: payment.holdingChargePerDay,
-          excessAction: payment.excessAction,
+        final snap = await FirebaseFirestore.instance
+            .collection('farms')
+            .doc(farmId)
+            .collection('sales')
+            .doc(saleId)
+            .get();
+
+        if (!snap.exists) continue;
+
+        final sale = Sale.fromDoc(snap);
+        final start = sale.holdingStart;
+        final startDay = DateTime(start.year, start.month, start.day);
+
+        if (deliveryDay.isBefore(startDay)) continue;
+
+        final rate = payment.holdingChargePerDay ??
+            sale.holdingChargePerDay ??
+            0;
+        final days = Sale.holdingDaysBetween(startDay, deliveryDay);
+        final advance = sale.bookingAmount ?? 0;
+
+        final settlement = SaleSettlement.fromAmount(
+          goatAmount: sale.totalSaleAmount,
+          discount: payment.discount < 0 ? 0 : payment.discount,
+          holdingCharges: Sale.roundMoney(days * (rate < 0 ? 0 : rate)),
+          transportCharge:
+          payment.transportCharges < 0 ? 0 : payment.transportCharges,
+          advancePaid: advance,
         );
 
-        outcomes.add(
-          BookingDeliveryOutcome(
+        bills.add(
+          WaitDeliveryBill(
             saleId: saleId,
-            remaining: remaining < 0 ? 0 : remaining,
+            payable: settlement.payable,
+            advancePaid: advance,
           ),
         );
-      } catch (e) {
-        outcomes.add(
-          BookingDeliveryOutcome(
-            saleId: saleId,
-            remaining: remaining < 0 ? 0 : remaining,
-            error: e is StateError
-                ? e.message
-                : FirestoreService.instance.describeError(e),
-          ),
-        );
+      } catch (_) {
+        // Let the delivery itself report the real problem.
       }
     }
 
-    return BookingDeliveryBatchResult(outcomes);
+    final allocation = WaitDeliveryAllocator.allocate(bills);
+
+    // Group bookings that are linked by a transfer.
+    final parent = <String, String>{for (final id in ids) id: id};
+
+    String find(String id) {
+      var root = id;
+
+      while (parent[root] != root) {
+        root = parent[root]!;
+      }
+
+      return root;
+    }
+
+    for (final transfer in allocation.transfers) {
+      final a = find(transfer.fromSaleId);
+      final b = find(transfer.toSaleId);
+
+      if (a != b) parent[b] = a;
+    }
+
+    final groups = <String, List<String>>{};
+
+    for (final id in ids) {
+      groups.putIfAbsent(find(id), () => <String>[]).add(id);
+    }
+
+    final outcomeById = <String, BookingDeliveryOutcome>{};
+
+    for (final group in groups.values) {
+      double remainingOf(String saleId) {
+        final alloc = allocation.bySale[saleId];
+        final payment = payments[saleId]!;
+        final due = alloc?.toCollect ?? payment.expectedRemaining;
+        final left = Sale.roundMoney(due - payment.amountReceivedNow);
+
+        return left < 0 ? 0 : left;
+      }
+
+      try {
+        await SalesService.instance.completeBookingDeliveryGroup(
+          farmId: farmId,
+          deliveryDate: deliveryDate,
+          paymentMethod: paymentMethod,
+          items: [
+            for (final saleId in group)
+              BookingPickupInput(
+                saleId: saleId,
+                transportCharges: payments[saleId]!.transportCharges,
+                amountReceivedNow: payments[saleId]!.amountReceivedNow,
+                onCredit: payments[saleId]!.onCredit,
+                excessAction: payments[saleId]!.excessAction,
+                discount: payments[saleId]!.discount,
+                holdingChargePerDay: payments[saleId]!.holdingChargePerDay,
+              ),
+          ],
+        );
+
+        for (final saleId in group) {
+          outcomeById[saleId] = BookingDeliveryOutcome(
+            saleId: saleId,
+            remaining: remainingOf(saleId),
+          );
+        }
+      } catch (e) {
+        final message = e is StateError
+            ? e.message
+            : FirestoreService.instance.describeError(e);
+
+        for (final saleId in group) {
+          outcomeById[saleId] = BookingDeliveryOutcome(
+            saleId: saleId,
+            remaining: remainingOf(saleId),
+            error: message,
+          );
+        }
+      }
+    }
+
+    return BookingDeliveryBatchResult([
+      for (final saleId in ids) outcomeById[saleId]!,
+    ]);
   }
 
   /// Payment methods to offer for the money received at delivery — same

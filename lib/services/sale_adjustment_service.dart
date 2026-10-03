@@ -135,6 +135,11 @@ class SaleAdjustmentService {
           'refunded it. Reverse that first, then delete the sale.';
     }
 
+    if (sale.payments.any((p) => p.isBookingTransfer && !p.voided)) {
+      return 'This sale was settled with extra advance moved over from '
+          'another booking at delivery, so it cannot be deleted on its own.';
+    }
+
     if (sale.payments.any((p) => p.isPalaiSettlement && !p.voided)) {
       return 'A payment on this sale was received through Customer Palai. '
           'Void that payment from Customer Palai first.';

@@ -152,6 +152,11 @@ class _WaitDeliveryCustomerScreenState
   final Map<String, _BookingSignature> _signatures =
   <String, _BookingSignature>{};
 
+  /// The customer's bookings in the order they are shown. Dues are
+  /// covered in this order when the ticked bookings are netted against
+  /// each other.
+  List<WaitDeliverySale> _ordered = const <WaitDeliverySale>[];
+
   bool _submitted = false;
   bool _delivering = false;
 
@@ -316,7 +321,14 @@ class _WaitDeliveryCustomerScreenState
   /// Final Amount Due for a booking: goat value (pickup weight x booking
   /// rate, or the fixed price) - discount + transportation - advance.
   /// Same figure the service saves.
+  ///
+  /// For a ticked booking this is the figure AFTER extra advance from the
+  /// other ticked bookings has been applied (see [_allocation]).
   double _remainingOf(WaitDeliverySale entry) {
+    final alloc = _allocation().bySale[entry.id];
+
+    if (alloc != null) return alloc.toCollect;
+
     return entry.remainingAt(
       _pickupWeightOf(entry),
       transport: _transportOf(entry),
@@ -324,11 +336,69 @@ class _WaitDeliveryCustomerScreenState
     );
   }
 
+  /// The ticked bookings treated as ONE customer settlement: a booking
+  /// whose advance is more than its bill pays part of another booking's
+  /// due. The same function the service re-runs before saving, so what is
+  /// shown here is what gets saved. A booking with no pickup weight yet
+  /// is left out until one is entered.
+  WaitDeliveryAllocation _allocation() {
+    final bills = <WaitDeliveryBill>[];
+
+    for (final entry in _ordered) {
+      if (!_selected.contains(entry.id)) continue;
+
+      final weight = _pickupWeightOf(entry);
+
+      if (weight <= 0) continue;
+
+      final settlement = entry.settlementAt(
+        weight,
+        transport: _transportOf(entry),
+        discount: _discountOf(entry),
+      );
+
+      bills.add(
+        WaitDeliveryBill(
+          saleId: entry.id,
+          payable: settlement.payable,
+          advancePaid: entry.advancePaid,
+        ),
+      );
+    }
+
+    return WaitDeliveryAllocator.allocate(bills);
+  }
+
+  /// Extra advance of other ticked bookings that pays this booking's due.
+  List<WaitDeliveryTransfer> _transfersInto(WaitDeliverySale entry) =>
+      _allocation().transfersInto(entry.id);
+
+  /// Extra advance of this booking that pays other bookings' dues.
+  List<WaitDeliveryTransfer> _transfersFrom(WaitDeliverySale entry) =>
+      _allocation().transfersFrom(entry.id);
+
+  double _totalTransferred() {
+    return Sale.roundMoney(
+      _allocation().transfers.fold<double>(
+        0,
+            (sum, t) => sum + t.amount,
+      ),
+    );
+  }
+
   /// What the advance covered beyond the booking's final bill (0 when it
   /// did not). Example: 85 kg x 620 = 52,700 against a 60,000 advance ->
   /// 7,300. Nothing until a pickup weight has been entered.
+  ///
+  /// For a ticked booking only the extra LEFT after the other bookings'
+  /// dues were covered counts here — that is the part that still needs the
+  /// Add to advance / Return to customer choice.
   double _excessOf(WaitDeliverySale entry) {
     if (_pickupWeightOf(entry) <= 0) return 0;
+
+    final alloc = _allocation().bySale[entry.id];
+
+    if (alloc != null) return alloc.leftoverExcess;
 
     return entry.excessAt(
       _pickupWeightOf(entry),
@@ -393,6 +463,8 @@ class _WaitDeliveryCustomerScreenState
   /// keeps every selected booking's amount field following its remaining
   /// amount while Sell on Credit is off.
   void _syncSelection(WaitDeliveryCustomer customer) {
+    _ordered = customer.sales;
+
     final ids = customer.sales.map((entry) => entry.id).toSet();
 
     for (final id in ids) {
@@ -615,6 +687,7 @@ class _WaitDeliveryCustomerScreenState
     final excessById = <String, double>{
       for (final entry in picked) entry.id: _excessOf(entry),
     };
+    final transferred = _totalTransferred();
 
     for (final entry in picked) {
       final weight = _pickupWeightOf(entry);
@@ -655,10 +728,15 @@ class _WaitDeliveryCustomerScreenState
       final left = result.totalRemainingDelivered;
       final extra = _extraDelivered(excessById, result);
 
-      final base = left > 0
+      var base = left > 0
           ? '${_goats(delivered)} delivered — '
           '${_money.format(left)} added to outstanding balance.'
           : '${_goats(delivered)} delivered — paid in full.';
+
+      if (transferred > 0) {
+        base = '$base ${_money.format(transferred)} of extra advance was '
+            'applied to another booking.';
+      }
 
       messenger.showSnackBar(
         SnackBar(
@@ -859,6 +937,26 @@ class _WaitDeliveryCustomerScreenState
 
                   const SizedBox(height: 10),
 
+                  if (_allocation().hasTransfers) ...[
+                    for (final transfer in _allocation().transfers) ...[
+                      _confirmTotalRow(
+                        '${transfer.fromSaleId} extra settles part of '
+                            '${transfer.toSaleId}',
+                        transfer.amount,
+                      ),
+                      const SizedBox(height: 6),
+                    ],
+                    Text(
+                      'No new money changes hands for this part — it was '
+                          'already received as the extra advance.',
+                      style: AppTheme.body(
+                        size: 10,
+                        color: AppColors.darkGreen,
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                  ],
+
                   _confirmTotalRow('Goat value + advance total', due),
                   const SizedBox(height: 6),
                   _confirmTotalRow('Received now', receivedNow),
@@ -1019,6 +1117,26 @@ class _WaitDeliveryCustomerScreenState
               if (due > 0)
                 Text(
                   'Received now: ${_money.format(receivedNow)}',
+                  style: AppTheme.body(
+                    size: 10,
+                    color: AppColors.darkGreen,
+                    weight: FontWeight.w600,
+                  ),
+                ),
+              for (final t in _transfersInto(entry))
+                Text(
+                  'Covered by extra from ${t.fromSaleId}: '
+                      '−${_money.format(t.amount)}',
+                  style: AppTheme.body(
+                    size: 10,
+                    color: AppColors.darkGreen,
+                    weight: FontWeight.w600,
+                  ),
+                ),
+              for (final t in _transfersFrom(entry))
+                Text(
+                  'Extra ${_money.format(t.amount)} → applied to '
+                      '${t.toSaleId}',
                   style: AppTheme.body(
                     size: 10,
                     color: AppColors.darkGreen,
@@ -2104,6 +2222,13 @@ class _WaitDeliveryCustomerScreenState
             'Advance paid',
             '− ${_money.format(entry.advancePaid)}',
           ),
+          for (final t in _transfersInto(entry)) ...[
+            const SizedBox(height: 6),
+            _calcRow(
+              'Covered by extra from ${t.fromSaleId}',
+              '− ${_money.format(t.amount)}',
+            ),
+          ],
           const Padding(
             padding: EdgeInsets.symmetric(vertical: 7),
             child: Divider(height: 1, color: AppColors.divider),
@@ -2113,6 +2238,14 @@ class _WaitDeliveryCustomerScreenState
             _money.format(due),
             emphasized: true,
           ),
+          for (final t in _transfersFrom(entry)) ...[
+            const SizedBox(height: 6),
+            _calcRow(
+              'Extra applied to ${t.toSaleId}',
+              _money.format(t.amount),
+              emphasized: true,
+            ),
+          ],
           if (excess > 0) ...[
             const SizedBox(height: 6),
             _calcRow(

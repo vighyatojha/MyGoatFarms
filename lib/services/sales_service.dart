@@ -14,6 +14,7 @@ import '../models/sale_draft.dart';
 import '../models/sale_model.dart';
 import '../models/sale_settlement.dart';
 import '../models/trading_purchase_model.dart';
+import '../models/wait_delivery_group.dart';
 import 'firestore_service.dart';
 import 'goat_service.dart';
 import 'health_reminder_scheduler.dart';
@@ -2479,20 +2480,81 @@ class SalesService {
     ExcessAction excessAction = ExcessAction.carryToAdvance,
     double discount = 0,
     double? holdingChargePerDay,
+  }) {
+    // A single booking is just a group of one: same code path, no
+    // transfers.
+    return completeBookingDeliveryGroup(
+      farmId: farmId,
+      deliveryDate: deliveryDate,
+      paymentMethod: paymentMethod,
+      items: [
+        BookingPickupInput(
+          saleId: saleId,
+          transportCharges: transportCharges,
+          amountReceivedNow: amountReceivedNow,
+          onCredit: onCredit,
+          excessAction: excessAction,
+          discount: discount,
+          holdingChargePerDay: holdingChargePerDay,
+        ),
+      ],
+    );
+  }
+
+  /// Completes several Booking / Holding sales of ONE customer as one
+  /// settlement, in ONE Firestore transaction, against one shared
+  /// [deliveryDate].
+  ///
+  /// Each booking is settled exactly as in [completeBookingDelivery]
+  /// (holding charges for the days held, delivery discount, transport,
+  /// revenue correction). On top of that, [WaitDeliveryAllocator] nets the
+  /// bookings against each other: the extra booking amount of a booking
+  /// whose booking amount is more than its final bill pays the due of a
+  /// booking whose booking amount is less. See
+  /// [completeWaitForDeliveryGroup] for how the donor and the receiver are
+  /// recorded — it is the same here:
+  ///
+  ///  * Donor: `excessTransferred` / `excessTransferredTo`; the bill reads
+  ///    paid in full; nothing goes to the advance or a refund for that part.
+  ///  * Receiver: a payment line "Adjusted from S-xxxx extra" (no new cash
+  ///    entry) plus a Sold Goat Revenue entry for the part of the
+  ///    transferred money that is revenue (capped at the goat sale +
+  ///    holding charges; transport is never revenue), on a fixed id so a
+  ///    retry cannot count it twice.
+  ///
+  /// All reads happen before any write, and a failure on any booking
+  /// leaves every booking in the group untouched.
+  ///
+  /// [items] must be in the order the bookings are shown on screen: that
+  /// is the order dues are covered in.
+  Future<void> completeBookingDeliveryGroup({
+    required String farmId,
+    required DateTime deliveryDate,
+    required List<BookingPickupInput> items,
+    String? paymentMethod,
   }) async {
-    if (transportCharges < 0) {
-      throw StateError('The transportation charge cannot be negative.');
+    if (items.isEmpty) return;
+
+    final seenIds = <String>{};
+
+    for (final item in items) {
+      if (!seenIds.add(item.saleId)) {
+        throw StateError('Booking ${item.saleId} is listed twice.');
+      }
+
+      if (item.transportCharges < 0) {
+        throw StateError('The transportation charge cannot be negative.');
+      }
+
+      if (item.holdingChargePerDay != null && item.holdingChargePerDay! < 0) {
+        throw StateError('The holding charge per day cannot be negative.');
+      }
+
+      if (item.discount < 0) {
+        throw StateError('The discount cannot be negative.');
+      }
     }
 
-    if (holdingChargePerDay != null && holdingChargePerDay < 0) {
-      throw StateError('The holding charge per day cannot be negative.');
-    }
-
-    if (discount < 0) {
-      throw StateError('The discount cannot be negative.');
-    }
-
-    final transport = SaleDraft.round2(transportCharges);
     final method = _paymentMethodOrCash(paymentMethod);
     final now = DateTime.now();
 
@@ -2502,370 +2564,447 @@ class SalesService {
       deliveryDate.day,
     );
 
-    // Not `late final`: Firestore may re-run the transaction closure on
-    // contention, which would assign these more than once.
-    double totalSaleAmount = 0;
-    double actualHoldingCharges = 0;
-
     await _db.runTransaction((transaction) async {
       // ---------------------------------------------------------------
       // 1. Reads first — a Firestore transaction requires every read
-      //    to happen before any write.
+      //    to happen before any write, across ALL bookings.
       // ---------------------------------------------------------------
 
-      final saleRef = _sales(farmId).doc(saleId);
-      final saleSnap = await transaction.get(saleRef);
+      final plans = <_BookingPickupPlan>[];
 
-      if (!saleSnap.exists) {
-        throw StateError('Sale $saleId no longer exists.');
-      }
+      for (final item in items) {
+        final saleId = item.saleId;
+        final saleRef = _sales(farmId).doc(saleId);
+        final saleSnap = await transaction.get(saleRef);
 
-      final sale = Sale.fromDoc(saleSnap);
-
-      if (!sale.isBooking) {
-        throw StateError('Sale $saleId is not a Booking sale.');
-      }
-
-      if (sale.status != Sale.statusBooked) {
-        throw StateError(
-          'Sale $saleId has already been completed or is in an '
-              'unexpected state ("${sale.status}").',
-        );
-      }
-
-      // Lot sale: the lot doc is read here, in the read phase, and the
-      // reservation is checked before anything is written.
-      DocumentReference<Map<String, dynamic>>? lotRef;
-
-      if (sale.isLotSale) {
-        lotRef = _tradingPurchases(farmId).doc(sale.lotDocId);
-        final lotSnap = await transaction.get(lotRef);
-
-        if (!lotSnap.exists) {
-          throw StateError('Lot ${sale.lotDocId} no longer exists.');
+        if (!saleSnap.exists) {
+          throw StateError('Sale $saleId no longer exists.');
         }
 
-        final lot = TradingPurchase.fromDoc(lotSnap);
+        final sale = Sale.fromDoc(saleSnap);
 
-        if (lot.reservedFarmQty < sale.lotQuantity) {
+        if (!sale.isBooking) {
+          throw StateError('Sale $saleId is not a Booking sale.');
+        }
+
+        if (sale.status != Sale.statusBooked) {
           throw StateError(
-            'Lot ${sale.lotDocId} has only ${lot.reservedFarmQty} goats '
-                'reserved but this sale holds ${sale.lotQuantity}. '
-                'Please check the lot before completing.',
+            'Sale $saleId has already been completed or is in an '
+                'unexpected state ("${sale.status}").',
           );
         }
 
-        if (sale.costPerGoatSnapshot == null) {
-          throw StateError(
-            'Sale $saleId has no stored cost per goat, so its profit '
-                'cannot be worked out.',
-          );
-        }
-      }
+        DocumentReference<Map<String, dynamic>>? lotRef;
 
-      final goatSnaps = <DocumentSnapshot<Map<String, dynamic>>>[];
+        if (sale.isLotSale) {
+          lotRef = _tradingPurchases(farmId).doc(sale.lotDocId);
+          final lotSnap = await transaction.get(lotRef);
 
-      for (final goatId in sale.goatIds) {
-        goatSnaps.add(
-          await transaction.get(_goats(farmId).doc(goatId)),
-        );
-      }
+          if (!lotSnap.exists) {
+            throw StateError('Lot ${sale.lotDocId} no longer exists.');
+          }
 
-      // ---------------------------------------------------------------
-      // 1a. Cost of Goods Sold — determine which of these goats will
-      //     actually move to Sold below (same eligibility check step 4
-      //     uses) and look up their cost now, still in the read phase.
-      //     Firestore requires every read in a transaction to happen
-      //     before any write, so this can't be deferred to step 4.
-      // ---------------------------------------------------------------
+          final lot = TradingPurchase.fromDoc(lotSnap);
 
-      final eligiblePurchaseIds = <String>[];
+          if (lot.reservedFarmQty < sale.lotQuantity) {
+            throw StateError(
+              'Lot ${sale.lotDocId} has only ${lot.reservedFarmQty} goats '
+                  'reserved but this sale holds ${sale.lotQuantity}. '
+                  'Please check the lot before completing.',
+            );
+          }
 
-      for (final snap in goatSnaps) {
-        if (!snap.exists) continue;
-
-        final goat = Goat.fromDoc(snap);
-
-        if (goat.currentStatus != Goat.statusBooked ||
-            goat.saleId != saleId) {
-          continue;
-        }
-
-        eligiblePurchaseIds.add(goat.purchaseId);
-      }
-
-      // A lot sale uses the cost per goat snapshotted when the sale was
-      // made — never the lot's current figure, which may have moved on.
-      final costOfGoodsSold = sale.isLotSale
-          ? SaleDraft.round2(
-        (sale.costPerGoatSnapshot ?? 0) * sale.lotQuantity,
-      )
-          : await _costOfGoatsInTransaction(
-        transaction: transaction,
-        farmId: farmId,
-        purchaseIds: eligiblePurchaseIds,
-      );
-
-      // ---------------------------------------------------------------
-      // 2. Compute the final settlement.
-      // ---------------------------------------------------------------
-
-      final holdingStart = sale.holdingStart;
-      final startDay = DateTime(
-        holdingStart.year,
-        holdingStart.month,
-        holdingStart.day,
-      );
-
-      if (deliveryDay.isBefore(startDay)) {
-        throw StateError(
-          'The delivery date cannot be before the day the holding '
-              'started (${startDay.day}/${startDay.month}/${startDay.year}).',
-        );
-      }
-
-      final actualHoldingDays =
-      Sale.holdingDaysBetween(startDay, deliveryDay);
-
-      // The rate edited at delivery wins; otherwise the booking's rate.
-      final effectiveHoldingRate = SaleDraft.round2(
-        holdingChargePerDay ?? sale.holdingChargePerDay ?? 0,
-      );
-      final bookingAmount = sale.bookingAmount ?? 0;
-      final actualHoldingChargesValue = SaleDraft.round2(
-        actualHoldingDays * effectiveHoldingRate,
-      );
-
-      // Goat Sale (already after any discount) + Holding Charges +
-      // Transportation - Booking Amount. Anything the booking amount
-      // covered beyond that is the excess.
-      final settlement = SaleSettlement.fromAmount(
-        goatAmount: sale.totalSaleAmount,
-        discount: discount,
-        holdingCharges: actualHoldingChargesValue,
-        transportCharge: transport,
-        advancePaid: bookingAmount,
-        excessAction: excessAction,
-      );
-      final finalAmount = settlement.balanceDue;
-      final excess = settlement.excess;
-
-      // Extra discount given at delivery (never more than the goat value).
-      final deliveryDiscount = settlement.appliedDiscount;
-
-      // REVENUE CORRECTION — read step. The booking money was recorded as
-      // Sold Goat Revenue on the booking date, capped at the goat sale then.
-      // A delivery discount can lower what the sale is worth below that, so
-      // the entry is read here (before any write) and lowered below.
-      final initialRevenueRef = _transactions(farmId)
-          .doc(_saleRevenueDocId(saleId, 'initial'));
-      DocumentSnapshot<Map<String, dynamic>>? initialRevenueSnap;
-
-      if (deliveryDiscount > 0) {
-        initialRevenueSnap = await transaction.get(initialRevenueRef);
-      }
-
-      // Reads must all happen before the first write below.
-      final advanceTarget = await _checkExcessInTransaction(
-        transaction: transaction,
-        farmId: farmId,
-        customerId: sale.customerId,
-        excess: excess,
-        action: excessAction,
-      );
-
-      // Captured for the Finance revenue write later in this same
-      // transaction (see _writeInitialRevenueInTransaction below): the
-      // gross sale value (not [finalAmount], which is the remaining
-      // balance) and the booking amount already received, which is the
-      // money that becomes revenue now that the goat has left. The
-      // balance is recorded as it is collected.
-      // The goat value after every discount (booking + delivery).
-      totalSaleAmount = settlement.netGoatAmount;
-      actualHoldingCharges = actualHoldingChargesValue;
-      // The money received right now, checked against the final amount.
-      final received = _checkCompletionPayment(
-        finalAmount: finalAmount,
-        amountReceivedNow: amountReceivedNow,
-        onCredit: onCredit,
-      );
-      final existingPayments =
-          (saleSnap.data()?['payments'] as List?) ?? const [];
-
-      // ---------------------------------------------------------------
-      // 3. Update the sale doc.
-      // ---------------------------------------------------------------
-
-      transaction.update(saleRef, {
-        'status': Sale.statusDeliveryCompleted,
-        'holdingStartDate': Timestamp.fromDate(startDay),
-        'holdingEndDate': Timestamp.fromDate(deliveryDay),
-        'actualHoldingDays': actualHoldingDays,
-        'totalHoldingCharges': actualHoldingCharges,
-        // The daily rate actually charged (it may have been edited at
-        // delivery), so the bill and the numbers always agree.
-        'holdingChargePerDay': effectiveHoldingRate,
-        // Cleared when there is none, so a stale value can never linger
-        // on the bill.
-        'transportCost': transport > 0 ? transport : FieldValue.delete(),
-        'finalAmountAfterHolding': finalAmount,
-        // A discount given at delivery is added to the booking discount, and
-        // the goat sale amount is lowered to match, so every reader of
-        // totalSaleAmount sees the net figure (same rule as a discount given
-        // when the sale was made).
-        if (deliveryDiscount > 0) ...{
-          'discount': SaleDraft.round2(sale.appliedDiscount + deliveryDiscount),
-          'totalSaleAmount': settlement.netGoatAmount,
-        },
-        'excessToAdvance': excessAction == ExcessAction.carryToAdvance &&
-            excess > 0
-            ? excess
-            : FieldValue.delete(),
-        'excessRefunded': excessAction == ExcessAction.refundToCustomer &&
-            excess > 0
-            ? excess
-            : FieldValue.delete(),
-        ..._completionPaymentFields(
-          existingPayments: existingPayments,
-          received: received,
-          method: method,
-          when: now,
-          onCredit: finalAmount > 0 && onCredit,
-          finalAmount: finalAmount,
-          paidBefore: bookingAmount,
-        ),
-        'deliveryCompletedAt': FieldValue.serverTimestamp(),
-      });
-
-      // REVENUE CORRECTION — write step. Lowers the booking-date revenue
-      // entry when the delivery discount means that much of the booking
-      // money is no longer farm revenue (it is the customer's extra, which
-      // goes to the advance or is refunded below). Nothing changes when the
-      // discounted sale still covers the whole booking amount.
-      if (initialRevenueSnap != null && initialRevenueSnap.exists) {
-        final recorded = SaleDraft.round2(
-          ((initialRevenueSnap.data()?['amount']) as num?)?.toDouble() ?? 0,
-        );
-        final allowed = SaleDraft.round2(
-          Sale.revenueFromPaid(
-            paid: bookingAmount,
-            revenueTotal: settlement.netRevenue,
-          ),
-        );
-
-        if (recorded > allowed) {
-          if (allowed <= 0) {
-            transaction.delete(initialRevenueRef);
-          } else {
-            transaction.update(initialRevenueRef, {
-              'amount': allowed,
-              'note': 'Sold Goat Revenue — Sale $saleId '
-                  '(lowered for a delivery discount)',
-            });
+          if (sale.costPerGoatSnapshot == null) {
+            throw StateError(
+              'Sale $saleId has no stored cost per goat, so its profit '
+                  'cannot be worked out.',
+            );
           }
         }
-      }
 
-      _writeCompletionRevenue(
-        transaction: transaction,
-        farmId: farmId,
-        saleId: saleId,
-        customerName: sale.customerName,
-        received: received,
-        paidBefore: bookingAmount,
-        revenueTotal: settlement.netRevenue,
-        existingPaymentCount: existingPayments.length,
-        method: method,
-        when: now,
-        lotId: sale.lotDocId,
-        customerId: sale.isLotSale ? sale.customerId : '',
-      );
+        final goatSnaps = <DocumentSnapshot<Map<String, dynamic>>>[];
 
-      _writeExcessInTransaction(
-        transaction: transaction,
-        farmId: farmId,
-        saleId: saleId,
-        customerId: sale.customerId,
-        customerName: sale.customerName,
-        excess: excess,
-        action: excessAction,
-        method: method,
-        when: now,
-        target: advanceTarget,
-      );
-
-      // ---------------------------------------------------------------
-      // 4. Flip every still-Booked goat in this sale to Sold — it has
-      //    now actually left the farm. Skip any goat that's already
-      //    moved on (defensive; shouldn't normally happen) rather than
-      //    clobbering it.
-      // ---------------------------------------------------------------
-
-      var movedGoats = sale.isLotSale ? sale.lotQuantity : 0;
-
-      if (sale.isLotSale) {
-        // The reserved goats are now sold: reserved -> sold, and the farm
-        // stock (mirrored by pendingCount) falls now, not at booking.
-        transaction.update(lotRef!, {
-          'reservedFarmQty': FieldValue.increment(-sale.lotQuantity),
-          'soldFromFarmQty': FieldValue.increment(sale.lotQuantity),
-          'pendingCount': FieldValue.increment(-sale.lotQuantity),
-          'updatedAt': FieldValue.serverTimestamp(),
-        });
-      }
-
-      for (final snap in goatSnaps) {
-        if (!snap.exists) continue;
-
-        final goat = Goat.fromDoc(snap);
-
-        if (goat.currentStatus != Goat.statusBooked ||
-            goat.saleId != saleId) {
-          continue;
+        for (final goatId in sale.goatIds) {
+          goatSnaps.add(
+            await transaction.get(_goats(farmId).doc(goatId)),
+          );
         }
 
-        transaction.update(snap.reference, {
-          'currentStatus': Goat.statusSold,
-        });
+        // Cost of Goods Sold, still in the read phase.
+        final eligiblePurchaseIds = <String>[];
 
-        movedGoats++;
+        for (final snap in goatSnaps) {
+          if (!snap.exists) continue;
+
+          final goat = Goat.fromDoc(snap);
+
+          if (goat.currentStatus != Goat.statusBooked ||
+              goat.saleId != saleId) {
+            continue;
+          }
+
+          eligiblePurchaseIds.add(goat.purchaseId);
+        }
+
+        final costOfGoodsSold = sale.isLotSale
+            ? SaleDraft.round2(
+          (sale.costPerGoatSnapshot ?? 0) * sale.lotQuantity,
+        )
+            : await _costOfGoatsInTransaction(
+          transaction: transaction,
+          farmId: farmId,
+          purchaseIds: eligiblePurchaseIds,
+        );
+
+        // The booking on its own: holding days counted inclusively.
+        final holdingStart = sale.holdingStart;
+        final startDay = DateTime(
+          holdingStart.year,
+          holdingStart.month,
+          holdingStart.day,
+        );
+
+        if (deliveryDay.isBefore(startDay)) {
+          throw StateError(
+            'The delivery date cannot be before the day the holding '
+                'started (${startDay.day}/${startDay.month}/${startDay.year}).',
+          );
+        }
+
+        final holdingDays = Sale.holdingDaysBetween(startDay, deliveryDay);
+
+        // The rate edited at delivery wins; otherwise the booking's rate.
+        final holdingRate = SaleDraft.round2(
+          item.holdingChargePerDay ?? sale.holdingChargePerDay ?? 0,
+        );
+        final holdingCharges = SaleDraft.round2(holdingDays * holdingRate);
+        final bookingAmount = sale.bookingAmount ?? 0;
+
+        // Goat Sale (already after any discount) + Holding Charges +
+        // Transportation, against the booking amount already paid.
+        final settlement = SaleSettlement.fromAmount(
+          goatAmount: sale.totalSaleAmount,
+          discount: item.discount,
+          holdingCharges: holdingCharges,
+          transportCharge: SaleDraft.round2(item.transportCharges),
+          advancePaid: bookingAmount,
+          excessAction: item.excessAction,
+        );
+
+        // REVENUE CORRECTION — read step (see completeBookingDelivery).
+        final initialRevenueRef = _transactions(farmId)
+            .doc(_saleRevenueDocId(saleId, 'initial'));
+        DocumentSnapshot<Map<String, dynamic>>? initialRevenueSnap;
+
+        if (settlement.appliedDiscount > 0) {
+          initialRevenueSnap = await transaction.get(initialRevenueRef);
+        }
+
+        plans.add(
+          _BookingPickupPlan(
+            item: item,
+            saleRef: saleRef,
+            sale: sale,
+            saleSnap: saleSnap,
+            lotRef: lotRef,
+            goatSnaps: goatSnaps,
+            costOfGoodsSold: costOfGoodsSold,
+            bookingAmount: bookingAmount,
+            startDay: startDay,
+            holdingDays: holdingDays,
+            holdingRate: holdingRate,
+            holdingCharges: holdingCharges,
+            settlement: settlement,
+            initialRevenueRef: initialRevenueRef,
+            initialRevenueSnap: initialRevenueSnap,
+          ),
+        );
       }
 
       // ---------------------------------------------------------------
-      // 5. Dashboard aggregate: Booking count decreases, Total Sold
-      //    increases. totalStock also decreases here — Phase 4
-      //    deliberately left it untouched when the booking was first
-      //    created (the goat hadn't left the farm yet), so this
-      //    deferred decrement lands now that it actually has. Realized
-      //    profit = the goat-only sale value plus holding charges
-      //    (never transport) minus what these goats cost to acquire —
-      //    computed in step 1a, above the read/write boundary.
+      // 2. Net the bookings against each other. Same function the screen
+      //    shows, so what was previewed is what gets saved.
+      // ---------------------------------------------------------------
+
+      final allocation = WaitDeliveryAllocator.allocate([
+        for (final plan in plans)
+          WaitDeliveryBill(
+            saleId: plan.item.saleId,
+            payable: plan.settlement.payable,
+            advancePaid: plan.bookingAmount,
+          ),
+      ]);
+
+      // ---------------------------------------------------------------
+      // 3. Remaining reads and the payment check, per booking, still
+      //    before the first write.
+      // ---------------------------------------------------------------
+
+      for (final plan in plans) {
+        final alloc = allocation.bySale[plan.item.saleId]!;
+
+        plan.alloc = alloc;
+        plan.transfersIn = allocation.transfersInto(plan.item.saleId);
+        plan.transfersOut = allocation.transfersFrom(plan.item.saleId);
+
+        plan.advanceTarget = await _checkExcessInTransaction(
+          transaction: transaction,
+          farmId: farmId,
+          customerId: plan.sale.customerId,
+          excess: alloc.leftoverExcess,
+          action: plan.item.excessAction,
+        );
+
+        plan.received = _checkCompletionPayment(
+          finalAmount: alloc.toCollect,
+          amountReceivedNow: plan.item.amountReceivedNow,
+          onCredit: plan.item.onCredit,
+        );
+      }
+
+      // ---------------------------------------------------------------
+      // 4. Writes — one booking after the other, same transaction.
+      // ---------------------------------------------------------------
+
+      var totalMovedGoats = 0;
+      var totalLotGoats = 0;
+      var totalProfit = 0.0;
+
+      for (final plan in plans) {
+        final item = plan.item;
+        final sale = plan.sale;
+        final saleId = item.saleId;
+        final alloc = plan.alloc;
+        final settlement = plan.settlement;
+
+        final transport = SaleDraft.round2(item.transportCharges);
+        final finalAmount = alloc.toCollect;
+        final leftover = alloc.leftoverExcess;
+        final deliveryDiscount = settlement.appliedDiscount;
+
+        final existingPayments =
+            (plan.saleSnap.data()?['payments'] as List?) ?? const [];
+
+        final transferLines = <Map<String, dynamic>>[
+          for (final t in plan.transfersIn)
+            SalePayment(
+              amount: t.amount,
+              method: method,
+              date: now,
+              note: '${SalePayment.bookingTransferPrefix}'
+                  '${t.fromSaleId} extra',
+            ).toMap(),
+        ];
+
+        final paidBefore =
+        SaleDraft.round2(plan.bookingAmount + alloc.takenIn);
+
+        final givenOut = alloc.givenOut;
+        final givenTo = plan.transfersOut
+            .map((t) => t.toSaleId)
+            .toSet()
+            .join(', ');
+
+        transaction.update(plan.saleRef, {
+          'status': Sale.statusDeliveryCompleted,
+          'holdingStartDate': Timestamp.fromDate(plan.startDay),
+          'holdingEndDate': Timestamp.fromDate(deliveryDay),
+          'actualHoldingDays': plan.holdingDays,
+          'totalHoldingCharges': plan.holdingCharges,
+          // The daily rate actually charged (it may have been edited at
+          // delivery), so the bill and the numbers always agree.
+          'holdingChargePerDay': plan.holdingRate,
+          'transportCost': transport > 0 ? transport : FieldValue.delete(),
+          'finalAmountAfterHolding': finalAmount,
+          if (deliveryDiscount > 0) ...{
+            'discount':
+            SaleDraft.round2(sale.appliedDiscount + deliveryDiscount),
+            'totalSaleAmount': settlement.netGoatAmount,
+          },
+          'excessToAdvance':
+          item.excessAction == ExcessAction.carryToAdvance &&
+              leftover > 0
+              ? leftover
+              : FieldValue.delete(),
+          'excessRefunded':
+          item.excessAction == ExcessAction.refundToCustomer &&
+              leftover > 0
+              ? leftover
+              : FieldValue.delete(),
+          'excessTransferred':
+          givenOut > 0 ? givenOut : FieldValue.delete(),
+          'excessTransferredTo':
+          givenOut > 0 ? givenTo : FieldValue.delete(),
+          ..._completionPaymentFields(
+            existingPayments: [...existingPayments, ...transferLines],
+            received: plan.received,
+            method: method,
+            when: now,
+            onCredit: finalAmount > 0 && item.onCredit,
+            finalAmount: finalAmount,
+            paidBefore: paidBefore,
+          ),
+          'deliveryCompletedAt': FieldValue.serverTimestamp(),
+        });
+
+        // REVENUE CORRECTION — write step.
+        final initialSnap = plan.initialRevenueSnap;
+
+        if (initialSnap != null && initialSnap.exists) {
+          final recorded = SaleDraft.round2(
+            ((initialSnap.data()?['amount']) as num?)?.toDouble() ?? 0,
+          );
+          final allowed = SaleDraft.round2(
+            Sale.revenueFromPaid(
+              paid: plan.bookingAmount,
+              revenueTotal: settlement.netRevenue,
+            ),
+          );
+
+          if (recorded > allowed) {
+            if (allowed <= 0) {
+              transaction.delete(plan.initialRevenueRef);
+            } else {
+              transaction.update(plan.initialRevenueRef, {
+                'amount': allowed,
+                'note': 'Sold Goat Revenue — Sale $saleId '
+                    '(lowered for a delivery discount)',
+              });
+            }
+          }
+        }
+
+        // Extra booking amount moved in from other bookings: the part of
+        // it that is revenue is recorded now, on this booking, on a fixed
+        // id (the slot of its first transfer line), so a retry cannot
+        // count it twice. The donor's own revenue is untouched, so the
+        // money is counted once.
+        if (alloc.takenIn > 0) {
+          final transferRevenue = SaleDraft.round2(
+            Sale.revenueFromPaid(
+              paid: paidBefore,
+              revenueTotal: settlement.netRevenue,
+            ) -
+                Sale.revenueFromPaid(
+                  paid: plan.bookingAmount,
+                  revenueTotal: settlement.netRevenue,
+                ),
+          );
+
+          if (transferRevenue > 0) {
+            transaction.set(
+              _transactions(farmId).doc(
+                _saleRevenueDocId(
+                  saleId,
+                  'pay${existingPayments.length + 1}',
+                ),
+              ),
+              {
+                ..._saleRevenueData(
+                  saleId: saleId,
+                  amount: transferRevenue,
+                  date: now,
+                  paymentMethod: method,
+                  customerName: sale.customerName,
+                  note: 'Sold Goat Revenue — extra booking amount '
+                      'adjusted from another booking, Sale $saleId',
+                  lotId: sale.lotDocId,
+                  customerId: sale.isLotSale ? sale.customerId : '',
+                ),
+                'createdAt': FieldValue.serverTimestamp(),
+              },
+            );
+          }
+        }
+
+        _writeCompletionRevenue(
+          transaction: transaction,
+          farmId: farmId,
+          saleId: saleId,
+          customerName: sale.customerName,
+          received: plan.received,
+          paidBefore: paidBefore,
+          revenueTotal: settlement.netRevenue,
+          existingPaymentCount:
+          existingPayments.length + transferLines.length,
+          method: method,
+          when: now,
+          lotId: sale.lotDocId,
+          customerId: sale.isLotSale ? sale.customerId : '',
+        );
+
+        _writeExcessInTransaction(
+          transaction: transaction,
+          farmId: farmId,
+          saleId: saleId,
+          customerId: sale.customerId,
+          customerName: sale.customerName,
+          excess: leftover,
+          action: item.excessAction,
+          method: method,
+          when: now,
+          target: plan.advanceTarget,
+        );
+
+        // Flip every still-Booked goat in this sale to Sold.
+        var movedGoats = sale.isLotSale ? sale.lotQuantity : 0;
+
+        if (sale.isLotSale) {
+          transaction.update(plan.lotRef!, {
+            'reservedFarmQty': FieldValue.increment(-sale.lotQuantity),
+            'soldFromFarmQty': FieldValue.increment(sale.lotQuantity),
+            'pendingCount': FieldValue.increment(-sale.lotQuantity),
+            'updatedAt': FieldValue.serverTimestamp(),
+          });
+
+          totalLotGoats += sale.lotQuantity;
+        }
+
+        for (final snap in plan.goatSnaps) {
+          if (!snap.exists) continue;
+
+          final goat = Goat.fromDoc(snap);
+
+          if (goat.currentStatus != Goat.statusBooked ||
+              goat.saleId != saleId) {
+            continue;
+          }
+
+          transaction.update(snap.reference, {
+            'currentStatus': Goat.statusSold,
+          });
+
+          movedGoats++;
+        }
+
+        totalMovedGoats += movedGoats;
+        totalProfit += SaleDraft.round2(
+          settlement.netGoatAmount +
+              plan.holdingCharges -
+              plan.costOfGoodsSold,
+        );
+      }
+
+      // ---------------------------------------------------------------
+      // 5. Dashboard aggregate, written once for the whole group:
+      //    Booking count decreases, Total Sold increases, totalStock
+      //    decreases (the deferred decrement). Realized profit = goat-only
+      //    sale value plus holding charges (never transport) minus what
+      //    the goats cost to acquire.
       // ---------------------------------------------------------------
 
       transaction.set(
         _summaryDoc(farmId),
         {
-          'booking': FieldValue.increment(-movedGoats),
-          'totalSold': FieldValue.increment(movedGoats),
-          'totalStock': FieldValue.increment(-movedGoats),
-          if (sale.isLotSale)
-            'pendingRegistrations': FieldValue.increment(-movedGoats),
-          'totalProfit': FieldValue.increment(
-            SaleDraft.round2(
-              totalSaleAmount + actualHoldingCharges - costOfGoodsSold,
-            ),
-          ),
+          'booking': FieldValue.increment(-totalMovedGoats),
+          'totalSold': FieldValue.increment(totalMovedGoats),
+          'totalStock': FieldValue.increment(-totalMovedGoats),
+          if (totalLotGoats > 0)
+            'pendingRegistrations': FieldValue.increment(-totalLotGoats),
+          'totalProfit': FieldValue.increment(SaleDraft.round2(totalProfit)),
         },
         SetOptions(merge: true),
       );
-
-      // -----------------------------------------------------------------
-      // FINANCE REVENUE — the booking payment was already recorded on the
-      // booking date. Only the money received NOW is added here, through
-      // _writeCompletionRevenue above. That keeps the original receipt
-      // date intact and prevents the booking payment from being counted
-      // twice.
-      // -----------------------------------------------------------------
     }).timeout(_timeout * 2);
   }
 
@@ -2925,335 +3064,465 @@ class SalesService {
     bool onCredit = false,
     double? discount,
     ExcessAction excessAction = ExcessAction.carryToAdvance,
+  }) {
+    // A single booking is just a group of one: same code path, no
+    // transfers.
+    return completeWaitForDeliveryGroup(
+      farmId: farmId,
+      paymentMethod: paymentMethod,
+      items: [
+        WaitPickupInput(
+          saleId: saleId,
+          pickupWeight: pickupWeight,
+          transportCharges: transportCharges,
+          amountReceivedNow: amountReceivedNow,
+          onCredit: onCredit,
+          discount: discount,
+          excessAction: excessAction,
+        ),
+      ],
+    );
+  }
+
+  /// Completes several Wait for Delivery bookings of ONE customer as one
+  /// settlement, in ONE Firestore transaction.
+  ///
+  /// Each booking is settled exactly as in [completeWaitForDeliveryPickup]
+  /// (booking-time rate or fixed price, discount, transport, revenue capped
+  /// at the goat value). On top of that, [WaitDeliveryAllocator] nets the
+  /// bookings against each other: the extra advance of a booking whose
+  /// advance is more than its bill pays the due of a booking whose advance
+  /// is less.
+  ///
+  ///  * Donor: `excessTransferred` / `excessTransferredTo` record the money
+  ///    moved. It is counted in the bill's excess figure, so the bill reads
+  ///    paid in full. Nothing goes to the customer's advance and nothing is
+  ///    refunded for this part.
+  ///  * Receiver: a payment line "Adjusted from S-xxxx extra" is added to
+  ///    its `payments` (see [SalePayment.isBookingTransfer]). It counts as
+  ///    paid, but creates no new cash entry — the money was already
+  ///    received as the donor's advance.
+  ///  * Revenue: still capped at each booking's goat value; transport is
+  ///    never revenue. The transferred money becomes revenue on the
+  ///    receiver (its "initial" Sold Goat Revenue is written on advance +
+  ///    transferred amount), never on the donor, so it is counted once.
+  ///  * Only the extra left after every due is covered goes to the
+  ///    advance / refund choice ([WaitPickupInput.excessAction]).
+  ///
+  /// All reads happen before any write. Because everything is one
+  /// transaction, a failure on any booking leaves every booking in the
+  /// group untouched.
+  ///
+  /// [items] must be in the order the bookings are shown on screen: that
+  /// is the order dues are covered in.
+  ///
+  /// Throws a [StateError] with a message fit to show to the person.
+  Future<void> completeWaitForDeliveryGroup({
+    required String farmId,
+    required List<WaitPickupInput> items,
+    String? paymentMethod,
   }) async {
-    if (pickupWeight <= 0) {
-      throw StateError('Pickup weight must be greater than zero.');
+    if (items.isEmpty) return;
+
+    final seenIds = <String>{};
+
+    for (final item in items) {
+      if (!seenIds.add(item.saleId)) {
+        throw StateError('Booking ${item.saleId} is listed twice.');
+      }
+
+      if (item.pickupWeight <= 0) {
+        throw StateError('Pickup weight must be greater than zero.');
+      }
+
+      if (item.discount != null && item.discount! < 0) {
+        throw StateError('The discount cannot be negative.');
+      }
+
+      if (item.transportCharges < 0) {
+        throw StateError('The transportation charge cannot be negative.');
+      }
     }
 
-    if (discount != null && discount < 0) {
-      throw StateError('The discount cannot be negative.');
-    }
-
-    if (transportCharges < 0) {
-      throw StateError('The transportation charge cannot be negative.');
-    }
-
-    final transport = SaleDraft.round2(transportCharges);
     final method = _paymentMethodOrCash(paymentMethod);
     final now = DateTime.now();
 
     // Not `late final`: Firestore may re-run the transaction closure on
     // contention, which would assign these more than once.
-    double grossSaleValue = 0;
-    double advancePaid = 0;
-    String customerName = '';
-    String initialMethod = FinancePaymentMethods.other;
-    List<String> pickedUpGoatIds = const [];
+    var pickedUpGoatIds = <String>[];
 
     await _db.runTransaction((transaction) async {
+      pickedUpGoatIds = <String>[];
+
       // ---------------------------------------------------------------
       // 1. Reads first — a Firestore transaction requires every read
-      //    to happen before any write.
+      //    to happen before any write, across ALL bookings.
       // ---------------------------------------------------------------
 
-      final saleRef = _sales(farmId).doc(saleId);
-      final saleSnap = await transaction.get(saleRef);
+      final plans = <_WaitPickupPlan>[];
 
-      if (!saleSnap.exists) {
-        throw StateError('Sale $saleId no longer exists.');
-      }
+      for (final item in items) {
+        final saleId = item.saleId;
+        final saleRef = _sales(farmId).doc(saleId);
+        final saleSnap = await transaction.get(saleRef);
 
-      final sale = Sale.fromDoc(saleSnap);
-      pickedUpGoatIds = List<String>.from(sale.goatIds);
-
-      if (!sale.isWaitForDelivery) {
-        throw StateError('Sale $saleId is not a Wait for Delivery sale.');
-      }
-
-      if (sale.status != Sale.statusWaitForDelivery) {
-        throw StateError(
-          'Sale $saleId has already been completed or is in an '
-              'unexpected state ("${sale.status}").',
-        );
-      }
-
-      // Lot sale: the lot doc is read here, in the read phase, and the
-      // reservation is checked before anything is written.
-      DocumentReference<Map<String, dynamic>>? lotRef;
-
-      if (sale.isLotSale) {
-        lotRef = _tradingPurchases(farmId).doc(sale.lotDocId);
-        final lotSnap = await transaction.get(lotRef);
-
-        if (!lotSnap.exists) {
-          throw StateError('Lot ${sale.lotDocId} no longer exists.');
+        if (!saleSnap.exists) {
+          throw StateError('Sale $saleId no longer exists.');
         }
 
-        final lot = TradingPurchase.fromDoc(lotSnap);
+        final sale = Sale.fromDoc(saleSnap);
+        pickedUpGoatIds.addAll(sale.goatIds);
 
-        if (lot.reservedFarmQty < sale.lotQuantity) {
+        if (!sale.isWaitForDelivery) {
+          throw StateError('Sale $saleId is not a Wait for Delivery sale.');
+        }
+
+        if (sale.status != Sale.statusWaitForDelivery) {
           throw StateError(
-            'Lot ${sale.lotDocId} has only ${lot.reservedFarmQty} goats '
-                'reserved but this sale holds ${sale.lotQuantity}. '
-                'Please check the lot before completing.',
+            'Sale $saleId has already been completed or is in an '
+                'unexpected state ("${sale.status}").',
           );
         }
 
-        if (sale.costPerGoatSnapshot == null) {
-          throw StateError(
-            'Sale $saleId has no stored cost per goat, so its profit '
-                'cannot be worked out.',
+        // Lot sale: the lot doc is read here, in the read phase, and the
+        // reservation is checked before anything is written.
+        DocumentReference<Map<String, dynamic>>? lotRef;
+
+        if (sale.isLotSale) {
+          lotRef = _tradingPurchases(farmId).doc(sale.lotDocId);
+          final lotSnap = await transaction.get(lotRef);
+
+          if (!lotSnap.exists) {
+            throw StateError('Lot ${sale.lotDocId} no longer exists.');
+          }
+
+          final lot = TradingPurchase.fromDoc(lotSnap);
+
+          if (lot.reservedFarmQty < sale.lotQuantity) {
+            throw StateError(
+              'Lot ${sale.lotDocId} has only ${lot.reservedFarmQty} goats '
+                  'reserved but this sale holds ${sale.lotQuantity}. '
+                  'Please check the lot before completing.',
+            );
+          }
+
+          if (sale.costPerGoatSnapshot == null) {
+            throw StateError(
+              'Sale $saleId has no stored cost per goat, so its profit '
+                  'cannot be worked out.',
+            );
+          }
+        }
+
+        final goatSnaps = <DocumentSnapshot<Map<String, dynamic>>>[];
+
+        for (final goatId in sale.goatIds) {
+          goatSnaps.add(
+            await transaction.get(_goats(farmId).doc(goatId)),
           );
         }
-      }
 
-      final goatSnaps = <DocumentSnapshot<Map<String, dynamic>>>[];
+        // Cost of Goods Sold — which of these goats will actually move to
+        // Sold (same eligibility check the write phase uses) and what they
+        // cost, still in the read phase.
+        final eligiblePurchaseIds = <String>[];
 
-      for (final goatId in sale.goatIds) {
-        goatSnaps.add(
-          await transaction.get(_goats(farmId).doc(goatId)),
+        for (final snap in goatSnaps) {
+          if (!snap.exists) continue;
+
+          final goat = Goat.fromDoc(snap);
+
+          if (goat.currentStatus != Goat.statusWaitOnDelivery ||
+              goat.saleId != saleId) {
+            continue;
+          }
+
+          eligiblePurchaseIds.add(goat.purchaseId);
+        }
+
+        // A lot sale uses the cost per goat snapshotted when the sale was
+        // made — never the lot's current figure, which may have moved on.
+        final costOfGoodsSold = sale.isLotSale
+            ? SaleDraft.round2(
+          (sale.costPerGoatSnapshot ?? 0) * sale.lotQuantity,
+        )
+            : await _costOfGoatsInTransaction(
+          transaction: transaction,
+          farmId: farmId,
+          purchaseIds: eligiblePurchaseIds,
+        );
+
+        // The booking on its own: booking-time rate, pickup weight, never
+        // today's rate. The discount comes off the goat value, never off
+        // transport.
+        final advance = sale.bookingAdvanceAmount ?? 0;
+
+        final settlement = SaleSettlement.fromAmount(
+          goatAmount: sale.goatValueAtWeight(item.pickupWeight),
+          discount: item.discount ?? sale.appliedDiscount,
+          transportCharge: SaleDraft.round2(item.transportCharges),
+          advancePaid: advance,
+          excessAction: item.excessAction,
+        );
+
+        plans.add(
+          _WaitPickupPlan(
+            item: item,
+            saleRef: saleRef,
+            sale: sale,
+            saleSnap: saleSnap,
+            lotRef: lotRef,
+            goatSnaps: goatSnaps,
+            costOfGoodsSold: costOfGoodsSold,
+            advance: advance,
+            settlement: settlement,
+          ),
         );
       }
 
       // ---------------------------------------------------------------
-      // 1a. Cost of Goods Sold — determine which of these goats will
-      //     actually move to Sold below (same eligibility check step 4
-      //     uses) and look up their cost now, still in the read phase.
-      //     Firestore requires every read in a transaction to happen
-      //     before any write, so this can't be deferred to step 4.
+      // 2. Net the bookings against each other. Same function the screen
+      //    shows, so what was previewed is what gets saved.
       // ---------------------------------------------------------------
 
-      final eligiblePurchaseIds = <String>[];
+      final allocation = WaitDeliveryAllocator.allocate([
+        for (final plan in plans)
+          WaitDeliveryBill(
+            saleId: plan.item.saleId,
+            payable: plan.settlement.payable,
+            advancePaid: plan.advance,
+          ),
+      ]);
 
-      for (final snap in goatSnaps) {
-        if (!snap.exists) continue;
+      // ---------------------------------------------------------------
+      // 3. Remaining reads (customer record for a kept advance) and the
+      //    payment check, per booking, still before the first write.
+      // ---------------------------------------------------------------
 
-        final goat = Goat.fromDoc(snap);
+      for (final plan in plans) {
+        final alloc = allocation.bySale[plan.item.saleId]!;
 
-        if (goat.currentStatus != Goat.statusWaitOnDelivery ||
-            goat.saleId != saleId) {
-          continue;
-        }
+        plan.alloc = alloc;
+        plan.transfersIn = allocation.transfersInto(plan.item.saleId);
+        plan.transfersOut = allocation.transfersFrom(plan.item.saleId);
 
-        eligiblePurchaseIds.add(goat.purchaseId);
+        plan.advanceTarget = await _checkExcessInTransaction(
+          transaction: transaction,
+          farmId: farmId,
+          customerId: plan.sale.customerId,
+          excess: alloc.leftoverExcess,
+          action: plan.item.excessAction,
+        );
+
+        // The money received right now, checked against what is really
+        // still due AFTER the transfers.
+        plan.received = _checkCompletionPayment(
+          finalAmount: alloc.toCollect,
+          amountReceivedNow: plan.item.amountReceivedNow,
+          onCredit: plan.item.onCredit,
+        );
       }
 
-      // A lot sale uses the cost per goat snapshotted when the sale was
-      // made — never the lot's current figure, which may have moved on.
-      final costOfGoodsSold = sale.isLotSale
-          ? SaleDraft.round2(
-        (sale.costPerGoatSnapshot ?? 0) * sale.lotQuantity,
-      )
-          : await _costOfGoatsInTransaction(
-        transaction: transaction,
-        farmId: farmId,
-        purchaseIds: eligiblePurchaseIds,
-      );
-
       // ---------------------------------------------------------------
-      // 2. Compute the final settlement — booking-time rate, pickup
-      //    weight, never today's rate.
+      // 4. Writes — one booking after the other, same transaction.
       // ---------------------------------------------------------------
 
-      final bookingAdvanceAmount = sale.bookingAdvanceAmount ?? 0;
+      var totalMovedGoats = 0;
+      var totalLotGoats = 0;
+      var totalProfit = 0.0;
 
-      // Per KG: pickup weight x the booking-time rate. Fixed price: the
-      // agreed price, unchanged by the pickup weight. The discount comes
-      // off this goat value, never off transport.
-      final settlement = SaleSettlement.fromAmount(
-        goatAmount: sale.goatValueAtWeight(pickupWeight),
-        discount: discount ?? sale.appliedDiscount,
-        transportCharge: transport,
-        advancePaid: bookingAdvanceAmount,
-        excessAction: excessAction,
-      );
+      for (final plan in plans) {
+        final item = plan.item;
+        final sale = plan.sale;
+        final saleId = item.saleId;
+        final alloc = plan.alloc;
+        final settlement = plan.settlement;
 
-      // Revenue and profit are based on the goat value AFTER the discount.
-      final goatValue = settlement.netGoatAmount;
-      final appliedDiscount = settlement.appliedDiscount;
+        // Revenue and profit are based on the goat value AFTER the
+        // discount.
+        final goatValue = settlement.netGoatAmount;
+        final appliedDiscount = settlement.appliedDiscount;
+        final transport = SaleDraft.round2(item.transportCharges);
 
-      // Transportation is collected on top of the goat value; the advance
-      // already paid is then taken off the whole.
-      final finalPrice = settlement.balanceDue;
-      final excess = settlement.excess;
+        final finalPrice = alloc.toCollect;
+        final leftover = alloc.leftoverExcess;
 
-      // Reads must all happen before the first write below.
-      final advanceTarget = await _checkExcessInTransaction(
-        transaction: transaction,
-        farmId: farmId,
-        customerId: sale.customerId,
-        excess: excess,
-        action: excessAction,
-      );
+        final existingPayments =
+            (plan.saleSnap.data()?['payments'] as List?) ?? const [];
 
-      // The money received right now, checked against the final amount.
-      final received = _checkCompletionPayment(
-        finalAmount: finalPrice,
-        amountReceivedNow: amountReceivedNow,
-        onCredit: onCredit,
-      );
-      final existingPayments =
-          (saleSnap.data()?['payments'] as List?) ?? const [];
+        // Extra advance moved in from other bookings becomes a payment
+        // line on this one. No cash entry: the money was received as the
+        // other booking's advance.
+        final transferLines = <Map<String, dynamic>>[
+          for (final t in plan.transfersIn)
+            SalePayment(
+              amount: t.amount,
+              method: method,
+              date: now,
+              note: '${SalePayment.bookingTransferPrefix}'
+                  '${t.fromSaleId} extra',
+            ).toMap(),
+        ];
 
-      // Captured for the Finance revenue write later in this same
-      // transaction (see _writeInitialRevenueInTransaction below): the
-      // gross sale value (pickup weight × booking rate, not
-      // [finalPrice], which is the remaining balance; and not including
-      // transportation, which is never revenue) and the advance
-      // already received, which is the money that becomes revenue now
-      // that the goat has left. The balance is recorded as it is
-      // collected.
-      grossSaleValue = goatValue;
-      advancePaid = bookingAdvanceAmount;
-      customerName = sale.customerName;
-      initialMethod = _methodOrOther(sale.paymentMethod);
+        final paidBefore = SaleDraft.round2(plan.advance + alloc.takenIn);
 
-      // ---------------------------------------------------------------
-      // 3. Update the sale doc.
-      // ---------------------------------------------------------------
+        final givenOut = alloc.givenOut;
+        final givenTo = plan.transfersOut
+            .map((t) => t.toSaleId)
+            .toSet()
+            .join(', ');
 
-      transaction.update(saleRef, {
-        'status': Sale.statusPickupCompleted,
-        'pickupWeight': pickupWeight,
-        // Cleared when there is none, so a stale value can never linger
-        // on the bill.
-        'transportCost':
-        transport > 0 ? transport : FieldValue.delete(),
-        'finalPriceAfterPickup': finalPrice,
-        // Cleared when there is none, so a stale value can never linger
-        // on the bill.
-        'discount':
-        appliedDiscount > 0 ? appliedDiscount : FieldValue.delete(),
-        'excessToAdvance': excessAction == ExcessAction.carryToAdvance &&
-            excess > 0
-            ? excess
-            : FieldValue.delete(),
-        'excessRefunded': excessAction == ExcessAction.refundToCustomer &&
-            excess > 0
-            ? excess
-            : FieldValue.delete(),
-        ..._completionPaymentFields(
-          existingPayments: existingPayments,
-          received: received,
+        transaction.update(plan.saleRef, {
+          'status': Sale.statusPickupCompleted,
+          'pickupWeight': item.pickupWeight,
+          // Cleared when there is none, so a stale value can never linger
+          // on the bill.
+          'transportCost':
+          transport > 0 ? transport : FieldValue.delete(),
+          'finalPriceAfterPickup': finalPrice,
+          'discount':
+          appliedDiscount > 0 ? appliedDiscount : FieldValue.delete(),
+          'excessToAdvance':
+          item.excessAction == ExcessAction.carryToAdvance &&
+              leftover > 0
+              ? leftover
+              : FieldValue.delete(),
+          'excessRefunded':
+          item.excessAction == ExcessAction.refundToCustomer &&
+              leftover > 0
+              ? leftover
+              : FieldValue.delete(),
+          'excessTransferred':
+          givenOut > 0 ? givenOut : FieldValue.delete(),
+          'excessTransferredTo':
+          givenOut > 0 ? givenTo : FieldValue.delete(),
+          ..._completionPaymentFields(
+            existingPayments: [...existingPayments, ...transferLines],
+            received: plan.received,
+            method: method,
+            when: now,
+            onCredit: finalPrice > 0 && item.onCredit,
+            finalAmount: finalPrice,
+            paidBefore: paidBefore,
+          ),
+          'deliveryCompletedAt': FieldValue.serverTimestamp(),
+        });
+
+        _writeCompletionRevenue(
+          transaction: transaction,
+          farmId: farmId,
+          saleId: saleId,
+          customerName: sale.customerName,
+          received: plan.received,
+          paidBefore: paidBefore,
+          revenueTotal: goatValue,
+          // The transfer lines take positions in the payments list, so the
+          // numbering of the Finance entry follows them.
+          existingPaymentCount:
+          existingPayments.length + transferLines.length,
           method: method,
           when: now,
-          onCredit: finalPrice > 0 && onCredit,
-          finalAmount: finalPrice,
-          paidBefore: bookingAdvanceAmount,
-        ),
-        'deliveryCompletedAt': FieldValue.serverTimestamp(),
-      });
+          lotId: sale.lotDocId,
+          customerId: sale.isLotSale ? sale.customerId : '',
+        );
 
-      _writeCompletionRevenue(
-        transaction: transaction,
-        farmId: farmId,
-        saleId: saleId,
-        customerName: sale.customerName,
-        received: received,
-        paidBefore: bookingAdvanceAmount,
-        revenueTotal: goatValue,
-        existingPaymentCount: existingPayments.length,
-        method: method,
-        when: now,
-        lotId: sale.lotDocId,
-        customerId: sale.isLotSale ? sale.customerId : '',
-      );
+        // Only the extra left after every due was covered.
+        _writeExcessInTransaction(
+          transaction: transaction,
+          farmId: farmId,
+          saleId: saleId,
+          customerId: sale.customerId,
+          customerName: sale.customerName,
+          excess: leftover,
+          action: item.excessAction,
+          method: method,
+          when: now,
+          target: plan.advanceTarget,
+        );
 
-      _writeExcessInTransaction(
-        transaction: transaction,
-        farmId: farmId,
-        saleId: saleId,
-        customerId: sale.customerId,
-        customerName: sale.customerName,
-        excess: excess,
-        action: excessAction,
-        method: method,
-        when: now,
-        target: advanceTarget,
-      );
+        // Flip every still-Wait-on-Delivery goat in this sale to Sold —
+        // it has now actually left the farm. Skip any goat that has
+        // already moved on rather than clobbering it.
+        var movedGoats = sale.isLotSale ? sale.lotQuantity : 0;
 
-      // ---------------------------------------------------------------
-      // 4. Flip every still-Wait-on-Delivery goat in this sale to
-      //    Sold — it has now actually left the farm. Skip any goat
-      //    that's already moved on (defensive; shouldn't normally
-      //    happen) rather than clobbering it.
-      // ---------------------------------------------------------------
+        if (sale.isLotSale) {
+          // The reserved goats are now sold: reserved -> sold, and the
+          // farm stock (mirrored by pendingCount) falls now, not at
+          // booking.
+          transaction.update(plan.lotRef!, {
+            'reservedFarmQty': FieldValue.increment(-sale.lotQuantity),
+            'soldFromFarmQty': FieldValue.increment(sale.lotQuantity),
+            'pendingCount': FieldValue.increment(-sale.lotQuantity),
+            'updatedAt': FieldValue.serverTimestamp(),
+          });
 
-      var movedGoats = sale.isLotSale ? sale.lotQuantity : 0;
-
-      if (sale.isLotSale) {
-        // The reserved goats are now sold: reserved -> sold, and the farm
-        // stock (mirrored by pendingCount) falls now, not at booking.
-        transaction.update(lotRef!, {
-          'reservedFarmQty': FieldValue.increment(-sale.lotQuantity),
-          'soldFromFarmQty': FieldValue.increment(sale.lotQuantity),
-          'pendingCount': FieldValue.increment(-sale.lotQuantity),
-          'updatedAt': FieldValue.serverTimestamp(),
-        });
-      }
-
-      for (final snap in goatSnaps) {
-        if (!snap.exists) continue;
-
-        final goat = Goat.fromDoc(snap);
-
-        if (goat.currentStatus != Goat.statusWaitOnDelivery ||
-            goat.saleId != saleId) {
-          continue;
+          totalLotGoats += sale.lotQuantity;
         }
 
-        transaction.update(snap.reference, {
-          'currentStatus': Goat.statusSold,
-        });
+        for (final snap in plan.goatSnaps) {
+          if (!snap.exists) continue;
 
-        movedGoats++;
+          final goat = Goat.fromDoc(snap);
+
+          if (goat.currentStatus != Goat.statusWaitOnDelivery ||
+              goat.saleId != saleId) {
+            continue;
+          }
+
+          transaction.update(snap.reference, {
+            'currentStatus': Goat.statusSold,
+          });
+
+          movedGoats++;
+        }
+
+        totalMovedGoats += movedGoats;
+        totalProfit += SaleDraft.round2(goatValue - plan.costOfGoodsSold);
+
+        // ---------------------------------------------------------------
+        // FINANCE REVENUE — the goat has now actually left the farm, so
+        // this is where the advance already received (plus any extra
+        // advance moved in from another booking) becomes Sold Goat
+        // Revenue, capped at the goat value, written in this same
+        // transaction. The remaining balance is recorded as it is
+        // collected — see the FINANCE INTEGRATION note above.
+        // ---------------------------------------------------------------
+
+        _writeInitialRevenueInTransaction(
+          transaction: transaction,
+          farmId: farmId,
+          saleId: saleId,
+          paid: paidBefore,
+          revenueTotal: goatValue,
+          date: now,
+          customerName: sale.customerName,
+          paymentMethod: _methodOrOther(sale.paymentMethod),
+          lotId: sale.lotDocId,
+          customerId: sale.isLotSale ? sale.customerId : '',
+        );
       }
 
       // ---------------------------------------------------------------
-      // 5. Dashboard aggregate: Wait on Delivery count decreases,
-      //    Total Sold increases. totalStock also decreases here —
-      //    same deferred-decrement reasoning as the Booking branch,
-      //    since Branch C never touched totalStock when the sale was
-      //    first created (the goat hadn't left the farm yet). Realized
-      //    profit = the goat-only sale value (never transport) minus
-      //    what these goats cost to acquire — computed in step 1a,
-      //    above the read/write boundary.
+      // 5. Dashboard aggregate, written once for the whole group: Wait
+      //    on Delivery count decreases, Total Sold increases, totalStock
+      //    decreases (the deferred decrement of Branch C). Realized
+      //    profit = goat-only sale value (never transport) minus what
+      //    the goats cost to acquire.
       // ---------------------------------------------------------------
 
       transaction.set(
         _summaryDoc(farmId),
         {
-          'waitOnDelivery': FieldValue.increment(-movedGoats),
-          'totalSold': FieldValue.increment(movedGoats),
-          'totalStock': FieldValue.increment(-movedGoats),
-          if (sale.isLotSale)
-            'pendingRegistrations': FieldValue.increment(-movedGoats),
+          'waitOnDelivery': FieldValue.increment(-totalMovedGoats),
+          'totalSold': FieldValue.increment(totalMovedGoats),
+          'totalStock': FieldValue.increment(-totalMovedGoats),
+          if (totalLotGoats > 0)
+            'pendingRegistrations': FieldValue.increment(-totalLotGoats),
           'totalProfit': FieldValue.increment(
-            SaleDraft.round2(grossSaleValue - costOfGoodsSold),
+            SaleDraft.round2(totalProfit),
           ),
         },
         SetOptions(merge: true),
-      );
-
-      // -----------------------------------------------------------------
-      // FINANCE REVENUE — the goat has now actually left the farm, so
-      // this is where the advance already received becomes Sold Goat
-      // Revenue, capped at pickup weight × booking rate, written in this
-      // same transaction. The remaining balance is recorded as it is
-      // collected — see the FINANCE INTEGRATION note above.
-      // -----------------------------------------------------------------
-
-      _writeInitialRevenueInTransaction(
-        transaction: transaction,
-        farmId: farmId,
-        saleId: saleId,
-        paid: advancePaid,
-        revenueTotal: grossSaleValue,
-        date: now,
-        customerName: customerName,
-        paymentMethod: initialMethod,
-        lotId: sale.lotDocId,
-        customerId: sale.isLotSale ? sale.customerId : '',
       );
     }).timeout(_timeout * 2);
 
@@ -3431,6 +3700,13 @@ class SalesService {
         throw StateError(
           'This payment was received through a Customer Palai payment, so '
               'it cannot be voided here.',
+        );
+      }
+
+      if (payment.isBookingTransfer) {
+        throw StateError(
+          'This line is extra advance moved over from another booking at '
+              'delivery, so it cannot be voided on its own.',
         );
       }
 
@@ -4035,6 +4311,157 @@ class SalesService {
 
     return controller.stream;
   }
+}
+
+/// What to record for one booking when Wait for Delivery bookings are
+/// completed together (see SalesService.completeWaitForDeliveryGroup).
+class WaitPickupInput {
+  final String saleId;
+  final double pickupWeight;
+
+  /// Optional transportation charge collected at pickup. Never revenue.
+  final double transportCharges;
+
+  /// Received now, out of what is still due after the bookings were netted
+  /// against each other.
+  final double amountReceivedNow;
+
+  /// Whatever is left after [amountReceivedNow] goes onto the customer's
+  /// outstanding balance.
+  final bool onCredit;
+
+  /// Null keeps the discount given at booking time.
+  final double? discount;
+
+  /// What to do with any extra advance left after every due is covered.
+  final ExcessAction excessAction;
+
+  const WaitPickupInput({
+    required this.saleId,
+    required this.pickupWeight,
+    this.transportCharges = 0,
+    this.amountReceivedNow = 0,
+    this.onCredit = false,
+    this.discount,
+    this.excessAction = ExcessAction.carryToAdvance,
+  });
+}
+
+/// What to record for one booking when Booking / Holding sales are
+/// completed together (see SalesService.completeBookingDeliveryGroup).
+class BookingPickupInput {
+  final String saleId;
+
+  /// Optional transportation charge collected at delivery. Never revenue.
+  final double transportCharges;
+
+  /// Received now, out of what is still due after the bookings were netted
+  /// against each other.
+  final double amountReceivedNow;
+
+  /// Whatever is left after [amountReceivedNow] goes onto the customer's
+  /// outstanding balance.
+  final bool onCredit;
+
+  /// What to do with any extra left after every due is covered.
+  final ExcessAction excessAction;
+
+  /// Extra discount given at delivery, on top of the booking discount.
+  final double discount;
+
+  /// Holding charge per day edited at delivery. Null keeps the booking's
+  /// rate.
+  final double? holdingChargePerDay;
+
+  const BookingPickupInput({
+    required this.saleId,
+    this.transportCharges = 0,
+    this.amountReceivedNow = 0,
+    this.onCredit = false,
+    this.excessAction = ExcessAction.carryToAdvance,
+    this.discount = 0,
+    this.holdingChargePerDay,
+  });
+}
+
+/// Everything read for one booking before the group's first write.
+class _BookingPickupPlan {
+  final BookingPickupInput item;
+  final DocumentReference<Map<String, dynamic>> saleRef;
+  final Sale sale;
+  final DocumentSnapshot<Map<String, dynamic>> saleSnap;
+  final DocumentReference<Map<String, dynamic>>? lotRef;
+  final List<DocumentSnapshot<Map<String, dynamic>>> goatSnaps;
+  final double costOfGoodsSold;
+  final double bookingAmount;
+  final DateTime startDay;
+  final int holdingDays;
+  final double holdingRate;
+  final double holdingCharges;
+
+  /// The booking on its own, before any transfer between bookings.
+  final SaleSettlement settlement;
+
+  final DocumentReference<Map<String, dynamic>> initialRevenueRef;
+  final DocumentSnapshot<Map<String, dynamic>>? initialRevenueSnap;
+
+  late WaitDeliverySaleAllocation alloc;
+  List<WaitDeliveryTransfer> transfersIn = const [];
+  List<WaitDeliveryTransfer> transfersOut = const [];
+  _AdvanceTarget advanceTarget = _AdvanceTarget.none;
+  double received = 0;
+
+  _BookingPickupPlan({
+    required this.item,
+    required this.saleRef,
+    required this.sale,
+    required this.saleSnap,
+    required this.lotRef,
+    required this.goatSnaps,
+    required this.costOfGoodsSold,
+    required this.bookingAmount,
+    required this.startDay,
+    required this.holdingDays,
+    required this.holdingRate,
+    required this.holdingCharges,
+    required this.settlement,
+    required this.initialRevenueRef,
+    required this.initialRevenueSnap,
+  });
+}
+
+/// Everything read for one booking before the group's first write.
+class _WaitPickupPlan {
+  final WaitPickupInput item;
+  final DocumentReference<Map<String, dynamic>> saleRef;
+  final Sale sale;
+  final DocumentSnapshot<Map<String, dynamic>> saleSnap;
+  final DocumentReference<Map<String, dynamic>>? lotRef;
+  final List<DocumentSnapshot<Map<String, dynamic>>> goatSnaps;
+  final double costOfGoodsSold;
+  final double advance;
+
+  /// The booking on its own, before any transfer between bookings.
+  final SaleSettlement settlement;
+
+  // Filled in once every booking has been read.
+  late WaitDeliverySaleAllocation alloc;
+  List<WaitDeliveryTransfer> transfersIn = const [];
+  List<WaitDeliveryTransfer> transfersOut = const [];
+  _AdvanceTarget advanceTarget = _AdvanceTarget.none;
+  double received = 0;
+
+  _WaitPickupPlan({
+    required this.item,
+    required this.saleRef,
+    required this.sale,
+    required this.saleSnap,
+    required this.lotRef,
+    required this.goatSnaps,
+    required this.costOfGoodsSold,
+    required this.advance,
+    required this.settlement,
+  });
 }
 
 /// A customer's earlier goat sales, shown on the customer step.

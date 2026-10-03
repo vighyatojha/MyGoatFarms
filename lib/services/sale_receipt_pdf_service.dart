@@ -957,8 +957,13 @@ class SaleReceiptPdfService {
     final hasExcessRefunded =
         excessRefunded > 0;
 
-    final hasExcessHandling =
-        hasExcessToAdvance || hasExcessRefunded;
+    final excessTransferred = sale.excessTransferred ?? 0;
+
+    final hasExcessTransferred = excessTransferred > 0;
+
+    final hasExcessHandling = hasExcessToAdvance ||
+        hasExcessRefunded ||
+        hasExcessTransferred;
 
     const maxListedPayments = 2;
 
@@ -1083,6 +1088,14 @@ class SaleReceiptPdfService {
           // -----------------------------------------------------------------
           // EXCESS AMOUNT
           // -----------------------------------------------------------------
+          if (hasExcessTransferred)
+            _calculationRow(
+              sale.excessTransferredTo.trim().isEmpty
+                  ? 'Extra applied to another booking'
+                  : 'Extra applied to ${sale.excessTransferredTo.trim()}',
+              _currency(excessTransferred),
+            ),
+
           if (hasExcessToAdvance)
             _excessPaymentRow(
               label: 'Extra Amount Added to Advance',
@@ -1306,6 +1319,10 @@ class SaleReceiptPdfService {
       SalePayment payment,
       ) {
     final method = payment.method.trim();
+
+    if (payment.isBookingTransfer) {
+      return payment.note.trim();
+    }
 
     return 'Balance payment · '
         '${DateFormat('dd MMM yyyy').format(payment.date)}'

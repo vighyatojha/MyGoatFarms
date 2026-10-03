@@ -41,6 +41,18 @@ class SalePayment {
   bool get isPalaiSettlement =>
       note.trim().startsWith('Received with Customer Palai payment');
 
+  /// Note prefix of a payment line that is really extra advance moved
+  /// over from another booking of the same customer at delivery (see
+  /// SalesService.completeWaitForDeliveryGroup).
+  static const String bookingTransferPrefix = 'Adjusted from ';
+
+  /// True for a line created by moving another booking's extra advance
+  /// onto this sale. No new cash came in (the money was received as the
+  /// other booking's advance), and the other booking was settled in the
+  /// same transaction, so it can never be voided on its own.
+  bool get isBookingTransfer =>
+      note.trim().startsWith(bookingTransferPrefix);
+
   factory SalePayment.fromMap(Map<String, dynamic> data) {
     final rawAmount = data['amount'];
     final rawDate = data['date'];
@@ -345,6 +357,17 @@ class Sale {
   /// delivery (recorded as a Finance outflow). Null when there was none.
   final double? excessRefunded;
 
+  /// Extra advance on this booking that was moved to another booking of
+  /// the same customer at delivery (Wait for Delivery batch). Null when
+  /// there was none. Like [excessToAdvance] and [excessRefunded] it is
+  /// money received beyond this bill, so it is taken off the amount paid;
+  /// the booking it went to carries it as a transfer payment line.
+  final double? excessTransferred;
+
+  /// Display ID(s) of the booking(s) that received [excessTransferred],
+  /// joined with ", ". Empty when nothing was transferred.
+  final String excessTransferredTo;
+
   const Sale({
     required this.id,
     required this.goatIds,
@@ -387,6 +410,8 @@ class Sale {
     this.discount = 0,
     this.excessToAdvance,
     this.excessRefunded,
+    this.excessTransferred,
+    this.excessTransferredTo = '',
     this.lotDocId = '',
     this.lotQuantity = 0,
     this.sourceLocation = '',
@@ -553,8 +578,11 @@ class Sale {
 
   /// Money kept as advance or handed back because the customer had paid
   /// more than the final bill (see [excessToAdvance], [excessRefunded]).
-  double get billExcessAdjusted =>
-      _nonNegative((excessToAdvance ?? 0) + (excessRefunded ?? 0));
+  double get billExcessAdjusted => _nonNegative(
+    (excessToAdvance ?? 0) +
+        (excessRefunded ?? 0) +
+        (excessTransferred ?? 0),
+  );
 
   /// True when the goats were sold for one agreed price instead of a
   /// price per KG.
@@ -877,6 +905,8 @@ class Sale {
       discount: numFrom('discount'),
       excessToAdvance: nullableNumFrom('excessToAdvance'),
       excessRefunded: nullableNumFrom('excessRefunded'),
+      excessTransferred: nullableNumFrom('excessTransferred'),
+      excessTransferredTo: (data['excessTransferredTo'] ?? '').toString(),
 
       lotDocId: (data['lotId'] ?? '').toString(),
       lotQuantity: nullableIntFrom('lotQuantity') ?? 0,
@@ -971,6 +1001,11 @@ class Sale {
 
     putIfNotNull('excessToAdvance', excessToAdvance);
     putIfNotNull('excessRefunded', excessRefunded);
+    putIfNotNull('excessTransferred', excessTransferred);
+
+    if (excessTransferredTo.trim().isNotEmpty) {
+      map['excessTransferredTo'] = excessTransferredTo.trim();
+    }
 
     if (isLotSale) {
       map['lotId'] = lotDocId;
