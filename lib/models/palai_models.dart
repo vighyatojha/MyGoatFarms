@@ -26,6 +26,11 @@ class PalaiCustomer {
   /// Palai price for this customer.
   final double price;
 
+  /// Money paid on a bill that was later deleted, waiting to be used on the
+  /// next bill (see MonthlyStatementEngine.deleteLatestBill). Read-only
+  /// here: only billing writes it.
+  final double billPaymentCredit;
+
   // --------------------------------------------------------------------
   // NOTE: Health Reminder Settings (Vaccination / Hoof Cutting / Hair
   // Trimming reminder days) used to live here, per customer. They have
@@ -50,6 +55,7 @@ class PalaiCustomer {
     required this.pendingAmount,
     this.advanceAmount = 0,
     this.price = 0,
+    this.billPaymentCredit = 0,
   });
 
   factory PalaiCustomer.fromDoc(
@@ -72,6 +78,8 @@ class PalaiCustomer {
       (data['advanceAmount'] as num?)?.toDouble() ?? 0,
       price:
       (data['price'] as num?)?.toDouble() ?? 0,
+      billPaymentCredit:
+      (data['billPaymentCredit'] as num?)?.toDouble() ?? 0,
     );
   }
 
@@ -129,6 +137,7 @@ class PalaiCustomer {
       pendingAmount: pendingAmount ?? this.pendingAmount,
       advanceAmount: advanceAmount ?? this.advanceAmount,
       price: price ?? this.price,
+      billPaymentCredit: billPaymentCredit,
     );
   }
 }

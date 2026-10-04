@@ -845,8 +845,16 @@ class FirestoreService {
         (customerData['pendingAmount'] ?? 0)
             .toDouble();
 
+        // Money paid on a bill that was later deleted (kept as a credit
+        // by Delete bill) is used here like advance. It was income when
+        // it was received, and checkout records only cash as income, so
+        // nothing is counted twice. Whatever is left becomes advance.
+        final paymentCredit =
+        ((customerData['billPaymentCredit'] as num?) ?? 0).toDouble();
+
         final advanceBefore =
-        (customerData['advanceAmount'] ?? 0)
+        ((customerData['advanceAmount'] ?? 0).toDouble() +
+            (paymentCredit > 0 ? paymentCredit : 0.0))
             .toDouble();
 
         // ------------------------------------------------------------
@@ -1124,6 +1132,7 @@ class FirestoreService {
         transaction.update(customerRef, {
           'pendingAmount': pendingAfter,
           'advanceAmount': advanceAfter,
+          if (paymentCredit > 0) 'billPaymentCredit': 0.0,
           'updatedAt': FieldValue.serverTimestamp(),
         });
 

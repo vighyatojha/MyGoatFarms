@@ -634,16 +634,39 @@ class _FinalCheckoutReportScreenState
             ? bill.displayTitle
             : '${DateFormat('MMMM').format(bill.billingMonth)} Bill '
             '(${bill.billingMonth.year})';
+        var charges = bill.effectiveOwnCharges;
+        var paid = bill.effectiveOwnPaid;
+        var remaining = bill.effectiveOwnRemaining;
+
+        // Bills made by the old app: it recorded every payment on the
+        // newest bill (e.g. ₹26,500 "paid" on a ₹7,500 bill) and some
+        // stored a remaining amount that also included the earlier
+        // outstanding. Show only what belongs to that month; whatever
+        // is left over is explained by the "Other balance" row below.
+        if (!bill.isStatement && !special) {
+          final own = charges - bill.advanceApplied;
+          final ownMax = own < 0 ? 0.0 : own;
+          if (paid > ownMax) paid = ownMax;
+          if (paid < 0) paid = 0;
+          final unpaid = ownMax - paid;
+          if (remaining > unpaid) remaining = unpaid;
+          if (remaining < 0) remaining = 0;
+        }
+
         billRows.add(
           FinalBillSummaryRow(
-            label: label,
-            charges: bill.effectiveOwnCharges,
-            paid: bill.effectiveOwnPaid,
-            remaining: bill.effectiveOwnRemaining,
-            status: bill.effectiveOwnStatus,
+            label: bill.isAdjustment && charges < 0
+                ? '$label (credit)'
+                : label,
+            charges: charges,
+            paid: paid,
+            remaining: remaining,
+            status: remaining <= 0.005
+                ? 'paid'
+                : (paid > 0.005 ? 'partial' : 'unpaid'),
           ),
         );
-        billsRemaining += bill.effectiveOwnRemaining;
+        billsRemaining += remaining;
       }
     } catch (e) {
       debugPrint('Final Checkout Report: could not load bills — $e');

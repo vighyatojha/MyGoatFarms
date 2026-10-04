@@ -242,8 +242,13 @@ class _CheckoutChargesPaymentScreenState
   double get _previousPending =>
       _customer?.pendingAmount ?? 0;
 
+  /// Advance plus any money paid on a deleted bill (used the same way at
+  /// checkout — see FirestoreService.createMonthlyBill).
   double get _advanceBefore =>
-      _customer?.advanceAmount ?? 0;
+      (_customer?.advanceAmount ?? 0) +
+          ((_customer?.billPaymentCredit ?? 0) > 0
+              ? _customer!.billPaymentCredit
+              : 0);
 
   /// Charges being added NOW.
   ///
