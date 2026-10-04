@@ -18,6 +18,7 @@ import '../../../widgets/farm_not_linked_state.dart';
 import '../../../widgets/image_source_sheet.dart';
 import '../../../widgets/photo_upload_circle.dart';
 import '../add_customer_screen.dart';
+import 'goat_billing_notice.dart';
 
 class CustomerGoatRegistrationScreen extends StatefulWidget {
   /// When opened from a customer's own profile (or anywhere else the
@@ -739,6 +740,17 @@ class _CustomerGoatRegistrationScreenState
       _showSnack(
         'Goat registered and checked in successfully.',
       );
+
+      // Arrival in a month that is already billed: those days are not on
+      // any bill yet, so tell the owner how to add them (Sync bills).
+      await showBilledMonthsNotice(
+        context,
+        farmId: farmId,
+        customerId: customerId,
+        affectedFrom: goat.farmArrivalDate ?? goat.checkInDate,
+        what: 'goat\'s arrival',
+      );
+      if (!mounted) return;
 
       // The list will reload from Firestore.
       // goatId is intentionally not required here.

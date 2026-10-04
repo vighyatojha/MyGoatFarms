@@ -42,7 +42,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
   bool _loading = true;
   bool _savingDetails = false;
   bool _uploadingPhoto = false;
-  bool _controllersInitialized = false;
   bool _loggingOut = false;
 
   /// True when the signed-in account is the farm owner, false when it's a
@@ -108,13 +107,14 @@ class _ProfileScreenState extends State<ProfileScreen> {
             _farm = farm;
             _loading = false;
 
-            if (!_controllersInitialized) {
-              _farmNameController.text = farm.farmName;
-              _ownerNameController.text = farm.ownerName;
-              _addressController.text = farm.address;
-
-              _controllersInitialized = true;
-            }
+            // Farm details are only edited in the Edit Farm Details
+            // sheet, so these always mirror the saved farm document.
+            // (Before, they were set once only: a change saved on another
+            // device left them stale, and Back then wrongly asked about
+            // "unsaved changes".)
+            _farmNameController.text = farm.farmName;
+            _ownerNameController.text = farm.ownerName;
+            _addressController.text = farm.address;
           });
 
           context
@@ -241,59 +241,47 @@ class _ProfileScreenState extends State<ProfileScreen> {
     return result == true;
   }
 
-  Future<void> _saveDetails() async {
-    // Defense in depth: the "Save Farm Details" button is hidden for
-    // partners (see _buildYourDetailsCard), but guard the method itself
-    // too in case it's ever reachable another way.
-    if (!_isOwner) return;
-    if (_farmId == null || _savingDetails) return;
+  /// Saves farm name, owner name and address.
+  ///
+  /// Returns null on success, or the message to show on failure. The
+  /// page's values only change AFTER the save succeeded, so a failed save
+  /// can never leave unsaved values behind (which used to make Back ask
+  /// about "unsaved changes" with no form on screen).
+  Future<String?> _saveFarmBasics({
+    required String farmName,
+    required String ownerName,
+    required String address,
+  }) async {
+    // Defense in depth: the edit button is hidden for partners, but guard
+    // the method itself too in case it's ever reachable another way.
+    if (!_isOwner) return 'Only the farm owner can edit farm details.';
+    if (_farmId == null) return 'Farm not loaded yet. Try again.';
+    if (_savingDetails) return 'Already saving.';
 
-    final farmName = _farmNameController.text.trim();
-    final ownerName = _ownerNameController.text.trim();
-    final address = _addressController.text.trim();
+    final name = farmName.trim();
+    final owner = ownerName.trim();
+    final addr = address.trim();
 
-    if (farmName.isEmpty) {
-      _showSnack(
-        'Farm name cannot be empty.',
-        isError: true,
-      );
-      return;
-    }
+    if (name.isEmpty) return 'Farm name cannot be empty.';
+    if (owner.isEmpty) return 'Owner name cannot be empty.';
 
-    if (ownerName.isEmpty) {
-      _showSnack(
-        'Owner name cannot be empty.',
-        isError: true,
-      );
-      return;
-    }
-
-    setState(() {
-      _savingDetails = true;
-    });
-
+    setState(() => _savingDetails = true);
     try {
       await FirestoreService.instance.updateFarmBasics(
         _farmId!,
-        farmName: farmName,
-        ownerName: ownerName,
-        address: address,
+        farmName: name,
+        ownerName: owner,
+        address: addr,
       );
-
-      _showSnack(
-        AppStrings.t(context, 'profile_updated'),
-      );
+      if (!mounted) return null;
+      _farmNameController.text = name;
+      _ownerNameController.text = owner;
+      _addressController.text = addr;
+      return null;
     } catch (e) {
-      _showSnack(
-        FirestoreService.instance.describeError(e),
-        isError: true,
-      );
+      return FirestoreService.instance.describeError(e);
     } finally {
-      if (mounted) {
-        setState(() {
-          _savingDetails = false;
-        });
-      }
+      if (mounted) setState(() => _savingDetails = false);
     }
   }
 
@@ -1373,11 +1361,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
   Future<void> _showEditFarmDetails() async {
     if (!_isOwner || _farmId == null) return;
 
-    final farmNameController = TextEditingController(text: _farmNameController.text);
-    final ownerNameController = TextEditingController(text: _ownerNameController.text);
-    final addressController = TextEditingController(text: _addressController.text);
-
-    final save = await showModalBottomSheet<bool>(
+    final saved = await showModalBottomSheet<bool>(
       context: context,
       isScrollControlled: true,
       showDragHandle: true,
@@ -1385,93 +1369,20 @@ class _ProfileScreenState extends State<ProfileScreen> {
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(26)),
       ),
-      builder: (sheetContext) {
-        return StatefulBuilder(
-          builder: (context, setSheetState) {
-            final keyboardBottom = MediaQuery.of(context).viewInsets.bottom;
-            return Padding(
-              padding: EdgeInsets.fromLTRB(20, 4, 20, 20 + keyboardBottom),
-              child: SingleChildScrollView(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text('Edit Farm Details', style: AppTheme.heading(size: 19, color: AppColors.darkGreen)),
-                    const SizedBox(height: 5),
-                    Text('Update the farm information shown on your profile.', style: AppTheme.body(size: 11)),
-                    const SizedBox(height: 18),
-                    _input(controller: farmNameController, label: 'Farm name', hint: 'Enter your farm name', icon: Icons.storefront_outlined),
-                    const SizedBox(height: 11),
-                    _input(controller: ownerNameController, label: 'Owner name', hint: 'Enter owner name', icon: Icons.person_outline),
-                    const SizedBox(height: 11),
-                    _input(controller: addressController, label: 'Farm address', hint: 'Enter complete farm address', icon: Icons.location_on_outlined, maxLines: 3),
-                    const SizedBox(height: 16),
-                    SizedBox(
-                      width: double.infinity,
-                      height: 48,
-                      child: FilledButton(
-                        onPressed: () async {
-                          if (farmNameController.text.trim().isEmpty || ownerNameController.text.trim().isEmpty) {
-                            ScaffoldMessenger.of(sheetContext).showSnackBar(
-                              const SnackBar(content: Text('Farm name and owner name cannot be empty.')),
-                            );
-                            return;
-                          }
-                          _farmNameController.text = farmNameController.text.trim();
-                          _ownerNameController.text = ownerNameController.text.trim();
-                          _addressController.text = addressController.text.trim();
-                          setSheetState(() {});
-                          await _saveDetails();
-                          if (sheetContext.mounted) Navigator.pop(sheetContext, true);
-                        },
-                        style: FilledButton.styleFrom(
-                          backgroundColor: AppColors.primaryGreen,
-                          foregroundColor: Colors.white,
-                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-                        ),
-                        child: const Text('Save Changes', style: TextStyle(fontWeight: FontWeight.w800)),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            );
-          },
-        );
-      },
-    );
-
-    farmNameController.dispose();
-    ownerNameController.dispose();
-    addressController.dispose();
-
-    if (save == true && mounted) {
-      setState(() {});
-    }
-  }
-
-  Widget _input({
-    required TextEditingController controller,
-    required String label,
-    required String hint,
-    required IconData icon,
-    int maxLines = 1,
-  }) {
-    return TextField(
-      controller: controller,
-      maxLines: maxLines,
-      textInputAction: maxLines > 1
-          ? TextInputAction.newline
-          : TextInputAction.next,
-      decoration: InputDecoration(
-        labelText: label,
-        hintText: hint,
-        prefixIcon: Icon(
-          icon,
-          color: AppColors.primaryGreen,
-        ),
+      // The sheet owns (and disposes) its own text fields, so closing it
+      // can never crash. The old version disposed them while the sheet was
+      // still animating closed, which threw "_dependents.isEmpty".
+      builder: (_) => _EditFarmDetailsSheet(
+        farmName: _farmNameController.text,
+        ownerName: _ownerNameController.text,
+        address: _addressController.text,
+        onSave: _saveFarmBasics,
       ),
     );
+
+    if (saved == true && mounted) {
+      _showSnack(AppStrings.t(context, 'profile_updated'));
+    }
   }
 
   Widget _lockedField({
@@ -1563,6 +1474,219 @@ class _ProfileScreenState extends State<ProfileScreen> {
         style: AppTheme.body(size: 11),
       ),
       trailing: trailing,
+    );
+  }
+}
+
+
+// ===========================================================================
+// EDIT FARM DETAILS SHEET
+// ===========================================================================
+
+/// Bottom sheet for farm name / owner name / address.
+///
+/// * Owns its text fields and disposes them only when the sheet is gone.
+/// * Shows a spinner while saving and cannot be closed mid-save.
+/// * Stays open on failure with the error shown inside the sheet (a
+///   snackbar would be hidden behind it), keeping what was typed.
+/// * Closes (returns true) only after the save really succeeded.
+class _EditFarmDetailsSheet extends StatefulWidget {
+  const _EditFarmDetailsSheet({
+    required this.farmName,
+    required this.ownerName,
+    required this.address,
+    required this.onSave,
+  });
+
+  final String farmName;
+  final String ownerName;
+  final String address;
+
+  /// Returns null on success, or an error message.
+  final Future<String?> Function({
+  required String farmName,
+  required String ownerName,
+  required String address,
+  }) onSave;
+
+  @override
+  State<_EditFarmDetailsSheet> createState() => _EditFarmDetailsSheetState();
+}
+
+class _EditFarmDetailsSheetState extends State<_EditFarmDetailsSheet> {
+  late final TextEditingController _farmName =
+  TextEditingController(text: widget.farmName);
+  late final TextEditingController _ownerName =
+  TextEditingController(text: widget.ownerName);
+  late final TextEditingController _address =
+  TextEditingController(text: widget.address);
+
+  bool _saving = false;
+  String? _error;
+
+  @override
+  void dispose() {
+    _farmName.dispose();
+    _ownerName.dispose();
+    _address.dispose();
+    super.dispose();
+  }
+
+  bool get _changed =>
+      _farmName.text.trim() != widget.farmName.trim() ||
+          _ownerName.text.trim() != widget.ownerName.trim() ||
+          _address.text.trim() != widget.address.trim();
+
+  Future<void> _save() async {
+    if (_saving) return;
+    FocusScope.of(context).unfocus();
+
+    if (_farmName.text.trim().isEmpty || _ownerName.text.trim().isEmpty) {
+      setState(() => _error = 'Farm name and owner name cannot be empty.');
+      return;
+    }
+    if (!_changed) {
+      Navigator.of(context).pop(false); // nothing to save
+      return;
+    }
+
+    setState(() {
+      _saving = true;
+      _error = null;
+    });
+
+    final error = await widget.onSave(
+      farmName: _farmName.text,
+      ownerName: _ownerName.text,
+      address: _address.text,
+    );
+
+    if (!mounted) return;
+    if (error == null) {
+      Navigator.of(context).pop(true);
+    } else {
+      setState(() {
+        _saving = false;
+        _error = error;
+      });
+    }
+  }
+
+  InputDecoration _decoration(String label, String hint, IconData icon) =>
+      InputDecoration(
+        labelText: label,
+        hintText: hint,
+        prefixIcon: Icon(icon, color: AppColors.primaryGreen),
+      );
+
+  @override
+  Widget build(BuildContext context) {
+    final keyboardBottom = MediaQuery.of(context).viewInsets.bottom;
+
+    return PopScope(
+      canPop: !_saving,
+      child: Padding(
+        padding: EdgeInsets.fromLTRB(20, 4, 20, 20 + keyboardBottom),
+        child: SingleChildScrollView(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                'Edit Farm Details',
+                style: AppTheme.heading(size: 19, color: AppColors.darkGreen),
+              ),
+              const SizedBox(height: 5),
+              Text(
+                'Update the farm information shown on your profile.',
+                style: AppTheme.body(size: 11),
+              ),
+              const SizedBox(height: 18),
+              TextField(
+                controller: _farmName,
+                enabled: !_saving,
+                textInputAction: TextInputAction.next,
+                textCapitalization: TextCapitalization.words,
+                decoration: _decoration(
+                  'Farm name',
+                  'Enter your farm name',
+                  Icons.storefront_outlined,
+                ),
+              ),
+              const SizedBox(height: 11),
+              TextField(
+                controller: _ownerName,
+                enabled: !_saving,
+                textInputAction: TextInputAction.next,
+                textCapitalization: TextCapitalization.words,
+                decoration: _decoration(
+                  'Owner name',
+                  'Enter owner name',
+                  Icons.person_outline,
+                ),
+              ),
+              const SizedBox(height: 11),
+              TextField(
+                controller: _address,
+                enabled: !_saving,
+                maxLines: 3,
+                textInputAction: TextInputAction.newline,
+                textCapitalization: TextCapitalization.sentences,
+                decoration: _decoration(
+                  'Farm address',
+                  'Enter complete farm address',
+                  Icons.location_on_outlined,
+                ),
+              ),
+              if (_error != null) ...[
+                const SizedBox(height: 12),
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(10),
+                  decoration: BoxDecoration(
+                    color: AppColors.error.withValues(alpha: 0.10),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: Text(
+                    _error!,
+                    style: AppTheme.body(size: 12, color: AppColors.error),
+                  ),
+                ),
+              ],
+              const SizedBox(height: 16),
+              SizedBox(
+                width: double.infinity,
+                height: 48,
+                child: FilledButton(
+                  onPressed: _saving ? null : _save,
+                  style: FilledButton.styleFrom(
+                    backgroundColor: AppColors.primaryGreen,
+                    foregroundColor: Colors.white,
+                    disabledBackgroundColor:
+                    AppColors.primaryGreen.withValues(alpha: 0.6),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(14),
+                    ),
+                  ),
+                  child: _saving
+                      ? const SizedBox(
+                    width: 20,
+                    height: 20,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2.2,
+                      color: Colors.white,
+                    ),
+                  )
+                      : const Text(
+                    'Save Changes',
+                    style: TextStyle(fontWeight: FontWeight.w800),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 }

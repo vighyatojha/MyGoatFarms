@@ -5,6 +5,7 @@ import '../../app_theme.dart';
 import '../../models/palai_models.dart';
 import '../../services/firestore_service.dart';
 import '../../services/health_reminder_scheduler.dart';
+import 'customer_palai/goat_billing_notice.dart';
 
 /// Deletes a Customer Palai goat and EVERYTHING that belongs to it:
 ///
@@ -117,6 +118,11 @@ Future<bool> confirmAndDeletePalaiGoat(
       ? goat.goatCode.trim()
       : (goat.name.trim().isNotEmpty ? goat.name.trim() : 'this goat');
 
+  // Billing effects of deleting (latest bill / days not billed yet).
+  final billingWarnings =
+  await deleteGoatBillingWarnings(farmId: farmId, goat: goat);
+  if (!context.mounted) return false;
+
   final confirmed = await showDialog<bool>(
     context: context,
     builder: (dialogContext) {
@@ -125,10 +131,33 @@ Future<bool> confirmAndDeletePalaiGoat(
           'Delete goat?',
           style: AppTheme.heading(size: 17),
         ),
-        content: Text(
-          'Delete $label permanently from the database? This will also '
-              'remove all of its health, care, weight, photo and report records.',
-          style: AppTheme.body(size: 13, color: AppColors.textDark),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Delete $label permanently from the database? This will also '
+                    'remove all of its health, care, weight, photo and report records.',
+                style: AppTheme.body(size: 13, color: AppColors.textDark),
+              ),
+              for (final warning in billingWarnings) ...[
+                const SizedBox(height: 10),
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(10),
+                  decoration: BoxDecoration(
+                    color: AppColors.warning.withValues(alpha: 0.12),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: Text(
+                    warning,
+                    style: AppTheme.body(size: 12, color: AppColors.textDark),
+                  ),
+                ),
+              ],
+            ],
+          ),
         ),
         actions: [
           TextButton(

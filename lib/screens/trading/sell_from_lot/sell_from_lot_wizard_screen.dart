@@ -15,6 +15,7 @@ import '../../../widgets/fast_route.dart';
 import '../../../widgets/permission_gate.dart';
 import '../purchase_goats/purchase_wizard_widgets.dart';
 import '../lots/transfer_to_customer_palai_wizard_screen.dart';
+import '../lots/transfer_to_own_palai_screen.dart';
 import '../sale_receipt_screen.dart';
 import '../steps/step2_customer_lookup.dart';
 import '../steps/step4_sale_details.dart';
@@ -284,6 +285,34 @@ class _SellFromLotWizardScreenState extends State<SellFromLotWizardScreen> {
     return result == true;
   }
 
+  /// Transfer to Own Palai for goats at the farm: the lot's own transfer
+  /// screen (the farm keeps them; not a sale). On success this wizard
+  /// closes with a confirmation.
+  Future<void> _openOwnPalaiTransfer() async {
+    final lot = _lot;
+    final farmId = _farmId;
+
+    if (lot == null || farmId == null) return;
+
+    final ids = await Navigator.of(context).push<List<String>>(
+      fastRoute(TransferToOwnPalaiScreen(farmId: farmId, lot: lot)),
+    );
+
+    if (!mounted || ids == null || ids.isEmpty) return;
+
+    final messenger = ScaffoldMessenger.of(context);
+    Navigator.of(context).pop();
+    messenger.showSnackBar(
+      SnackBar(
+        content: Text(
+          '${ids.length} goat${ids.length == 1 ? '' : 's'} transferred to '
+              'Own Palai.',
+        ),
+        backgroundColor: AppColors.darkGreen,
+      ),
+    );
+  }
+
   /// Transfer to Palai for goats at the farm. A lot's goats are anonymous,
   /// so a Palai transfer needs each goat registered — that is the lot's own
   /// Palai transfer wizard, which this hands over to.
@@ -491,6 +520,7 @@ class _SellFromLotWizardScreenState extends State<SellFromLotWizardScreen> {
           key: _deliveryKey,
           draft: _draft,
           onTransferToPalai: _openPalaiTransfer,
+          onTransferToOwnPalai: _openOwnPalaiTransfer,
         );
 
       default:

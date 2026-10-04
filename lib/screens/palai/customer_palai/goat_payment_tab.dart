@@ -206,8 +206,17 @@ class _GoatPaymentTabState extends State<GoatPaymentTab> {
 
   Widget _billTile(MonthlyBill bill) {
     final amount = _lineFor(bill) ?? 0;
-    final isPaid = bill.isPaid;
-    final color = isPaid ? AppColors.success : AppColors.error;
+    // Status of THAT month. A bill's own status (bill.status) is for the
+    // whole statement and stops updating once a newer bill carries it
+    // forward, so it could still say "Unpaid" for a month that was paid.
+    final ownStatus = bill.effectiveOwnStatus;
+    final isPaid = ownStatus == 'paid';
+    final statusText = isPaid
+        ? 'Paid'
+        : (ownStatus == 'partial' ? 'Partially Paid' : 'Unpaid');
+    final color = isPaid
+        ? AppColors.success
+        : (ownStatus == 'partial' ? AppColors.warning : AppColors.error);
 
     return Container(
       margin: const EdgeInsets.only(bottom: 8),
@@ -222,7 +231,7 @@ class _GoatPaymentTabState extends State<GoatPaymentTab> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(DateFormat('MMMM yyyy').format(bill.billingMonth), style: AppTheme.heading(size: 12.5)),
-                Text(bill.statusLabel, style: AppTheme.body(size: 10.5, color: color)),
+                Text(statusText, style: AppTheme.body(size: 10.5, color: color)),
               ],
             ),
           ),

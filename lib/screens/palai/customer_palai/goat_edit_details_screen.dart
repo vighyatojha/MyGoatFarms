@@ -8,6 +8,7 @@ import '../../../models/palai_models.dart';
 import '../../../services/firestore_service.dart';
 import '../../../services/image_service.dart';
 import '../../../widgets/image_source_sheet.dart';
+import 'goat_billing_notice.dart';
 
 /// Edits a goat's basic registration details — deliberately the SAME
 /// field set as CustomerGoatRegistrationScreen, nothing more:
@@ -227,6 +228,26 @@ class _GoatEditDetailsScreenState extends State<GoatEditDetailsScreen> {
 
       if (!mounted) return;
       _showSnack('Goat details updated.');
+
+      // Price or arrival date changed: months already billed keep the old
+      // figures, so say so and how to fix them.
+      final oldArrival = widget.goat.farmArrivalDate ?? widget.goat.checkInDate;
+      final newArrival = _farmArrivalDate ?? oldArrival;
+      final priceChanged = (widget.goat.pricing - pricing).abs() > 0.005;
+      final arrivalChanged = !DateUtils.isSameDay(oldArrival, newArrival);
+      if (priceChanged || arrivalChanged) {
+        await showBilledMonthsNotice(
+          context,
+          farmId: widget.farmId,
+          customerId: widget.customerId,
+          affectedFrom: newArrival.isBefore(oldArrival) ? newArrival : oldArrival,
+          what: priceChanged && arrivalChanged
+              ? 'price and arrival date change'
+              : (priceChanged ? 'price change' : 'arrival date change'),
+        );
+        if (!mounted) return;
+      }
+
       Navigator.of(context).pop(updated);
     } catch (e) {
       if (!mounted) return;

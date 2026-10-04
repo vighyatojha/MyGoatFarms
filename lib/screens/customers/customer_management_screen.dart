@@ -309,6 +309,41 @@ class _CustomerManagementScreenState
     );
   }
 
+  Future<void> _showBalanceNotSettledDialog(
+      PalaiCustomer customer, {
+        required double pending,
+        required double advance,
+      }) {
+    String money(double v) => '₹${v.toStringAsFixed(0)}';
+    final parts = <String>[
+      if (pending.abs() > 0.5) '${money(pending)} pending',
+      if (advance > 0.5) '${money(advance)} advance / credit held',
+    ];
+    return showDialog<void>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+        title: Text(
+          'Settle the balance first',
+          style: AppTheme.heading(size: 17),
+        ),
+        content: Text(
+          '${customer.name} still has ${parts.join(' and ')}. Deleting now '
+              'would lose that balance.\n\nCollect the pending amount (Receive '
+              'Payment), or clear it with an adjustment in Monthly Bills, and '
+              'return any advance. Then delete the customer.',
+          style: AppTheme.body(size: 13, color: AppColors.textDark),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(),
+            child: const Text('OK'),
+          ),
+        ],
+      ),
+    );
+  }
+
   Future<void> _deleteCustomer(
       PalaiCustomer customer,
       ) async {
@@ -328,6 +363,24 @@ class _CustomerManagementScreenState
 
       if (hasActiveGoats) {
         await _showActiveGoatsDialog(customer);
+        return;
+      }
+
+      // Money check: deleting a customer who still owes money (or is owed
+      // advance / credit) would silently lose that balance — the bills and
+      // payments would remain but nobody could see or collect them.
+      final fresh = await FirestoreService.instance
+          .getCustomer(farmId, customer.id);
+      if (!mounted) return;
+      final pending = fresh?.pendingAmount ?? customer.pendingAmount;
+      final advance = fresh?.advanceAmount ?? customer.advanceAmount;
+      final credit = fresh?.billPaymentCredit ?? 0;
+      if (pending.abs() > 0.5 || advance > 0.5 || credit > 0.5) {
+        await _showBalanceNotSettledDialog(
+          customer,
+          pending: pending,
+          advance: advance + (credit > 0 ? credit : 0),
+        );
         return;
       }
 

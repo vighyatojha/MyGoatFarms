@@ -63,11 +63,18 @@ class Step5DeliveryOptions extends StatefulWidget {
   /// wizard) instead of selecting a branch here.
   final VoidCallback? onTransferToPalai;
 
+  /// Lot sales only. When given, goats at the farm get a "Transfer to Own
+  /// Palai" card that calls it (the lot wizard opens the lot's Own Palai
+  /// transfer). Own Palai is the farm keeping the goats itself, so it is
+  /// not a sale and has no form here.
+  final VoidCallback? onTransferToOwnPalai;
+
   const Step5DeliveryOptions({
     super.key,
     required this.draft,
     this.palaiOnly = false,
     this.onTransferToPalai,
+    this.onTransferToOwnPalai,
   });
 
   @override
@@ -434,9 +441,6 @@ class Step5DeliveryOptionsState extends State<Step5DeliveryOptions> {
             'The customer keeps boarding ${_theGoats(draft)} here.',
             style: AppTheme.body(size: 12),
           ),
-        ] else if (_fromSupplier) ...[
-          // Goats still at the supplier can only be handed over now,
-          // so there is nothing to choose — go straight to the form.
         ] else ...[
           Text(
             _isLot
@@ -449,6 +453,27 @@ class Step5DeliveryOptionsState extends State<Step5DeliveryOptions> {
               color: AppColors.textDark,
             ),
           ),
+          if (_fromSupplier) ...[
+            const SizedBox(height: 6),
+            // Every option stays on screen, so nothing looks "removed":
+            // the ones that need the goats at the farm are greyed out
+            // with the reason.
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: AppColors.warning.withValues(alpha: 0.12),
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: Text(
+                'These goats are still at the supplier, so they can only be '
+                    'handed over now (Deliver Now). Receive the lot first '
+                    '(Lot → Receive Lot) to hold, book or transfer them, or '
+                    'pick "At farm" as the source if some have arrived.',
+                style: AppTheme.body(size: 11.5, color: AppColors.textDark),
+              ),
+            ),
+          ],
           const SizedBox(height: 12),
 
           _BranchCard(
@@ -461,39 +486,43 @@ class Step5DeliveryOptionsState extends State<Step5DeliveryOptions> {
                 _selectBranch(Sale.deliveryTypeDeliverNow),
           ),
 
-          if (_offersHolding) ...[
-            const SizedBox(height: 10),
-            _BranchCard(
-              title: 'Booking / Holding',
-              subtitle:
-              'Held here after payment, picked up later',
-              icon: Icons.bookmark_outline_rounded,
-              selected:
-              draft.deliveryType == Sale.deliveryTypeBooking,
-              onTap: () =>
-                  _selectBranch(Sale.deliveryTypeBooking),
-            ),
-            const SizedBox(height: 10),
-            _BranchCard(
-              title: 'Wait for Delivery',
-              subtitle:
-              'Booked now at today\'s rate, weighed at pickup',
-              icon: Icons.schedule_outlined,
-              selected: draft.deliveryType ==
-                  Sale.deliveryTypeWaitForDelivery,
-              onTap: () => _selectBranch(
+          const SizedBox(height: 10),
+          _BranchCard(
+            title: 'Booking / Holding',
+            subtitle: _offersHolding
+                ? 'Held here after payment, picked up later'
+                : 'Needs the goats at the farm',
+            icon: Icons.bookmark_outline_rounded,
+            enabled: _offersHolding,
+            selected:
+            draft.deliveryType == Sale.deliveryTypeBooking,
+            onTap: () =>
+                _selectBranch(Sale.deliveryTypeBooking),
+          ),
+          const SizedBox(height: 10),
+          _BranchCard(
+            title: 'Wait for Delivery',
+            subtitle: _offersHolding
+                ? 'Booked now at today\'s rate, weighed at pickup'
+                : 'Needs the goats at the farm',
+            icon: Icons.schedule_outlined,
+            enabled: _offersHolding,
+            selected: draft.deliveryType ==
                 Sale.deliveryTypeWaitForDelivery,
-              ),
+            onTap: () => _selectBranch(
+              Sale.deliveryTypeWaitForDelivery,
             ),
-          ],
+          ),
 
-          if (_offersPalai || _showsLotPalaiCard) ...[
+          if (_offersPalai || _isLot) ...[
             const SizedBox(height: 10),
             _BranchCard(
               title: 'Transfer to Palai',
-              subtitle:
-              'Customer keeps boarding ${_theGoats(draft)} here',
+              subtitle: _isLot && _fromSupplier
+                  ? 'Needs the goats at the farm'
+                  : 'Customer keeps boarding ${_theGoats(draft)} here',
               icon: Icons.holiday_village_outlined,
+              enabled: _offersPalai || _showsLotPalaiCard,
               selected:
               draft.deliveryType == Sale.deliveryTypePalai,
               onTap: _showsLotPalaiCard
@@ -502,9 +531,22 @@ class Step5DeliveryOptionsState extends State<Step5DeliveryOptions> {
                   _selectBranch(Sale.deliveryTypePalai),
             ),
           ],
+
+          if (_isLot && widget.onTransferToOwnPalai != null) ...[
+            const SizedBox(height: 10),
+            _BranchCard(
+              title: 'Transfer to Own Palai',
+              subtitle: _fromSupplier
+                  ? 'Needs the goats at the farm'
+                  : 'The farm keeps ${_theGoats(draft)} as its own',
+              icon: Icons.home_work_outlined,
+              enabled: !_fromSupplier,
+              onTap: widget.onTransferToOwnPalai,
+            ),
+          ],
         ],
 
-        SizedBox(height: _fromSupplier ? 4 : 18),
+        const SizedBox(height: 18),
 
         if (draft.isDeliverNow)
           _buildDeliverNowForm(draft),

@@ -1916,9 +1916,11 @@ class MonthlyStatementEngine {
     double discount = 0,
     String? notes,
     String reason = '',
+    Map<String, ({int days, double monthlyRate})> goatDetails = const {},
   }) async {
     if (otherCharges < 0 || discount < 0 ||
-        goatAmounts.values.any((v) => v < 0)) {
+        goatAmounts.values.any((v) => v < 0) ||
+        goatDetails.values.any((d) => d.days < 0 || d.monthlyRate < 0)) {
       throw ArgumentError('Amounts cannot be negative.');
     }
 
@@ -1950,6 +1952,19 @@ class MonthlyStatementEngine {
         final amount = roundMoney(
           goatAmounts[goatId] ?? (line['palaiAmount'] as num?)?.toDouble() ?? 0,
         );
+        final oldAmount =
+        roundMoney((line['palaiAmount'] as num?)?.toDouble() ?? 0);
+        // Days / rate edited on the Edit screen: the bill (and its PDF)
+        // shows the corrected "N of M days at ₹X/month". The billed date
+        // range itself is not moved.
+        final details = goatDetails[goatId];
+        if (details != null) {
+          line['billableDays'] = details.days;
+          line['monthlyRate'] = roundMoney(details.monthlyRate);
+        }
+        if ((amount - oldAmount).abs() > kMoneyEpsilon || details != null) {
+          line['editedFromAmount'] = line['editedFromAmount'] ?? oldAmount;
+        }
         line['palaiAmount'] = amount;
         palai = roundMoney(palai + amount);
         lines.add(line);
@@ -1964,7 +1979,11 @@ class MonthlyStatementEngine {
         newCharges: newCharges,
         ownPaid: bill.ownPaid,
         previousOutstanding: num0('previousOutstanding'),
-        advanceApplied: num0('advanceApplied'),
+        // Money paid on a deleted bill was taken off this bill too (it is
+        // in ownPaid); leaving it out made Total Payable jump up by that
+        // amount after any edit.
+        advanceApplied:
+        roundMoney(num0('advanceApplied') + num0('paidFromDeletedBill')),
         amountPaid: num0('amountPaid'),
       );
 
