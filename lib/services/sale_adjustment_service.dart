@@ -11,15 +11,26 @@ import 'package:mygoatfarms/models/trading_purchase_model.dart';
 import 'package:mygoatfarms/services/firestore_service.dart';
 import 'package:mygoatfarms/services/health_reminder_scheduler.dart';
 
-/// What happens to the advance / booking money when a deal is cancelled.
-enum AdvanceDecision {
-  /// The money is handed back to the customer. The Sold Goat Revenue that
-  /// was recorded for it is voided, so Finance no longer counts it.
-  refund,
+/// How a cancelled deal ended, for the confirmation message.
+class CancelDealOutcome {
+  /// Goats released back to stock / the lot.
+  final int goats;
 
-  /// The farm keeps the money (the customer walked away). It stays as
-  /// Sold Goat Revenue in Finance.
-  keep,
+  /// Advance the customer had paid.
+  final double advance;
+
+  /// Handed back to the customer.
+  final double refunded;
+
+  /// Kept by the farm (cancellation charge / forfeited advance).
+  final double kept;
+
+  const CancelDealOutcome({
+    required this.goats,
+    required this.advance,
+    required this.refunded,
+    required this.kept,
+  });
 }
 
 /// Cancel Deal, Delete Sale and Edit Sale for the Trading module.
@@ -297,44 +308,86 @@ class SaleAdjustmentService {
   // CANCEL DEAL
   // -----------------------------------------------------------------------
 
-  /// Cancels an open Booking / Wait for Delivery.
+  /// What the advance of an open deal is: the booking amount (Booking /
+  /// Holding) or the advance (Wait for Delivery). Public so the cancel
+  /// screen shows exactly the figure this service settles.
+  double advanceOf(Sale sale) => _round2(_advanceOf(sale));
+
+  /// Cancels an open Booking / Wait for Delivery in ONE transaction.
   ///
-  /// * the goats go back to Available (or the lot's reserved goats are
-  ///   released),
-  /// * the Booking / Wait on Delivery count on the dashboard comes down,
-  /// * the advance is refunded (revenue voided) or kept (revenue stays, and
-  ///   for a Wait for Delivery advance it is recorded now), as chosen,
-  /// * the sale is archived, never silently lost.
-  Future<void> cancelDeal({
+  /// The customer had paid [advanceOf] up front. [refundAmount] of it is
+  /// handed back (0 .. advance); the rest is kept by the farm as a
+  /// cancellation charge. Full refund, full keep and a part refund are
+  /// all the same call.
+  ///
+  /// Goats:
+  ///  * registered goats go back to the status they had before the deal
+  ///    (Available or Own Palai);
+  ///  * lot goats are released from the lot's reservation (at the farm or
+  ///    at the supplier, whichever the deal was booked from).
+  ///
+  /// Finance (money is recorded as it is received, see Sale):
+  ///  * Booking: the booking amount was recorded as Sold Goat Revenue on
+  ///    the booking day. If all of it is kept, that entry simply stays.
+  ///    Otherwise it is voided and only the kept part is recorded again
+  ///    today, so Finance always shows exactly what the farm kept.
+  ///  * Wait for Delivery: the advance was never recorded (the final value
+  ///    was not known). Only the kept part, if any, is recorded today.
+  ///
+  /// Also: the Booking / Wait on Delivery count on the dashboard comes
+  /// down, the customer's purchase count drops by one, the sale is moved
+  /// to archivedSales (with the refund / kept split, method and reason)
+  /// and an activity is logged.
+  Future<CancelDealOutcome> cancelDeal({
     required String farmId,
     required String saleId,
-    required AdvanceDecision advance,
+    required double refundAmount,
+    String refundMethod = 'Cash',
     String reason = '',
   }) async {
+    if (refundAmount.isNaN || refundAmount < 0) {
+      throw ArgumentError('The refund cannot be negative.');
+    }
+
     final actor = await FirestoreService.instance.getCurrentActor();
 
     String customerName = '';
     var restoredToOwnPalai = <String>[];
+    CancelDealOutcome? outcome;
 
     await _db.runTransaction((transaction) async {
       // ---------------------------- READS ----------------------------
       final saleSnap = await transaction.get(_saleRef(farmId, saleId));
 
       if (!saleSnap.exists) {
-        throw StateError('This sale could not be found. It may already '
-            'have been cancelled or deleted.');
+        throw StateError('This deal could not be found. It may already '
+            'have been cancelled, delivered or deleted.');
       }
 
       final sale = Sale.fromDoc(saleSnap);
 
       if (!isOpenDeal(sale)) {
         throw StateError(
-          'Only a booking or wait-for-delivery that has not been '
-              'delivered can be cancelled.',
+          'This deal has already been delivered, so it can no longer be '
+              'cancelled. Use Delete Sale instead.',
         );
       }
 
       customerName = sale.customerName;
+
+      final advanceAmount = advanceOf(sale);
+      final refund = _round2(refundAmount);
+
+      if (refund > advanceAmount + 0.005) {
+        throw ArgumentError(
+          'The refund (₹${refund.toStringAsFixed(2)}) cannot be more than '
+              'the advance received (₹${advanceAmount.toStringAsFixed(2)}).',
+        );
+      }
+
+      final kept = _round2(
+        (advanceAmount - refund) < 0 ? 0 : advanceAmount - refund,
+      );
 
       final goatSnaps = <DocumentSnapshot<Map<String, dynamic>>>[];
 
@@ -346,6 +399,14 @@ class SaleAdjustmentService {
       final customerSnap =
       await _readCustomer(transaction, farmId, sale.customerId);
 
+      // What Finance currently counts for this deal.
+      final activeRevenue = _round2(
+        revenueDocs.fold<double>(0, (sum, doc) {
+          if (!doc.exists || doc.data()?['status'] == 'voided') return sum;
+          return sum + ((doc.data()?['amount'] as num?)?.toDouble() ?? 0);
+        }),
+      );
+
       // ---------------------------- WRITES ---------------------------
       restoredToOwnPalai = _releaseOpenDeal(
         transaction: transaction,
@@ -354,33 +415,42 @@ class SaleAdjustmentService {
         goatSnaps: goatSnaps,
       );
 
-      final advanceAmount = _round2(_advanceOf(sale));
+      // Finance must end up counting exactly [kept]. When it already does
+      // (full keep of a booking amount) nothing changes; otherwise the
+      // old entries are voided and the kept part is recorded today.
+      final financeAlreadyRight =
+          refund <= 0.005 && (activeRevenue - kept).abs() < 0.01;
 
-      if (advance == AdvanceDecision.refund) {
+      if (!financeAlreadyRight) {
         _voidRevenueDocs(
           transaction,
           revenueDocs,
-          'Deal cancelled, advance refunded',
+          refund >= advanceAmount - 0.005
+              ? 'Deal cancelled, advance refunded'
+              : 'Deal cancelled, ₹${refund.toStringAsFixed(2)} refunded',
         );
-      } else if (sale.isWaitForDelivery && advanceAmount > 0) {
-        // A Wait for Delivery advance was never written to Finance (the
-        // final goat value was unknown). Kept money is real income now.
-        transaction.set(_txRef(farmId, _revenueId(saleId, 'forfeit')), {
-          'amount': advanceAmount,
-          'isIncome': true,
-          'category': RevenueCategories.soldGoatRevenue,
-          if (sale.customerName.trim().isNotEmpty)
-            'customerName': sale.customerName.trim(),
-          'note': 'Advance kept after cancelled deal, Sale $saleId',
-          'paymentMethod': (sale.paymentMethod ?? '').trim().isEmpty
-              ? 'Other'
-              : sale.paymentMethod!.trim(),
-          'date': Timestamp.fromDate(DateTime.now()),
-          'status': 'active',
-          'referenceType': 'tradingSale',
-          'referenceId': saleId,
-          'createdAt': FieldValue.serverTimestamp(),
-        });
+
+        if (kept > 0) {
+          transaction.set(_txRef(farmId, _revenueId(saleId, 'forfeit')), {
+            'amount': kept,
+            'isIncome': true,
+            'category': RevenueCategories.soldGoatRevenue,
+            if (sale.customerName.trim().isNotEmpty)
+              'customerName': sale.customerName.trim(),
+            'note': refund > 0
+                ? 'Cancellation charge kept from advance '
+                '(₹${refund.toStringAsFixed(2)} refunded), Sale $saleId'
+                : 'Advance kept after cancelled deal, Sale $saleId',
+            'paymentMethod': (sale.paymentMethod ?? '').trim().isEmpty
+                ? 'Other'
+                : sale.paymentMethod!.trim(),
+            'date': Timestamp.fromDate(DateTime.now()),
+            'status': 'active',
+            'referenceType': 'tradingSale',
+            'referenceId': saleId,
+            'createdAt': FieldValue.serverTimestamp(),
+          });
+        }
       }
 
       _dropCustomerPurchase(
@@ -390,6 +460,14 @@ class SaleAdjustmentService {
         customerSnap: customerSnap,
       );
 
+      final decision = advanceAmount <= 0
+          ? 'none'
+          : refund <= 0.005
+          ? 'keep'
+          : kept <= 0.005
+          ? 'refund'
+          : 'partial';
+
       _archive(
         transaction: transaction,
         farmId: farmId,
@@ -398,10 +476,25 @@ class SaleAdjustmentService {
         reason: reason,
         actor: actor,
         extra: {
-          'advanceDecision': advance.name,
+          'advanceDecision': decision,
           'advanceAmount': advanceAmount,
+          'refundAmount': refund,
+          'keptAmount': kept,
+          if (refund > 0) 'refundMethod': refundMethod.trim(),
+          'cancelledAt': FieldValue.serverTimestamp(),
         },
       );
+
+      final goats = _goatCount(sale);
+
+      final money = advanceAmount <= 0
+          ? 'no advance'
+          : decision == 'refund'
+          ? '₹${refund.toStringAsFixed(0)} refunded'
+          : decision == 'keep'
+          ? '₹${kept.toStringAsFixed(0)} advance kept'
+          : '₹${refund.toStringAsFixed(0)} refunded, '
+          '₹${kept.toStringAsFixed(0)} kept';
 
       _writeActivity(
         transaction: transaction,
@@ -409,8 +502,15 @@ class SaleAdjustmentService {
         actor: actor,
         title: 'Deal Cancelled',
         subtitle: 'Sale $saleId · ${sale.customerName} · '
-            '${_goatCount(sale)} goat(s) back in stock · '
-            '${advance == AdvanceDecision.refund ? 'advance refunded' : 'advance kept'}',
+            '$goats goat${goats == 1 ? '' : 's'} back in stock · $money'
+            '${reason.trim().isEmpty ? '' : ' · ${reason.trim()}'}',
+      );
+
+      outcome = CancelDealOutcome(
+        goats: goats,
+        advance: advanceAmount,
+        refunded: refund,
+        kept: kept,
       );
     }).timeout(_timeout * 2);
 
@@ -426,6 +526,8 @@ class SaleAdjustmentService {
         actor: actor,
       ),
     );
+
+    return outcome!;
   }
 
   /// Puts the goats of an open (undelivered) deal back and lowers the

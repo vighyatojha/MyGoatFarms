@@ -6,6 +6,7 @@ import 'package:mygoatfarms/models/partner_permission_keys.dart';
 import 'package:mygoatfarms/models/sale_model.dart';
 import 'package:mygoatfarms/services/partner_access_service.dart';
 import 'package:mygoatfarms/services/sale_adjustment_service.dart';
+import 'package:mygoatfarms/widgets/cancel_deal_sheet.dart';
 
 /// What a sale action did, so the screen knows whether to reload or leave.
 enum SaleActionResult { none, edited, cancelled, deleted }
@@ -191,122 +192,47 @@ void _snack(BuildContext context, String message, {bool error = false}) {
 // CANCEL DEAL
 // ===========================================================================
 
+/// Opens the Cancel Deal screen (see cancel_deal_sheet.dart) and, on
+/// success, confirms what happened in one line.
 Future<SaleActionResult> showCancelDealDialog(
     BuildContext context, {
       required String farmId,
       required Sale sale,
     }) async {
-  final service = SaleAdjustmentService.instance;
-
-  if (!service.canCancel(sale)) {
+  if (!SaleAdjustmentService.instance.canCancel(sale)) {
     _snack(
       context,
-      'Only a booking or wait-for-delivery that is not delivered yet can '
-          'be cancelled.',
+      'This deal has already been delivered, so it can no longer be '
+          'cancelled. Use Delete Sale instead.',
       error: true,
     );
     return SaleActionResult.none;
   }
 
-  final reason = TextEditingController();
-  var decision = AdvanceDecision.refund;
-
-  final advance = sale.isBooking
-      ? (sale.bookingAmount ?? 0)
-      : (sale.bookingAdvanceAmount ?? 0);
-
-  final ok = await showDialog<bool>(
-    context: context,
-    builder: (ctx) => StatefulBuilder(
-      builder: (ctx, setLocal) => AlertDialog(
-        title: const Text('Cancel this deal?'),
-        content: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                '${sale.id} · ${sale.customerName}\n'
-                    'The goat(s) go back to stock and the booking is '
-                    'removed from the delivery list.',
-              ),
-              if (advance > 0) ...[
-                const SizedBox(height: 14),
-                Text(
-                  'Advance received: ₹${advance.toStringAsFixed(2)}',
-                  style: const TextStyle(fontWeight: FontWeight.w700),
-                ),
-                RadioListTile<AdvanceDecision>(
-                  contentPadding: EdgeInsets.zero,
-                  dense: true,
-                  value: AdvanceDecision.refund,
-                  groupValue: decision,
-                  title: const Text('Refund to customer'),
-                  subtitle: const Text(
-                    'Its Sold Goat Revenue in Finance is voided.',
-                  ),
-                  onChanged: (v) => setLocal(() => decision = v!),
-                ),
-                RadioListTile<AdvanceDecision>(
-                  contentPadding: EdgeInsets.zero,
-                  dense: true,
-                  value: AdvanceDecision.keep,
-                  groupValue: decision,
-                  title: const Text('Keep the advance'),
-                  subtitle: const Text(
-                    'Stays as income; the customer forfeits it.',
-                  ),
-                  onChanged: (v) => setLocal(() => decision = v!),
-                ),
-              ],
-              const SizedBox(height: 8),
-              TextField(
-                controller: reason,
-                textCapitalization: TextCapitalization.sentences,
-                maxLength: 120,
-                decoration: const InputDecoration(
-                  labelText: 'Reason (optional)',
-                ),
-              ),
-            ],
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('Keep deal'),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            child: const Text(
-              'Cancel deal',
-              style: TextStyle(color: AppColors.error),
-            ),
-          ),
-        ],
-      ),
-    ),
+  final outcome = await showCancelDealSheet(
+    context,
+    farmId: farmId,
+    sale: sale,
   );
 
-  final reasonText = reason.text;
-  reason.dispose();
+  if (outcome == null) return SaleActionResult.none;
 
-  if (ok != true) return SaleActionResult.none;
+  String money(double v) => '₹${v.toStringAsFixed(v == v.roundToDouble() ? 0 : 2)}';
 
-  try {
-    await service.cancelDeal(
-      farmId: farmId,
-      saleId: sale.id,
-      advance: decision,
-      reason: reasonText,
-    );
+  final goats = '${outcome.goats} goat${outcome.goats == 1 ? '' : 's'} '
+      'back in stock';
 
-    _snack(context, 'Deal cancelled. Goats are back in stock.');
-    return SaleActionResult.cancelled;
-  } catch (e) {
-    _snack(context, _clean(e), error: true);
-    return SaleActionResult.none;
-  }
+  final advance = outcome.advance <= 0
+      ? ''
+      : outcome.kept <= 0
+      ? ' · ${money(outcome.refunded)} refunded'
+      : outcome.refunded <= 0
+      ? ' · ${money(outcome.kept)} kept'
+      : ' · ${money(outcome.refunded)} refunded, ${money(outcome.kept)} kept';
+
+  _snack(context, 'Deal ${sale.id} cancelled · $goats$advance');
+
+  return SaleActionResult.cancelled;
 }
 
 // ===========================================================================
