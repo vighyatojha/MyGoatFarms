@@ -112,7 +112,10 @@ class PalaiCustomer {
       'package': package,
       // pendingAmount / advanceAmount are deliberately NOT here: they are
       // changed only by bills, payments, checkout, death settlement and
-      // corrections, so editing a customer can never overwrite them.
+      // corrections. The Edit Customer screen changes pending separately
+      // via MonthlyStatementEngine.setPendingAmount (transactional, keeps
+      // the monthly bills in sync, logged), so a plain profile save can
+      // never overwrite a balance with a stale value.
       'price': price,
     };
   }

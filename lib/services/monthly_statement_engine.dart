@@ -1824,6 +1824,102 @@ class MonthlyStatementEngine {
   }
 
   // =========================================================================
+  // MANUAL PENDING EDIT (Edit Customer screen)
+  // =========================================================================
+
+  /// Sets the customer's pending amount to [newPending] — the one place the
+  /// Edit Customer screen is allowed to change a balance.
+  ///
+  /// pendingAmount is the billing source of truth: the next generated bill
+  /// carries it forward as "Previous Outstanding" and the Payments screens
+  /// clear it oldest month first. So this never just overwrites the field:
+  ///
+  /// * Raised: the extra is an older balance not tied to a bill. It is
+  ///   carried forward on the next bill, never charged as a new month.
+  /// * Lowered: taken off the oldest unpaid months first (exactly like a
+  ///   waiver), so every month's own remaining amount still adds up to
+  ///   pendingAmount. It is not a payment and not income.
+  ///
+  /// The current balance is read inside the transaction, so a payment made
+  /// while the form was open is never overwritten with a stale number, and
+  /// saving the same target twice is harmless. The change is written to
+  /// the activity log with the before / after figures.
+  /// Returns the pending amount that was stored.
+  Future<double> setPendingAmount({
+    required String farmId,
+    required String customerId,
+    required double newPending,
+    String reason = '',
+  }) async {
+    final target = roundMoney(newPending);
+    if (target < 0) {
+      throw ArgumentError('Pending amount cannot be negative.');
+    }
+
+    final customerRef = _customers(farmId).doc(customerId);
+    final billRefs =
+    await PalaiLedger.instance.monthlyBillRefs(farmId, customerId);
+    final activityRef = _farm(farmId).collection('activities').doc();
+    final actor = await FirestoreService.instance.getCurrentActor();
+
+    var stored = target;
+
+    await _db.runTransaction<void>((transaction) async {
+      final customerSnap = await transaction.get(customerRef);
+      if (!customerSnap.exists) {
+        throw StateError('Customer no longer exists.');
+      }
+      final ledger = await PalaiLedger.instance.read(transaction, billRefs);
+
+      final customer = customerSnap.data() ?? {};
+      final name = (customer['name'] ?? '').toString();
+      final pendingBefore =
+      roundMoney((customer['pendingAmount'] as num?)?.toDouble() ?? 0);
+
+      final delta = roundMoney(target - pendingBefore);
+      stored = pendingBefore;
+      if (delta.abs() <= kMoneyEpsilon) return;
+
+      final writer = LedgerWriter();
+      if (delta < 0) {
+        PalaiLedger.instance.reduceDues(
+          writer: writer,
+          ledger: ledger,
+          amount: -delta,
+          pendingBefore: pendingBefore,
+          recordOnStatement: false,
+        );
+      }
+      writer.flush(transaction);
+
+      transaction.update(customerRef, {
+        'pendingAmount': target,
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
+
+      final sign = delta > 0 ? '+' : '−';
+      transaction.set(activityRef, {
+        'type': 'customerUpdated',
+        'title': 'Pending Amount Edited',
+        'subtitle': '$name · ₹${pendingBefore.toStringAsFixed(0)} → '
+            '₹${target.toStringAsFixed(0)} ($sign₹${delta.abs().toStringAsFixed(0)})',
+        'module': 'palai',
+        'customerId': customerId,
+        'pendingBefore': pendingBefore,
+        'pendingAfter': target,
+        if (reason.trim().isNotEmpty) 'note': reason.trim(),
+        'timestamp': FieldValue.serverTimestamp(),
+        if (actor != null) 'actorUid': actor.uid,
+        if (actor != null) 'actorName': actor.name,
+        if (actor != null) 'actorRole': actor.role,
+      });
+      stored = target;
+    }).timeout(_timeout);
+
+    return stored;
+  }
+
+  // =========================================================================
   // CONSISTENCY CHECK (all customers)
   // =========================================================================
 

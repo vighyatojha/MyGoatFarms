@@ -9,6 +9,7 @@ import '../../models/activity_model.dart';
 import '../../services/firestore_service.dart';
 import '../../services/monthly_statement_engine.dart';
 import '../../utils/billing_ledger.dart';
+import 'package:flutter/services.dart';
 
 /// Add / Edit form for a Palai customer.
 ///
@@ -24,8 +25,10 @@ import '../../utils/billing_ledger.dart';
 /// still owed is saved as an opening balance ('Pending before September
 /// 2026') that is carried forward on the first bill, never charged again.
 ///
-/// Editing never changes the pending amount: balances move only through
-/// bills, payments, checkout, death settlement and corrections.
+/// Editing: the pending amount can be corrected here. It is saved through
+/// MonthlyStatementEngine.setPendingAmount (never a raw overwrite), so the
+/// next generated bill carries exactly the new figure forward, older
+/// months stay consistent with it, and the change is logged.
 class AddCustomerScreen extends StatefulWidget {
   final PalaiCustomer? customer;
 
@@ -54,6 +57,9 @@ class _AddCustomerScreenState extends State<AddCustomerScreen> {
   bool? _earlierMonthsPaid;
   late final _priceController =
   TextEditingController(text: widget.customer != null ? _trimZero(widget.customer!.price) : '');
+  /// Edit mode only: the customer's pending amount, editable.
+  late final _pendingController = TextEditingController(
+      text: widget.customer != null ? _trimZero(widget.customer!.pendingAmount) : '');
   late String _package = widget.customer?.package ?? 'Basic Palai';
   bool _saving = false;
   bool _deleting = false;
@@ -67,6 +73,7 @@ class _AddCustomerScreenState extends State<AddCustomerScreen> {
     _addressController.dispose();
     _openingController.dispose();
     _priceController.dispose();
+    _pendingController.dispose();
     super.dispose();
   }
 
@@ -96,8 +103,52 @@ class _AddCustomerScreenState extends State<AddCustomerScreen> {
     });
   }
 
+  /// The pending amount typed in the edit form (edit mode only).
+  double get _pendingTarget =>
+      roundMoney(double.tryParse(_pendingController.text.trim()) ?? 0);
+
+  /// True when the owner changed the pending amount from what the customer
+  /// had when this screen opened.
+  bool get _pendingChanged =>
+      widget.isEditing &&
+          (_pendingTarget - roundMoney(widget.customer!.pendingAmount)).abs() >
+              kMoneyEpsilon;
+
+  Future<bool> _confirmPendingChange() async {
+    final before = widget.customer!.pendingAmount;
+    final after = _pendingTarget;
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: Colors.white,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: Text('Change pending amount?', style: AppTheme.heading(size: 16)),
+        content: Text(
+          '${widget.customer!.name}: ₹${_trimZero(before)} → ₹${_trimZero(after)}\n\n'
+              '${after > before ? 'The extra is carried forward on the next bill as an earlier balance.' : 'The reduction is taken off the oldest unpaid months first. It is not recorded as a payment.'}\n\n'
+              'The next bill and payments will use the new amount.',
+          style: AppTheme.body(size: 13),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: Text('Cancel', style: AppTheme.body(size: 13, color: AppColors.textGrey)),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: Text('Change', style: AppTheme.body(size: 13, color: AppColors.darkGreen, weight: FontWeight.w600)),
+          ),
+        ],
+      ),
+    );
+    return ok == true;
+  }
+
   Future<void> _save() async {
     if (!_formKey.currentState!.validate()) return;
+
+    if (_pendingChanged && !await _confirmPendingChange()) return;
+    if (!mounted) return;
 
     if (!widget.isEditing && _plan.asksAboutEarlierMonths) {
       if (_earlierMonthsPaid == null) {
@@ -122,6 +173,16 @@ class _AddCustomerScreenState extends State<AddCustomerScreen> {
 
     try {
       if (widget.isEditing) {
+        // Balance first: it is the part that affects billing. It targets an
+        // absolute amount read live inside a transaction, so retrying after
+        // a failed profile save can never apply the change twice.
+        if (_pendingChanged) {
+          await MonthlyStatementEngine.instance.setPendingAmount(
+            farmId: farmId,
+            customerId: widget.customer!.id,
+            newPending: _pendingTarget,
+          );
+        }
         final updated = widget.customer!.copyWith(
           name: _nameController.text.trim(),
           mobileNumber: _mobileController.text.trim(),
@@ -318,7 +379,7 @@ class _AddCustomerScreenState extends State<AddCustomerScreen> {
               _textField(_addressController, hint: 'Village / City, District', maxLines: 2, optional: true),
               const SizedBox(height: 16),
               if (widget.isEditing)
-                _buildPendingReadOnly()
+                _buildPendingEditable()
               else
                 _buildEnrollment(),
               const SizedBox(height: 28),
@@ -446,8 +507,8 @@ class _AddCustomerScreenState extends State<AddCustomerScreen> {
     );
   }
 
-  Widget _buildPendingReadOnly() {
-    final customer = widget.customer!;
+  Widget _buildPendingEditable() {
+    final advance = widget.customer!.advanceAmount;
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.all(14),
@@ -455,23 +516,57 @@ class _AddCustomerScreenState extends State<AddCustomerScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
-            children: [
-              Expanded(
-                child: Text('Pending amount', style: AppTheme.heading(size: 13)),
-              ),
-              Text(
-                '₹${_trimZero(customer.pendingAmount)}',
-                style: AppTheme.heading(size: 14, color: AppColors.darkGreen),
-              ),
+          Text('Pending amount (₹)', style: AppTheme.heading(size: 13)),
+          const SizedBox(height: 8),
+          TextFormField(
+            controller: _pendingController,
+            keyboardType: const TextInputType.numberWithOptions(decimal: true),
+            inputFormatters: [
+              FilteringTextInputFormatter.allow(RegExp(r'^\d*\.?\d{0,2}')),
             ],
+            validator: (v) {
+              final value = double.tryParse((v ?? '').trim());
+              if (value == null) return 'Enter an amount (0 if nothing is pending)';
+              if (value < 0) return 'Cannot be negative';
+              return null;
+            },
+            decoration: InputDecoration(
+              prefixText: '₹ ',
+              hintText: '0',
+              hintStyle: AppTheme.body(size: 12),
+              filled: true,
+              fillColor: AppColors.paleGreen,
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(10),
+                borderSide: BorderSide.none,
+              ),
+              contentPadding:
+              const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+            ),
+            style: AppTheme.body(size: 13, color: AppColors.textDark),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            'Enter the older balance only. This is what the next bill '
+                'carries forward as Previous Outstanding. Do not include the '
+                'month that is still to be billed, or it will be counted '
+                'twice. Changes are logged.',
+            style: AppTheme.body(size: 11.5),
           ),
           const SizedBox(height: 4),
           Text(
-            'Changes only through bills, payments, checkout and corrections, '
-                'so it cannot be edited here.',
+            'To update a bill that is already issued: delete that bill, '
+                'change this amount, then generate the bill again.',
             style: AppTheme.body(size: 11.5),
           ),
+          if (advance > kMoneyEpsilon) ...[
+            const SizedBox(height: 6),
+            Text(
+              'This customer also has ₹${_trimZero(advance)} advance, which '
+                  'the next bill will apply against what is owed.',
+              style: AppTheme.body(size: 11.5, color: AppColors.darkGreen),
+            ),
+          ],
         ],
       ),
     );

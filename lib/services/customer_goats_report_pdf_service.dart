@@ -515,6 +515,11 @@ class CustomerGoatsReportPdfService {
               bill.isStatement ? 'Less: Advance Applied' : 'Current Advance',
               '- ${_currency(bill.advanceApplied)}',
             ),
+          if (bill.isStatement && bill.paidFromDeletedBill > 0)
+            _billRow(
+              'Less: Already Paid for ${bill.monthYear}',
+              '- ${_currency(bill.paidFromDeletedBill)}',
+            ),
           pw.SizedBox(height: 3),
           pw.Divider(color: PdfColors.grey300, height: 1),
           pw.SizedBox(height: 3),

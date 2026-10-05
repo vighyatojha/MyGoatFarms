@@ -112,7 +112,17 @@ class LatestStatementCard extends StatelessWidget {
               else
                 _buildBill(bill!),
               const Divider(height: 22),
-              _row('Outstanding today', _currency(livePending), bold: true),
+              // With no Goat Sale Credit the live balance IS the total
+              // payable, so it is labelled as such (same figure the bill
+              // PDF calls Total Payable). With a credit, the plain balance
+              // is shown first and Total payable is the sum below.
+              _row(
+                _goatSale > kMoneyEpsilon
+                    ? 'Outstanding today'
+                    : 'Total payable (outstanding today)',
+                _currency(livePending),
+                bold: _goatSale <= kMoneyEpsilon,
+              ),
               if (bill != null &&
                   !bill!.locked &&
                   (livePending - bill!.remainingAmount).abs() > 0.5)
@@ -133,7 +143,7 @@ class LatestStatementCard extends StatelessWidget {
                 _row('Goat sale credit (Trading)', _currency(_goatSale)),
                 const SizedBox(height: 4),
                 _row(
-                  'Total owed to the farm',
+                  'Total payable (Palai + goat sale)',
                   _currency(livePending + _goatSale),
                   bold: true,
                 ),
@@ -177,6 +187,14 @@ class LatestStatementCard extends StatelessWidget {
           _row('Previous outstanding', _currency(bill.previousOutstanding)),
           if (bill.advanceApplied > kMoneyEpsilon)
             _row('Less: advance applied', '− ${_currency(bill.advanceApplied)}'),
+          // Money already received for this month (e.g. a payment kept
+          // when a bill was deleted). Without this row the lines above
+          // would not add up to Total payable.
+          if (bill.paidFromDeletedBill > kMoneyEpsilon)
+            _row(
+              'Less: already paid for $month',
+              '− ${_currency(bill.paidFromDeletedBill)}',
+            ),
           const SizedBox(height: 4),
           _row('Total payable', _currency(bill.totalPayable), bold: true),
           if (bill.amountPaid > kMoneyEpsilon)
