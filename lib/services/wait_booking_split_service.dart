@@ -485,9 +485,13 @@ class WaitBookingSplitService {
 
         final lot = TradingPurchase.fromDoc(lotSnap);
 
-        if (lot.reservedFarmQty < sale.lotQuantity) {
+        final reservedHere = sale.sourceLocation == Sale.sourceSupplier
+            ? lot.reservedSupplierQty
+            : lot.reservedFarmQty;
+
+        if (reservedHere < sale.lotQuantity) {
           throw StateError(
-            'Lot ${sale.lotDocId} has only ${lot.reservedFarmQty} goats '
+            'Lot ${sale.lotDocId} has only $reservedHere goats '
                 'reserved but this booking holds ${sale.lotQuantity}. '
                 'Please check the lot first.',
           );
@@ -723,7 +727,9 @@ class WaitBookingSplitService {
       if (!keep) {
         if (sale.isLotSale) {
           transaction.update(lotRef!, {
-            'reservedFarmQty': FieldValue.increment(-leftoverCount),
+            (sale.sourceLocation == Sale.sourceSupplier
+                ? 'reservedSupplierQty'
+                : 'reservedFarmQty'): FieldValue.increment(-leftoverCount),
             'updatedAt': FieldValue.serverTimestamp(),
           });
         }

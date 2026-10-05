@@ -589,8 +589,13 @@ class _LotDetailScreenState extends State<LotDetailScreen> {
         ),
         if (lot.reservedFarmQty > 0)
           WizardComputedRow(
-            label: 'Reserved (booked)',
+            label: 'Reserved at farm (booked)',
             value: '${lot.reservedFarmQty}',
+          ),
+        if (lot.reservedSupplierQty > 0)
+          WizardComputedRow(
+            label: 'Reserved at supplier (booked)',
+            value: '${lot.reservedSupplierQty}',
           ),
         WizardComputedRow(
           label: 'Remaining in lot',
@@ -639,7 +644,11 @@ class _LotDetailScreenState extends State<LotDetailScreen> {
           value: '${PurchaseCosting.formatNumber(lot.totalWeightAtPurchase)} kg',
         ),
         WizardComputedRow(
-          label: 'Price per kg',
+          label: 'Pricing',
+          value: lot.isFixedPrice ? 'Fixed Price' : 'By KG',
+        ),
+        WizardComputedRow(
+          label: lot.isFixedPrice ? 'Effective price per kg' : 'Price per kg',
           value: wizardCurrency(lot.pricePerKg),
         ),
         WizardComputedRow(
@@ -957,10 +966,12 @@ class _LotDetailScreenState extends State<LotDetailScreen> {
         _ActionButton(
           icon: Icons.inventory_2_outlined,
           label: 'Receive Lot',
-          hint: lot.supplierQty > 0
-              ? '${lot.supplierQty} goats still at supplier'
+          hint: lot.supplierAvailableQty > 0
+              ? '${lot.supplierAvailableQty} goats still at supplier'
+              : lot.reservedSupplierQty > 0
+              ? '${lot.reservedSupplierQty} at supplier are booked'
               : 'Nothing left at the supplier',
-          enabled: lot.isLot && canReceive && lot.supplierQty > 0,
+          enabled: lot.isLot && canReceive && lot.supplierAvailableQty > 0,
           onTap: () => _receive(lot),
         ),
         _ActionButton(

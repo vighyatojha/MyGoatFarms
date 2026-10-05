@@ -2,7 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import 'package:mygoatfarms/app_theme.dart';
+import 'package:mygoatfarms/models/partner_permission_keys.dart';
 import 'package:mygoatfarms/models/sale_model.dart';
+import 'package:mygoatfarms/services/partner_access_service.dart';
 import 'package:mygoatfarms/services/sale_adjustment_service.dart';
 
 /// What a sale action did, so the screen knows whether to reload or leave.
@@ -30,6 +32,14 @@ class SaleActionsMenu extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // Editing, cancelling and deleting a sale are selling actions. The
+    // security rules refuse them for partners without a Trading
+    // permission, so hide them instead of letting the save fail.
+    if (!PartnerAccessService.instance
+        .allows(PartnerPermissionKeys.tradingSell)) {
+      return const SizedBox.shrink();
+    }
+
     final service = SaleAdjustmentService.instance;
     final canCancel = service.canCancel(sale);
 
@@ -102,7 +112,9 @@ class OpenDealButtons extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    if (!SaleAdjustmentService.instance.canCancel(sale)) {
+    if (!SaleAdjustmentService.instance.canCancel(sale) ||
+        !PartnerAccessService.instance
+            .allows(PartnerPermissionKeys.tradingSell)) {
       return const SizedBox.shrink();
     }
 

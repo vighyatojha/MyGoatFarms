@@ -96,7 +96,7 @@ class PurchaseCostCard extends StatelessWidget {
             value: wizardCurrency(c.effectiveCostPerKg),
             footnote: c.costIncreasePerKg > 0
                 ? '+${wizardCurrency(c.costIncreasePerKg)} more than the '
-                '${wizardCurrency(c.pricePerKg)} / kg you paid'
+                '${wizardCurrency(c.effectivePricePerKg)} / kg you paid'
                 : null,
           ),
 

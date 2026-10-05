@@ -34,12 +34,15 @@ class TradingLotOverview {
   final int farmQty;
 
   /// Goats across every lot currently reserved by a Booking or
-  /// Wait-for-Delivery sale (`reservedFarmQty`).
+  /// Wait-for-Delivery sale, at the farm and at the supplier.
   final int reservedQty;
 
   /// Goats across every lot at the farm and not reserved — what can
   /// actually be sold, transferred, or is otherwise free right now.
   final int farmAvailableQty;
+
+  /// Goats across every lot at the supplier and not reserved.
+  final int supplierAvailableQty;
 
   /// Total still owed to suppliers across every lot.
   final double supplierDue;
@@ -69,6 +72,7 @@ class TradingLotOverview {
     required this.farmQty,
     required this.reservedQty,
     required this.farmAvailableQty,
+    this.supplierAvailableQty = 0,
     required this.supplierDue,
     required this.unconvertedPurchases,
     this.lotSoldQty = 0,
@@ -104,6 +108,7 @@ class TradingLotOverview {
     var farmQty = 0;
     var reservedQty = 0;
     var farmAvailableQty = 0;
+    var supplierAvailableQty = 0;
     var supplierDue = 0.0;
     var lotSoldQty = 0;
     var totalPurchasedQty = 0;
@@ -125,8 +130,9 @@ class TradingLotOverview {
       lotSoldQty += lot.soldQty;
       supplierQty += lot.supplierQty;
       farmQty += lot.farmQty;
-      reservedQty += lot.reservedFarmQty;
+      reservedQty += lot.reservedQty;
       farmAvailableQty += lot.farmAvailableQty;
+      supplierAvailableQty += lot.supplierAvailableQty;
       supplierDue += lot.dueAmount;
     }
 
@@ -147,6 +153,7 @@ class TradingLotOverview {
       farmQty: farmQty,
       reservedQty: reservedQty,
       farmAvailableQty: farmAvailableQty,
+      supplierAvailableQty: supplierAvailableQty,
       supplierDue: PurchaseCosting.round2(supplierDue),
       unconvertedPurchases: legacy.length,
       lotSoldQty: lotSoldQty,

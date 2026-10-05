@@ -260,6 +260,12 @@ class TradingService {
     required double totalWeightAtPurchase,
     required double pricePerKg,
 
+    // By KG (default) or Fixed Price. For Fixed Price, [fixedPurchaseAmount]
+    // is the agreed amount for the whole lot and [pricePerKg] is ignored
+    // (the effective rate is worked out and stored instead).
+    String pricingMode = TradingPurchase.pricingModePerKg,
+    double fixedPurchaseAmount = 0,
+
     // Gender split of totalGoats, captured at Purchase Details rather
     // than per-goat at Registration. Defaults to 0/0 for callers (like
     // the single-goat quick purchase) that don't collect this yet.
@@ -332,7 +338,15 @@ class TradingService {
       );
     }
 
-    if (pricePerKg <= 0) {
+    final isFixedPrice = pricingMode == TradingPurchase.pricingModeFixed;
+
+    if (isFixedPrice && fixedPurchaseAmount <= 0) {
+      throw ArgumentError(
+        'Fixed purchase price must be greater than zero.',
+      );
+    }
+
+    if (!isFixedPrice && pricePerKg <= 0) {
       throw ArgumentError(
         'Price per kg must be greater than zero.',
       );
@@ -405,7 +419,8 @@ class TradingService {
     final costing = PurchaseCosting(
       totalGoats: totalGoats,
       weightAtPurchase: totalWeightAtPurchase,
-      pricePerKg: pricePerKg,
+      pricePerKg: isFixedPrice ? 0 : pricePerKg,
+      fixedPurchaseAmount: isFixedPrice ? fixedPurchaseAmount : 0,
       weightAfterArrival: safeArrivalWeight,
       mortality: isCompleted ? mortality : 0,
       transportCost: transportCost,
@@ -485,8 +500,12 @@ class TradingService {
           totalGoats: totalGoats,
           totalWeightAtPurchase:
           totalWeightAtPurchase,
-          pricePerKg: pricePerKg,
+          pricePerKg: costing.effectivePricePerKg,
           purchaseAmount: purchaseAmount,
+          pricingMode: isFixedPrice
+              ? TradingPurchase.pricingModeFixed
+              : TradingPurchase.pricingModePerKg,
+          fixedPurchaseAmount: isFixedPrice ? purchaseAmount : 0,
           maleGoats: maleGoats,
           femaleGoats: femaleGoats,
 
@@ -1471,6 +1490,10 @@ class TradingService {
     required double totalWeightAtPurchase,
     required double pricePerKg,
 
+    // By KG or Fixed Price (see savePurchase).
+    String pricingMode = TradingPurchase.pricingModePerKg,
+    double fixedPurchaseAmount = 0,
+
     // Extra costs
     required double transportCost,
     required double loadingCharges,
@@ -1500,7 +1523,13 @@ class TradingService {
       throw ArgumentError('Purchase weight must be greater than zero.');
     }
 
-    if (pricePerKg <= 0) {
+    final isFixedPrice = pricingMode == TradingPurchase.pricingModeFixed;
+
+    if (isFixedPrice && fixedPurchaseAmount <= 0) {
+      throw ArgumentError('Fixed purchase price must be greater than zero.');
+    }
+
+    if (!isFixedPrice && pricePerKg <= 0) {
       throw ArgumentError('Price per kg must be greater than zero.');
     }
 
@@ -1568,8 +1597,8 @@ class TradingService {
       if (totalGoats < lot.minEditableTotalGoats) {
         throw ArgumentError(
           'Total goats cannot be less than ${lot.minEditableTotalGoats} — '
-              'that many have already been sold from the supplier or '
-              'received at the farm.',
+              'that many have already been sold or booked from the supplier '
+              'or received at the farm.',
         );
       }
 
@@ -1609,7 +1638,8 @@ class TradingService {
       final costing = PurchaseCosting(
         totalGoats: totalGoats,
         weightAtPurchase: totalWeightAtPurchase,
-        pricePerKg: pricePerKg,
+        pricePerKg: isFixedPrice ? 0 : pricePerKg,
+        fixedPurchaseAmount: isFixedPrice ? fixedPurchaseAmount : 0,
         weightAfterArrival: arrivedWeight,
         mortality: lot.mortality,
         transportCost: transportCost,
@@ -1661,8 +1691,12 @@ class TradingService {
         'maleGoats': maleGoats,
         'femaleGoats': femaleGoats,
         'totalWeightAtPurchase': totalWeightAtPurchase,
-        'pricePerKg': pricePerKg,
+        'pricePerKg': costing.effectivePricePerKg,
         'purchaseAmount': newPurchaseAmount,
+        'pricingMode': isFixedPrice
+            ? TradingPurchase.pricingModeFixed
+            : TradingPurchase.pricingModePerKg,
+        'fixedPurchaseAmount': isFixedPrice ? newPurchaseAmount : 0,
         'transportCost': transportCost,
         'loadingCharges': loadingCharges,
         'unloadingCharges': unloadingCharges,
@@ -1950,9 +1984,16 @@ class TradingService {
         );
       }
 
-      if (arrivedQty + diedQty > lot.supplierQty) {
+      // Goats booked for a customer at the supplier (Booking / Wait for
+      // Delivery from the supplier) are handed over straight from there,
+      // so they are never received at the farm.
+      if (arrivedQty + diedQty > lot.supplierAvailableQty) {
         throw ArgumentError(
-          'Only ${lot.supplierQty} goats are still at the supplier.',
+          lot.reservedSupplierQty > 0
+              ? 'Only ${lot.supplierAvailableQty} goats can be received — '
+              '${lot.reservedSupplierQty} at the supplier are booked for '
+              'customers and are delivered from there.'
+              : 'Only ${lot.supplierQty} goats are still at the supplier.',
         );
       }
 
@@ -1999,6 +2040,7 @@ class TradingService {
         totalGoats: lot.totalGoats,
         weightAtPurchase: lot.totalWeightAtPurchase,
         pricePerKg: lot.pricePerKg,
+        fixedPurchaseAmount: lot.isFixedPrice ? lot.fixedPurchaseAmount : 0,
         weightAfterArrival: newArrivalWeight,
         mortality: newMortality,
         transportCost: newTransport,
@@ -2188,6 +2230,7 @@ class TradingService {
               'soldFromSupplierQty': 0,
               'soldFromFarmQty': 0,
               'reservedFarmQty': 0,
+              'reservedSupplierQty': 0,
               'paidAmount': current.purchaseAmount,
               'legacyConvertedAt': FieldValue.serverTimestamp(),
               'updatedAt': FieldValue.serverTimestamp(),
@@ -2312,7 +2355,7 @@ class TradingService {
     final existing = await getPurchase(farmId, purchaseId);
 
     if (existing != null && existing.isLot) {
-      if (mortality >= existing.supplierQty) {
+      if (mortality >= existing.supplierAvailableQty) {
         throw ArgumentError(
           'At least one goat must survive — mortality cannot equal or '
               'exceed the goats still at the supplier.',
@@ -2322,7 +2365,7 @@ class TradingService {
       return receiveLotBatch(
         farmId: farmId,
         lotDocId: purchaseId,
-        arrivedQty: existing.supplierQty - mortality,
+        arrivedQty: existing.supplierAvailableQty - mortality,
         diedQty: mortality,
         arrivalWeight: totalWeightAfterArrival,
         date: dateReceivedAtFarm,
@@ -2392,6 +2435,8 @@ class TradingService {
         totalGoats: purchase.totalGoats,
         weightAtPurchase: purchase.totalWeightAtPurchase,
         pricePerKg: purchase.pricePerKg,
+        fixedPurchaseAmount:
+        purchase.isFixedPrice ? purchase.fixedPurchaseAmount : 0,
         weightAfterArrival: totalWeightAfterArrival,
         mortality: mortality,
         transportCost: transportCost,

@@ -80,7 +80,7 @@ class _ReceiveLotScreenState extends State<ReceiveLotScreen> {
   }
 
   void _receiveAllRemaining() {
-    _arrivedController.text = '${_lot.supplierQty}';
+    _arrivedController.text = '${_lot.supplierAvailableQty}';
     _diedController.text = '0';
     setState(() {});
   }
@@ -107,8 +107,8 @@ class _ReceiveLotScreenState extends State<ReceiveLotScreen> {
   String? _validateCounts() {
     if (_arrived + _died <= 0) return 'Enter at least one goat';
 
-    if (_arrived + _died > _lot.supplierQty) {
-      return 'Only ${_lot.supplierQty} goats are still at the supplier';
+    if (_arrived + _died > _lot.supplierAvailableQty) {
+      return 'Only ${_lot.supplierAvailableQty} goats are still at the supplier';
     }
 
     return null;
@@ -118,7 +118,8 @@ class _ReceiveLotScreenState extends State<ReceiveLotScreen> {
     if (_saving) return;
     if (!(_formKey.currentState?.validate() ?? false)) return;
 
-    final lastBatch = _arrived + _died == _lot.supplierQty;
+    final lastBatch = _arrived + _died == _lot.supplierAvailableQty &&
+        _lot.reservedSupplierQty == 0;
 
     final ok = await showWizardConfirm(
       context: context,
@@ -181,7 +182,7 @@ class _ReceiveLotScreenState extends State<ReceiveLotScreen> {
     final looksOff =
         avg > 0 && (avg < _minKgPerGoat || avg > _maxKgPerGoat);
 
-    final remainingAfter = lot.supplierQty - _arrived - _died;
+    final remainingAfter = lot.supplierAvailableQty - _arrived - _died;
 
     return PermissionGate(
       permission: PartnerPermissionKeys.tradingReceive,
@@ -221,10 +222,15 @@ class _ReceiveLotScreenState extends State<ReceiveLotScreen> {
                     label: 'Sold from supplier',
                     value: '${lot.soldFromSupplierQty}',
                   ),
+                if (lot.reservedSupplierQty > 0)
+                  WizardComputedRow(
+                    label: 'Booked at supplier (delivered from there)',
+                    value: '${lot.reservedSupplierQty}',
+                  ),
                 const Divider(height: 18, color: AppColors.divider),
                 WizardComputedRow(
                   label: 'Available to receive',
-                  value: '${lot.supplierQty}',
+                  value: '${lot.supplierAvailableQty}',
                   emphasize: true,
                 ),
               ],
@@ -281,7 +287,7 @@ class _ReceiveLotScreenState extends State<ReceiveLotScreen> {
                 Align(
                   alignment: Alignment.centerLeft,
                   child: ActionChip(
-                    label: Text('Receive all ${lot.supplierQty} remaining'),
+                    label: Text('Receive all ${lot.supplierAvailableQty} remaining'),
                     backgroundColor: AppColors.lightGreen,
                     onPressed: _receiveAllRemaining,
                   ),
@@ -385,7 +391,11 @@ class _ReceiveLotScreenState extends State<ReceiveLotScreen> {
               const SizedBox(height: 10),
               WizardNote(
                 remainingAfter == 0
-                    ? 'This receives every goat left at the supplier.'
+                    ? (lot.reservedSupplierQty > 0
+                    ? 'This receives every goat that is not booked. The '
+                    '${lot.reservedSupplierQty} booked goats stay at the '
+                    'supplier until their delivery is completed.'
+                    : 'This receives every goat left at the supplier.')
                     : '$remainingAfter goats will still be at the supplier '
                     'after this batch.',
               ),

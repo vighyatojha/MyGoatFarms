@@ -903,6 +903,27 @@ class SalesService {
     return saleId;
   }
 
+  /// After supplier-held goats were handed over: a lot with nothing left
+  /// at the supplier (and something already received) is fully received,
+  /// same rule as a Deliver Now sale from the supplier.
+  void _markSupplierEmptyLotsReceived(
+      Transaction transaction,
+      String farmId,
+      Map<String, TradingPurchase> lotsBefore,
+      Map<String, int> supplierDoneByLot,
+      ) {
+    supplierDoneByLot.forEach((lotDocId, done) {
+      final lot = lotsBefore[lotDocId];
+      if (lot == null) return;
+
+      if (lot.supplierQty - done <= 0 && lot.receivedTotalQty > 0) {
+        transaction.update(_tradingPurchases(farmId).doc(lotDocId), {
+          'receivingStatus': 'completed',
+        });
+      }
+    });
+  }
+
   // -----------------------------------------------------------------------
   // SELL FROM LOT — DELIVER NOW
   // -----------------------------------------------------------------------
@@ -1003,12 +1024,13 @@ class SalesService {
       }
 
       final available =
-      fromSupplier ? lot.supplierQty : lot.farmAvailableQty;
+      fromSupplier ? lot.supplierAvailableQty : lot.farmAvailableQty;
 
       if (quantity > available) {
         throw StateError(
           fromSupplier
-              ? 'Only $available goats are still at the supplier.'
+              ? 'Only $available goats are available at the supplier '
+              '(booked goats are not counted).'
               : 'Only $available goats are available at the farm '
               '(booked goats are not counted).',
         );
@@ -1296,13 +1318,15 @@ class SalesService {
 
   /// Saves a Booking or Wait for Delivery sale made straight from a lot.
   ///
-  /// Only for goats already AT THE FARM: a lot still at the supplier can
-  /// never be held (the goats are not here to hold), so a supplier source
-  /// is rejected outright even though the UI never offers it.
+  /// Works for both sources:
+  ///  - farm: the quantity goes into the lot's `reservedFarmQty` (which
+  ///    lowers `farmAvailableQty` so nobody else can sell it);
+  ///  - supplier: the quantity goes into `reservedSupplierQty` (which
+  ///    lowers `supplierAvailableQty`, and keeps those goats out of
+  ///    Receive Lot). They are handed over straight from the supplier
+  ///    when the delivery is completed.
   ///
-  /// The goats are held, not sold: the quantity goes into the lot's
-  /// `reservedFarmQty` (which lowers `farmAvailableQty` so nobody else can
-  /// sell it) and NOT into `soldFromFarmQty`. `farmQty`, `pendingCount`,
+  /// The goats are held, not sold: nothing goes into `soldFrom*Qty`. `farmQty`, `pendingCount`,
   /// `totalStock` and `totalSold` are untouched until the delivery is
   /// completed. No revenue is written now either, exactly like the
   /// individual-goat flow.
@@ -1321,12 +1345,10 @@ class SalesService {
       throw ArgumentError('Enter how many goats are being held.');
     }
 
-    if (draft.sourceLocation != Sale.sourceFarm) {
-      throw ArgumentError(
-        'Booking and Wait for Delivery are only available for goats '
-            'already at the farm (source was "${draft.sourceLocation}"). '
-            'Goats still at the supplier can only be sold with Deliver Now.',
-      );
+    final fromSupplier = draft.sourceLocation == Sale.sourceSupplier;
+
+    if (!fromSupplier && draft.sourceLocation != Sale.sourceFarm) {
+      throw ArgumentError('Choose where the goats are being sold from.');
     }
 
     if (draft.totalSellingWeight <= 0) {
@@ -1360,11 +1382,13 @@ class SalesService {
         );
       }
 
-      final available = lot.farmAvailableQty;
+      final available =
+      fromSupplier ? lot.supplierAvailableQty : lot.farmAvailableQty;
 
       if (quantity > available) {
         throw StateError(
-          'Only $available goats are available at the farm '
+          'Only $available goats are available '
+              '${fromSupplier ? 'at the supplier' : 'at the farm'} '
               '(goats already booked are not counted).',
         );
       }
@@ -1420,7 +1444,7 @@ class SalesService {
         goatIds: const [],
         lotDocId: draft.lotDocId,
         lotQuantity: quantity,
-        sourceLocation: Sale.sourceFarm,
+        sourceLocation: fromSupplier ? Sale.sourceSupplier : Sale.sourceFarm,
         costPerGoatSnapshot: costPerGoat,
         customerId: customerId,
         customerName: draft.customerName.trim(),
@@ -1465,7 +1489,8 @@ class SalesService {
       // ---------------------------------------------------------------
 
       transaction.update(lotRef, {
-        'reservedFarmQty': FieldValue.increment(quantity),
+        (fromSupplier ? 'reservedSupplierQty' : 'reservedFarmQty'):
+        FieldValue.increment(quantity),
         'updatedAt': FieldValue.serverTimestamp(),
       });
 
@@ -2595,6 +2620,7 @@ class SalesService {
         }
 
         DocumentReference<Map<String, dynamic>>? lotRef;
+        TradingPurchase? lotBefore;
 
         if (sale.isLotSale) {
           lotRef = _tradingPurchases(farmId).doc(sale.lotDocId);
@@ -2606,13 +2632,19 @@ class SalesService {
 
           final lot = TradingPurchase.fromDoc(lotSnap);
 
-          if (lot.reservedFarmQty < sale.lotQuantity) {
+          final reservedHere = sale.sourceLocation == Sale.sourceSupplier
+              ? lot.reservedSupplierQty
+              : lot.reservedFarmQty;
+
+          if (reservedHere < sale.lotQuantity) {
             throw StateError(
-              'Lot ${sale.lotDocId} has only ${lot.reservedFarmQty} goats '
+              'Lot ${sale.lotDocId} has only $reservedHere goats '
                   'reserved but this sale holds ${sale.lotQuantity}. '
                   'Please check the lot before completing.',
             );
           }
+
+          lotBefore = lot;
 
           if (sale.costPerGoatSnapshot == null) {
             throw StateError(
@@ -2707,6 +2739,7 @@ class SalesService {
             sale: sale,
             saleSnap: saleSnap,
             lotRef: lotRef,
+            lotBefore: lotBefore,
             goatSnaps: goatSnaps,
             costOfGoodsSold: costOfGoodsSold,
             bookingAmount: bookingAmount,
@@ -2768,6 +2801,12 @@ class SalesService {
 
       var totalMovedGoats = 0;
       var totalLotGoats = 0;
+
+      // Goats handed over straight from the supplier (held there by a
+      // supplier-sourced booking): never farm stock.
+      var supplierLotGoats = 0;
+      final supplierDoneByLot = <String, int>{};
+      final lotsBefore = <String, TradingPurchase>{};
       var totalProfit = 0.0;
 
       for (final plan in plans) {
@@ -2950,14 +2989,35 @@ class SalesService {
         var movedGoats = sale.isLotSale ? sale.lotQuantity : 0;
 
         if (sale.isLotSale) {
-          transaction.update(plan.lotRef!, {
-            'reservedFarmQty': FieldValue.increment(-sale.lotQuantity),
-            'soldFromFarmQty': FieldValue.increment(sale.lotQuantity),
-            'pendingCount': FieldValue.increment(-sale.lotQuantity),
-            'updatedAt': FieldValue.serverTimestamp(),
-          });
+          if (sale.sourceLocation == Sale.sourceSupplier) {
+            // Held at the supplier: handed over straight from there. These
+            // goats were never farm stock, so totalStock /
+            // pendingRegistrations do not move for them.
+            transaction.update(plan.lotRef!, {
+              'reservedSupplierQty': FieldValue.increment(-sale.lotQuantity),
+              'soldFromSupplierQty': FieldValue.increment(sale.lotQuantity),
+              'updatedAt': FieldValue.serverTimestamp(),
+            });
 
-          totalLotGoats += sale.lotQuantity;
+            supplierLotGoats += sale.lotQuantity;
+            supplierDoneByLot[sale.lotDocId] =
+                (supplierDoneByLot[sale.lotDocId] ?? 0) + sale.lotQuantity;
+            if (plan.lotBefore != null) {
+              lotsBefore[sale.lotDocId] ??= plan.lotBefore!;
+            }
+          } else {
+            // The reserved goats are now sold: reserved -> sold, and the
+            // farm stock (mirrored by pendingCount) falls now, not at
+            // booking.
+            transaction.update(plan.lotRef!, {
+              'reservedFarmQty': FieldValue.increment(-sale.lotQuantity),
+              'soldFromFarmQty': FieldValue.increment(sale.lotQuantity),
+              'pendingCount': FieldValue.increment(-sale.lotQuantity),
+              'updatedAt': FieldValue.serverTimestamp(),
+            });
+
+            totalLotGoats += sale.lotQuantity;
+          }
         }
 
         for (final snap in plan.goatSnaps) {
@@ -2998,12 +3058,19 @@ class SalesService {
         {
           'booking': FieldValue.increment(-totalMovedGoats),
           'totalSold': FieldValue.increment(totalMovedGoats),
-          'totalStock': FieldValue.increment(-totalMovedGoats),
+          'totalStock':
+          FieldValue.increment(-(totalMovedGoats - supplierLotGoats)),
           if (totalLotGoats > 0)
             'pendingRegistrations': FieldValue.increment(-totalLotGoats),
           'totalProfit': FieldValue.increment(SaleDraft.round2(totalProfit)),
         },
         SetOptions(merge: true),
+      );
+      _markSupplierEmptyLotsReceived(
+        transaction,
+        farmId,
+        lotsBefore,
+        supplierDoneByLot,
       );
     }).timeout(_timeout * 2);
   }
@@ -3187,6 +3254,7 @@ class SalesService {
         // Lot sale: the lot doc is read here, in the read phase, and the
         // reservation is checked before anything is written.
         DocumentReference<Map<String, dynamic>>? lotRef;
+        TradingPurchase? lotBefore;
 
         if (sale.isLotSale) {
           lotRef = _tradingPurchases(farmId).doc(sale.lotDocId);
@@ -3198,13 +3266,19 @@ class SalesService {
 
           final lot = TradingPurchase.fromDoc(lotSnap);
 
-          if (lot.reservedFarmQty < sale.lotQuantity) {
+          final reservedHere = sale.sourceLocation == Sale.sourceSupplier
+              ? lot.reservedSupplierQty
+              : lot.reservedFarmQty;
+
+          if (reservedHere < sale.lotQuantity) {
             throw StateError(
-              'Lot ${sale.lotDocId} has only ${lot.reservedFarmQty} goats '
+              'Lot ${sale.lotDocId} has only $reservedHere goats '
                   'reserved but this sale holds ${sale.lotQuantity}. '
                   'Please check the lot before completing.',
             );
           }
+
+          lotBefore = lot;
 
           if (sale.costPerGoatSnapshot == null) {
             throw StateError(
@@ -3272,6 +3346,7 @@ class SalesService {
             sale: sale,
             saleSnap: saleSnap,
             lotRef: lotRef,
+            lotBefore: lotBefore,
             goatSnaps: goatSnaps,
             costOfGoodsSold: costOfGoodsSold,
             advance: advance,
@@ -3329,6 +3404,12 @@ class SalesService {
 
       var totalMovedGoats = 0;
       var totalLotGoats = 0;
+
+      // Goats handed over straight from the supplier (held there by a
+      // supplier-sourced booking): never farm stock.
+      var supplierLotGoats = 0;
+      final supplierDoneByLot = <String, int>{};
+      final lotsBefore = <String, TradingPurchase>{};
       var totalProfit = 0.0;
 
       for (final plan in plans) {
@@ -3446,17 +3527,35 @@ class SalesService {
         var movedGoats = sale.isLotSale ? sale.lotQuantity : 0;
 
         if (sale.isLotSale) {
-          // The reserved goats are now sold: reserved -> sold, and the
-          // farm stock (mirrored by pendingCount) falls now, not at
-          // booking.
-          transaction.update(plan.lotRef!, {
-            'reservedFarmQty': FieldValue.increment(-sale.lotQuantity),
-            'soldFromFarmQty': FieldValue.increment(sale.lotQuantity),
-            'pendingCount': FieldValue.increment(-sale.lotQuantity),
-            'updatedAt': FieldValue.serverTimestamp(),
-          });
+          if (sale.sourceLocation == Sale.sourceSupplier) {
+            // Held at the supplier: handed over straight from there. These
+            // goats were never farm stock, so totalStock /
+            // pendingRegistrations do not move for them.
+            transaction.update(plan.lotRef!, {
+              'reservedSupplierQty': FieldValue.increment(-sale.lotQuantity),
+              'soldFromSupplierQty': FieldValue.increment(sale.lotQuantity),
+              'updatedAt': FieldValue.serverTimestamp(),
+            });
 
-          totalLotGoats += sale.lotQuantity;
+            supplierLotGoats += sale.lotQuantity;
+            supplierDoneByLot[sale.lotDocId] =
+                (supplierDoneByLot[sale.lotDocId] ?? 0) + sale.lotQuantity;
+            if (plan.lotBefore != null) {
+              lotsBefore[sale.lotDocId] ??= plan.lotBefore!;
+            }
+          } else {
+            // The reserved goats are now sold: reserved -> sold, and the
+            // farm stock (mirrored by pendingCount) falls now, not at
+            // booking.
+            transaction.update(plan.lotRef!, {
+              'reservedFarmQty': FieldValue.increment(-sale.lotQuantity),
+              'soldFromFarmQty': FieldValue.increment(sale.lotQuantity),
+              'pendingCount': FieldValue.increment(-sale.lotQuantity),
+              'updatedAt': FieldValue.serverTimestamp(),
+            });
+
+            totalLotGoats += sale.lotQuantity;
+          }
         }
 
         for (final snap in plan.goatSnaps) {
@@ -3515,7 +3614,8 @@ class SalesService {
         {
           'waitOnDelivery': FieldValue.increment(-totalMovedGoats),
           'totalSold': FieldValue.increment(totalMovedGoats),
-          'totalStock': FieldValue.increment(-totalMovedGoats),
+          'totalStock':
+          FieldValue.increment(-(totalMovedGoats - supplierLotGoats)),
           if (totalLotGoats > 0)
             'pendingRegistrations': FieldValue.increment(-totalLotGoats),
           'totalProfit': FieldValue.increment(
@@ -3523,6 +3623,12 @@ class SalesService {
           ),
         },
         SetOptions(merge: true),
+      );
+      _markSupplierEmptyLotsReceived(
+        transaction,
+        farmId,
+        lotsBefore,
+        supplierDoneByLot,
       );
     }).timeout(_timeout * 2);
 
@@ -4391,6 +4497,9 @@ class _BookingPickupPlan {
   final Sale sale;
   final DocumentSnapshot<Map<String, dynamic>> saleSnap;
   final DocumentReference<Map<String, dynamic>>? lotRef;
+
+  /// The lot as read in this transaction (lot sales only).
+  final TradingPurchase? lotBefore;
   final List<DocumentSnapshot<Map<String, dynamic>>> goatSnaps;
   final double costOfGoodsSold;
   final double bookingAmount;
@@ -4417,6 +4526,7 @@ class _BookingPickupPlan {
     required this.sale,
     required this.saleSnap,
     required this.lotRef,
+    this.lotBefore,
     required this.goatSnaps,
     required this.costOfGoodsSold,
     required this.bookingAmount,
@@ -4437,6 +4547,9 @@ class _WaitPickupPlan {
   final Sale sale;
   final DocumentSnapshot<Map<String, dynamic>> saleSnap;
   final DocumentReference<Map<String, dynamic>>? lotRef;
+
+  /// The lot as read in this transaction (lot sales only).
+  final TradingPurchase? lotBefore;
   final List<DocumentSnapshot<Map<String, dynamic>>> goatSnaps;
   final double costOfGoodsSold;
   final double advance;
@@ -4457,6 +4570,7 @@ class _WaitPickupPlan {
     required this.sale,
     required this.saleSnap,
     required this.lotRef,
+    this.lotBefore,
     required this.goatSnaps,
     required this.costOfGoodsSold,
     required this.advance,

@@ -112,6 +112,7 @@ class _CompleteReceivingScreenState
       totalGoats: p.totalGoats,
       weightAtPurchase: p.totalWeightAtPurchase,
       pricePerKg: p.pricePerKg,
+      fixedPurchaseAmount: p.isFixedPrice ? p.fixedPurchaseAmount : 0,
       weightAfterArrival: _arrivalWeight,
       mortality: _mortality,
       transportCost: _money(_transportController),

@@ -4,6 +4,7 @@ import 'package:flutter/services.dart';
 import '../../../goat_icons.dart';
 import '../../../models/purchase_costing.dart';
 import '../../../models/trading_purchase_draft.dart';
+import '../../../models/trading_purchase_model.dart';
 import '../purchase_goats/purchase_wizard_widgets.dart';
 
 /// Step 2 — Lot Details.
@@ -13,7 +14,8 @@ import '../purchase_goats/purchase_wizard_widgets.dart';
 /// - Male Goats / Female Goats (optional; if entered they must add up to
 ///   Total Goats)
 /// - Total Weight at Purchase
-/// - Price per KG
+/// - Pricing: By KG (Price per KG) or Fixed Price (one agreed amount for
+///   the whole lot) — the same slider the Sell wizard uses
 /// (Payment moved to its own step — see step_lot_payment.dart.)
 ///
 /// Breed has intentionally been removed from the Trading purchase flow.
@@ -23,8 +25,8 @@ import '../purchase_goats/purchase_wizard_widgets.dart';
 /// are bought and counted as a lot, not registered one at a time with a
 /// gender choice each.
 ///
-/// Purchase Amount is always calculated, live, as:
-/// Total Weight × Price per KG
+/// Purchase Amount is calculated live: Total Weight × Price per KG (By KG),
+/// or the agreed amount itself (Fixed Price).
 ///
 /// Every figure on this screen comes from [PurchaseCosting] (via the draft),
 /// so it is the same number that is later shown in the summary and saved.
@@ -47,6 +49,7 @@ class _Step2PurchaseDetailsState extends State<Step2PurchaseDetails> {
   late final TextEditingController _totalGoatsController;
   late final TextEditingController _weightController;
   late final TextEditingController _priceController;
+  late final TextEditingController _fixedPriceController;
   late final TextEditingController _maleGoatsController;
   late final TextEditingController _femaleGoatsController;
 
@@ -78,6 +81,12 @@ class _Step2PurchaseDetailsState extends State<Step2PurchaseDetails> {
           : PurchaseCosting.formatNumber(draft.pricePerKg),
     );
 
+    _fixedPriceController = TextEditingController(
+      text: draft.fixedPurchaseAmount == 0
+          ? ''
+          : PurchaseCosting.formatNumber(draft.fixedPurchaseAmount),
+    );
+
     _maleGoatsController = TextEditingController(
       text: draft.maleGoats == 0 ? '' : draft.maleGoats.toString(),
     );
@@ -92,6 +101,7 @@ class _Step2PurchaseDetailsState extends State<Step2PurchaseDetails> {
     _totalGoatsController.dispose();
     _weightController.dispose();
     _priceController.dispose();
+    _fixedPriceController.dispose();
     _maleGoatsController.dispose();
     _femaleGoatsController.dispose();
     super.dispose();
@@ -109,6 +119,9 @@ class _Step2PurchaseDetailsState extends State<Step2PurchaseDetails> {
 
     draft.pricePerKg = double.tryParse(_priceController.text.trim()) ?? 0;
 
+    draft.fixedPurchaseAmount =
+        double.tryParse(_fixedPriceController.text.trim()) ?? 0;
+
     draft.maleGoats =
         int.tryParse(_maleGoatsController.text.trim()) ?? 0;
 
@@ -116,6 +129,29 @@ class _Step2PurchaseDetailsState extends State<Step2PurchaseDetails> {
         int.tryParse(_femaleGoatsController.text.trim()) ?? 0;
 
     setState(() {});
+  }
+
+  void _setFixedPrice(bool fixed) {
+    final mode = fixed
+        ? TradingPurchase.pricingModeFixed
+        : TradingPurchase.pricingModePerKg;
+
+    if (widget.draft.pricingMode == mode) return;
+
+    // The field that is about to disappear may hold the keyboard.
+    FocusScope.of(context).unfocus();
+
+    setState(() => widget.draft.pricingMode = mode);
+  }
+
+  String? _validatePrice(String? value) {
+    final number = double.tryParse(value?.trim() ?? '');
+
+    if (number == null || number <= 0) {
+      return 'Enter a valid price';
+    }
+
+    return null;
   }
 
   /// Shared validator for both the Male and Female fields: reads straight
@@ -265,25 +301,52 @@ class _Step2PurchaseDetailsState extends State<Step2PurchaseDetails> {
 
               const SizedBox(height: 14),
 
-              wizardField(
-                controller: _priceController,
-                label: 'Price per KG',
-                hint: '0.00',
-                icon: Icons.currency_rupee_rounded,
-                suffix: '/ KG',
-                keyboardType: wizardDecimalKeyboard,
-                inputFormatters: wizardDecimalFormatters(),
-                textInputAction: TextInputAction.done,
-                onChanged: (_) => _recalculate(),
-                validator: (value) {
-                  final number = double.tryParse(value?.trim() ?? '');
+              // How is this lot priced? Only the field for the active
+              // mode is in the tree, so Next only validates the price in
+              // use.
+              PricingModeSlider(
+                isFixed: draft.isFixedPrice,
+                onChanged: _setFixedPrice,
+              ),
 
-                  if (number == null || number <= 0) {
-                    return 'Enter a valid price';
-                  }
+              const SizedBox(height: 14),
 
-                  return null;
-                },
+              AnimatedSize(
+                duration: const Duration(milliseconds: 200),
+                curve: Curves.easeOut,
+                alignment: Alignment.topCenter,
+                child: draft.isFixedPrice
+                    ? KeyedSubtree(
+                  key: const ValueKey('purchase-fixed-price'),
+                  child: wizardField(
+                    controller: _fixedPriceController,
+                    label: 'Fixed Purchase Price',
+                    hint: '0.00',
+                    icon: Icons.currency_rupee_rounded,
+                    suffix: 'total',
+                    helper: 'One agreed price for the whole lot',
+                    keyboardType: wizardDecimalKeyboard,
+                    inputFormatters: wizardDecimalFormatters(),
+                    textInputAction: TextInputAction.done,
+                    onChanged: (_) => _recalculate(),
+                    validator: _validatePrice,
+                  ),
+                )
+                    : KeyedSubtree(
+                  key: const ValueKey('purchase-price-per-kg'),
+                  child: wizardField(
+                    controller: _priceController,
+                    label: 'Price per KG',
+                    hint: '0.00',
+                    icon: Icons.currency_rupee_rounded,
+                    suffix: '/ KG',
+                    keyboardType: wizardDecimalKeyboard,
+                    inputFormatters: wizardDecimalFormatters(),
+                    textInputAction: TextInputAction.done,
+                    onChanged: (_) => _recalculate(),
+                    validator: _validatePrice,
+                  ),
+                ),
               ),
             ],
           ),
@@ -297,7 +360,13 @@ class _Step2PurchaseDetailsState extends State<Step2PurchaseDetails> {
           WizardResultCard(
             icon: Icons.calculate_outlined,
             title: 'Purchase Amount',
-            formula: costing.weightAtPurchase > 0 && costing.pricePerKg > 0
+            formula: draft.isFixedPrice
+                ? (costing.weightAtPurchase > 0 && costing.purchaseAmount > 0
+                ? 'Fixed price · '
+                '${PurchaseCosting.formatNumber(costing.weightAtPurchase)} kg '
+                '≈ ${wizardCurrency(costing.effectivePricePerKg)} / kg'
+                : 'Fixed price for the whole lot')
+                : costing.weightAtPurchase > 0 && costing.pricePerKg > 0
                 ? '${PurchaseCosting.formatNumber(costing.weightAtPurchase)} kg × '
                 '${wizardCurrency(costing.pricePerKg)} / kg'
                 : 'Total Weight × Price per KG',

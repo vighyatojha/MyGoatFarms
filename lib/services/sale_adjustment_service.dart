@@ -475,8 +475,11 @@ class SaleAdjustmentService {
     }
 
     if (sale.isLotSale) {
+      // Held at the supplier or at the farm — release the matching pool.
       transaction.update(_purchaseRef(farmId, sale.lotDocId), {
-        'reservedFarmQty': FieldValue.increment(-sale.lotQuantity),
+        (sale.sourceLocation == Sale.sourceSupplier
+            ? 'reservedSupplierQty'
+            : 'reservedFarmQty'): FieldValue.increment(-sale.lotQuantity),
         'updatedAt': FieldValue.serverTimestamp(),
       });
 

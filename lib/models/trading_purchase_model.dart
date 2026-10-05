@@ -73,9 +73,10 @@ extension LotLocationLabel on LotLocation {
 /// * [registeredCount] (existing field) now means "moved out of the lot
 ///   into individual goat records" — i.e. transferred to Own Palai /
 ///   Customer Palai (or registered under the legacy flow).
-/// * Booking / Wait-for-Delivery sales only ever draw on farm stock;
-///   [reservedFarmQty] holds goats promised to a customer but not yet
-///   handed over.
+/// * Booking / Wait-for-Delivery sales hold goats instead of selling
+///   them: [reservedFarmQty] / [reservedSupplierQty] hold goats promised
+///   to a customer but not yet handed over, at the farm / at the
+///   supplier.
 ///
 /// Supplier payments live in `tradingPurchases/{id}/payments`; receiving
 /// events in `tradingPurchases/{id}/receivings`. [paidAmount] is the sum
@@ -104,6 +105,22 @@ class TradingPurchase {
   final double totalWeightAtPurchase;
   final double pricePerKg;
   final double purchaseAmount;
+
+  /// How the lot was priced: [pricingModePerKg] (Total Weight x Price per
+  /// KG, the default and every lot saved before this existed) or
+  /// [pricingModeFixed] (one agreed amount for the whole lot).
+  final String pricingMode;
+
+  /// The agreed amount for a [pricingModeFixed] lot; 0 for a per-KG lot.
+  /// [pricePerKg] still holds the effective rate (amount / weight) so
+  /// every screen that shows a rate keeps working.
+  final double fixedPurchaseAmount;
+
+  static const String pricingModePerKg = 'perKg';
+  static const String pricingModeFixed = 'fixed';
+
+  bool get isFixedPrice =>
+      pricingMode == pricingModeFixed && fixedPurchaseAmount > 0;
 
   /// Gender split of [totalGoats], captured at purchase time (Step 2 —
   /// Purchase Details) rather than during individual Goat Registration.
@@ -203,6 +220,13 @@ class TradingPurchase {
   /// available for a new sale.
   final int reservedFarmQty;
 
+  /// Supplier goats promised to a customer (Booking / Wait-for-Delivery
+  /// sold straight from the supplier) but not yet handed over. They are
+  /// still counted in [supplierQty] but are not available for a new sale,
+  /// and they are not received at the farm: completing the delivery
+  /// hands them over straight from the supplier.
+  final int reservedSupplierQty;
+
   /// Sum of all supplier payments recorded for this lot.
   final double paidAmount;
 
@@ -246,6 +270,8 @@ class TradingPurchase {
     required this.totalWeightAtPurchase,
     required this.pricePerKg,
     required this.purchaseAmount,
+    this.pricingMode = pricingModePerKg,
+    this.fixedPurchaseAmount = 0,
     this.maleGoats = 0,
     this.femaleGoats = 0,
     this.maleRegistered = 0,
@@ -278,6 +304,7 @@ class TradingPurchase {
     this.soldFromSupplierQty = 0,
     this.soldFromFarmQty = 0,
     this.reservedFarmQty = 0,
+    this.reservedSupplierQty = 0,
     this.paidAmount = 0,
 
     this.dealCancelled = false,
@@ -331,6 +358,16 @@ class TradingPurchase {
     return v < 0 ? 0 : v;
   }
 
+  /// Supplier goats free for a new sale (not reserved for a customer) and
+  /// free to be received at the farm.
+  int get supplierAvailableQty {
+    final v = supplierQty - reservedSupplierQty;
+    return v < 0 ? 0 : v;
+  }
+
+  /// Goats reserved for customers, at the supplier and at the farm.
+  int get reservedQty => reservedSupplierQty + reservedFarmQty;
+
   /// Goats at the farm still owned by the lot (includes reserved ones).
   int get farmQty {
     final v = receivedAliveQty - soldFromFarmQty - registeredCount;
@@ -366,7 +403,7 @@ class TradingPurchase {
   }
 
   /// Goats that can be sold right now, from either location.
-  int get availableForSaleQty => supplierQty + farmAvailableQty;
+  int get availableForSaleQty => supplierAvailableQty + farmAvailableQty;
 
   bool get isActive => !dealCancelled && remainingQty > 0;
 
@@ -405,11 +442,13 @@ class TradingPurchase {
           receivedTotalQty == 0 &&
           soldQty == 0 &&
           registeredCount == 0 &&
-          reservedFarmQty == 0;
+          reservedFarmQty == 0 &&
+          reservedSupplierQty == 0;
 
   /// Fewest goats the lot can be edited down to: the goats that already
   /// left the supplier (sold from it, or received at the farm).
-  int get minEditableTotalGoats => soldFromSupplierQty + receivedTotalQty;
+  int get minEditableTotalGoats =>
+      soldFromSupplierQty + receivedTotalQty + reservedSupplierQty;
 
   // Weights ---------------------------------------------------------------
 
@@ -432,6 +471,7 @@ class TradingPurchase {
     totalGoats: totalGoats,
     weightAtPurchase: totalWeightAtPurchase,
     pricePerKg: pricePerKg,
+    fixedPurchaseAmount: isFixedPrice ? fixedPurchaseAmount : 0,
     weightAfterArrival: totalWeightAfterArrival ?? 0,
     mortality: mortality,
     transportCost: transportCost,
@@ -547,6 +587,13 @@ class TradingPurchase {
       pricePerKg: numFrom('pricePerKg'),
       purchaseAmount: numFrom('purchaseAmount'),
 
+      // Absent on lots saved before Fixed Price existed -> By KG.
+      pricingMode:
+      (data['pricingMode'] ?? '').toString().trim() == pricingModeFixed
+          ? pricingModeFixed
+          : pricingModePerKg,
+      fixedPurchaseAmount: numFrom('fixedPurchaseAmount'),
+
       // Absent on purchases saved before the gender split existed.
       maleGoats: intFrom('maleGoats'),
       femaleGoats: intFrom('femaleGoats'),
@@ -592,6 +639,7 @@ class TradingPurchase {
       soldFromSupplierQty: intFrom('soldFromSupplierQty'),
       soldFromFarmQty: intFrom('soldFromFarmQty'),
       reservedFarmQty: intFrom('reservedFarmQty'),
+      reservedSupplierQty: intFrom('reservedSupplierQty'),
       paidAmount: numFrom('paidAmount'),
 
       dealCancelled: data['dealCancelled'] == true,
@@ -623,6 +671,8 @@ class TradingPurchase {
       'totalWeightAtPurchase': totalWeightAtPurchase,
       'pricePerKg': pricePerKg,
       'purchaseAmount': purchaseAmount,
+      'pricingMode': isFixedPrice ? pricingModeFixed : pricingModePerKg,
+      'fixedPurchaseAmount': isFixedPrice ? fixedPurchaseAmount : 0,
       'maleGoats': maleGoats,
       'femaleGoats': femaleGoats,
       'maleRegistered': maleRegistered,
@@ -654,6 +704,7 @@ class TradingPurchase {
       'soldFromSupplierQty': soldFromSupplierQty,
       'soldFromFarmQty': soldFromFarmQty,
       'reservedFarmQty': reservedFarmQty,
+      'reservedSupplierQty': reservedSupplierQty,
       'paidAmount': paidAmount,
     };
 

@@ -203,8 +203,8 @@ class _LotTile extends StatelessWidget {
               const SizedBox(height: 10),
               Row(
                 children: [
-                  if (lot.supplierQty > 0)
-                    _pill('At Supplier', lot.supplierQty),
+                  if (lot.supplierAvailableQty > 0)
+                    _pill('At Supplier', lot.supplierAvailableQty),
                   if (lot.farmAvailableQty > 0)
                     _pill('At Farm', lot.farmAvailableQty),
                 ],

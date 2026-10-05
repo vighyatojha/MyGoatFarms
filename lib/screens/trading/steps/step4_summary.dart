@@ -123,7 +123,9 @@ class Step4SummaryState extends State<Step4Summary> {
         // Purchase
         totalGoats: draft.totalGoats,
         totalWeightAtPurchase: draft.totalWeightAtPurchase,
-        pricePerKg: draft.pricePerKg,
+        pricePerKg: draft.effectivePricePerKg,
+        pricingMode: draft.pricingMode,
+        fixedPurchaseAmount: draft.isFixedPrice ? draft.fixedPurchaseAmount : 0,
         maleGoats: draft.maleGoats,
         femaleGoats: draft.femaleGoats,
 
@@ -322,7 +324,9 @@ class Step4SummaryState extends State<Step4Summary> {
           children: [
             WizardComputedRow(
               label:
-              'Purchase Amount\n${PurchaseCosting.formatNumber(c.weightAtPurchase)} kg × ${wizardCurrency(c.pricePerKg)}',
+              c.isFixedPrice
+                  ? 'Purchase Amount (Fixed Price)\n${PurchaseCosting.formatNumber(c.weightAtPurchase)} kg ≈ ${wizardCurrency(c.effectivePricePerKg)} / kg'
+                  : 'Purchase Amount\n${PurchaseCosting.formatNumber(c.weightAtPurchase)} kg × ${wizardCurrency(c.pricePerKg)}',
               value: wizardCurrency(c.purchaseAmount),
             ),
             if (completed) ...[
@@ -367,7 +371,7 @@ class Step4SummaryState extends State<Step4Summary> {
                 const SizedBox(height: 6),
                 WizardNote(
                   'Each kg costs ${wizardCurrency(c.costIncreasePerKg)} more '
-                      'than the ${wizardCurrency(c.pricePerKg)} / kg paid to '
+                      'than the ${wizardCurrency(c.effectivePricePerKg)} / kg paid to '
                       'the seller, after transport and weight loss.',
                 ),
               ],

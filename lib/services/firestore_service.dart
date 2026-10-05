@@ -433,13 +433,17 @@ class FirestoreService {
       return false;
     }
 
-    final doc = await _db
-        .collection('mobileIndex')
-        .doc(normalizedMobile)
-        .get()
+    // Runs before sign-up (not signed in), so it goes through the
+    // `isMobileRegistered` Cloud Function instead of reading mobileIndex
+    // directly — the security rules no longer let signed-out users read
+    // mobileIndex (it reveals farm ids).
+    final result = await FirebaseFunctions.instance
+        .httpsCallable('isMobileRegistered')
+        .call({'mobileNumber': normalizedMobile})
         .timeout(timeout);
 
-    return doc.exists;
+    final data = result.data;
+    return data is Map && data['registered'] == true;
   }
 
   Stream<List<Map<String, dynamic>>>
@@ -1325,28 +1329,18 @@ class FirestoreService {
     final mobile = mobileNumber.trim();
     if (mobile.isEmpty) return null;
 
-    final ownerQuery = await _farms
-        .where('mobileNumber', isEqualTo: mobile)
-        .limit(1)
-        .get()
+    // Runs before sign-in, so it goes through the `resolveLoginEmail`
+    // Cloud Function (owners first, then partners — same order as
+    // before). The old direct queries needed public `list` security
+    // rules that let anyone page through every farm and partner
+    // document; the function returns only the email.
+    final result = await FirebaseFunctions.instance
+        .httpsCallable('resolveLoginEmail')
+        .call({'mobileNumber': mobile})
         .timeout(timeout);
-    if (ownerQuery.docs.isNotEmpty) {
-      final email =
-      (ownerQuery.docs.first.data()['email'] as String?)?.trim();
-      if (email != null && email.isNotEmpty) return email;
-    }
 
-    // Needs the partners.mobileNumber COLLECTION_GROUP index declared in
-    // firestore.indexes.json (fieldOverrides).
-    final partnerQuery = await FirebaseFirestore.instance
-        .collectionGroup('partners')
-        .where('mobileNumber', isEqualTo: mobile)
-        .limit(1)
-        .get()
-        .timeout(timeout);
-    if (partnerQuery.docs.isEmpty) return null;
-    final email =
-    (partnerQuery.docs.first.data()['email'] as String?)?.trim();
+    final data = result.data;
+    final email = data is Map ? (data['email'] as String?)?.trim() : null;
     return (email == null || email.isEmpty) ? null : email;
   }
 

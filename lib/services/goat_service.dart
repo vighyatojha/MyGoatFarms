@@ -193,6 +193,22 @@ class GoatService {
     return snapshot.count ?? 0;
   }
 
+  /// Registered goats the farm keeps in Own Palai (still its stock).
+  Future<int> ownPalaiGoatCount(
+      String farmId,
+      ) async {
+    final snapshot = await _goats(farmId)
+        .where(
+      'currentStatus',
+      isEqualTo: Goat.statusOwnPalai,
+    )
+        .count()
+        .get()
+        .timeout(_timeout);
+
+    return snapshot.count ?? 0;
+  }
+
   // -----------------------------------------------------------------------
   // OWN PALAI
   // -----------------------------------------------------------------------

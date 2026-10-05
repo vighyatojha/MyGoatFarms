@@ -178,15 +178,19 @@ class Step5DeliveryOptionsState extends State<Step5DeliveryOptions> {
   bool get _fromSupplier =>
       _isLot && widget.draft.sourceLocation == Sale.sourceSupplier;
 
-  bool get _offersHolding => !_fromSupplier;
+  /// Booking / Wait for Delivery: offered for every source. Goats held
+  /// at the supplier are reserved there (reservedSupplierQty) and handed
+  /// over straight from the supplier when the delivery is completed.
+  bool get _offersHolding => true;
 
   bool get _offersPalai => !_isLot || widget.palaiOnly;
 
-  /// A lot sale at the farm shows a Transfer to Palai card that hands
-  /// over to the lot's own Palai transfer wizard.
+  /// A lot sale shows a Transfer to Palai card that hands over to the
+  /// lot's own Palai transfer wizard. Goats still at the supplier are
+  /// received at the farm first (the lot wizard opens Receive Lot), since
+  /// Palai needs each goat registered.
   bool get _showsLotPalaiCard =>
       _isLot &&
-          !_fromSupplier &&
           !widget.palaiOnly &&
           widget.onTransferToPalai != null;
 
@@ -218,14 +222,6 @@ class Step5DeliveryOptionsState extends State<Step5DeliveryOptions> {
     if (!_isLot) return;
 
     final draft = widget.draft;
-
-    if (_fromSupplier) {
-      if (draft.deliveryType != Sale.deliveryTypeDeliverNow) {
-        draft.onCredit = false;
-        draft.deliveryType = Sale.deliveryTypeDeliverNow;
-      }
-      return;
-    }
 
     if (draft.deliveryType.isNotEmpty &&
         !_isAllowed(draft.deliveryType)) {
@@ -318,10 +314,7 @@ class Step5DeliveryOptionsState extends State<Step5DeliveryOptions> {
     if (!_isAllowed(draft.deliveryType)) {
       wizardSnack(
         context,
-        _fromSupplier
-            ? 'Goats still at the supplier can only be sold with '
-            'Deliver Now.'
-            : 'This delivery option is not available for a lot sale.',
+        'This delivery option is not available for a lot sale.',
         error: true,
       );
       return false;
@@ -413,14 +406,6 @@ class Step5DeliveryOptionsState extends State<Step5DeliveryOptions> {
   Widget build(BuildContext context) {
     final draft = widget.draft;
 
-    // The person may have gone back and switched the lot source to the
-    // supplier — keep the draft on its only valid option.
-    if (_fromSupplier &&
-        draft.deliveryType != Sale.deliveryTypeDeliverNow) {
-      draft.onCredit = false;
-      draft.deliveryType = Sale.deliveryTypeDeliverNow;
-    }
-
     return ListView(
       keyboardDismissBehavior:
       ScrollViewKeyboardDismissBehavior.onDrag,
@@ -455,21 +440,18 @@ class Step5DeliveryOptionsState extends State<Step5DeliveryOptions> {
           ),
           if (_fromSupplier) ...[
             const SizedBox(height: 6),
-            // Every option stays on screen, so nothing looks "removed":
-            // the ones that need the goats at the farm are greyed out
-            // with the reason.
             Container(
               width: double.infinity,
               padding: const EdgeInsets.all(10),
               decoration: BoxDecoration(
-                color: AppColors.warning.withValues(alpha: 0.12),
+                color: AppColors.info.withValues(alpha: 0.10),
                 borderRadius: BorderRadius.circular(10),
               ),
               child: Text(
-                'These goats are still at the supplier, so they can only be '
-                    'handed over now (Deliver Now). Receive the lot first '
-                    '(Lot → Receive Lot) to hold, book or transfer them, or '
-                    'pick "At farm" as the source if some have arrived.',
+                'These goats are still at the supplier. Booking and Wait '
+                    'for Delivery keep them reserved there and hand them '
+                    'over straight from the supplier. Transfer to Palai / '
+                    'Own Palai first receives them at the farm.',
                 style: AppTheme.body(size: 11.5, color: AppColors.textDark),
               ),
             ),
@@ -489,9 +471,9 @@ class Step5DeliveryOptionsState extends State<Step5DeliveryOptions> {
           const SizedBox(height: 10),
           _BranchCard(
             title: 'Booking / Holding',
-            subtitle: _offersHolding
-                ? 'Held here after payment, picked up later'
-                : 'Needs the goats at the farm',
+            subtitle: _fromSupplier
+                ? 'Reserved at the supplier, handed over later'
+                : 'Held here after payment, picked up later',
             icon: Icons.bookmark_outline_rounded,
             enabled: _offersHolding,
             selected:
@@ -502,9 +484,7 @@ class Step5DeliveryOptionsState extends State<Step5DeliveryOptions> {
           const SizedBox(height: 10),
           _BranchCard(
             title: 'Wait for Delivery',
-            subtitle: _offersHolding
-                ? 'Booked now at today\'s rate, weighed at pickup'
-                : 'Needs the goats at the farm',
+            subtitle: 'Booked now at today\'s rate, weighed at pickup',
             icon: Icons.schedule_outlined,
             enabled: _offersHolding,
             selected: draft.deliveryType ==
@@ -519,7 +499,7 @@ class Step5DeliveryOptionsState extends State<Step5DeliveryOptions> {
             _BranchCard(
               title: 'Transfer to Palai',
               subtitle: _isLot && _fromSupplier
-                  ? 'Needs the goats at the farm'
+                  ? 'Receive at the farm first, then board'
                   : 'Customer keeps boarding ${_theGoats(draft)} here',
               icon: Icons.holiday_village_outlined,
               enabled: _offersPalai || _showsLotPalaiCard,
@@ -537,10 +517,9 @@ class Step5DeliveryOptionsState extends State<Step5DeliveryOptions> {
             _BranchCard(
               title: 'Transfer to Own Palai',
               subtitle: _fromSupplier
-                  ? 'Needs the goats at the farm'
+                  ? 'Receive at the farm first, then keep'
                   : 'The farm keeps ${_theGoats(draft)} as its own',
               icon: Icons.home_work_outlined,
-              enabled: !_fromSupplier,
               onTap: widget.onTransferToOwnPalai,
             ),
           ],

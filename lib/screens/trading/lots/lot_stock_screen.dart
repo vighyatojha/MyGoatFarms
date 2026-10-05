@@ -1,4 +1,3 @@
-
 import 'package:flutter/material.dart';
 
 import '../../../app_theme.dart';
@@ -106,7 +105,7 @@ class _LotStockScreenState extends State<LotStockScreen> {
   Widget _totals(List<TradingPurchase> lots) {
     final supplier = lots.fold<int>(0, (s, l) => s + l.supplierQty);
     final farm = lots.fold<int>(0, (s, l) => s + l.farmQty);
-    final reserved = lots.fold<int>(0, (s, l) => s + l.reservedFarmQty);
+    final reserved = lots.fold<int>(0, (s, l) => s + l.reservedQty);
     final available = lots.fold<int>(0, (s, l) => s + l.availableForSaleQty);
 
     return Container(
@@ -205,7 +204,7 @@ class _LotStockScreenState extends State<LotStockScreen> {
                 children: [
                   _stat('At Supplier', lot.supplierQty),
                   _stat('At Farm', lot.farmQty),
-                  _stat('Reserved', lot.reservedFarmQty),
+                  _stat('Reserved', lot.reservedQty),
                   _stat('Available', lot.availableForSaleQty, emphasize: true),
                 ],
               ),

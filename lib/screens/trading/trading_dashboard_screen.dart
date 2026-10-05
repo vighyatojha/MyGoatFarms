@@ -5,7 +5,6 @@ import 'package:intl/intl.dart';
 
 import '../../app_theme.dart';
 import '../../goat_icons.dart';
-import '../../models/goat_model.dart';
 import '../../models/lot_sales_summary.dart';
 import '../../models/sale_model.dart';
 import '../../models/trading_lot_overview.dart';
@@ -13,6 +12,7 @@ import '../../models/trading_purchase_model.dart';
 import '../../models/trading_summary_model.dart';
 import '../../services/firestore_service.dart';
 import '../../services/goat_service.dart';
+import '../../services/partner_access_service.dart';
 import '../../services/trading_service.dart';
 import '../../widgets/farm_not_linked_state.dart';
 import '../../widgets/fast_route.dart';
@@ -20,6 +20,7 @@ import 'goat_stock/booking_delivery_customer_list_screen.dart';
 import 'goat_stock/goat_stock_list_screen.dart';
 import 'goat_stock/sold_customer_list_screen.dart';
 import 'goat_stock/wait_delivery_customer_list_screen.dart';
+import 'lots/legacy_conversion_sheet.dart';
 import 'lots/lot_management_screen.dart';
 import 'lots/lot_sales_list_screen.dart';
 import 'lots/lot_stock_screen.dart';
@@ -82,6 +83,9 @@ class _TradingDashboardScreenState extends State<TradingDashboardScreen> {
   // changes (a sale, booking or registration touches it), when the user
   // returns from another screen, and on pull-to-refresh.
   int? _availableCount;
+
+  /// Registered goats in Own Palai — part of Stock.
+  int _ownPalaiCount = 0;
   bool _availableBusy = false;
   bool _availableDirty = false;
   StreamSubscription<TradingSummary>? _summarySignal;
@@ -157,6 +161,8 @@ class _TradingDashboardScreenState extends State<TradingDashboardScreen> {
         if (!mounted || farmId == null) return;
 
         final count = await GoatService.instance.availableGoatCount(farmId);
+        final ownPalai =
+        await GoatService.instance.ownPalaiGoatCount(farmId);
 
         if (!mounted) return;
 
@@ -166,7 +172,10 @@ class _TradingDashboardScreenState extends State<TradingDashboardScreen> {
           continue;
         }
 
-        setState(() => _availableCount = count);
+        setState(() {
+          _availableCount = count;
+          _ownPalaiCount = ownPalai;
+        });
       } while (_availableDirty);
     } catch (_) {
       // Keep showing the last known number.
@@ -294,6 +303,29 @@ class _TradingDashboardScreenState extends State<TradingDashboardScreen> {
 
   /// Lot Management: all purchase lots, receiving, lot selling and
   /// supplier payments live behind this screen.
+  /// Converts older (pre-lot) purchases right from the dashboard — the
+  /// same sheet as the banner in Lot Management. Owner only.
+  Future<void> _openConversion() async {
+    final farmId = _farmId;
+    if (farmId == null) return;
+
+    final converted = await showLegacyConversionSheet(
+      context: context,
+      farmId: farmId,
+    );
+
+    if (converted == true && mounted) {
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          const SnackBar(
+            content: Text('Older purchases are now in Lot Management.'),
+            backgroundColor: AppColors.darkGreen,
+          ),
+        );
+    }
+  }
+
   Future<void> _openLotManagement() {
     final farmId = _farmId;
     if (farmId == null) return Future.value();
@@ -535,25 +567,29 @@ class _TradingDashboardScreenState extends State<TradingDashboardScreen> {
       return const _Pulse(child: _OverviewSkeleton());
     }
 
-    final availableInLots = lotOverview.farmAvailableQty;
+    // Stock = at the farm + at the supplier + Own Palai, i.e. every goat
+    // the farm owns that is not sold or booked:
+    //   at farm     = registered Available goats + free lot goats at farm
+    //   at supplier = free lot goats still at the supplier
+    //   Own Palai   = registered goats the farm keeps in Own Palai
+    final atFarm = _availableCount == null
+        ? null
+        : _availableCount! + lotOverview.farmAvailableQty;
+    final atSupplier = lotOverview.supplierAvailableQty;
+    final ownPalai = _ownPalaiCount;
 
     return Column(
       children: [
         _pair(
           _StatCard(
             icon: GoatIcons.paw,
-            label: 'Available Stock',
-            // Individually-registered goats marked Available, plus goats
-            // sitting free inside a lot at the farm (not yet transferred,
-            // not reserved) — the badge breaks out the lot half so the
-            // number doesn't look unexplained next to Goat Stock, which
-            // only ever shows the individually-registered half.
-            value: _availableCount == null
-                ? '—'
-                : '${_availableCount! + availableInLots}',
-            badge: availableInLots > 0 ? '$availableInLots in lots' : null,
+            label: 'Stock',
+            value: atFarm == null ? '—' : '${atFarm + atSupplier + ownPalai}',
+            footnote: atFarm == null
+                ? null
+                : 'Farm $atFarm · Supplier $atSupplier · Palai $ownPalai',
             color: AppColors.primaryGreen,
-            onTap: () => _openGoatStock(statusFilter: Goat.statusAvailable),
+            onTap: () => _openGoatStock(),
           ),
           _StatCard(
             icon: Icons.event_available_outlined,
@@ -563,7 +599,7 @@ class _TradingDashboardScreenState extends State<TradingDashboardScreen> {
             badge: s.booking > 0 ? 'Deposit paid' : null,
             onTap: _openBooking,
           ),
-          height: 116,
+          height: 128,
         ),
         const SizedBox(height: 10),
         _pair(
@@ -767,6 +803,15 @@ class _TradingDashboardScreenState extends State<TradingDashboardScreen> {
                 trailing: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
+                    if (!PartnerAccessService.instance.isPartner) ...[
+                      _CompactActionButton(
+                        label: 'Convert',
+                        icon: Icons.swap_horiz_rounded,
+                        color: AppColors.warning,
+                        onTap: _openConversion,
+                      ),
+                      const SizedBox(width: 6),
+                    ],
                     _Pill(
                       '${lotOverview.unconvertedPurchases} to convert',
                       AppColors.warning,
@@ -1472,6 +1517,7 @@ class _StatCard extends StatelessWidget {
     required this.color,
     required this.onTap,
     this.badge,
+    this.footnote,
   });
 
   final IconData icon;
@@ -1480,6 +1526,9 @@ class _StatCard extends StatelessWidget {
   final Color color;
   final VoidCallback onTap;
   final String? badge;
+
+  /// Small line under the value (e.g. the Stock breakdown).
+  final String? footnote;
 
   @override
   Widget build(BuildContext context) {
@@ -1528,6 +1577,15 @@ class _StatCard extends StatelessWidget {
                 ],
               ],
             ),
+            if (footnote != null) ...[
+              const SizedBox(height: 2),
+              Text(
+                footnote!,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: AppTheme.body(size: 9.5),
+              ),
+            ],
           ],
         ),
       ),
@@ -1803,7 +1861,7 @@ class _OverviewSkeleton extends StatelessWidget {
   Widget build(BuildContext context) {
     return Column(
       children: [
-        _pair(const _SkeletonCard(), const _SkeletonCard(), height: 116),
+        _pair(const _SkeletonCard(), const _SkeletonCard(), height: 128),
         const SizedBox(height: 10),
         _pair(const _SkeletonCard(), const _SkeletonCard(), height: 116),
         const SizedBox(height: 10),

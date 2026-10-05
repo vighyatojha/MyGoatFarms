@@ -12,10 +12,8 @@ import '../purchase_goats/purchase_wizard_widgets.dart';
 /// Step 2 — where the goats are coming from (when the lot has stock in
 /// both places) and how many, plus the total selling weight.
 ///
-/// A lot still at the supplier can only be sold Deliver Now — Booking and
-/// Wait for Delivery need goats that have actually arrived, so those
-/// options are for farm stock only and are offered on the next step
-/// (delivery options), not here.
+/// Every delivery option is offered on the last step for both sources;
+/// goats booked at the supplier are reserved there until handed over.
 class StepSourceAndQuantity extends StatefulWidget {
   final GlobalKey<FormState> formKey;
   final SaleDraft draft;
@@ -45,7 +43,7 @@ class _StepSourceAndQuantityState extends State<StepSourceAndQuantity> {
     // Safety net: never start with an empty / impossible source.
     final lot = widget.lot;
     final validSource = draft.sourceLocation == Sale.sourceSupplier
-        ? lot.supplierQty > 0
+        ? lot.supplierAvailableQty > 0
         : draft.sourceLocation == Sale.sourceFarm && lot.farmAvailableQty > 0;
 
     if (!validSource) {
@@ -75,7 +73,7 @@ class _StepSourceAndQuantityState extends State<StepSourceAndQuantity> {
 
   int get _available {
     final lot = widget.lot;
-    return _fromSupplier ? lot.supplierQty : lot.farmAvailableQty;
+    return _fromSupplier ? lot.supplierAvailableQty : lot.farmAvailableQty;
   }
 
   void _setSource(String source) {
@@ -91,7 +89,8 @@ class _StepSourceAndQuantityState extends State<StepSourceAndQuantity> {
     final draft = widget.draft;
     final lot = widget.lot;
 
-    final bothLocations = lot.supplierQty > 0 && lot.farmAvailableQty > 0;
+    final bothLocations =
+        lot.supplierAvailableQty > 0 && lot.farmAvailableQty > 0;
 
     return Form(
       key: widget.formKey,
@@ -111,7 +110,7 @@ class _StepSourceAndQuantityState extends State<StepSourceAndQuantity> {
                     Expanded(
                       child: _SourceOption(
                         title: 'At Supplier',
-                        subtitle: '${lot.supplierQty} available',
+                        subtitle: '${lot.supplierAvailableQty} available',
                         icon: Icons.local_shipping_outlined,
                         selected: _fromSupplier,
                         onTap: () => _setSource(Sale.sourceSupplier),
@@ -136,11 +135,11 @@ class _StepSourceAndQuantityState extends State<StepSourceAndQuantity> {
                   value: _fromSupplier ? 'At Supplier' : 'At Farm',
                 ),
 
-              if (_fromSupplier)
-                const WizardNote(
-                  'Goats still at the supplier can only be sold Deliver '
-                      'Now — Booking and Wait for Delivery need goats '
-                      'that have arrived at the farm.',
+              if (_fromSupplier && lot.reservedSupplierQty > 0)
+                WizardNote(
+                  '${lot.reservedSupplierQty} more at the supplier '
+                      '${lot.reservedSupplierQty == 1 ? 'is' : 'are'} '
+                      'already booked for customers.',
                 ),
 
               const SizedBox(height: 14),

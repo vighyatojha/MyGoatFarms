@@ -950,6 +950,18 @@ class _GoatStockListScreenState
     return goats.where((goat) => _matchesTab(goat, status)).length;
   }
 
+  /// Stock = at the farm + at the supplier + Own Palai: registered goats
+  /// that are Available or in Own Palai, plus lot goats at the farm and at
+  /// the supplier that are not booked for a customer. Same figure as the
+  /// dashboard's Stock card.
+  int _stockCount(List<Goat> goats) {
+    return goats.where(_inAvailableStock).length +
+        _lots.fold<int>(
+          0,
+              (sum, l) => sum + l.farmAvailableQty + l.supplierAvailableQty,
+        );
+  }
+
   List<Goat> _visibleGoats(List<Goat> allGoats) {
     final status = _statusFilter;
 
@@ -1162,12 +1174,13 @@ class _GoatStockListScreenState
           children: [
             Expanded(
               child: _summaryItem(
-                icon: Icons.check_circle_outline_rounded,
-                label: 'Available',
-                value: _count(allGoats, Goat.statusAvailable,
-                ),
+                icon: Icons.inventory_2_outlined,
+                label: 'Stock',
+                value: _stockCount(allGoats),
                 color: AppColors.success,
-                status: Goat.statusAvailable,
+                // Opens "All" — the tab that lists farm, supplier and Own
+                // Palai goats together.
+                status: null,
               ),
             ),
 
@@ -2411,7 +2424,10 @@ class _LotStockCard extends StatelessWidget {
                         if (atSupplier > 0)
                           _chip(
                             Icons.local_shipping_outlined,
-                            '$atSupplier at supplier',
+                            lot.reservedSupplierQty > 0
+                                ? '$atSupplier at supplier '
+                                '(${lot.reservedSupplierQty} booked)'
+                                : '$atSupplier at supplier',
                             _statusColor(_kLotSupplier),
                           ),
                         if (atFarm > 0)

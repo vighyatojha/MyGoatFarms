@@ -941,3 +941,155 @@ class WizardStepIndicator extends StatelessWidget {
     );
   }
 }
+
+// ============================================================================
+// PRICING MODE SLIDER
+// ============================================================================
+
+/// Shared by Sell (Sale Details) and Purchase (Lot Details, Edit Lot).
+///
+/// Two-option sliding switch: "By KG" | "Fixed Price".
+///
+/// The green thumb slides between the halves. It can be changed by
+/// tapping either side or by dragging across the track.
+class PricingModeSlider extends StatelessWidget {
+  final bool isFixed;
+  final ValueChanged<bool> onChanged;
+
+  const PricingModeSlider({
+    super.key,
+    required this.isFixed,
+    required this.onChanged,
+  });
+
+  static const double _height = 46;
+  static const double _pad = 4;
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final width = constraints.maxWidth;
+
+        return GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          // Dragging the thumb past the middle of the track flips it.
+          onHorizontalDragUpdate: (details) {
+            final fixed = details.localPosition.dx > width / 2;
+
+            if (fixed != isFixed) onChanged(fixed);
+          },
+          child: Container(
+            height: _height,
+            padding: const EdgeInsets.all(_pad),
+            decoration: BoxDecoration(
+              color: AppColors.paleGreen,
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(
+                color: AppColors.primaryGreen.withValues(alpha: 0.18),
+              ),
+            ),
+            child: Stack(
+              children: [
+                // The sliding thumb.
+                AnimatedAlign(
+                  duration: const Duration(milliseconds: 220),
+                  curve: Curves.easeOutCubic,
+                  alignment: isFixed
+                      ? Alignment.centerRight
+                      : Alignment.centerLeft,
+                  child: FractionallySizedBox(
+                    widthFactor: 0.5,
+                    heightFactor: 1,
+                    child: DecoratedBox(
+                      decoration: BoxDecoration(
+                        color: AppColors.primaryGreen,
+                        borderRadius: BorderRadius.circular(11),
+                        boxShadow: [
+                          BoxShadow(
+                            color: AppColors.primaryGreen
+                                .withValues(alpha: 0.30),
+                            blurRadius: 8,
+                            offset: const Offset(0, 2),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+
+                // The two labels, on top of the thumb.
+                Row(
+                  children: [
+                    Expanded(
+                      child: _PricingModeOption(
+                        label: 'By KG',
+                        icon: Icons.scale_outlined,
+                        selected: !isFixed,
+                        onTap: () => onChanged(false),
+                      ),
+                    ),
+                    Expanded(
+                      child: _PricingModeOption(
+                        label: 'Fixed Price',
+                        icon: Icons.currency_rupee_rounded,
+                        selected: isFixed,
+                        onTap: () => onChanged(true),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _PricingModeOption extends StatelessWidget {
+  final String label;
+  final IconData icon;
+  final bool selected;
+  final VoidCallback onTap;
+
+  const _PricingModeOption({
+    required this.label,
+    required this.icon,
+    required this.selected,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final color = selected ? Colors.white : AppColors.textGrey;
+
+    return Semantics(
+      button: true,
+      selected: selected,
+      label: label,
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: onTap,
+        child: Center(
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(icon, size: 16, color: color),
+              const SizedBox(width: 6),
+              Flexible(
+                child: Text(
+                  label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: AppTheme.heading(size: 12, color: color),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}

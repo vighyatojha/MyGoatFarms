@@ -10,6 +10,7 @@ import 'dart:math' as math;
 /// Formulas (from the Trading flow PDF):
 ///
 ///   Purchase Amount       = Weight at Purchase x Price per KG
+///                           (or the agreed amount, for a Fixed Price lot)
 ///   Total Expenses        = Transport + Loading + Unloading + Other
 ///   Grand Total           = Purchase Amount + Total Expenses
 ///   Weight Loss           = Weight at Purchase - Weight After Arrival
@@ -29,6 +30,11 @@ class PurchaseCosting {
   final double weightAtPurchase;
   final double pricePerKg;
 
+  /// Fixed Price lots: the one agreed amount for the whole lot. When it is
+  /// above 0 it IS the purchase amount and [pricePerKg] is only the
+  /// effective rate shown to the person. 0 = priced By KG.
+  final double fixedPurchaseAmount;
+
   /// 0 means "not received yet".
   final double weightAfterArrival;
   final int mortality;
@@ -42,6 +48,7 @@ class PurchaseCosting {
     this.totalGoats = 0,
     this.weightAtPurchase = 0,
     this.pricePerKg = 0,
+    this.fixedPurchaseAmount = 0,
     this.weightAfterArrival = 0,
     this.mortality = 0,
     this.transportCost = 0,
@@ -88,8 +95,21 @@ class PurchaseCosting {
   // PURCHASE
   // ---------------------------------------------------------------------------
 
-  /// Weight at Purchase x Price per KG. Never entered by hand.
-  double get purchaseAmount => round2(weightAtPurchase * pricePerKg);
+  bool get isFixedPrice => fixedPurchaseAmount > 0;
+
+  /// By KG: Weight at Purchase x Price per KG.
+  /// Fixed Price: the agreed amount, as typed.
+  double get purchaseAmount => isFixedPrice
+      ? round2(fixedPurchaseAmount)
+      : round2(weightAtPurchase * pricePerKg);
+
+  /// Price per KG actually paid: the rate typed (By KG), or the fixed
+  /// amount spread over the purchase weight (Fixed Price).
+  double get effectivePricePerKg => isFixedPrice
+      ? (weightAtPurchase > 0
+      ? round2(fixedPurchaseAmount / weightAtPurchase)
+      : 0)
+      : pricePerKg;
 
   /// Purchase price of one goat on average, before any expenses.
   double get purchaseAmountPerGoat =>
@@ -151,7 +171,7 @@ class PurchaseCosting {
 
   /// How much dearer each kg is than the rate paid to the seller.
   double get costIncreasePerKg => hasArrival
-      ? round2(effectiveCostPerKg - pricePerKg)
+      ? round2(effectiveCostPerKg - effectivePricePerKg)
       : 0;
 
   /// Grand Total / goats that actually arrived alive.
@@ -178,6 +198,7 @@ class PurchaseCosting {
       totalGoats: totalGoats,
       weightAtPurchase: weightAtPurchase,
       pricePerKg: pricePerKg,
+      fixedPurchaseAmount: fixedPurchaseAmount,
     );
   }
 }

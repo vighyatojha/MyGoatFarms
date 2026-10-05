@@ -289,7 +289,9 @@ class LotSalesCards extends StatelessWidget {
               if (sale.saleDate != null) wizardDate(sale.saleDate!),
               '${sale.lotQuantity} goat${sale.lotQuantity == 1 ? '' : 's'}',
               '${PurchaseCosting.formatNumber(weight)} kg',
-              if (weight > 0)
+              if (sale.isFixedPrice)
+                'Fixed ${wizardCurrency(sale.fixedSalePrice ?? sale.totalSaleAmount)}'
+              else if (weight > 0)
                 '${wizardCurrency(LotSalesSummary.effectivePricePerKg(sale))}'
                     '/kg',
             ].join('  •  '),

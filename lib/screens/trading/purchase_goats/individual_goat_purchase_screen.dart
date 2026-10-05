@@ -7,12 +7,14 @@ import 'package:intl/intl.dart';
 import '../../../app_theme.dart';
 import '../../../goat_icons.dart';
 import '../../../models/goat_model.dart';
+import '../../../models/partner_permission_keys.dart';
 import '../../../models/trading_purchase_model.dart';
 import '../../../services/firestore_service.dart';
 import '../../../services/goat_service.dart';
 import '../../../services/image_service.dart';
 import '../../../services/trading_service.dart';
 import '../../../widgets/image_source_sheet.dart';
+import '../../../widgets/permission_gate.dart';
 import '../../../widgets/photo_upload_circle.dart';
 import '../purchase_goats/purchase_wizard_widgets.dart';
 
@@ -70,8 +72,11 @@ class _IndividualGoatPurchaseScreenState
   final _mobileController = TextEditingController();
   final _marketController = TextEditingController();
 
-  // Price
+  // Price — By KG (price per kg) or Fixed Price (one agreed amount for
+  // the goat), same slider as the Purchase Lot and Sell screens.
   final _priceController = TextEditingController();
+  final _fixedPriceController = TextEditingController();
+  bool _isFixed = false;
 
   String _healthStatus = Goat.healthStatusValues.first;
   String _gender = Goat.genderValues.first;
@@ -103,6 +108,7 @@ class _IndividualGoatPurchaseScreenState
     _mobileController.dispose();
     _marketController.dispose();
     _priceController.dispose();
+    _fixedPriceController.dispose();
     super.dispose();
   }
 
@@ -123,7 +129,35 @@ class _IndividualGoatPurchaseScreenState
   double get _pricePerKg =>
       double.tryParse(_priceController.text.trim()) ?? 0;
 
-  double get _purchaseAmount => _weight * _pricePerKg;
+  double get _fixedPrice =>
+      double.tryParse(_fixedPriceController.text.trim()) ?? 0;
+
+  /// By KG: weight x price per kg. Fixed Price: the agreed amount.
+  double get _purchaseAmount => _isFixed ? _fixedPrice : _weight * _pricePerKg;
+
+  /// Rate shown for the goat: typed (By KG) or worked out (Fixed Price).
+  double get _effectivePricePerKg => _isFixed
+      ? (_weight > 0 ? _fixedPrice / _weight : 0)
+      : _pricePerKg;
+
+  void _setFixedPrice(bool fixed) {
+    if (_locked || fixed == _isFixed) return;
+
+    // The field that is about to disappear may hold the keyboard.
+    FocusScope.of(context).unfocus();
+
+    setState(() => _isFixed = fixed);
+  }
+
+  String? _validatePrice(String? value) {
+    final number = double.tryParse((value ?? '').trim());
+
+    if (number == null || number <= 0) {
+      return 'Enter a valid price';
+    }
+
+    return null;
+  }
 
   String _currency(num value) {
     return NumberFormat.currency(
@@ -255,7 +289,11 @@ class _IndividualGoatPurchaseScreenState
         purchaseDate: _purchaseDate,
         totalGoats: 1,
         totalWeightAtPurchase: _weight,
-        pricePerKg: _pricePerKg,
+        pricePerKg: _isFixed ? 0 : _pricePerKg,
+        pricingMode: _isFixed
+            ? TradingPurchase.pricingModeFixed
+            : TradingPurchase.pricingModePerKg,
+        fixedPurchaseAmount: _isFixed ? _fixedPrice : 0,
         paymentMethod: _paymentMethod,
 
         // The goat is bought and brought to the farm in one go, so
@@ -321,8 +359,19 @@ class _IndividualGoatPurchaseScreenState
   // BUILD
   // ===========================================================================
 
+  // Same permission as the Purchase Lot wizard. The security rules also
+  // refuse purchase writes from partners without a Trading permission,
+  // so without this gate such a partner would fill the form and only
+  // then get a "blocked" error.
   @override
   Widget build(BuildContext context) {
+    return PermissionGate(
+      permission: PartnerPermissionKeys.tradingPurchaseCreate,
+      child: _buildScreen(context),
+    );
+  }
+
+  Widget _buildScreen(BuildContext context) {
     return Scaffold(
       backgroundColor: AppColors.paleGreen,
       appBar: AppBar(
@@ -745,39 +794,68 @@ class _IndividualGoatPurchaseScreenState
     final saved = _savedPurchase;
 
     final weight = saved?.totalWeightAtPurchase ?? _weight;
-    final pricePerKg = saved?.pricePerKg ?? _pricePerKg;
+    final pricePerKg = saved?.pricePerKg ?? _effectivePricePerKg;
     final amount = saved?.purchaseAmount ?? _purchaseAmount;
+    final isFixed = saved?.isFixedPrice ?? _isFixed;
+
+    final priceFormatters = [
+      FilteringTextInputFormatter.allow(
+        RegExp(r'^\d*\.?\d{0,2}'),
+      ),
+    ];
 
     return WizardSectionCard(
       title: 'Price & Payment',
       icon: Icons.payments_outlined,
       children: [
-        wizardField(
-          controller: _priceController,
-          label: 'Price per KG',
-          hint: '0.00',
-          icon: Icons.currency_rupee_rounded,
-          suffix: '/ KG',
-          keyboardType: const TextInputType.numberWithOptions(
-            decimal: true,
-          ),
-          inputFormatters: [
-            FilteringTextInputFormatter.allow(
-              RegExp(r'^\d*\.?\d{0,2}'),
+        // How is this goat priced?
+        PricingModeSlider(
+          isFixed: isFixed,
+          onChanged: _setFixedPrice,
+        ),
+
+        const SizedBox(height: 14),
+
+        // Only the field for the active mode is in the tree, so Save only
+        // validates the price that is in use.
+        AnimatedSize(
+          duration: const Duration(milliseconds: 200),
+          curve: Curves.easeOut,
+          alignment: Alignment.topCenter,
+          child: isFixed
+              ? KeyedSubtree(
+            key: const ValueKey('goat-fixed-price'),
+            child: wizardField(
+              controller: _fixedPriceController,
+              label: 'Fixed Purchase Price',
+              hint: '0.00',
+              icon: Icons.currency_rupee_rounded,
+              suffix: 'total',
+              helper: 'One agreed price for this goat',
+              keyboardType: const TextInputType.numberWithOptions(
+                decimal: true,
+              ),
+              inputFormatters: priceFormatters,
+              onChanged: (_) => setState(() {}),
+              validator: _validatePrice,
             ),
-          ],
-          onChanged: (_) => setState(() {}),
-          validator: (value) {
-            final number = double.tryParse(
-              (value ?? '').trim(),
-            );
-
-            if (number == null || number <= 0) {
-              return 'Enter a valid price';
-            }
-
-            return null;
-          },
+          )
+              : KeyedSubtree(
+            key: const ValueKey('goat-price-per-kg'),
+            child: wizardField(
+              controller: _priceController,
+              label: 'Price per KG',
+              hint: '0.00',
+              icon: Icons.currency_rupee_rounded,
+              suffix: '/ KG',
+              keyboardType: const TextInputType.numberWithOptions(
+                decimal: true,
+              ),
+              inputFormatters: priceFormatters,
+              onChanged: (_) => setState(() {}),
+              validator: _validatePrice,
+            ),
+          ),
         ),
 
         const SizedBox(height: 14),
@@ -799,7 +877,7 @@ class _IndividualGoatPurchaseScreenState
                 value: '${_trimZero(weight)} kg',
               ),
               WizardComputedRow(
-                label: 'Price per KG',
+                label: isFixed ? 'Fixed Price (≈ / KG)' : 'Price per KG',
                 value: _currency(pricePerKg),
               ),
               const Divider(height: 10),

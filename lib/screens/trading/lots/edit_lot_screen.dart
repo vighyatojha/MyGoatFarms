@@ -75,6 +75,10 @@ class _EditLotScreenState extends State<EditLotScreen> {
   late final TextEditingController _female;
   late final TextEditingController _weight;
   late final TextEditingController _price;
+  late final TextEditingController _fixedPrice;
+
+  /// By KG or Fixed Price, starting from how the lot was saved.
+  late bool _isFixed;
 
   late final TextEditingController _transport;
   late final TextEditingController _loading;
@@ -113,8 +117,14 @@ class _EditLotScreenState extends State<EditLotScreen> {
     _weight = TextEditingController(
       text: PurchaseCosting.formatNumber(lot.totalWeightAtPurchase),
     );
+    _isFixed = lot.isFixedPrice;
     _price = TextEditingController(
-      text: PurchaseCosting.formatNumber(lot.pricePerKg),
+      text: lot.isFixedPrice ? '' : PurchaseCosting.formatNumber(lot.pricePerKg),
+    );
+    _fixedPrice = TextEditingController(
+      text: lot.isFixedPrice
+          ? PurchaseCosting.formatNumber(lot.fixedPurchaseAmount)
+          : '',
     );
 
     _transport = TextEditingController(text: money(lot.transportCost));
@@ -139,6 +149,7 @@ class _EditLotScreenState extends State<EditLotScreen> {
       _female,
       _weight,
       _price,
+      _fixedPrice,
       _transport,
       _loading,
       _unloading,
@@ -160,7 +171,8 @@ class _EditLotScreenState extends State<EditLotScreen> {
   PurchaseCosting get _costing => PurchaseCosting(
     totalGoats: _i(_goats),
     weightAtPurchase: _d(_weight),
-    pricePerKg: _d(_price),
+    pricePerKg: _isFixed ? 0 : _d(_price),
+    fixedPurchaseAmount: _isFixed ? _d(_fixedPrice) : 0,
     weightAfterArrival: _lot.totalWeightAfterArrival ?? 0,
     mortality: _lot.mortality,
     transportCost: _d(_transport),
@@ -248,7 +260,11 @@ class _EditLotScreenState extends State<EditLotScreen> {
         maleGoats: _i(_male),
         femaleGoats: _i(_female),
         totalWeightAtPurchase: _d(_weight),
-        pricePerKg: _d(_price),
+        pricePerKg: _isFixed ? 0 : _d(_price),
+        pricingMode: _isFixed
+            ? TradingPurchase.pricingModeFixed
+            : TradingPurchase.pricingModePerKg,
+        fixedPurchaseAmount: _isFixed ? _d(_fixedPrice) : 0,
         transportCost: _d(_transport),
         loadingCharges: _d(_loading),
         unloadingCharges: _d(_unloading),
@@ -791,22 +807,59 @@ class _EditLotScreenState extends State<EditLotScreen> {
           },
         ),
         const SizedBox(height: 12),
-        wizardField(
-          controller: _price,
-          label: 'Price per kg',
-          hint: '0.00',
-          icon: Icons.currency_rupee_rounded,
-          keyboardType: wizardDecimalKeyboard,
-          inputFormatters: wizardDecimalFormatters(),
-          onChanged: (_) => _refresh(),
-          validator: (value) {
-            final n = double.tryParse(value?.trim() ?? '');
-
-            if (n == null || n <= 0) return 'Enter a price greater than 0';
-
-            return null;
+        PricingModeSlider(
+          isFixed: _isFixed,
+          onChanged: (fixed) {
+            if (fixed == _isFixed) return;
+            FocusScope.of(context).unfocus();
+            setState(() => _isFixed = fixed);
           },
         ),
+        const SizedBox(height: 12),
+        if (_isFixed)
+          KeyedSubtree(
+            key: const ValueKey('edit-fixed-price'),
+            child: wizardField(
+              controller: _fixedPrice,
+              label: 'Fixed purchase price',
+              hint: '0.00',
+              icon: Icons.currency_rupee_rounded,
+              suffix: 'total',
+              helper: _costing.effectivePricePerKg > 0
+                  ? '≈ ${wizardCurrency(_costing.effectivePricePerKg)} / kg'
+                  : 'One agreed price for the whole lot',
+              keyboardType: wizardDecimalKeyboard,
+              inputFormatters: wizardDecimalFormatters(),
+              onChanged: (_) => _refresh(),
+              validator: (value) {
+                final n = double.tryParse(value?.trim() ?? '');
+
+                if (n == null || n <= 0) return 'Enter a price greater than 0';
+
+                return null;
+              },
+            ),
+          )
+        else
+          KeyedSubtree(
+            key: const ValueKey('edit-price-per-kg'),
+            child: wizardField(
+              controller: _price,
+              label: 'Price per kg',
+              hint: '0.00',
+              icon: Icons.currency_rupee_rounded,
+              keyboardType: wizardDecimalKeyboard,
+              inputFormatters: wizardDecimalFormatters(),
+              onChanged: (_) => _refresh(),
+              validator: (value) {
+                final n = double.tryParse(value?.trim() ?? '');
+
+                if (n == null || n <= 0) return 'Enter a price greater than 0';
+
+                return null;
+              },
+            ),
+          ),
       ],
     );
   }

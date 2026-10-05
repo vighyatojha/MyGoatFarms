@@ -248,7 +248,9 @@ class _PurchaseSuccessScreenState extends State<PurchaseSuccessScreen> {
                       '${PurchaseCosting.formatNumber(lot.totalWeightAtPurchase)} kg',
                     ),
                     WizardComputedRow(
-                      label: 'Purchase Price / KG',
+                      label: lot.isFixedPrice
+                          ? 'Fixed Price (≈ / KG)'
+                          : 'Purchase Price / KG',
                       value: wizardCurrency(lot.pricePerKg),
                     ),
                     WizardComputedRow(

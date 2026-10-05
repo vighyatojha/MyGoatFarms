@@ -1419,7 +1419,10 @@ class _CompleteWaitForDeliveryScreenState
           _infoLine(
             icon: Icons.lock_clock_outlined,
             color: AppColors.textGrey,
-            text: 'Uses the rate fixed at booking time (${_currency(rate)} '
+            text: sale.isFixedPrice
+                ? 'Fixed Price sale — the agreed amount stays the same '
+                'whatever the pickup weight.'
+                : 'Uses the rate fixed at booking time (${_currency(rate)} '
                 '/ kg), not today\'s rate.',
           ),
         ],

@@ -14,6 +14,7 @@ import '../../../widgets/farm_not_linked_state.dart';
 import '../../../widgets/fast_route.dart';
 import '../../../widgets/permission_gate.dart';
 import '../purchase_goats/purchase_wizard_widgets.dart';
+import '../lots/receive_lot_screen.dart';
 import '../lots/transfer_to_customer_palai_wizard_screen.dart';
 import '../lots/transfer_to_own_palai_screen.dart';
 import '../sale_receipt_screen.dart';
@@ -30,15 +31,13 @@ import 'step_source_and_quantity.dart';
 /// Delivery -> Save. The last step is the same [Step5DeliveryOptions] the
 /// Sell Goat wizard uses, told (through the draft) that this is a lot
 /// sale:
-///  - goats still at the supplier: Deliver Now only (no picker shown);
-///  - goats at the farm: Deliver Now, Booking / Holding or Wait for
-///    Delivery (held goats are reserved in the lot, not sold, until the
-///    delivery is completed from the Booking / Wait for Delivery lists);
-///  - goats at the farm also get Transfer to Palai, which hands over to the
-///    lot's own Palai transfer wizard (goats must be registered one by
-///    one);
-///  - goats at the supplier skip the option picker and go straight to
-///    the Deliver Now form.
+///  - every source gets Deliver Now, Booking / Holding and Wait for
+///    Delivery (held goats are reserved in the lot — at the farm or at the
+///    supplier — not sold, until the delivery is completed from the
+///    Booking / Wait for Delivery lists);
+///  - Transfer to Palai / Own Palai hand over to the lot's own transfer
+///    screens (goats must be registered one by one). Goats still at the
+///    supplier are received at the farm first (Receive Lot).
 class SellFromLotWizardScreen extends StatefulWidget {
   /// When given (e.g. from the "Lot Created" screen) the wizard skips Select
   /// Lot and opens on Source & Quantity for this lot.
@@ -224,9 +223,19 @@ class _SellFromLotWizardScreenState extends State<SellFromLotWizardScreen> {
                 value: '${SaleDraft.formatWeight(d.totalSellingWeight)} KG',
               ),
               WizardComputedRow(
-                label: 'Selling Price / KG',
-                value: wizardCurrency(d.effectivePricePerKg),
+                label: 'Pricing',
+                value: d.isFixedPrice ? 'Fixed Price' : 'By KG',
               ),
+              if (d.isFixedPrice)
+                WizardComputedRow(
+                  label: 'Fixed Price (≈ / KG)',
+                  value: wizardCurrency(d.effectivePricePerKg),
+                )
+              else
+                WizardComputedRow(
+                  label: 'Selling Price / KG',
+                  value: wizardCurrency(d.effectivePricePerKg),
+                ),
               const Divider(height: 18, color: AppColors.divider),
               WizardComputedRow(
                 label: 'Total Sale',
@@ -285,14 +294,67 @@ class _SellFromLotWizardScreenState extends State<SellFromLotWizardScreen> {
     return result == true;
   }
 
-  /// Transfer to Own Palai for goats at the farm: the lot's own transfer
-  /// screen (the farm keeps them; not a sale). On success this wizard
-  /// closes with a confirmation.
-  Future<void> _openOwnPalaiTransfer() async {
+  /// Palai / Own Palai transfers register goats one by one, so they need
+  /// the goats at the farm. When this sale is from the supplier, offer to
+  /// receive them first (Receive Lot) and return the refreshed lot, or
+  /// null when the person backed out.
+  Future<TradingPurchase?> _lotAtFarmForTransfer(String target) async {
     final lot = _lot;
     final farmId = _farmId;
 
-    if (lot == null || farmId == null) return;
+    if (lot == null || farmId == null) return null;
+
+    final fromSupplier = _draft.sourceLocation == Sale.sourceSupplier;
+
+    if (!fromSupplier && lot.farmAvailableQty > 0) return lot;
+
+    if (lot.supplierAvailableQty <= 0) {
+      wizardSnack(
+        context,
+        'No goats of ${lot.lotId} are free to receive at the farm.',
+        error: true,
+      );
+      return null;
+    }
+
+    final ok = await showWizardConfirm(
+      context: context,
+      title: 'Receive goats first?',
+      message: 'These goats are still at the supplier. $target registers '
+          'each goat at the farm, so receive them first. After receiving '
+          'you will go straight to the transfer.',
+      confirmLabel: 'Receive Lot',
+    );
+
+    if (!ok || !mounted) return null;
+
+    final received = await Navigator.of(context).push<bool>(
+      fastRoute(ReceiveLotScreen(farmId: farmId, lot: lot)),
+    );
+
+    if (received != true || !mounted) return null;
+
+    final fresh =
+    await TradingService.instance.lotStream(farmId, lot.id).first;
+
+    if (!mounted || fresh == null) return null;
+
+    setState(() {
+      _lot = fresh;
+      _draft.sourceLocation = Sale.sourceFarm;
+    });
+
+    return fresh.farmAvailableQty > 0 ? fresh : null;
+  }
+
+  /// Transfer to Own Palai: the lot's own transfer screen (the farm keeps
+  /// them; not a sale). On success this wizard closes with a confirmation.
+  Future<void> _openOwnPalaiTransfer() async {
+    final farmId = _farmId;
+    if (farmId == null) return;
+
+    final lot = await _lotAtFarmForTransfer('Own Palai');
+    if (lot == null || !mounted) return;
 
     final ids = await Navigator.of(context).push<List<String>>(
       fastRoute(TransferToOwnPalaiScreen(farmId: farmId, lot: lot)),
@@ -316,11 +378,12 @@ class _SellFromLotWizardScreenState extends State<SellFromLotWizardScreen> {
   /// Transfer to Palai for goats at the farm. A lot's goats are anonymous,
   /// so a Palai transfer needs each goat registered — that is the lot's own
   /// Palai transfer wizard, which this hands over to.
-  void _openPalaiTransfer() {
-    final lot = _lot;
+  Future<void> _openPalaiTransfer() async {
     final farmId = _farmId;
+    if (farmId == null) return;
 
-    if (lot == null || farmId == null) return;
+    final lot = await _lotAtFarmForTransfer('Transfer to Palai');
+    if (lot == null || !mounted) return;
 
     Navigator.of(context).pushReplacement(
       fastRoute(

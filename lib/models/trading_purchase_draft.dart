@@ -1,4 +1,5 @@
 import 'purchase_costing.dart';
+import 'trading_purchase_model.dart';
 
 /// Shared in-memory state for the Purchase Lot wizard.
 ///
@@ -36,6 +37,19 @@ class PurchaseDraft {
   int totalGoats = 0;
   double totalWeightAtPurchase = 0;
   double pricePerKg = 0;
+
+  /// By KG (Total Weight x Price per KG) or Fixed Price (one agreed amount
+  /// for the whole lot) — same choice the Sell wizards offer.
+  String pricingMode = TradingPurchase.pricingModePerKg;
+
+  /// The agreed amount when [pricingMode] is Fixed Price.
+  double fixedPurchaseAmount = 0;
+
+  bool get isFixedPrice => pricingMode == TradingPurchase.pricingModeFixed;
+
+  /// Rate saved on the lot: what was typed (By KG) or the fixed amount
+  /// spread over the purchase weight (Fixed Price).
+  double get effectivePricePerKg => costing.effectivePricePerKg;
 
   /// Gender split of [totalGoats], captured here — at Purchase Details —
   /// rather than per-goat on the Register Goat screen, since a wholesale
@@ -130,7 +144,8 @@ class PurchaseDraft {
   PurchaseCosting get costing => PurchaseCosting(
     totalGoats: totalGoats,
     weightAtPurchase: totalWeightAtPurchase,
-    pricePerKg: pricePerKg,
+    pricePerKg: isFixedPrice ? 0 : pricePerKg,
+    fixedPurchaseAmount: isFixedPrice ? fixedPurchaseAmount : 0,
     weightAfterArrival: totalWeightAfterArrival,
     mortality: mortality,
     transportCost: transportCost,
@@ -151,7 +166,8 @@ class PurchaseDraft {
   // DERIVED VALUES (kept for existing callers)
   // ---------------------------------------------------------------------------
 
-  /// Purchase Amount = Total Weight x Price per KG. Never entered by hand.
+  /// Purchase Amount = Total Weight x Price per KG (By KG), or the agreed
+  /// amount (Fixed Price).
   double get purchaseAmount => costing.purchaseAmount;
 
   /// Weight Loss = Weight at Purchase - Weight After Arrival.
@@ -199,6 +215,7 @@ class PurchaseDraft {
           totalGoats > 0 ||
           totalWeightAtPurchase > 0 ||
           pricePerKg > 0 ||
+          fixedPurchaseAmount > 0 ||
           maleGoats > 0 ||
           femaleGoats > 0 ||
           paidNow > 0 ||

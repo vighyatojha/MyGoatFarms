@@ -577,3 +577,73 @@ exports.backfillMobileIndex = onCall(
       return stats;
     },
 );
+// ---------------------------------------------------------------------
+// 5. Login / sign-up lookups by mobile number (no sign-in required)
+//
+// Replace the public Firestore queries the app used before sign-in:
+//   farms.where('mobileNumber', ==, n).limit(1)
+//   collectionGroup('partners').where('mobileNumber', ==, n).limit(1)
+//   mobileIndex/{n}.get()
+// Those needed public security rules, and a public `list` rule can be
+// abused to page through every farm and partner document. These
+// functions run with admin access and return ONLY the single value the
+// login / sign-up screen needs — never the farm or partner document.
+//
+// The number must be an exact match (same as the old queries), and is
+// only accepted as 6–15 digits (an optional leading '+' is allowed), so
+// a caller cannot send ranges or wildcards.
+// ---------------------------------------------------------------------
+
+const MOBILE_PATTERN = /^\+?[0-9]{6,15}$/;
+
+function readMobile(request) {
+  const raw = request.data && request.data.mobileNumber;
+  const mobile = typeof raw === 'string' ? raw.trim() : '';
+
+  if (!MOBILE_PATTERN.test(mobile)) {
+    throw new HttpsError('invalid-argument', 'Enter a valid mobile number.');
+  }
+
+  return mobile;
+}
+
+// Login: mobile number -> the email to sign in with, or null.
+// Owners first, then partners — exactly the order the app used before.
+exports.resolveLoginEmail = onCall(
+    {region: 'us-central1'},
+    async (request) => {
+      const mobile = readMobile(request);
+
+      const ownerSnap = await db.collection('farms')
+          .where('mobileNumber', '==', mobile)
+          .limit(1)
+          .get();
+
+      if (!ownerSnap.empty) {
+        const email = String(ownerSnap.docs[0].get('email') || '').trim();
+        if (email) return {email};
+      }
+
+      const partnerSnap = await db.collectionGroup('partners')
+          .where('mobileNumber', '==', mobile)
+          .limit(1)
+          .get();
+
+      if (!partnerSnap.empty) {
+        const email = String(partnerSnap.docs[0].get('email') || '').trim();
+        if (email) return {email};
+      }
+
+      return {email: null};
+    },
+);
+
+// Sign-up: is this mobile number already registered to a farm?
+exports.isMobileRegistered = onCall(
+    {region: 'us-central1'},
+    async (request) => {
+      const mobile = readMobile(request);
+      const snap = await db.collection('mobileIndex').doc(mobile).get();
+      return {registered: snap.exists};
+    },
+);
