@@ -16,6 +16,7 @@ import '../../services/partner_access_service.dart';
 import '../../services/trading_service.dart';
 import '../../widgets/farm_not_linked_state.dart';
 import '../../widgets/fast_route.dart';
+import '../customers/hub/customer_hub_list_screen.dart';
 import 'goat_stock/booking_delivery_customer_list_screen.dart';
 import 'goat_stock/goat_stock_list_screen.dart';
 import 'goat_stock/sold_customer_list_screen.dart';
@@ -36,7 +37,8 @@ import 'sell_goat/sell_goat_wizard_screen.dart';
 ///  1. Header (back, title, recalculate)
 ///  2. 2x2 stat cards (Available Stock, Booking, Wait on Delivery,
 ///     Total Sold) + compact secondary stats list
-///  3. Sales options card (Sell Available Stock, Lot Management, Lot Sales)
+///  3. Sales options card (Sell Available Stock, Lot Management, Lot Sales,
+///     Customers)
 ///  4. Secondary trading stats with direct Purchase / Sell controls.
 ///     Goats stay anonymous inside a lot; they are only registered when
 ///     transferred to a Palai, so there is no standalone "Register Goats" action.
@@ -330,6 +332,14 @@ class _TradingDashboardScreenState extends State<TradingDashboardScreen> {
     final farmId = _farmId;
     if (farmId == null) return Future.value();
     return _push(LotManagementScreen(farmId: farmId));
+  }
+
+  /// Customers: one list of Palai customers with their deliveries and
+  /// money position. Read-only; it opens the existing screens for actions.
+  Future<void> _openCustomers() {
+    final farmId = _farmId;
+    if (farmId == null) return Future.value();
+    return _push(CustomerHubListScreen(farmId: farmId));
   }
 
   /// Lot Sales: every sale made from a purchase lot.
@@ -702,6 +712,15 @@ class _TradingDashboardScreenState extends State<TradingDashboardScreen> {
               title: 'Lot Sales',
               subtitle: 'All sales made from purchase lots',
               onTap: _openLotSales,
+              trailing: chevron(),
+            ),
+            divider,
+            _StripRow(
+              icon: Icons.groups_2_outlined,
+              color: Colors.indigo,
+              title: 'Customers',
+              subtitle: 'Palai customers, deliveries and accounts',
+              onTap: _openCustomers,
               trailing: chevron(),
             ),
           ],
