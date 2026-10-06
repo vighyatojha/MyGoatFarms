@@ -1,16 +1,36 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:timezone/timezone.dart' as tz;
 
 import '../models/health_reminder_settings_model.dart';
 import '../models/trading_goat_health_record.dart';
 import 'firestore_service.dart';
 import 'goat_service.dart';
+import 'notification_schedule.dart';
 import 'notification_service.dart';
 
-/// Schedules the "7 days before / 1 day before / due today" health
+/// Health reminder notifications (vaccination / hoof cutting / hair
+/// trimming / medicine).
 ///
-/// reminder notifications described in the notification design doc.
+/// HOW NOTIFICATIONS ARE DELIVERED NOW
+/// -----------------------------------
+/// Earlier, every record had its own OS alarms (7 days / 2 days / 1 day
+/// before / due day, all at midnight) and anything already due fired
+/// IMMEDIATELY — which happened on every app open, because app start
+/// re-ran the scheduling for every due/overdue record.
+///
+/// Now there is ONE combined "daily digest" notification, delivered 3
+/// times a day at RANDOM times picked by [NotificationSchedule.minutesFor]
+/// — anywhere between 6 AM and 11 PM, at least 4 hours apart. Each
+/// digest lists what is overdue, due today, tomorrow, in 2 days and in
+/// 7 days. Opening the app only REBUILDS the upcoming digests from fresh
+/// data; it never shows a notification. A day with nothing to report gets
+/// no notification at all.
+///
+/// The in-app Notifications feed (Firestore) is still written as before.
 ///
 /// Covers two record shapes:
 ///   * Customer Palai's separate vaccination / hoof-cutting /
@@ -22,12 +42,8 @@ import 'notification_service.dart';
 ///     scheduler and the same farm-wide notification feed instead of a
 ///     separate mechanism — see the phase 3 plan's Task 1.3.
 ///
-/// There is no backend (Cloud Functions) in this app yet, so these are
-/// scheduled entirely on-device using flutter_local_notifications'
-/// zonedSchedule — which uses Android's AlarmManager under the hood and
-/// will fire even if the app is backgrounded or fully closed. (The one
-/// gap this doesn't cover is a device reboot clearing pending alarms —
-/// see the note on [rescheduleAllForFarm].)
+/// The digests are scheduled on-device with flutter_local_notifications'
+/// zonedSchedule (AlarmManager), so they fire even if the app is closed.
 class HealthReminderScheduler {
   HealthReminderScheduler._();
   static final HealthReminderScheduler instance = HealthReminderScheduler._();
@@ -148,58 +164,19 @@ class HealthReminderScheduler {
   // Farm-wide: re-schedule + due-check across every module
   // ---------------------------------------------------------------------
 
-  /// Re-derives and re-schedules reminders for every Customer-Palai goat's
-  /// vaccination / hoof-cutting / hair-trimming records and every
-  /// Available, Own-Palai and Wait-on-Delivery (Trading) goat's health
-  /// records, across the farm.
+  /// Called on app start (MainShell). Rebuilds the next
+  /// [NotificationSchedule.daysAhead] days of daily digests (3 a day, random times)
+  /// from fresh data. Also re-arms them after a reboot cleared the OS
+  /// alarms.
   ///
-  /// flutter_local_notifications' scheduled alarms are cleared by
-  /// Android when the phone reboots and are NOT automatically
-  /// re-created — call this once after login / on app start (in
-  /// addition to scheduling at creation time) so a reboot doesn't
-  /// silently drop upcoming reminders.
+  /// Shows NO notification itself — this is the fix for "a notification
+  /// every time the app is opened".
   Future<void> rescheduleAllForFarm(String farmId) async {
     // Make sure every Available, Own Palai and Wait on Delivery goat
     // carries the farm's current Health Reminder Settings before its
-    // reminders are read back and scheduled.
+    // reminders are read back.
     await syncOwnPalaiFarmReminders(farmId);
-
-    try {
-      final upcomingCustomer =
-      await FirestoreService.instance.upcomingCustomerHealthReminders(farmId, withinDays: 60);
-      for (final reminder in upcomingCustomer) {
-        await scheduleCustomerHealthReminder(
-          farmId: farmId,
-          customerId: reminder.goat.customerId,
-          goatId: reminder.goat.id,
-          goatCode: reminder.goat.goatCode,
-          recordType: reminder.recordType,
-          recordId: reminder.recordId,
-          label: reminder.label,
-          dueDate: reminder.dueDate,
-        );
-      }
-    } catch (e) {
-      debugPrint('HealthReminderScheduler: reschedule-all (customer palai) failed: $e');
-    }
-
-    try {
-      final upcomingTrading =
-      await FirestoreService.instance.upcomingTradingHealthReminders(farmId, withinDays: 60);
-      for (final reminder in upcomingTrading) {
-        await scheduleTradingHealthReminder(
-          farmId: farmId,
-          goatId: reminder.goat.id,
-          goatCode: reminder.goat.id, // the trading goat's id doubles as its display code (e.g. "G-0001")
-          recordType: reminder.recordType.name,
-          recordId: reminder.recordId,
-          label: reminder.recordType.label,
-          dueDate: reminder.dueDate,
-        );
-      }
-    } catch (e) {
-      debugPrint('HealthReminderScheduler: reschedule-all (trading) failed: $e');
-    }
+    await refreshDailyDigest(farmId, force: true);
   }
 
   /// Writes/updates a Firestore notification record for anything due
@@ -252,6 +229,10 @@ class HealthReminderScheduler {
     } catch (e) {
       debugPrint('HealthReminderScheduler: due-check (trading) failed: $e');
     }
+
+    // Keep the scheduled digests in step with what just changed. Cheap
+    // when called repeatedly — see the cooldown in [refreshDailyDigest].
+    await refreshDailyDigest(farmId);
   }
 
   // ---------------------------------------------------------------------
@@ -425,9 +406,16 @@ class HealthReminderScheduler {
     }
   }
 
-  /// Shared 7-days-before / 1-day-before / due-today scheduling used by
-  /// both [scheduleCustomerHealthReminder] and
+  /// Shared handler used by both [scheduleCustomerHealthReminder] and
   /// [scheduleTradingHealthReminder].
+  ///
+  /// No longer schedules per-record OS alarms or fires anything
+  /// immediately. It:
+  ///   1. cancels this record's old-style per-record alarms (left over
+  ///      from earlier app versions),
+  ///   2. mirrors an already-due/overdue record into the in-app feed,
+  ///   3. rebuilds the daily digests so the change shows up
+  ///      in the next digest.
   Future<void> _scheduleThreeStageReminders({
     required String farmId,
     required String key,
@@ -443,73 +431,9 @@ class HealthReminderScheduler {
     // Palai); Trading (Own Palai) records pass 'health_trading'.
     String? notificationDocKeyPrefix,
   }) async {
-    // Cancel any existing schedule for this record first, so editing a
-    // due date doesn't leave stale reminders behind alongside the new
-    // ones.
     await cancelForEvent(key);
 
-    if (dueDate == null) return; // No reminder cadence set for this record.
-
-    final labelLower = label.toLowerCase();
-    final payload = NotificationService.encodePayload(payloadExtras);
-
-    await _scheduleIfFuture(
-      id: _notificationId(key, _ReminderStage.sevenDaysBefore),
-      when: dueDate.subtract(const Duration(days: 7)),
-      title: '$label coming up',
-      body: '$goatCode is due for $labelLower in 7 days.',
-      payload: payload,
-    );
-
-    await _scheduleIfFuture(
-      id: _notificationId(key, _ReminderStage.twoDaysBefore),
-      when: dueDate.subtract(const Duration(days: 2)),
-      title: '$label in 2 days',
-      body: '$goatCode is due for $labelLower in 2 days.',
-      payload: payload,
-    );
-
-    await _scheduleIfFuture(
-      id: _notificationId(key, _ReminderStage.oneDayBefore),
-      when: dueDate.subtract(const Duration(days: 1)),
-      title: '$label tomorrow',
-      body: '$goatCode is due for $labelLower tomorrow.',
-      payload: payload,
-    );
-
-    // "Due today" is special: if the record's due date IS today (or
-    // already overdue), `dueDate` — normally midnight of that day — has
-    // already passed the moment it's later than 00:00, so a plain
-    // schedule-for-the-future call would silently do nothing. Fire it
-    // right away instead so adding a record with a same-day due date
-    // still produces a notification immediately.
-    final now = DateTime.now();
-    if (!dueDate.isAfter(now)) {
-      await _showNow(
-        id: _notificationId(key, _ReminderStage.dueToday),
-        title: "Time for $goatCode's $label",
-        body: '$goatCode is due for $labelLower now.',
-        payload: payload,
-      );
-    } else {
-      await _scheduleIfFuture(
-        id: _notificationId(key, _ReminderStage.dueToday),
-        when: dueDate,
-        title: "Time for $goatCode's $label",
-        body: '$goatCode is due for $labelLower now.',
-        payload: payload,
-      );
-    }
-
-    // Mirror into the Firestore notification feed immediately if this
-    // record is already due (including "due earlier today") or overdue,
-    // so NotificationScreen reflects it right away instead of waiting
-    // for the next app-open due-check. Compared against `now`, not
-    // midnight-of-today — due dates can carry a specific time (e.g.
-    // "due at 9:42 AM"), and comparing against midnight was the actual
-    // bug that delayed this mirror until the day after the due moment
-    // had already passed.
-    if (!dueDate.isAfter(now)) {
+    if (dueDate != null && !dueDate.isAfter(DateTime.now())) {
       final reference = <String, String>{'goatId': goatId, 'recordId': recordId};
       if (customerId != null) reference['customerId'] = customerId;
       await _writeDueOrOverdueNotification(
@@ -523,6 +447,10 @@ class HealthReminderScheduler {
         reference: reference,
       );
     }
+
+    // Many records can be (re)scheduled in a row (e.g. a farm-settings
+    // sync); refreshDailyDigest coalesces those into one rebuild.
+    unawaited(refreshDailyDigest(farmId, force: true));
   }
 
   Future<void> _writeDueOrOverdueNotification({
@@ -552,15 +480,215 @@ class HealthReminderScheduler {
     );
   }
 
-  Future<void> _scheduleIfFuture({
+  // ---------------------------------------------------------------------
+  // Daily digest: 3 notifications a day, random times 6 AM - 11 PM, 4 h apart
+  // ---------------------------------------------------------------------
+
+  /// Notification ids reserved for the digest:
+  /// `_digestIdBase + dayOffset * 10 + slotIndex`. Far away from the
+  /// hashed per-record ids, which are multiples of 10 plus 0..3.
+  static const int _digestIdBase = 2000000005;
+
+  static const String _legacyCleanupPrefsKey = 'mgf_digest_migrated_v1';
+  static const Duration _digestCooldown = Duration(minutes: 5);
+
+  Future<void>? _digestInFlight;
+  bool _digestDirty = false;
+  DateTime? _digestBuiltAt;
+  String? _digestFarmId;
+
+  /// Rebuilds the scheduled digests for the next
+  /// [NotificationSchedule.daysAhead] days from the farm's current health
+  /// records. Never shows a notification immediately.
+  ///
+  /// Overlapping calls share one rebuild (with one follow-up if something
+  /// changed meanwhile). Without [force], a call within 5 minutes of the
+  /// last rebuild for the same farm is skipped. Never throws.
+  Future<void> refreshDailyDigest(String farmId, {bool force = false}) {
+    final running = _digestInFlight;
+    if (running != null) {
+      if (force) _digestDirty = true;
+      return running;
+    }
+
+    if (!force &&
+        _digestFarmId == farmId &&
+        _digestBuiltAt != null &&
+        DateTime.now().difference(_digestBuiltAt!) < _digestCooldown) {
+      return Future.value();
+    }
+
+    final future = _rebuildDigest(farmId).whenComplete(() {
+      _digestInFlight = null;
+      _digestBuiltAt = DateTime.now();
+      _digestFarmId = farmId;
+      if (_digestDirty) {
+        _digestDirty = false;
+        unawaited(refreshDailyDigest(farmId, force: true));
+      }
+    });
+    _digestInFlight = future;
+    return future;
+  }
+
+  /// Cancels every scheduled digest — call on logout.
+  Future<void> cancelDailyDigest() async {
+    for (var day = 0; day <= NotificationSchedule.daysAhead; day++) {
+      for (var slot = 0; slot < NotificationSchedule.perDay; slot++) {
+        await _plugin.cancel(_digestId(day, slot));
+      }
+    }
+    _digestBuiltAt = null;
+  }
+
+  Future<void> _rebuildDigest(String farmId) async {
+    try {
+      await _cleanUpLegacyAlarmsOnce();
+
+      // Everything due up to 7 days after the last scheduled day, plus
+      // everything already overdue (the queries include overdue).
+      final horizon = NotificationSchedule.daysAhead + 8;
+      final items = <_DigestItem>[];
+
+      try {
+        final customer = await FirestoreService.instance
+            .upcomingCustomerHealthReminders(farmId, withinDays: horizon);
+        for (final r in customer) {
+          items.add(_DigestItem(r.goat.goatCode, r.label, r.dueDate));
+        }
+      } catch (e) {
+        debugPrint('HealthReminderScheduler: digest (customer palai) failed: $e');
+      }
+
+      try {
+        final trading = await FirestoreService.instance
+            .upcomingTradingHealthReminders(farmId, withinDays: horizon);
+        for (final r in trading) {
+          // The trading goat's id doubles as its display code.
+          items.add(_DigestItem(r.goat.id, r.recordType.label, r.dueDate));
+        }
+      } catch (e) {
+        debugPrint('HealthReminderScheduler: digest (trading) failed: $e');
+      }
+
+      await cancelDailyDigest();
+
+      final now = tz.TZDateTime.now(tz.local);
+      final today = DateTime(now.year, now.month, now.day);
+
+      for (var day = 0; day <= NotificationSchedule.daysAhead; day++) {
+        final date = today.add(Duration(days: day));
+        final content = _digestContentFor(date, items);
+        if (content == null) continue; // nothing to report that day
+
+        // Today's 3 random times (same every time for the same date).
+        final minutes = NotificationSchedule.minutesFor(date);
+        for (var slot = 0; slot < minutes.length; slot++) {
+          final when = tz.TZDateTime(tz.local, date.year, date.month,
+              date.day, minutes[slot] ~/ 60, minutes[slot] % 60);
+          if (!when.isAfter(now)) continue; // slot already passed
+          if (NotificationSchedule.isQuietTime(when)) continue; // safety net
+
+          // Clear it 1 minute before the next one (or at 11 PM for the
+          // last one), so only one shows in the tray at a time.
+          final clearAt = slot + 1 < minutes.length
+              ? tz.TZDateTime(tz.local, date.year, date.month, date.day,
+              minutes[slot + 1] ~/ 60, minutes[slot + 1] % 60)
+              : tz.TZDateTime(tz.local, date.year, date.month, date.day,
+              NotificationSchedule.quietStartHour);
+
+          await _scheduleDigest(
+            id: _digestId(day, slot),
+            when: when,
+            visibleFor: clearAt.difference(when) - const Duration(minutes: 1),
+            title: content.title,
+            body: content.body,
+            bigText: content.bigText,
+          );
+        }
+      }
+    } catch (e) {
+      debugPrint('HealthReminderScheduler: digest rebuild failed: $e');
+    }
+  }
+
+  /// Earlier versions scheduled up to 4 alarms per record, some at
+  /// midnight. Remove them all once after updating so none of them can
+  /// still fire. Runs only once per install.
+  Future<void> _cleanUpLegacyAlarmsOnce() async {
+    final prefs = await SharedPreferences.getInstance();
+    if (prefs.getBool(_legacyCleanupPrefsKey) == true) return;
+    await _plugin.cancelAll();
+    await prefs.setBool(_legacyCleanupPrefsKey, true);
+  }
+
+  int _digestId(int day, int slot) => _digestIdBase + day * 10 + slot;
+
+  /// What the digest for [date] says, or null if there is nothing to say.
+  /// Uses the same stages as before: overdue, today, tomorrow, in 2 days,
+  /// in 7 days.
+  _DigestContent? _digestContentFor(DateTime date, List<_DigestItem> items) {
+    final overdue = <_DigestItem>[];
+    final today = <_DigestItem>[];
+    final tomorrow = <_DigestItem>[];
+    final inTwo = <_DigestItem>[];
+    final inSeven = <_DigestItem>[];
+
+    for (final item in items) {
+      final due = DateTime(item.dueDate.year, item.dueDate.month, item.dueDate.day);
+      final diff = due.difference(date).inDays;
+      if (diff < 0) {
+        overdue.add(item);
+      } else if (diff == 0) {
+        today.add(item);
+      } else if (diff == 1) {
+        tomorrow.add(item);
+      } else if (diff == 2) {
+        inTwo.add(item);
+      } else if (diff == 7) {
+        inSeven.add(item);
+      }
+    }
+
+    final lines = <String>[];
+    void addLine(String heading, List<_DigestItem> list) {
+      if (list.isEmpty) return;
+      const maxNames = 3;
+      final names = list
+          .take(maxNames)
+          .map((i) => '${i.goatCode} ${i.label.toLowerCase()}')
+          .join(', ');
+      final more = list.length > maxNames ? ' +${list.length - maxNames} more' : '';
+      lines.add('$heading: $names$more');
+    }
+
+    addLine('Overdue', overdue);
+    addLine('Due today', today);
+    addLine('Tomorrow', tomorrow);
+    addLine('In 2 days', inTwo);
+    addLine('In 7 days', inSeven);
+    if (lines.isEmpty) return null;
+
+    final urgent = overdue.length + today.length;
+    final title = urgent > 0
+        ? '$urgent goat health task${urgent == 1 ? '' : 's'} need attention'
+        : 'Upcoming goat health tasks';
+
+    return _DigestContent(
+      title: title,
+      body: lines.first,
+      bigText: lines.join('\n'),
+    );
+  }
+
+  Future<void> _scheduleDigest({
     required int id,
-    required DateTime when,
+    required tz.TZDateTime when,
+    required Duration visibleFor,
     required String title,
     required String body,
-    required String payload,
+    required String bigText,
   }) async {
-    if (when.isBefore(DateTime.now())) return; // Already passed — skip.
-
     final details = NotificationDetails(
       android: AndroidNotificationDetails(
         NotificationService.channelId,
@@ -568,17 +696,18 @@ class HealthReminderScheduler {
         channelDescription: NotificationService.channelDescription,
         importance: Importance.high,
         priority: Priority.high,
+        styleInformation: BigTextStyleInformation(bigText),
+        // Auto-remove before the next one arrives (see caller).
+        timeoutAfter: visibleFor.inMilliseconds,
       ),
     );
-    final scheduledTime = tz.TZDateTime.from(when, tz.local);
 
-    // IMPORTANT: flutter_local_notifications does NOT throw a catchable
-    // Dart exception when exact scheduling is requested without the
-    // exact-alarm permission granted — it logs a native error and
-    // silently drops the schedule instead. A try/catch around
-    // zonedSchedule() cannot detect that. Checking the live permission
-    // status first and picking the matching mode is the only reliable
-    // way to make sure the reminder actually gets scheduled either way.
+    final payload = NotificationService.encodePayload(
+      {'category': 'health', 'type': 'health_digest'},
+    );
+
+    // flutter_local_notifications silently drops an exact schedule when
+    // the exact-alarm permission is missing, so pick the mode up front.
     final exactAllowed = await NotificationService.instance.canScheduleExactAlarms();
     final mode = exactAllowed
         ? AndroidScheduleMode.exactAllowWhileIdle
@@ -589,31 +718,24 @@ class HealthReminderScheduler {
         id,
         title,
         body,
-        scheduledTime,
+        when,
         details,
-        // Required by flutter_local_notifications 18.0.1's top-level
-        // zonedSchedule() facade even for an Android-only call — it's an
-        // iOS-specific setting (interpreted wall-clock vs. absolute time
-        // across timezone/DST changes) that this app never uses on
-        // Android, but the parameter is still mandatory at this version.
-        uiLocalNotificationDateInterpretation: UILocalNotificationDateInterpretation.absoluteTime,
+        uiLocalNotificationDateInterpretation:
+        UILocalNotificationDateInterpretation.absoluteTime,
         androidScheduleMode: mode,
         payload: payload,
       );
     } catch (e) {
-      // Belt-and-suspenders only — the permission check above is what
-      // actually prevents the silent-drop case. If scheduling still
-      // throws for some other reason, fall back to inexact rather than
-      // losing the reminder entirely.
-      debugPrint('HealthReminderScheduler: zonedSchedule failed ($mode), retrying inexact: $e');
+      debugPrint('HealthReminderScheduler: digest schedule failed ($mode): $e');
       if (mode == AndroidScheduleMode.exactAllowWhileIdle) {
         await _plugin.zonedSchedule(
           id,
           title,
           body,
-          scheduledTime,
+          when,
           details,
-          uiLocalNotificationDateInterpretation: UILocalNotificationDateInterpretation.absoluteTime,
+          uiLocalNotificationDateInterpretation:
+          UILocalNotificationDateInterpretation.absoluteTime,
           androidScheduleMode: AndroidScheduleMode.inexactAllowWhileIdle,
           payload: payload,
         );
@@ -621,37 +743,8 @@ class HealthReminderScheduler {
     }
   }
 
-  /// Fires a local notification immediately — used for the "due today"
-  /// stage when the due date has already arrived (or passed) by the
-  /// time the record is saved, so the person still gets a heads-up
-  /// instead of a silently-skipped past-dated schedule.
-  Future<void> _showNow({
-    required int id,
-    required String title,
-    required String body,
-    required String payload,
-  }) async {
-    await _plugin.show(
-      id,
-      title,
-      body,
-      const NotificationDetails(
-        android: AndroidNotificationDetails(
-          NotificationService.channelId,
-          NotificationService.channelName,
-          channelDescription: NotificationService.channelDescription,
-          importance: Importance.high,
-          priority: Priority.high,
-        ),
-      ),
-      payload: payload,
-    );
-  }
-
-  /// Deterministic notification id per (key, stage) so scheduling the
-  /// same record twice replaces rather than duplicates, and so
-  /// [cancelForEvent] can find them again. flutter_local_notifications
-  /// ids are 32-bit ints, so this is kept within that range.
+  /// Id scheme of the OLD per-record alarms. Kept only so
+  /// [cancelForEvent] can remove alarms an older app version scheduled.
   int _notificationId(String key, _ReminderStage stage) {
     final hash = key.hashCode & 0x0FFFFFFF; // keep well under 2^31
     return hash * 10 + stage.index;
@@ -659,3 +752,17 @@ class HealthReminderScheduler {
 }
 
 enum _ReminderStage { sevenDaysBefore, twoDaysBefore, oneDayBefore, dueToday }
+
+class _DigestItem {
+  final String goatCode;
+  final String label;
+  final DateTime dueDate;
+  _DigestItem(this.goatCode, this.label, this.dueDate);
+}
+
+class _DigestContent {
+  final String title;
+  final String body;
+  final String bigText;
+  _DigestContent({required this.title, required this.body, required this.bigText});
+}

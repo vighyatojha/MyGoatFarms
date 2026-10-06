@@ -65,7 +65,6 @@
 const {initializeApp} = require('firebase-admin/app');
 const {getFirestore, Timestamp, FieldValue} = require('firebase-admin/firestore');
 const {getMessaging} = require('firebase-admin/messaging');
-const {onDocumentCreated} = require('firebase-functions/v2/firestore');
 const {onSchedule} = require('firebase-functions/v2/scheduler');
 const {onCall, HttpsError} = require('firebase-functions/v2/https');
 const {logger} = require('firebase-functions');
@@ -137,23 +136,28 @@ async function pushToFarm(farmId, notification) {
 }
 
 // ---------------------------------------------------------------------
-// 1. Fan out every notification the app already writes to Firestore
+// 1. (REMOVED) Instant fan-out of every notification doc
+//
+// `onHealthNotificationCreated` used to push the moment ANY doc was
+// created under farms/{farmId}/notifications. The app creates those docs
+// on app open (due / overdue check) and the sweep below creates them at
+// any hour, so users got a push on every app open and in the middle of
+// the night.
+//
+// Health reminders are now delivered by the app itself as ONE digest,
+// 3 times a day at random times between 6 AM and 11 PM IST, at least
+// 4 hours apart (see lib/services/notification_schedule.dart
+// and HealthReminderScheduler.refreshDailyDigest). The notification docs
+// are still written and still show in the in-app Notifications screen —
+// they just no longer trigger a push.
+//
+// When deploying, `firebase deploy --only functions` will ask to delete
+// `onHealthNotificationCreated` — answer YES.
+//
+// `pushToFarm` above is kept so a future scheduled push can reuse it;
+// only call it from a function scheduled inside 6 AM – 11 PM IST, e.g.
+//   onSchedule({schedule: '0 6,10,14 * * *', timeZone: 'Asia/Kolkata'}, ...)
 // ---------------------------------------------------------------------
-
-exports.onHealthNotificationCreated = onDocumentCreated(
-    'farms/{farmId}/notifications/{notificationId}',
-    async (event) => {
-      const farmId = event.params.farmId;
-      const data = event.data.data();
-      if (!data) return;
-
-      try {
-        await pushToFarm(farmId, data);
-      } catch (e) {
-        logger.error(`Failed to push notification for farm ${farmId}:`, e);
-      }
-    },
-);
 
 // ---------------------------------------------------------------------
 // 2. Advance (7-day / 1-day before) reminders — the one thing that only
@@ -179,8 +183,8 @@ async function writeAdvanceReminder({farmId, docKey, type, title, message, refer
       isRead: false,
       createdAt: FieldValue.serverTimestamp(),
     });
-    // .create() succeeding means this is a brand-new doc — Firestore's
-    // own onDocumentCreated trigger above will pick it up and push it.
+    // In-app feed entry only — no push. The device-side daily digest
+    // (3 a day, 6 AM - 11 PM) is what notifies the user.
   } catch (e) {
     if (e.code === 6 /* ALREADY_EXISTS */) return; // Already sent — normal.
     throw e;

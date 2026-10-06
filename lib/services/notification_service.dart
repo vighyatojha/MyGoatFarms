@@ -10,6 +10,7 @@ import 'package:timezone/data/latest_all.dart' as tz_data;
 import 'package:timezone/timezone.dart' as tz;
 
 import 'firebase_messaging_background.dart';
+import 'notification_schedule.dart';
 
 /// Central, Android-only push-notification layer for MyGoatFarms.
 ///
@@ -126,6 +127,14 @@ class NotificationService {
   /// farm/user that just signed out (see doc section 7 — "Remove/disable
   /// current device token" before Firebase sign-out).
   Future<void> disableForCurrentFarm() async {
+    // Drop the scheduled daily digests of the farm that is
+    // signing out, so they don't keep firing after logout.
+    try {
+      await _localNotifications.cancelAll();
+    } catch (e) {
+      debugPrint('NotificationService: failed to cancel scheduled notifications: $e');
+    }
+
     if (_farmId == null) return;
     final deviceId = await _deviceId();
     try {
@@ -311,6 +320,9 @@ class NotificationService {
     FirebaseMessaging.onMessage.listen((RemoteMessage message) {
       final notification = message.notification;
       if (notification == null) return;
+
+      // Never disturb between 11 PM and 6 AM.
+      if (NotificationSchedule.isQuietTime(tz.TZDateTime.now(tz.local))) return;
 
       _localNotifications.show(
         message.hashCode,
