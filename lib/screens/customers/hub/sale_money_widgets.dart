@@ -12,6 +12,12 @@ NumberFormat.currency(locale: 'en_IN', symbol: '₹', decimalDigits: 2);
 String saleDay(DateTime? d) => d == null ? '—' : _date.format(d);
 String rupee2(double v) => _rupee2.format(v);
 
+String goatsText(CustomerSaleLine l) {
+  final n = l.goatCount;
+  final goats = '$n goat${n == 1 ? '' : 's'}';
+  return l.lots.isEmpty ? goats : '$goats · ${l.lots.keys.join(', ')}';
+}
+
 /// Bill → received → due, as three boxes. Due is Finance's figure.
 class SaleBillStrip extends StatelessWidget {
   const SaleBillStrip({super.key, required this.line});
@@ -25,11 +31,7 @@ class SaleBillStrip extends StatelessWidget {
       children: [
         _Box(label: 'Bill', value: hubMoney(line.total)),
         const SizedBox(width: 8),
-        _Box(
-          label: 'Received',
-          value: hubMoney(line.received),
-          color: AppColors.success,
-        ),
+        _Box(label: 'Received', value: hubMoney(line.received), color: AppColors.success),
         const SizedBox(width: 8),
         _Box(
           label: due > 0 ? 'Due' : 'Status',
@@ -54,7 +56,6 @@ class SalePaymentTimeline extends StatelessWidget {
     if (events.isEmpty) {
       return Text('No payment recorded yet', style: AppTheme.body(size: 11.5));
     }
-
     return Column(
       children: [
         for (var i = 0; i < events.length; i++)
@@ -72,25 +73,8 @@ class _TimelineRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final Color color;
-    final IconData icon;
-    switch (event.kind) {
-      case MoneyEventKind.received:
-        color = AppColors.success;
-        icon = Icons.south_west_rounded;
-        break;
-      case MoneyEventKind.voided:
-        color = AppColors.textGrey;
-        icon = Icons.block_rounded;
-        break;
-      case MoneyEventKind.adjusted:
-        color = AppColors.info;
-        icon = Icons.swap_horiz_rounded;
-        break;
-    }
-    final strike = event.kind == MoneyEventKind.voided
-        ? TextDecoration.lineThrough
-        : null;
+    final style = moneyEventStyle(event.kind);
+    final strike = event.kind == MoneyEventKind.voided ? TextDecoration.lineThrough : null;
     final sub = [
       saleDay(event.date),
       if (event.method.isNotEmpty) event.method,
@@ -109,15 +93,12 @@ class _TimelineRow extends StatelessWidget {
                   width: 22,
                   height: 22,
                   decoration: BoxDecoration(
-                    color: color.withValues(alpha: 0.12),
+                    color: style.color.withValues(alpha: 0.12),
                     shape: BoxShape.circle,
                   ),
-                  child: Icon(icon, size: 13, color: color),
+                  child: Icon(style.icon, size: 13, color: style.color),
                 ),
-                if (!last)
-                  Expanded(
-                    child: Container(width: 1.5, color: AppColors.divider),
-                  ),
+                if (!last) Expanded(child: Container(width: 1.5, color: AppColors.divider)),
               ],
             ),
           ),
@@ -148,7 +129,7 @@ class _TimelineRow extends StatelessWidget {
                     event.kind == MoneyEventKind.adjusted
                         ? '− ${rupee2(event.amount)}'
                         : rupee2(event.amount),
-                    style: AppTheme.heading(size: 12.5, color: color)
+                    style: AppTheme.heading(size: 12.5, color: style.color)
                         .copyWith(decoration: strike),
                   ),
                 ],
@@ -161,78 +142,21 @@ class _TimelineRow extends StatelessWidget {
   }
 }
 
-/// What delivering an open booking would come to, worked out with the
-/// same getters as the Wait on Delivery / Booking & Holding screens.
-class OpenBookingEstimate extends StatelessWidget {
-  const OpenBookingEstimate({super.key, required this.line});
+class MoneyEventStyle {
+  const MoneyEventStyle(this.color, this.icon);
+  final Color color;
+  final IconData icon;
+}
 
-  final CustomerSaleLine line;
-
-  @override
-  Widget build(BuildContext context) {
-    final s = line.estimate();
-    if (s == null) return const SizedBox.shrink();
-
-    final wait = line.sale.isWaitForDelivery;
-    final rows = <Widget>[
-      if (line.isFixedPrice)
-        _Line('Fixed price', rupee2(s.goatAmount))
-      else if (wait)
-        _Line(
-          'Goat value at booking weight',
-          rupee2(s.goatAmount),
-          sub: '${_kg(line.sale.bookingWeight ?? 0)} kg × ${rupee2(line.ratePerKg)}/kg',
-        )
-      else
-        _Line('Goat sale amount', rupee2(s.goatAmount)),
-      if (s.appliedDiscount > 0)
-        _Line('Discount', '− ${rupee2(s.appliedDiscount)}', color: AppColors.success),
-      if (s.holdingCharges > 0)
-        _Line('Holding charges to today', rupee2(s.holdingCharges)),
-      _Line(line.initialPaymentLabel, '− ${rupee2(s.advancePaid)}',
-          color: AppColors.success),
-    ];
-
-    final Widget result;
-    if (line.estimateNeedsWeight) {
-      result = _Result(
-        label: 'No booking weight saved',
-        value: 'Weigh at pickup',
-        color: AppColors.textGrey,
-      );
-    } else if (s.excess > 0) {
-      result = _Result(
-        label: 'Advance covers it',
-        value: '${rupee2(s.excess)} extra',
-        color: AppColors.success,
-      );
-    } else {
-      result = _Result(
-        label: wait ? 'Due at pickup (estimate)' : 'Due if delivered today',
-        value: rupee2(s.balanceDue),
-        color: HubColors.estimate,
-      );
-    }
-
-    return Column(
-      children: [
-        ...rows,
-        const Divider(height: 14, color: AppColors.divider),
-        result,
-        Padding(
-          padding: const EdgeInsets.only(top: 4),
-          child: Text(
-            wait
-                ? 'Final amount uses the pickup weight. Not in Finance until pickup.'
-                : 'Holding charges grow each day. Not in Finance until delivery.',
-            style: AppTheme.body(size: 10),
-          ),
-        ),
-      ],
-    );
+MoneyEventStyle moneyEventStyle(MoneyEventKind kind) {
+  switch (kind) {
+    case MoneyEventKind.received:
+      return const MoneyEventStyle(AppColors.success, Icons.south_west_rounded);
+    case MoneyEventKind.voided:
+      return const MoneyEventStyle(AppColors.textGrey, Icons.block_rounded);
+    case MoneyEventKind.adjusted:
+      return const MoneyEventStyle(AppColors.info, Icons.swap_horiz_rounded);
   }
-
-  static String _kg(double v) => NumberFormat('#,##0.##', 'en_IN').format(v);
 }
 
 /// Shown on a sale whose figures need a look. Never changes any total.
@@ -266,10 +190,8 @@ class SaleCheckNote extends StatelessWidget {
           const Icon(Icons.info_outline, size: 15, color: AppColors.warning),
           const SizedBox(width: 8),
           Expanded(
-            child: Text(
-              notes.join('\n'),
-              style: AppTheme.body(size: 10.5, color: AppColors.textDark),
-            ),
+            child: Text(notes.join('\n'),
+                style: AppTheme.body(size: 10.5, color: AppColors.textDark)),
           ),
         ],
       ),
@@ -282,12 +204,7 @@ class SaleCheckNote extends StatelessWidget {
 // =============================================================================
 
 class _Box extends StatelessWidget {
-  const _Box({
-    required this.label,
-    required this.value,
-    this.color,
-    this.strong = false,
-  });
+  const _Box({required this.label, required this.value, this.color, this.strong = false});
 
   final String label;
   final String value;
@@ -309,72 +226,13 @@ class _Box extends StatelessWidget {
           children: [
             Text(label, style: AppTheme.body(size: 10)),
             const SizedBox(height: 2),
-            Text(
-              value,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: AppTheme.heading(size: 13.5, color: c),
-            ),
+            Text(value,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: AppTheme.heading(size: 13.5, color: c)),
           ],
         ),
       ),
-    );
-  }
-}
-
-class _Line extends StatelessWidget {
-  const _Line(this.label, this.value, {this.sub, this.color});
-
-  final String label;
-  final String value;
-  final String? sub;
-  final Color? color;
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 3),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(label,
-                    style: AppTheme.body(size: 12, color: AppColors.textDark)),
-                if (sub != null) Text(sub!, style: AppTheme.body(size: 10)),
-              ],
-            ),
-          ),
-          Text(
-            value,
-            style: AppTheme.body(
-              size: 12,
-              color: color ?? AppColors.textDark,
-              weight: FontWeight.w600,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _Result extends StatelessWidget {
-  const _Result({required this.label, required this.value, required this.color});
-
-  final String label;
-  final String value;
-  final Color color;
-
-  @override
-  Widget build(BuildContext context) {
-    return Row(
-      children: [
-        Expanded(child: Text(label, style: AppTheme.heading(size: 13))),
-        Text(value, style: AppTheme.heading(size: 14, color: color)),
-      ],
     );
   }
 }

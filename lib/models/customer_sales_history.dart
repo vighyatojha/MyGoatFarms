@@ -280,34 +280,57 @@ class LotPurchaseSummary {
   });
 }
 
-enum SalesHistoryFilter { all, delivered, open, balance }
+/// Purchase history filters. Delivered sales only: open bookings are on
+/// the Wait on Delivery and Booking & Holding screens.
+enum SalesHistoryFilter { all, unpaid, paid }
 
 extension SalesHistoryFilterLabel on SalesHistoryFilter {
   String get label {
     switch (this) {
       case SalesHistoryFilter.all:
         return 'All';
-      case SalesHistoryFilter.delivered:
-        return 'Delivered';
-      case SalesHistoryFilter.open:
-        return 'Open bookings';
-      case SalesHistoryFilter.balance:
-        return 'Balance due';
+      case SalesHistoryFilter.unpaid:
+        return 'Unpaid';
+      case SalesHistoryFilter.paid:
+        return 'Paid';
     }
   }
 
   bool test(CustomerSaleLine line) {
+    if (!line.sale.isDelivered) return false;
     switch (this) {
       case SalesHistoryFilter.all:
         return true;
-      case SalesHistoryFilter.delivered:
-        return line.sale.isDelivered;
-      case SalesHistoryFilter.open:
-        return line.isOpen;
-      case SalesHistoryFilter.balance:
+      case SalesHistoryFilter.unpaid:
         return line.hasBalance;
+      case SalesHistoryFilter.paid:
+        return !line.hasBalance;
     }
   }
+}
+
+/// One line of a customer's trading account history: a bill or a money
+/// movement on a delivered sale.
+class AccountHistoryEntry {
+  final DateTime? date;
+  final String saleId;
+  final String title;
+  final String detail;
+  final double amount;
+
+  /// Null for a bill.
+  final MoneyEventKind? kind;
+
+  const AccountHistoryEntry({
+    required this.date,
+    required this.saleId,
+    required this.title,
+    required this.detail,
+    required this.amount,
+    this.kind,
+  });
+
+  bool get isBill => kind == null;
 }
 
 /// A customer's goat purchase history, newest first.
@@ -419,6 +442,62 @@ class CustomerSalesHistory {
 
   bool get isEmpty => lines.isEmpty;
 
+  /// Delivered sales, newest first (purchase history and ledger).
+  List<CustomerSaleLine> get delivered =>
+      lines.where((l) => l.sale.isDelivered).toList();
+
+  /// Open Wait on Delivery bookings, newest first.
+  List<CustomerSaleLine> get openWait =>
+      lines.where((l) => l.isOpen && l.sale.isWaitForDelivery).toList();
+
+  /// Open Booking & Holding bookings, newest first.
+  List<CustomerSaleLine> get openHolding =>
+      lines.where((l) => l.isOpen && l.sale.isBooking).toList();
+
+  /// Bills and money movements on delivered sales, newest first. Palai
+  /// bills and payments are never part of it.
+  List<AccountHistoryEntry> get accountHistory {
+    final entries = <AccountHistoryEntry>[];
+    for (final l in delivered) {
+      if (l.priceNotTracked) continue;
+      entries.add(AccountHistoryEntry(
+        date: l.deliveredOn ?? l.date,
+        saleId: l.id,
+        title: 'Bill · ${l.id}',
+        detail: '${l.goatCount} goat${l.goatCount == 1 ? '' : 's'}'
+            '${l.lots.isEmpty ? '' : ' · ${l.lots.keys.join(', ')}'}',
+        amount: l.total,
+      ));
+      for (final e in l.moneyEvents) {
+        entries.add(AccountHistoryEntry(
+          date: e.date,
+          saleId: l.id,
+          title: e.label,
+          detail: [
+            l.id,
+            if (e.method.isNotEmpty) e.method,
+            if (e.note.isNotEmpty) e.note,
+          ].join(' · '),
+          amount: e.amount,
+          kind: e.kind,
+        ));
+      }
+    }
+    entries.sort((a, b) {
+      final ad = a.date ?? DateTime.fromMillisecondsSinceEpoch(0);
+      final bd = b.date ?? DateTime.fromMillisecondsSinceEpoch(0);
+      final byDate = bd.compareTo(ad);
+      if (byDate != 0) return byDate;
+      // Same day: payment above its bill (newest first reads bottom-up).
+      return (a.isBill ? 1 : 0).compareTo(b.isBill ? 1 : 0);
+    });
+    return entries;
+  }
+
+  /// Everything received on delivered sales (receipt figures).
+  double get totalReceived => Sale.roundMoney(
+      _delivered.fold(0.0, (s, l) => s + l.received));
+
   int get saleCount => lines.length;
   int get deliveredCount => lines.where((l) => l.sale.isDelivered).length;
   int get openCount => _open.length;
@@ -451,8 +530,15 @@ class CustomerSalesHistory {
   /// checked so a future change that breaks it is visible.
   bool get matchesFinance => (pending - financeGoatSaleCredit).abs() < 0.01;
 
-  DateTime? get firstPurchase => lines.isEmpty ? null : lines.last.date;
-  DateTime? get lastPurchase => lines.isEmpty ? null : lines.first.date;
+  DateTime? get firstPurchase {
+    final d = delivered;
+    return d.isEmpty ? null : d.last.date;
+  }
+
+  DateTime? get lastPurchase {
+    final d = delivered;
+    return d.isEmpty ? null : d.first.date;
+  }
 
   /// Weighted average rate per KG over delivered per-KG sales with a
   /// weight. Null when there are none.
@@ -471,11 +557,11 @@ class CustomerSalesHistory {
     _delivered.fold(0.0, (s, l) => s + (l.weight > 0 ? l.weight : 0)),
   );
 
-  /// Lots the customer has bought from, most goats first.
+  /// Lots the customer has bought from (delivered), most goats first.
   List<LotPurchaseSummary> get lots {
     final goatsByLot = <String, int>{};
     final salesByLot = <String, int>{};
-    for (final l in lines) {
+    for (final l in delivered) {
       l.lots.forEach((lot, n) {
         goatsByLot[lot] = (goatsByLot[lot] ?? 0) + n;
         salesByLot[lot] = (salesByLot[lot] ?? 0) + 1;

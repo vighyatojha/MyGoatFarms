@@ -6,13 +6,12 @@ import '../../../models/customer_sales_history.dart';
 import '../../../models/sale_model.dart';
 import '../../../services/customer_account_service.dart';
 import '../../../widgets/fast_route.dart';
-import '../../trading/goat_stock/booking_delivery_customer_screen.dart';
-import '../../trading/goat_stock/wait_delivery_customer_screen.dart';
 import '../../trading/sale_receipt_screen.dart';
 import 'hub_widgets.dart';
 import 'sale_money_widgets.dart';
 
-/// Every goat sale to one customer: which lot each goat came from, how it
+/// Every DELIVERED goat sale to one customer (open bookings are on the
+/// Wait on Delivery and Booking & Holding screens): which lot each goat came from, how it
 /// was priced, what was paid and what is still due. Read-only.
 ///
 /// Goat-sale money only. Palai package and monthly Palai charges are not
@@ -82,26 +81,6 @@ class _CustomerSalesHistoryScreenState
     );
   }
 
-  /// Opens the existing Wait on Delivery / Booking & Holding screen for
-  /// this customer, where the pickup or delivery is completed and paid.
-  void _openComplete(CustomerSaleLine l) {
-    final name = l.sale.customerName.trim().isEmpty
-        ? widget.customerName
-        : l.sale.customerName.trim();
-    final screen = l.sale.isWaitForDelivery
-        ? WaitDeliveryCustomerScreen(
-      farmId: widget.farmId,
-      customerKey: l.deliveryKey,
-      customerName: name,
-    )
-        : BookingDeliveryCustomerScreen(
-      farmId: widget.farmId,
-      customerKey: l.deliveryKey,
-      customerName: name,
-    );
-    Navigator.of(context).push(fastRoute(screen));
-  }
-
   String _day(DateTime? d) => d == null ? '—' : _date.format(d);
 
   // ---------------------------------------------------------------------------
@@ -140,12 +119,13 @@ class _CustomerSalesHistoryScreenState
                       subtitle: 'This customer may have been deleted.',
                     );
                   }
-                  if (history.isEmpty) {
+                  if (history.delivered.isEmpty) {
                     return const HubMessage(
                       icon: Icons.sell_outlined,
-                      title: 'No goat purchases yet',
+                      title: 'No delivered purchases yet',
                       subtitle:
-                      'Sales to this customer will appear here with their lot and payments.',
+                      'Goats appear here once they are delivered. Open bookings are on '
+                          'the Wait on Delivery and Booking & Holding screens.',
                     );
                   }
                   return _body(history);
@@ -254,7 +234,7 @@ class _CustomerSalesHistoryScreenState
           Row(
             children: [
               _Fact('Goats bought', '${h.goatsBought}'),
-              _Fact('Sales', '${h.deliveredCount} delivered'),
+              _Fact('Sales', '${h.deliveredCount}'),
               _Fact('Avg rate', avg == null ? '—' : '${_rupee2.format(avg)}/kg'),
             ],
           ),
@@ -263,15 +243,11 @@ class _CustomerSalesHistoryScreenState
             children: [
               _Fact('Total bought', hubMoney(h.totalBought)),
               _Fact(
-                'Pending (Finance)',
+                'Pending',
                 hubMoney(h.pending),
                 color: h.pending > 0 ? HubColors.owes : AppColors.success,
               ),
-              _Fact(
-                'Due at delivery',
-                h.openCount == 0 ? '—' : hubMoney(h.dueAtDelivery),
-                color: h.dueAtDelivery > 0 ? HubColors.estimate : null,
-              ),
+              _Fact('Received', hubMoney(h.totalReceived), color: AppColors.success),
             ],
           ),
           const SizedBox(height: 12),
@@ -282,25 +258,6 @@ class _CustomerSalesHistoryScreenState
               _Fact('Customer since', _day(h.firstPurchase)),
             ],
           ),
-          if (h.openCount > 0) ...[
-            const Divider(height: 22, color: AppColors.divider),
-            Row(
-              children: [
-                const Icon(Icons.schedule_outlined,
-                    size: 16, color: HubColors.estimate),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Text(
-                    '${h.openCount} open booking${h.openCount == 1 ? '' : 's'}, '
-                        '${h.goatsOnOpenBookings} goat${h.goatsOnOpenBookings == 1 ? '' : 's'}, '
-                        '${hubMoney(h.advanceOnOpenBookings)} advance paid. '
-                        'Due at delivery is an estimate.',
-                    style: AppTheme.body(size: 11.5, color: AppColors.textDark),
-                  ),
-                ),
-              ],
-            ),
-          ],
           if (h.needsCheckCount > 0) ...[
             const SizedBox(height: 10),
             _Note(
@@ -477,42 +434,15 @@ class _CustomerSalesHistoryScreenState
             style: AppTheme.body(size: 12, color: AppColors.textDark, weight: FontWeight.w500),
           ),
           const SizedBox(height: 8),
-          if (l.isOpen) ...[
-            OpenBookingEstimate(line: l),
-            const SizedBox(height: 10),
-            SizedBox(
-              width: double.infinity,
-              height: 40,
-              child: FilledButton.icon(
-                onPressed: () => _openComplete(l),
-                style: FilledButton.styleFrom(
-                  backgroundColor: AppColors.primaryGreen,
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                ),
-                icon: Icon(
-                  l.sale.isWaitForDelivery
-                      ? Icons.local_shipping_outlined
-                      : Icons.event_available_outlined,
-                  size: 18,
-                ),
-                label: Text(
-                  l.sale.isWaitForDelivery ? 'Complete pickup' : 'Complete delivery',
-                  style: AppTheme.heading(size: 13, color: Colors.white),
-                ),
-              ),
-            ),
-          ]
-          else if (l.priceNotTracked)
+          if (l.priceNotTracked)
             Text(
               'Price not recorded for this transfer',
               style: AppTheme.body(size: 11.5),
             )
           else ...[
-              SaleBillStrip(line: l),
-              SaleCheckNote(line: l),
-            ],
+            SaleBillStrip(line: l),
+            SaleCheckNote(line: l),
+          ],
           if (open) ...[
             const Divider(height: 22, color: AppColors.divider),
             ..._details(l),
