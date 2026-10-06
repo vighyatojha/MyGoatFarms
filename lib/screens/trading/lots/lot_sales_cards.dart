@@ -254,106 +254,239 @@ class LotSalesCards extends StatelessWidget {
     }
   }
 
+  /// One sale, laid out like the lot cards: ID + status badge, customer
+  /// and date, a GOATS | WEIGHT | RATE panel, then the amount line with the
+  /// payment badge. Long notes and actions get their own line, so nothing
+  /// can overflow on a narrow phone.
   Widget _saleRow(BuildContext context, Sale sale) {
     final open = _isOpen(sale);
     final statusColor = open ? AppColors.warning : AppColors.success;
     final payment = _paymentLabel(sale);
     final weight = LotSalesSummary.saleWeight(sale);
     final customer =
-    sale.customerName.trim().isEmpty ? 'Customer' : sale.customerName;
+    sale.customerName.trim().isEmpty ? 'Customer' : sale.customerName.trim();
     final tappable = _hasReceipt(sale);
+    final goats = sale.lotQuantity;
+
+    final rateLabel = sale.isFixedPrice ? 'FIXED' : 'RATE / KG';
+    final rateValue = sale.isFixedPrice
+        ? wizardCurrency(sale.fixedSalePrice ?? sale.totalSaleAmount)
+        : weight > 0
+        ? wizardCurrency(LotSalesSummary.effectivePricePerKg(sale))
+        : '—';
+
+    Widget cell(String label, String value) {
+      return Expanded(
+        child: Column(
+          children: [
+            Text(
+              label,
+              maxLines: 1,
+              style: AppTheme.body(
+                size: 9.5,
+                color: AppColors.textGrey,
+                weight: FontWeight.w600,
+              ).copyWith(letterSpacing: 0.5),
+            ),
+            const SizedBox(height: 2),
+            FittedBox(
+              fit: BoxFit.scaleDown,
+              child: Text(
+                value,
+                maxLines: 1,
+                style: AppTheme.heading(size: 14, color: AppColors.textDark),
+              ),
+            ),
+          ],
+        ),
+      );
+    }
 
     final row = Padding(
-      padding: const EdgeInsets.symmetric(vertical: 2),
+      padding: const EdgeInsets.symmetric(vertical: 4),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          // S-0032  [Waiting]
           Row(
             children: [
               Expanded(
                 child: Text(
-                  '${sale.id} • $customer',
-                  style: AppTheme.body(
-                    size: 13,
-                    color: AppColors.textDark,
-                    weight: FontWeight.w700,
-                  ),
-                ),
-              ),
-              LotBadge(label: _statusLabel(sale), color: statusColor),
-            ],
-          ),
-          const SizedBox(height: 4),
-          Text(
-            [
-              if (sale.saleDate != null) wizardDate(sale.saleDate!),
-              '${sale.lotQuantity} goat${sale.lotQuantity == 1 ? '' : 's'}',
-              '${PurchaseCosting.formatNumber(weight)} kg',
-              if (sale.isFixedPrice)
-                'Fixed ${wizardCurrency(sale.fixedSalePrice ?? sale.totalSaleAmount)}'
-              else if (weight > 0)
-                '${wizardCurrency(LotSalesSummary.effectivePricePerKg(sale))}'
-                    '/kg',
-            ].join('  •  '),
-            style: AppTheme.body(size: 11.5),
-          ),
-          const SizedBox(height: 6),
-          Row(
-            children: [
-              Text(
-                wizardCurrency(sale.billGoatSale),
-                style: AppTheme.body(
-                  size: 13.5,
-                  color: AppColors.textDark,
-                  weight: FontWeight.w800,
+                  sale.id,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: AppTheme.heading(size: 15, color: AppColors.textDark),
                 ),
               ),
               const SizedBox(width: 8),
-              LotBadge(label: payment, color: _paymentColor(payment)),
-              const Spacer(),
-              if (tappable)
-                Row(
-                  children: [
-                    Text(
-                      sale.canCollectBalance ? 'Receipt / collect' : 'Receipt',
-                      style: AppTheme.body(
-                        size: 12,
-                        color: AppColors.primaryGreen,
-                      ),
-                    ),
-                    const Icon(
-                      Icons.chevron_right_rounded,
-                      size: 18,
-                      color: AppColors.primaryGreen,
-                    ),
-                  ],
-                )
-              else if (open)
-                Text(
-                  'Finish from Booking / Wait on Delivery',
-                  style: AppTheme.body(size: 10.5),
-                ),
+              LotIconBadge(
+                label: _statusLabel(sale),
+                color: statusColor,
+                icon: open ? Icons.schedule_rounded : Icons.check_rounded,
+              ),
             ],
           ),
-          if (sale.canCollectBalance) ...[
-            const SizedBox(height: 6),
-            Align(
-              alignment: Alignment.centerLeft,
-              child: OutlinedButton.icon(
-                onPressed: () => _receivePayment(context, sale),
-                icon: const Icon(Icons.payments_outlined, size: 16),
-                label: Text(
-                  'Receive payment • ${wizardCurrency(sale.billBalanceDue)} due',
+          const SizedBox(height: 2),
+          // Rustam • 04/10/2026
+          Row(
+            children: [
+              const Icon(Icons.person_outline_rounded,
+                  size: 14, color: AppColors.textGrey),
+              const SizedBox(width: 4),
+              Expanded(
+                child: Text(
+                  [
+                    customer,
+                    if (sale.saleDate != null) wizardDate(sale.saleDate!),
+                  ].join('  •  '),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: AppTheme.body(size: 12, color: AppColors.textGrey),
                 ),
-                style: OutlinedButton.styleFrom(
-                  foregroundColor: AppColors.primaryGreen,
-                  visualDensity: VisualDensity.compact,
-                  textStyle: const TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w600,
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+
+          // GOATS | WEIGHT | RATE
+          Container(
+            padding: const EdgeInsets.symmetric(vertical: 8),
+            decoration: BoxDecoration(
+              color: const Color(0xFFF6F8F6),
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: AppColors.divider.withValues(alpha: 0.6)),
+            ),
+            child: IntrinsicHeight(
+              child: Row(
+                children: [
+                  cell('GOATS', '$goats'),
+                  VerticalDivider(
+                    width: 1,
+                    thickness: 1,
+                    color: AppColors.divider.withValues(alpha: 0.9),
+                  ),
+                  cell('WEIGHT', '${PurchaseCosting.formatNumber(weight)} kg'),
+                  VerticalDivider(
+                    width: 1,
+                    thickness: 1,
+                    color: AppColors.divider.withValues(alpha: 0.9),
+                  ),
+                  cell(rateLabel, rateValue),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 10),
+
+          // Amount: ₹3,80,000.00            [Partial]
+          Row(
+            children: [
+              Expanded(
+                child: FittedBox(
+                  fit: BoxFit.scaleDown,
+                  alignment: Alignment.centerLeft,
+                  child: Text.rich(
+                    TextSpan(
+                      children: [
+                        TextSpan(
+                          text: 'Amount: ',
+                          style: AppTheme.body(size: 12.5, color: AppColors.textGrey),
+                        ),
+                        TextSpan(
+                          text: wizardCurrency(sale.billGoatSale),
+                          style: AppTheme.heading(size: 16, color: AppColors.textDark),
+                        ),
+                      ],
+                    ),
                   ),
                 ),
               ),
+              const SizedBox(width: 8),
+              LotIconBadge(
+                label: payment,
+                color: _paymentColor(payment),
+                icon: payment == 'Paid' ? Icons.check_rounded : null,
+              ),
+            ],
+          ),
+
+          // Own line: never shares space with the amount.
+          if (open && !tappable) ...[
+            const SizedBox(height: 8),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+              decoration: BoxDecoration(
+                color: AppColors.warning.withValues(alpha: 0.08),
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Icon(Icons.info_outline_rounded,
+                      size: 15, color: AppColors.warning),
+                  const SizedBox(width: 6),
+                  Expanded(
+                    child: Text(
+                      sale.isBooking
+                          ? 'Not delivered yet. Finish it from Booking & Holding.'
+                          : 'Not picked up yet. Finish it from Wait on Delivery.',
+                      style: AppTheme.body(size: 11, color: AppColors.textDark),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+
+          if (tappable || sale.canCollectBalance) ...[
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                if (sale.canCollectBalance)
+                  Expanded(
+                    child: OutlinedButton.icon(
+                      onPressed: () => _receivePayment(context, sale),
+                      icon: const Icon(Icons.payments_outlined, size: 16),
+                      label: FittedBox(
+                        fit: BoxFit.scaleDown,
+                        child: Text(
+                          'Collect ${wizardCurrency(sale.billBalanceDue)}',
+                        ),
+                      ),
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: AppColors.primaryGreen,
+                        side: const BorderSide(color: AppColors.primaryGreen),
+                        visualDensity: VisualDensity.compact,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        textStyle: const TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                  )
+                else
+                  const Spacer(),
+                if (tappable) ...[
+                  const SizedBox(width: 8),
+                  Text(
+                    'Receipt',
+                    style: AppTheme.body(
+                      size: 12.5,
+                      color: AppColors.primaryGreen,
+                      weight: FontWeight.w600,
+                    ),
+                  ),
+                  const Icon(
+                    Icons.chevron_right_rounded,
+                    size: 18,
+                    color: AppColors.primaryGreen,
+                  ),
+                ],
+              ],
             ),
           ],
         ],

@@ -17,6 +17,7 @@ import '../../services/trading_service.dart';
 import '../../widgets/farm_not_linked_state.dart';
 import '../../widgets/fast_route.dart';
 import '../customers/hub/customer_hub_list_screen.dart';
+import 'suppliers/goat_supplier_list_screen.dart';
 import 'goat_stock/booking_delivery_customer_list_screen.dart';
 import 'goat_stock/goat_stock_list_screen.dart';
 import 'goat_stock/sold_customer_list_screen.dart';
@@ -37,8 +38,7 @@ import 'sell_goat/sell_goat_wizard_screen.dart';
 ///  1. Header (back, title, recalculate)
 ///  2. 2x2 stat cards (Available Stock, Booking, Wait on Delivery,
 ///     Total Sold) + compact secondary stats list
-///  3. Sales options card (Sell Available Stock, Lot Management, Lot Sales,
-///     Customers)
+///  3. Sales options card (Sell Available Stock, Lot Management, Lot Sales)
 ///  4. Secondary trading stats with direct Purchase / Sell controls.
 ///     Goats stay anonymous inside a lot; they are only registered when
 ///     transferred to a Palai, so there is no standalone "Register Goats" action.
@@ -334,8 +334,16 @@ class _TradingDashboardScreenState extends State<TradingDashboardScreen> {
     return _push(LotManagementScreen(farmId: farmId));
   }
 
-  /// Customers: one list of Palai customers with their deliveries and
-  /// money position. Read-only; it opens the existing screens for actions.
+  /// Supplier ledger: every goat supplier, what was bought, paid and is
+  /// still due (worked out from the lots), with payments per lot.
+  Future<void> _openSupplierLedger() {
+    final farmId = _farmId;
+    if (farmId == null) return Future.value();
+    return _push(GoatSupplierListScreen(farmId: farmId));
+  }
+
+  /// Customers: everyone the farm trades with, their bookings, purchases
+  /// and trading account. Read-only; actions open the existing screens.
   Future<void> _openCustomers() {
     final farmId = _farmId;
     if (farmId == null) return Future.value();
@@ -783,10 +791,10 @@ class _TradingDashboardScreenState extends State<TradingDashboardScreen> {
             _StripRow(
               icon: Icons.currency_rupee_rounded,
               color: AppColors.error,
-              title: 'Supplier Payments Due',
-              subtitle: 'Owed across all lots',
+              title: 'Supplier Ledger',
+              subtitle: 'Supplier ledger · owed across all lots',
               subtitleColor: AppColors.error,
-              onTap: _openLotManagement,
+              onTap: _openSupplierLedger,
               trailing: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../../app_theme.dart';
+import '../../../models/lot_sales_summary.dart';
 import '../../../models/purchase_costing.dart';
 import '../../../models/sale_model.dart';
 import '../../../models/trading_lot_death_model.dart';
@@ -38,10 +39,16 @@ class LotDetailScreen extends StatefulWidget {
   /// Firestore document id of the lot (PUR-0007).
   final String lotDocId;
 
+  /// The lot as the previous screen already had it. When given, the screen
+  /// shows it at once (no loading spinner) and the live stream replaces it
+  /// as soon as it arrives.
+  final TradingPurchase? initialLot;
+
   const LotDetailScreen({
     super.key,
     required this.farmId,
     required this.lotDocId,
+    this.initialLot,
   });
 
   @override
@@ -55,6 +62,16 @@ class _LotDetailScreenState extends State<LotDetailScreen> {
   late final Stream<List<LotDeath>> _deathsStream;
   late final Stream<List<Sale>> _salesStream;
 
+  /// Same query as [_salesStream], for the "Lot at a glance" card (each
+  /// StreamBuilder gets its own listener).
+  late final Stream<List<Sale>> _glanceSalesStream;
+
+  /// Optimistic state: payments being voided and deaths being undone. The
+  /// row changes at once; the live data confirms it, or it springs back
+  /// with an error message if the save fails.
+  final Set<String> _voiding = <String>{};
+  final Set<String> _undoing = <String>{};
+
   @override
   void initState() {
     super.initState();
@@ -67,6 +84,8 @@ class _LotDetailScreenState extends State<LotDetailScreen> {
         service.lotReceivingsStream(widget.farmId, widget.lotDocId);
     _deathsStream = service.lotDeathsStream(widget.farmId, widget.lotDocId);
     _salesStream = service.salesForLotStream(widget.farmId, widget.lotDocId);
+    _glanceSalesStream =
+        service.salesForLotStream(widget.farmId, widget.lotDocId);
   }
 
   void _snack(String message, {bool error = false}) {
@@ -146,6 +165,7 @@ class _LotDetailScreenState extends State<LotDetailScreen> {
 
     if (ok != true) return;
 
+    setState(() => _undoing.add(d.id));
     try {
       await TradingService.instance.undoLotFarmDeath(
         farmId: widget.farmId,
@@ -158,6 +178,8 @@ class _LotDetailScreenState extends State<LotDetailScreen> {
         _snack(e.toString().replaceFirst(RegExp(r'^\w*(Error|Exception): '), ''),
             error: true);
       }
+    } finally {
+      if (mounted) setState(() => _undoing.remove(d.id));
     }
   }
 
@@ -224,6 +246,7 @@ class _LotDetailScreenState extends State<LotDetailScreen> {
 
     if (ok != true) return;
 
+    setState(() => _voiding.add(p.id));
     try {
       await TradingService.instance.voidSupplierPayment(
         farmId: widget.farmId,
@@ -237,6 +260,8 @@ class _LotDetailScreenState extends State<LotDetailScreen> {
         _snack(e.toString().replaceFirst(RegExp(r'^\w*(Error|Exception): '), ''),
             error: true);
       }
+    } finally {
+      if (mounted) setState(() => _voiding.remove(p.id));
     }
   }
 
@@ -293,6 +318,7 @@ class _LotDetailScreenState extends State<LotDetailScreen> {
       permission: PartnerPermissionKeys.tradingView,
       child: StreamBuilder<TradingPurchase?>(
         stream: _lotStream,
+        initialData: widget.initialLot,
         builder: (context, snapshot) {
           final lot = snapshot.data;
 
@@ -344,40 +370,114 @@ class _LotDetailScreenState extends State<LotDetailScreen> {
       );
     }
 
-    return ListView(
-      padding: const EdgeInsets.fromLTRB(16, 16, 16, 28),
-      children: [
-        _header(lot),
-        const SizedBox(height: 14),
-
-        if (lot.dealCancelled) ...[
-          _cancelledCard(lot),
-          const SizedBox(height: 14),
-        ],
-
-        if (!lot.isLot) ...[
+    // Header on top, then swipeable tabs. The header scrolls away and the
+    // tab bar stays pinned, so each tab gets the whole screen. Actions are
+    // not a tab: they sit at the bottom of whichever tab is open.
+    final tabs = <(String, IconData, List<Widget>)>[
+      (
+      'Overview',
+      Icons.dashboard_outlined,
+      [
+        if (lot.isLot && !lot.dealCancelled) _glanceCard(lot),
+        if (lot.dealCancelled) _cancelledCard(lot),
+        if (!lot.isLot)
           const WizardNote(
             'This purchase was made before lots existed and has not been '
                 'converted yet, so lot actions are unavailable.',
             tone: WizardNoteTone.warning,
           ),
-          const SizedBox(height: 14),
-        ],
-
-        _stockCard(lot),
-        const SizedBox(height: 14),
-        _purchaseCard(lot),
-        const SizedBox(height: 14),
-        _receivingCard(lot),
-        const SizedBox(height: 14),
-        _paymentCard(lot),
-        const SizedBox(height: 14),
-        if (lot.isLot) ...[
-          _salesCards(lot),
-          const SizedBox(height: 14),
-        ],
-        _actions(lot),
       ],
+      ),
+      ('Stock', Icons.inventory_2_outlined, [_stockCard(lot)]),
+      (
+      'Sales',
+      Icons.sell_outlined,
+      [
+        if (lot.isLot)
+          _salesCards(lot)
+        else
+          const WizardNote('Sales by lot are not available for this purchase.'),
+      ],
+      ),
+      ('Supplier', Icons.payments_outlined, [_paymentCard(lot)]),
+      (
+      'Details',
+      Icons.receipt_long_outlined,
+      [_purchaseCard(lot), _receivingCard(lot)],
+      ),
+    ];
+
+    return DefaultTabController(
+      length: tabs.length,
+      child: NestedScrollView(
+        headerSliverBuilder: (context, _) => [
+          SliverToBoxAdapter(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(16, 14, 16, 10),
+              child: _header(lot),
+            ),
+          ),
+          SliverPersistentHeader(
+            pinned: true,
+            delegate: _TabBarDelegate(
+              TabBar(
+                isScrollable: true,
+                tabAlignment: TabAlignment.start,
+                padding: const EdgeInsets.symmetric(horizontal: 12),
+                labelPadding: const EdgeInsets.symmetric(horizontal: 4),
+                dividerColor: Colors.transparent,
+                indicatorSize: TabBarIndicatorSize.tab,
+                indicator: BoxDecoration(
+                  color: AppColors.primaryGreen,
+                  borderRadius: BorderRadius.circular(20),
+                ),
+                labelColor: Colors.white,
+                unselectedLabelColor: AppColors.textDark,
+                labelStyle: const TextStyle(
+                  fontFamily: 'Poppins',
+                  fontSize: 12.5,
+                  fontWeight: FontWeight.w600,
+                ),
+                tabs: [
+                  for (final t in tabs)
+                    Tab(
+                      height: 36,
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 12),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(t.$2, size: 16),
+                            const SizedBox(width: 6),
+                            Text(t.$1),
+                          ],
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          ),
+        ],
+        body: TabBarView(
+          children: [
+            for (final t in tabs)
+              _KeepAliveTab(
+                child: ListView(
+                  padding: const EdgeInsets.fromLTRB(16, 12, 16, 28),
+                  children: [
+                    for (var i = 0; i < t.$3.length; i++) ...[
+                      if (i > 0) const SizedBox(height: 13),
+                      _Compact(child: t.$3[i]),
+                    ],
+                    const SizedBox(height: 13),
+                    _Compact(child: _actions(lot)),
+                  ],
+                ),
+              ),
+          ],
+        ),
+      ),
     );
   }
 
@@ -434,14 +534,53 @@ class _LotDetailScreenState extends State<LotDetailScreen> {
 
   Widget _header(TradingPurchase lot) {
     final status = lot.paymentStatus;
+    final completed = !lot.isActive && !lot.dealCancelled;
+
+    final String badgeLabel;
+    final Color badgeColor;
+    final IconData badgeIcon;
+    if (lot.dealCancelled) {
+      badgeLabel = 'Deal Cancelled';
+      badgeColor = AppColors.error;
+      badgeIcon = Icons.block_rounded;
+    } else if (completed || !lot.isLot) {
+      badgeLabel = 'Completed';
+      badgeColor = AppColors.success;
+      badgeIcon = Icons.task_alt_rounded;
+    } else {
+      badgeLabel = lotLocationLabel(lot.location);
+      badgeColor = lotLocationColor(lot.location);
+      badgeIcon = lotLocationIcon(lot.location);
+    }
+
+    final List<(String, int, Color?)> columns = lot.dealCancelled
+        ? [('PURCHASED', lot.totalGoats, null)]
+        : completed
+        ? [
+      ('PURCHASED', lot.totalGoats, null),
+      ('SOLD', lot.soldQty, null),
+      ('DIED', lot.mortality, lot.mortality > 0 ? AppColors.error : null),
+      ('TO PALAI', lot.registeredCount, null),
+    ]
+        : [
+      ('PURCHASED', lot.totalGoats, null),
+      ('SOLD', lot.soldQty, null),
+      ('REMAINING', lot.remainingQty, const Color(0xFF1E8A57)),
+    ];
 
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, 14),
       decoration: BoxDecoration(
-        color: AppColors.primaryGreen.withValues(alpha: 0.06),
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: AppColors.primaryGreen.withValues(alpha: 0.18)),
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(20),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.045),
+            blurRadius: 12,
+            offset: const Offset(0, 4),
+          ),
+        ],
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -450,46 +589,339 @@ class _LotDetailScreenState extends State<LotDetailScreen> {
             children: [
               Text(
                 lot.lotId,
-                style: AppTheme.heading(size: 22, color: AppColors.primaryGreen),
+                style: AppTheme.heading(
+                  size: 24,
+                  color: AppColors.textDark,
+                  weight: FontWeight.w800,
+                ),
               ),
-              const Spacer(),
-              LotBadge(
-                label: lot.dealCancelled
-                    ? 'Deal Cancelled'
-                    : lot.isActive
-                    ? 'Active'
-                    : 'Completed',
-                color: lot.dealCancelled
-                    ? AppColors.error
-                    : lot.isActive
-                    ? AppColors.info
-                    : AppColors.textGrey,
+              const SizedBox(width: 10),
+              Flexible(
+                child: LotIconBadge(
+                  label: badgeLabel,
+                  color: badgeColor,
+                  icon: badgeIcon,
+                ),
               ),
             ],
           ),
           const SizedBox(height: 4),
-          Text(
-            '${lot.sellerName} • ${wizardDate(lot.purchaseDate)}',
-            style: AppTheme.body(size: 12),
-          ),
-          const SizedBox(height: 12),
-          Wrap(
-            spacing: 8,
-            runSpacing: 6,
+          Row(
             children: [
-              if (lot.isLot && !lot.dealCancelled)
-                LotBadge(
-                  label: lotLocationLabel(lot.location),
-                  color: lotLocationColor(lot.location),
+              const Icon(Icons.storefront_outlined, size: 14, color: AppColors.textGrey),
+              const SizedBox(width: 5),
+              Expanded(
+                child: Text(
+                  '${lot.sellerName}  •  ${wizardDate(lot.purchaseDate)}',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: AppTheme.body(size: 12.5, color: AppColors.textGrey),
                 ),
-              LotBadge(
-                label: 'Payment: ${supplierPaymentStatusLabel(status)}',
+              ),
+            ],
+          ),
+          const SizedBox(height: 14),
+
+          // PURCHASED | SOLD | REMAINING
+          Container(
+            padding: const EdgeInsets.symmetric(vertical: 11),
+            decoration: BoxDecoration(
+              color: const Color(0xFFF6F8F6),
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: AppColors.divider.withValues(alpha: 0.6)),
+            ),
+            child: IntrinsicHeight(
+              child: Row(
+                children: [
+                  for (var i = 0; i < columns.length; i++) ...[
+                    if (i > 0)
+                      VerticalDivider(
+                        width: 1,
+                        thickness: 1,
+                        color: AppColors.divider.withValues(alpha: 0.9),
+                      ),
+                    Expanded(
+                      child: Column(
+                        children: [
+                          Text(
+                            columns[i].$1,
+                            style: AppTheme.body(
+                              size: 10.5,
+                              color: AppColors.textGrey,
+                              weight: FontWeight.w600,
+                            ).copyWith(letterSpacing: 0.6),
+                          ),
+                          const SizedBox(height: 3),
+                          Text(
+                            '${columns[i].$2}',
+                            style: AppTheme.heading(
+                              size: 21,
+                              color: columns[i].$3 ?? AppColors.textDark,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+          ),
+
+          // At Supplier / At Farm
+          if (lot.isLot && !lot.dealCancelled && !completed) ...[
+            const SizedBox(height: 8),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 8),
+              decoration: BoxDecoration(
+                color: AppColors.lightGreen.withValues(alpha: 0.45),
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(
+                  color: AppColors.primaryGreen.withValues(alpha: 0.12),
+                ),
+              ),
+              child: Row(
+                children: [
+                  const Icon(Icons.warehouse_outlined, size: 15, color: AppColors.textGrey),
+                  const SizedBox(width: 5),
+                  Text(
+                    'At Supplier: ${lot.supplierQty}',
+                    style: AppTheme.body(
+                        size: 12, color: AppColors.textDark, weight: FontWeight.w600),
+                  ),
+                  const Spacer(),
+                  Icon(
+                    Icons.home_outlined,
+                    size: 15,
+                    color: lot.farmQty > 0 ? AppColors.darkGreen : AppColors.textGrey,
+                  ),
+                  const SizedBox(width: 5),
+                  Text(
+                    'At Farm: ${lot.farmQty}',
+                    style: AppTheme.body(
+                        size: 12, color: AppColors.textDark, weight: FontWeight.w600),
+                  ),
+                ],
+              ),
+            ),
+          ],
+
+          const SizedBox(height: 12),
+          Container(height: 1, color: AppColors.divider.withValues(alpha: 0.7)),
+          const SizedBox(height: 11),
+
+          // Due / Settled
+          Row(
+            children: [
+              Expanded(
+                child: lot.dealCancelled
+                    ? Text(
+                  'Loss ${wizardCurrency(lot.cancelLossAmount)}  •  '
+                      'Refunded ${wizardCurrency(lot.cancelRefundAmount)}',
+                  style: AppTheme.body(
+                      size: 12.5, color: AppColors.textDark, weight: FontWeight.w600),
+                )
+                    : lot.dueAmount >= 0.01
+                    ? Text.rich(TextSpan(children: [
+                  TextSpan(
+                    text: 'Due: ',
+                    style: AppTheme.body(size: 13, color: AppColors.textGrey),
+                  ),
+                  TextSpan(
+                    text: wizardCurrency(lot.dueAmount),
+                    style: AppTheme.heading(size: 18, color: AppColors.textDark),
+                  ),
+                ]))
+                    : Text.rich(TextSpan(children: [
+                  TextSpan(
+                    text: 'Payment: ',
+                    style: AppTheme.body(size: 13, color: AppColors.textGrey),
+                  ),
+                  TextSpan(
+                    text: 'Settled (${wizardCurrency(0)} Due)',
+                    style: AppTheme.heading(size: 15, color: AppColors.success),
+                  ),
+                ])),
+              ),
+              const SizedBox(width: 8),
+              LotIconBadge(
+                label: supplierPaymentStatusLabel(status),
                 color: lotPaymentColor(status),
+                icon: status == 'Paid' ? Icons.check_rounded : null,
               ),
             ],
           ),
         ],
       ),
+    );
+  }
+
+  // ---------------------------------------------------------------------
+  // LOT AT A GLANCE: stock left, sales done, supplier payment pending
+  // ---------------------------------------------------------------------
+
+  Widget _glanceCard(TradingPurchase lot) {
+    final canPay = PartnerAccessService.instance
+        .allows(PartnerPermissionKeys.tradingSupplierPayment);
+
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(18),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.045),
+            blurRadius: 12,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text('Lot at a glance', style: AppTheme.heading(size: 15)),
+          const SizedBox(height: 12),
+
+          // 1. Stock still pending in the lot
+          _glanceSection(
+            icon: Icons.inventory_2_outlined,
+            color: AppColors.primaryGreen,
+            title: 'Stock left in lot',
+            value: '${lot.remainingQty} of ${lot.totalGoats}',
+            lines: [
+              'At supplier ${lot.supplierQty}  •  At farm ${lot.farmQty}',
+              'Available to sell now ${lot.availableForSaleQty}'
+                  '${lot.reservedQty > 0 ? '  •  Booked ${lot.reservedQty}' : ''}',
+              if (lot.unsoldOutLabel.isNotEmpty) '${lot.unsoldOutLabel} (not sold)',
+            ],
+          ),
+          const Divider(height: 22, color: AppColors.divider),
+
+          // 2. Sales made from this lot
+          StreamBuilder<List<Sale>>(
+            stream: _glanceSalesStream,
+            builder: (context, snap) {
+              if (!snap.hasData) {
+                return _glanceSection(
+                  icon: Icons.sell_outlined,
+                  color: AppColors.info,
+                  title: 'Sales from this lot',
+                  value: '${lot.soldQty} sold',
+                  lines: const ['Loading sale amounts…'],
+                );
+              }
+              final sales = LotSalesSummary.from(lot, snap.data!);
+              return _glanceSection(
+                icon: Icons.sell_outlined,
+                color: AppColors.info,
+                title: 'Sales from this lot',
+                value: '${sales.goatsSold} sold',
+                lines: [
+                  'Sales ${wizardCurrency(sales.revenue)}'
+                      '  •  Customers owe ${wizardCurrency(sales.customerPending)}',
+                  if (sales.openGoats > 0)
+                    '${sales.openGoats} goats booked, waiting for delivery',
+                ],
+                valueColor: AppColors.textDark,
+              );
+            },
+          ),
+          const Divider(height: 22, color: AppColors.divider),
+
+          // 3. Supplier payment pending
+          _glanceSection(
+            icon: Icons.payments_outlined,
+            color: lot.dueAmount >= 0.01 ? AppColors.error : AppColors.success,
+            title: 'Supplier payment',
+            value: lot.dueAmount >= 0.01
+                ? '${wizardCurrency(lot.dueAmount)} due'
+                : 'Fully paid',
+            valueColor:
+            lot.dueAmount >= 0.01 ? AppColors.error : AppColors.success,
+            lines: [
+              'Paid ${wizardCurrency(lot.paidAmount)} of '
+                  '${wizardCurrency(lot.purchaseAmount)}  •  ${lot.sellerName}',
+            ],
+          ),
+          if (lot.dueAmount >= 0.01 && canPay) ...[
+            const SizedBox(height: 12),
+            SizedBox(
+              width: double.infinity,
+              height: 44,
+              child: FilledButton.icon(
+                onPressed: () => _addPayment(lot),
+                style: FilledButton.styleFrom(
+                  backgroundColor: AppColors.primaryGreen,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                ),
+                icon: const Icon(Icons.payments_outlined, size: 18),
+                label: Text('Pay supplier ${wizardCurrency(lot.dueAmount)}'),
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _glanceSection({
+    required IconData icon,
+    required Color color,
+    required String title,
+    required String value,
+    required List<String> lines,
+    Color? valueColor,
+  }) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Container(
+          width: 36,
+          height: 36,
+          decoration: BoxDecoration(
+            color: color.withValues(alpha: 0.10),
+            borderRadius: BorderRadius.circular(11),
+          ),
+          child: Icon(icon, size: 19, color: color),
+        ),
+        const SizedBox(width: 12),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Expanded(
+                    child: Text(title, style: AppTheme.body(size: 12)),
+                  ),
+                  Text(
+                    value,
+                    style: AppTheme.heading(
+                      size: 15,
+                      color: valueColor ?? AppColors.primaryGreen,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 3),
+              for (final line in lines)
+                Padding(
+                  padding: const EdgeInsets.only(top: 2),
+                  child: Text(
+                    line,
+                    style: AppTheme.body(
+                      size: 11.5,
+                      color: AppColors.textDark,
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        ),
+      ],
     );
   }
 
@@ -552,61 +984,251 @@ class _LotDetailScreenState extends State<LotDetailScreen> {
   // STOCK
   // ---------------------------------------------------------------------
 
+  /// Stock, made easy to read:
+  ///  1. one coloured bar of every goat bought: sold / at supplier / at
+  ///     farm / died / moved to individual goats;
+  ///  2. big tiles for what can be done now;
+  ///  3. a short list of where the goats went.
+  /// Every number is the lot's own live figure.
   Widget _stockCard(TradingPurchase lot) {
-    return WizardSectionCard(
-      title: 'Stock',
-      icon: Icons.inventory_2_outlined,
-      children: [
-        WizardComputedRow(label: 'Purchased', value: '${lot.totalGoats}'),
-        WizardComputedRow(
-          label: 'Sold',
-          value: '${lot.soldQty} '
-              '(supplier ${lot.soldFromSupplierQty} • farm ${lot.soldFromFarmQty})',
-        ),
-        if (lot.registeredCount > 0)
-          WizardComputedRow(
-            label: 'Moved to individual goats',
-            value: '${lot.registeredCount}',
+    const sold = Color(0xFF3569A8);
+    const supplier = Color(0xFF6757B7);
+    const farm = Color(0xFF278B68);
+    const died = AppColors.error;
+    const moved = Color(0xFFB26A00);
+
+    final segments = <(String, int, Color)>[
+      ('Sold', lot.soldQty, sold),
+      ('At supplier', lot.supplierQty, supplier),
+      ('At farm', lot.farmQty, farm),
+      ('Died', lot.mortality, died),
+      ('Individual goats', lot.registeredCount, moved),
+    ].where((e) => e.$2 > 0).toList();
+
+    final shown = segments.fold<int>(0, (s, e) => s + e.$2);
+    final total = lot.totalGoats > shown ? lot.totalGoats : shown;
+
+    Widget tile(String label, int value, String sub, Color color, IconData icon,
+        {bool big = false}) {
+      return Expanded(
+        child: Container(
+          padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+          decoration: BoxDecoration(
+            color: color.withValues(alpha: 0.08),
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(color: color.withValues(alpha: 0.18)),
           ),
-        if (lot.transitDeathQty > 0)
-          WizardComputedRow(
-            label: 'Died in transit',
-            value: '${lot.transitDeathQty}',
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Icon(icon, size: 15, color: color),
+                  const SizedBox(width: 5),
+                  Expanded(
+                    child: Text(
+                      label,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: AppTheme.body(
+                          size: 11.5, color: color, weight: FontWeight.w600),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 4),
+              Text(
+                '$value',
+                style: AppTheme.heading(size: big ? 28 : 22, color: AppColors.textDark),
+              ),
+              Text(sub,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: AppTheme.body(size: 10.5)),
+            ],
           ),
-        if (lot.farmDeathQty > 0)
-          WizardComputedRow(
-            label: 'Died at farm',
-            value: '${lot.farmDeathQty}',
+        ),
+      );
+    }
+
+    Widget wentRow(Color color, String label, String value, {String? sub}) {
+      return Padding(
+        padding: const EdgeInsets.symmetric(vertical: 5),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Container(
+              width: 10,
+              height: 10,
+              margin: const EdgeInsets.only(top: 4),
+              decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(label,
+                      style: AppTheme.body(
+                          size: 13, color: AppColors.textDark, weight: FontWeight.w500)),
+                  if (sub != null) Text(sub, style: AppTheme.body(size: 11)),
+                ],
+              ),
+            ),
+            Text(value, style: AppTheme.heading(size: 15, color: AppColors.textDark)),
+          ],
+        ),
+      );
+    }
+
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(18),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.045),
+            blurRadius: 12,
+            offset: const Offset(0, 4),
           ),
-        const Divider(height: 18, color: AppColors.divider),
-        WizardComputedRow(
-          label: 'At supplier',
-          value: '${lot.supplierQty}',
-        ),
-        WizardComputedRow(
-          label: 'At farm',
-          value: '${lot.farmQty}',
-        ),
-        if (lot.reservedFarmQty > 0)
-          WizardComputedRow(
-            label: 'Reserved at farm (booked)',
-            value: '${lot.reservedFarmQty}',
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Title + remaining
+          Row(
+            children: [
+              Expanded(child: Text('Stock', style: AppTheme.heading(size: 16))),
+              Text.rich(
+                TextSpan(children: [
+                  TextSpan(
+                    text: '${lot.remainingQty}',
+                    style: AppTheme.heading(size: 18, color: farm),
+                  ),
+                  TextSpan(
+                    text: ' of ${lot.totalGoats} left',
+                    style: AppTheme.body(size: 12.5),
+                  ),
+                ]),
+              ),
+            ],
           ),
-        if (lot.reservedSupplierQty > 0)
-          WizardComputedRow(
-            label: 'Reserved at supplier (booked)',
-            value: '${lot.reservedSupplierQty}',
+          const SizedBox(height: 12),
+
+          // 1. Where every goat is
+          ClipRRect(
+            borderRadius: BorderRadius.circular(8),
+            child: SizedBox(
+              height: 14,
+              child: total == 0
+                  ? Container(color: AppColors.divider)
+                  : Row(
+                children: [
+                  for (final e in segments)
+                    Expanded(flex: e.$2, child: Container(color: e.$3)),
+                  if (total > shown)
+                    Expanded(
+                      flex: total - shown,
+                      child: Container(color: AppColors.divider),
+                    ),
+                ],
+              ),
+            ),
           ),
-        WizardComputedRow(
-          label: 'Remaining in lot',
-          value: '${lot.remainingQty}',
-          emphasize: true,
-        ),
-        WizardComputedRow(
-          label: 'Available to sell now',
-          value: '${lot.availableForSaleQty}',
-        ),
-      ],
+          const SizedBox(height: 8),
+          Wrap(
+            spacing: 12,
+            runSpacing: 4,
+            children: [
+              for (final e in segments)
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Container(
+                      width: 8,
+                      height: 8,
+                      decoration: BoxDecoration(color: e.$3, shape: BoxShape.circle),
+                    ),
+                    const SizedBox(width: 4),
+                    Text('${e.$1} ${e.$2}',
+                        style: AppTheme.body(size: 11, color: AppColors.textDark)),
+                  ],
+                ),
+            ],
+          ),
+          const SizedBox(height: 16),
+
+          // 2. What can be done now
+          Row(
+            children: [
+              tile(
+                'Available to sell',
+                lot.availableForSaleQty,
+                'Ready for a new sale now',
+                AppColors.primaryGreen,
+                Icons.sell_outlined,
+                big: true,
+              ),
+              const SizedBox(width: 10),
+              tile(
+                'Booked',
+                lot.reservedQty,
+                lot.reservedQty == 0
+                    ? 'No open bookings'
+                    : 'Supplier ${lot.reservedSupplierQty} · Farm ${lot.reservedFarmQty}',
+                AppColors.warning,
+                Icons.event_available_outlined,
+                big: true,
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          Row(
+            children: [
+              tile(
+                'At supplier',
+                lot.supplierQty,
+                lot.supplierQty == 0 ? 'All received' : 'Not received yet',
+                supplier,
+                Icons.local_shipping_outlined,
+              ),
+              const SizedBox(width: 10),
+              tile(
+                'At farm',
+                lot.farmQty,
+                lot.farmQty == 0 ? 'None at the farm' : 'Received, not sold',
+                farm,
+                Icons.home_outlined,
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
+
+          // 3. Where they went
+          Text('Where the goats went',
+              style: AppTheme.heading(size: 13.5, color: AppColors.textGrey)),
+          const SizedBox(height: 4),
+          wentRow(
+            sold,
+            'Sold',
+            '${lot.soldQty}',
+            sub: 'From supplier ${lot.soldFromSupplierQty}  •  '
+                'From farm ${lot.soldFromFarmQty}',
+          ),
+          if (lot.registeredCount > 0)
+            wentRow(moved, 'Moved to individual goats', '${lot.registeredCount}',
+                sub: 'Now in Available Stock or Palai'),
+          if (lot.transitDeathQty > 0)
+            wentRow(died, 'Died in transit', '${lot.transitDeathQty}'),
+          if (lot.farmDeathQty > 0)
+            wentRow(died, 'Died at farm', '${lot.farmDeathQty}'),
+          const Divider(height: 18, color: AppColors.divider),
+          wentRow(farm, 'Still in the lot', '${lot.remainingQty}',
+              sub: 'At supplier ${lot.supplierQty}  •  At farm ${lot.farmQty}'),
+        ],
+      ),
     );
   }
 
@@ -768,53 +1390,55 @@ class _LotDetailScreenState extends State<LotDetailScreen> {
                 const Divider(height: 22, color: AppColors.divider),
                 Text('Deaths at farm', style: AppTheme.body(size: 11)),
                 const SizedBox(height: 6),
-                for (final d in deaths)
-                  Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 4),
-                    child: Row(
-                      children: [
-                        Expanded(
-                          child: Text(
-                            '${wizardDate(d.date)} • ${d.reason}'
-                                '${d.note.trim().isEmpty ? '' : ' • ${d.note.trim()}'}'
-                                '${d.reversed ? ' • Undone' : ''}',
-                            style: AppTheme.body(
-                              size: 12,
-                              color: d.reversed
-                                  ? AppColors.textGrey
-                                  : AppColors.textDark,
-                            ).copyWith(
-                              decoration: d.reversed
-                                  ? TextDecoration.lineThrough
-                                  : null,
-                            ),
-                          ),
-                        ),
-                        Text(
-                          '${d.qty} • ${wizardCurrency(d.lossAmount)}',
-                          style: AppTheme.body(
-                            size: 12,
-                            color: d.reversed
-                                ? AppColors.textGrey
-                                : AppColors.error,
-                            weight: FontWeight.w600,
-                          ),
-                        ),
-                        if (!d.reversed)
-                          IconButton(
-                            tooltip: 'Undo this death',
-                            visualDensity: VisualDensity.compact,
-                            icon: const Icon(Icons.undo_rounded, size: 18),
-                            onPressed: () => _undoDeath(d),
-                          ),
-                      ],
-                    ),
-                  ),
+                for (final d in deaths) _deathRow(d),
               ],
             );
           },
         ),
       ],
+    );
+  }
+
+  /// One farm death. While an undo is being saved it already shows as
+  /// undone (optimistic); it springs back if the save fails.
+  Widget _deathRow(LotDeath d) {
+    final pending = _undoing.contains(d.id) && !d.reversed;
+    final undone = d.reversed || pending;
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Row(
+        children: [
+          Expanded(
+            child: Text(
+              '${wizardDate(d.date)} • ${d.reason}'
+                  '${d.note.trim().isEmpty ? '' : ' • ${d.note.trim()}'}'
+                  '${d.reversed ? ' • Undone' : pending ? ' • Undoing…' : ''}',
+              style: AppTheme.body(
+                size: 12,
+                color: undone ? AppColors.textGrey : AppColors.textDark,
+              ).copyWith(
+                decoration: undone ? TextDecoration.lineThrough : null,
+              ),
+            ),
+          ),
+          Text(
+            '${d.qty} • ${wizardCurrency(d.lossAmount)}',
+            style: AppTheme.body(
+              size: 12,
+              color: undone ? AppColors.textGrey : AppColors.error,
+              weight: FontWeight.w600,
+            ),
+          ),
+          if (!undone)
+            IconButton(
+              tooltip: 'Undo this death',
+              visualDensity: VisualDensity.compact,
+              icon: const Icon(Icons.undo_rounded, size: 18),
+              onPressed: () => _undoDeath(d),
+            ),
+        ],
+      ),
     );
   }
 
@@ -877,13 +1501,16 @@ class _LotDetailScreenState extends State<LotDetailScreen> {
   }
 
   Widget _paymentRow(LotPayment p, TradingPurchase lot) {
+    final pendingVoid = _voiding.contains(p.id) && !p.voided;
     final canVoid = !p.voided &&
+        !pendingVoid &&
         !lot.dealCancelled &&
         !p.isLegacy &&
         PartnerAccessService.instance
             .allows(PartnerPermissionKeys.financeExpenseVoid);
 
-    final dim = p.voided ? AppColors.textGrey : AppColors.textDark;
+    final struck = p.voided || pendingVoid;
+    final dim = struck ? AppColors.textGrey : AppColors.textDark;
 
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 5),
@@ -897,9 +1524,9 @@ class _LotDetailScreenState extends State<LotDetailScreen> {
                 Text(
                   '${wizardDate(p.date)} • ${p.method}'
                       '${p.isLegacy ? ' (earlier purchase)' : ''}'
-                      '${p.voided ? ' • Voided' : ''}',
+                      '${p.voided ? ' • Voided' : pendingVoid ? ' • Voiding…' : ''}',
                   style: AppTheme.body(size: 12, color: dim).copyWith(
-                    decoration: p.voided ? TextDecoration.lineThrough : null,
+                    decoration: struck ? TextDecoration.lineThrough : null,
                   ),
                 ),
                 if (p.note.trim().isNotEmpty)
@@ -919,7 +1546,7 @@ class _LotDetailScreenState extends State<LotDetailScreen> {
               color: dim,
               weight: FontWeight.w700,
             ).copyWith(
-              decoration: p.voided ? TextDecoration.lineThrough : null,
+              decoration: struck ? TextDecoration.lineThrough : null,
             ),
           ),
           if (canVoid)
@@ -1094,6 +1721,93 @@ class _ActionButton extends StatelessWidget {
           ),
         ),
       ),
+    );
+  }
+}
+
+/// Pinned tab bar under the lot header.
+class _TabBarDelegate extends SliverPersistentHeaderDelegate {
+  _TabBarDelegate(this.tabBar);
+
+  final TabBar tabBar;
+
+  static const double _height = 52;
+
+  @override
+  double get minExtent => _height;
+
+  @override
+  double get maxExtent => _height;
+
+  @override
+  Widget build(BuildContext context, double shrinkOffset, bool overlapsContent) {
+    return Container(
+      color: AppColors.paleGreen,
+      alignment: Alignment.center,
+      child: Container(
+        height: 40,
+        margin: const EdgeInsets.symmetric(horizontal: 16),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(22),
+          border: Border.all(color: AppColors.divider.withValues(alpha: 0.7)),
+        ),
+        child: Padding(
+          padding: const EdgeInsets.all(2),
+          child: tabBar,
+        ),
+      ),
+    );
+  }
+
+  @override
+  bool shouldRebuild(covariant _TabBarDelegate old) => old.tabBar != tabBar;
+}
+
+/// Keeps a tab alive while swiping, so its live data is not reloaded.
+class _KeepAliveTab extends StatefulWidget {
+  const _KeepAliveTab({required this.child});
+
+  final Widget child;
+
+  @override
+  State<_KeepAliveTab> createState() => _KeepAliveTabState();
+}
+
+class _KeepAliveTabState extends State<_KeepAliveTab>
+    with AutomaticKeepAliveClientMixin {
+  @override
+  bool get wantKeepAlive => true;
+
+  @override
+  Widget build(BuildContext context) {
+    super.build(context);
+    return widget.child;
+  }
+}
+
+/// Draws [child] about 7% smaller (text, icons, padding and all), using the
+/// full width. Used for everything below the lot header card.
+class _Compact extends StatelessWidget {
+  const _Compact({required this.child});
+
+  final Widget child;
+
+  static const double _scale = 0.93;
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        return FittedBox(
+          fit: BoxFit.fitWidth,
+          alignment: Alignment.topCenter,
+          child: SizedBox(
+            width: constraints.maxWidth / _scale,
+            child: child,
+          ),
+        );
+      },
     );
   }
 }

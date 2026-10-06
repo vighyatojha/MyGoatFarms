@@ -210,7 +210,7 @@ class _LotManagementScreenState extends State<LotManagementScreen> {
                 activeCount,
                 completedCount,
               ),
-              if (!_showCompleted) _locationChips(),
+              if (!_showCompleted) _locationChips(all),
               Expanded(
                 child: lots.isEmpty
                     ? _empty(all.isEmpty)
@@ -241,6 +241,7 @@ class _LotManagementScreenState extends State<LotManagementScreen> {
                             LotDetailScreen(
                               farmId: widget.farmId,
                               lotDocId: lot.id,
+                              initialLot: lot,
                             ),
                           ),
                         );
@@ -465,12 +466,18 @@ class _LotManagementScreenState extends State<LotManagementScreen> {
     );
   }
 
-  Widget _locationChips() {
+  Widget _locationChips(List<TradingPurchase> all) {
+    final active = all.where((l) => l.isActive).toList();
+
     Widget chip(
-        String label,
+        String name,
         LotLocation? value,
         ) {
       final selected = _location == value;
+      final count = value == null
+          ? active.length
+          : active.where((l) => l.location == value).length;
+      final label = value == null ? name : '$name  $count';
 
       return Padding(
         padding: EdgeInsets.only(right: _s(8)),
@@ -484,25 +491,17 @@ class _LotManagementScreenState extends State<LotManagementScreen> {
               _location = value;
             });
           },
-          selectedColor: AppColors.lightGreen,
+          selectedColor: AppColors.darkGreen,
           backgroundColor: Colors.white,
           side: BorderSide(
-            color: selected
-                ? AppColors.primaryGreen
-                .withValues(alpha: 0.25)
-                : AppColors.divider,
+            color: selected ? AppColors.darkGreen : AppColors.divider,
           ),
-          shape: RoundedRectangleBorder(
-            borderRadius:
-            BorderRadius.circular(_s(11)),
-          ),
+          shape: const StadiumBorder(),
           labelStyle: TextStyle(
             fontFamily: 'Poppins',
-            fontSize: _s(11),
+            fontSize: _s(11.5),
             fontWeight: FontWeight.w600,
-            color: selected
-                ? AppColors.darkGreen
-                : AppColors.textGrey,
+            color: selected ? Colors.white : AppColors.textDark,
           ),
         ),
       );
@@ -677,14 +676,7 @@ class _LotCard extends StatelessWidget {
                   ),
                 ],
               ),
-              SizedBox(height: _s(11)),
-              Container(
-                height: 1,
-                color: AppColors.divider.withValues(
-                  alpha: 0.70,
-                ),
-              ),
-              SizedBox(height: _s(11)),
+              SizedBox(height: _s(12)),
 
               // Every figure below is derived from the live
               // TradingPurchase (never cached): the model reads the
@@ -716,7 +708,12 @@ class _LotCard extends StatelessWidget {
                 ),
               ],
 
-              SizedBox(height: _s(11)),
+              SizedBox(height: _s(12)),
+              Container(
+                height: 1,
+                color: AppColors.divider.withValues(alpha: 0.70),
+              ),
+              SizedBox(height: _s(10)),
               _paymentRow(status),
             ],
           ),
@@ -741,26 +738,34 @@ class _LotCard extends StatelessWidget {
       badgeLabel = lotLocationLabel(lot.location);
       badgeColor = lotLocationColor(lot.location);
     }
+    final badgeIcon = lot.dealCancelled
+        ? Icons.block_rounded
+        : _isCompleted
+        ? Icons.task_alt_rounded
+        : lotLocationIcon(lot.location);
 
     return Row(
       crossAxisAlignment:
       CrossAxisAlignment.center,
       children: [
-        Expanded(
-          child: Text(
-            lot.lotId,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: AppTheme.heading(
-              size: _s(16),
-              color: AppColors.primaryGreen,
-            ),
+        Text(
+          lot.lotId,
+          maxLines: 1,
+          style: AppTheme.heading(
+            size: _s(18),
+            color: AppColors.textDark,
           ),
         ),
         SizedBox(width: _s(8)),
-        LotBadge(
-          label: badgeLabel,
-          color: badgeColor,
+        Expanded(
+          child: Align(
+            alignment: Alignment.centerLeft,
+            child: LotIconBadge(
+              label: badgeLabel,
+              color: badgeColor,
+              icon: badgeIcon,
+            ),
+          ),
         ),
         if (onEdit != null || onCancelDeal != null)
           SizedBox(
@@ -829,201 +834,125 @@ class _LotCard extends StatelessWidget {
   // STATS
   // ---------------------------------------------------------------------------
 
-  // Colours shared by the tiles.
-  static const _blue = (bg: Color(0xFFEAF2FF), fg: Color(0xFF3569A8));
-  static const _red = (bg: Color(0xFFFFEEF0), fg: Color(0xFFD25563));
-  static const _green = (bg: Color(0xFFEAF8EF), fg: Color(0xFF31965A));
-  static const _purple = (bg: Color(0xFFF0EEFF), fg: Color(0xFF6757B7));
-  static const _teal = (bg: Color(0xFFE8F7F1), fg: Color(0xFF278B68));
-  static const _grey = (bg: Color(0xFFF1F3F1), fg: Color(0xFF68756A));
-  static const _amber = (bg: Color(0xFFFFF4E0), fg: Color(0xFFB26A00));
+  static const Color _panelBg = Color(0xFFF6F8F6);
+  static const Color _remainingGreen = Color(0xFF1E8A57);
 
-  Widget _gap() => SizedBox(width: _s(7));
-
-  /// Active lot: where every goat that is still owned is right now.
+  /// Active lot: Purchased / Sold / Remaining, then where the remaining
+  /// goats are (at the supplier / at the farm).
   Widget _activeStats() {
     return Column(
       children: [
-        Row(
-          children: [
-            Expanded(
-              child: _statTile(
-                label: 'Purchased',
-                value: lot.totalGoats,
-                icon: Icons.shopping_cart_outlined,
-                colors: _blue,
-              ),
-            ),
-            _gap(),
-            Expanded(
-              child: _statTile(
-                label: 'Sold',
-                value: lot.soldQty,
-                icon: Icons.sell_outlined,
-                colors: _red,
-              ),
-            ),
-            _gap(),
-            Expanded(
-              child: _statTile(
-                label: 'Remaining',
-                value: lot.remainingQty,
-                icon: Icons.inventory_2_outlined,
-                colors: _green,
-              ),
-            ),
-          ],
-        ),
-        SizedBox(height: _s(7)),
-        Row(
-          children: [
-            Expanded(
-              child: _statTile(
-                label: 'At Supplier',
-                value: lot.supplierQty,
-                icon: Icons.local_shipping_outlined,
-                colors: _purple,
-              ),
-            ),
-            _gap(),
-            Expanded(
-              child: _statTile(
-                label: 'At Farm',
-                value: lot.farmQty,
-                icon: Icons.home_work_outlined,
-                colors: _teal,
-              ),
-            ),
-          ],
-        ),
+        _panel([
+          ('PURCHASED', lot.totalGoats, null),
+          ('SOLD', lot.soldQty, null),
+          ('REMAINING', lot.remainingQty, _remainingGreen),
+        ]),
+        SizedBox(height: _s(8)),
+        _locationStrip(),
       ],
     );
   }
 
-  /// Completed lot: where every goat went. Nothing is left, so
-  /// Remaining / At Supplier / At Farm (all 0) are not repeated; instead
-  /// the tiles reconcile exactly:
+  /// Completed lot: where every goat went.
   ///   Purchased = Sold + Died + Moved to Palai
   Widget _completedStats() {
-    return Row(
-      children: [
-        Expanded(
-          child: _statTile(
-            label: 'Purchased',
-            value: lot.totalGoats,
-            icon: Icons.shopping_cart_outlined,
-            colors: _blue,
-          ),
-        ),
-        _gap(),
-        Expanded(
-          child: _statTile(
-            label: 'Sold',
-            value: lot.soldQty,
-            icon: Icons.sell_outlined,
-            colors: _red,
-          ),
-        ),
-        _gap(),
-        Expanded(
-          child: _statTile(
-            label: 'Died',
-            value: lot.mortality,
-            icon: Icons.heart_broken_outlined,
-            colors: lot.mortality > 0 ? _amber : _grey,
-          ),
-        ),
-        _gap(),
-        Expanded(
-          child: _statTile(
-            label: 'To Palai',
-            value: lot.registeredCount,
-            icon: Icons.swap_horiz_rounded,
-            colors: lot.registeredCount > 0 ? _teal : _grey,
-          ),
-        ),
-      ],
-    );
+    return _panel([
+      ('PURCHASED', lot.totalGoats, null),
+      ('SOLD', lot.soldQty, null),
+      ('DIED', lot.mortality, lot.mortality > 0 ? AppColors.error : null),
+      ('TO PALAI', lot.registeredCount, null),
+    ]);
   }
 
-  /// Cancelled deal: the goats were never taken, so only the purchase size
-  /// is meaningful.
+  /// Cancelled deal: only the purchase size means anything.
   Widget _cancelledStats() {
-    return Row(
-      children: [
-        Expanded(
-          child: _statTile(
-            label: 'Purchased',
-            value: lot.totalGoats,
-            icon: Icons.shopping_cart_outlined,
-            colors: _blue,
-          ),
-        ),
-        _gap(),
-        const Expanded(flex: 3, child: SizedBox.shrink()),
-      ],
-    );
+    return _panel([('PURCHASED', lot.totalGoats, null)]);
   }
 
-  Widget _statTile({
-    required String label,
-    required int value,
-    required IconData icon,
-    required ({Color bg, Color fg}) colors,
-  }) {
+  Widget _panel(List<(String, int, Color?)> columns) {
     return Container(
-      constraints: BoxConstraints(
-        minHeight: _s(64),
-      ),
-      padding: EdgeInsets.symmetric(
-        horizontal: _s(7),
-        vertical: _s(7),
-      ),
+      padding: EdgeInsets.symmetric(vertical: _s(10)),
       decoration: BoxDecoration(
-        color: colors.bg,
+        color: _panelBg,
         borderRadius: BorderRadius.circular(_s(12)),
-        border: Border.all(
-          color: colors.fg.withValues(alpha: 0.08),
-        ),
+        border: Border.all(color: AppColors.divider.withValues(alpha: 0.6)),
       ),
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(
-                icon,
-                size: _s(11),
-                color: colors.fg.withValues(alpha: 0.72),
-              ),
-              SizedBox(width: _s(3)),
-              Text(
-                value.toString(),
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                textAlign: TextAlign.center,
-                style: AppTheme.heading(
-                  size: _s(15),
-                  color: colors.fg,
-                  weight: FontWeight.w800,
+      child: IntrinsicHeight(
+        child: Row(
+          children: [
+            for (var i = 0; i < columns.length; i++) ...[
+              if (i > 0)
+                VerticalDivider(
+                  width: 1,
+                  thickness: 1,
+                  color: AppColors.divider.withValues(alpha: 0.9),
+                ),
+              Expanded(
+                child: Column(
+                  children: [
+                    Text(
+                      columns[i].$1,
+                      maxLines: 1,
+                      style: AppTheme.body(
+                        size: _s(10),
+                        color: AppColors.textGrey,
+                        weight: FontWeight.w600,
+                      ).copyWith(letterSpacing: 0.6),
+                    ),
+                    SizedBox(height: _s(3)),
+                    Text(
+                      '${columns[i].$2}',
+                      style: AppTheme.heading(
+                        size: _s(19),
+                        color: columns[i].$3 ?? AppColors.textDark,
+                      ),
+                    ),
+                  ],
                 ),
               ),
             ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _locationStrip() {
+    Widget item(IconData icon, String text, bool strong) => Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(
+          icon,
+          size: _s(14),
+          color: strong ? AppColors.darkGreen : AppColors.textGrey,
+        ),
+        SizedBox(width: _s(5)),
+        Text(
+          text,
+          style: AppTheme.body(
+            size: _s(11.5),
+            color: AppColors.textDark,
+            weight: FontWeight.w600,
           ),
-          SizedBox(height: _s(2)),
-          Text(
-            label,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            textAlign: TextAlign.center,
-            style: AppTheme.body(
-              size: _s(8.8),
-              color: colors.fg.withValues(alpha: 0.78),
-              weight: FontWeight.w600,
-            ),
-          ),
+        ),
+      ],
+    );
+
+    return Container(
+      padding: EdgeInsets.symmetric(horizontal: _s(10), vertical: _s(7)),
+      decoration: BoxDecoration(
+        color: AppColors.lightGreen.withValues(alpha: 0.45),
+        borderRadius: BorderRadius.circular(_s(10)),
+        border: Border.all(
+          color: AppColors.primaryGreen.withValues(alpha: 0.12),
+        ),
+      ),
+      child: Row(
+        children: [
+          item(Icons.warehouse_outlined, 'At Supplier: ${lot.supplierQty}',
+              lot.supplierQty > 0),
+          const Spacer(),
+          item(Icons.home_outlined, 'At Farm: ${lot.farmQty}', lot.farmQty > 0),
         ],
       ),
     );
@@ -1070,44 +999,63 @@ class _LotCard extends StatelessWidget {
     );
   }
 
-  Widget _paymentRow(
-      dynamic status,
-      ) {
-    final String amountText;
+  Widget _paymentRow(String status) {
+    final badge = LotIconBadge(
+      label: supplierPaymentStatusLabel(status),
+      color: lotPaymentColor(status),
+      icon: status == 'Paid' ? Icons.check_rounded : null,
+    );
 
+    final Widget amount;
     if (lot.dealCancelled) {
-      amountText =
-      'Loss ${wizardCurrency(lot.cancelLossAmount)}'
-          '  •  Refunded '
-          '${wizardCurrency(lot.cancelRefundAmount)}';
+      amount = Text(
+        'Loss ${wizardCurrency(lot.cancelLossAmount)}  •  '
+            'Refunded ${wizardCurrency(lot.cancelRefundAmount)}',
+        maxLines: 2,
+        overflow: TextOverflow.ellipsis,
+        style: AppTheme.body(
+          size: _s(11.5),
+          color: AppColors.textDark,
+          weight: FontWeight.w600,
+        ),
+      );
     } else if (lot.dueAmount >= 0.01) {
-      amountText =
-      'Due ${wizardCurrency(lot.dueAmount)}';
+      amount = Text.rich(
+        TextSpan(
+          children: [
+            TextSpan(
+              text: 'Due: ',
+              style: AppTheme.body(size: _s(12.5), color: AppColors.textGrey),
+            ),
+            TextSpan(
+              text: wizardCurrency(lot.dueAmount),
+              style: AppTheme.heading(size: _s(16), color: AppColors.textDark),
+            ),
+          ],
+        ),
+      );
     } else {
-      amountText = 'Fully paid';
+      amount = Text.rich(
+        TextSpan(
+          children: [
+            TextSpan(
+              text: 'Payment: ',
+              style: AppTheme.body(size: _s(12.5), color: AppColors.textGrey),
+            ),
+            TextSpan(
+              text: 'Settled (${wizardCurrency(0)} Due)',
+              style: AppTheme.heading(size: _s(14), color: AppColors.success),
+            ),
+          ],
+        ),
+      );
     }
 
     return Row(
-      crossAxisAlignment:
-      CrossAxisAlignment.center,
       children: [
-        Expanded(
-          child: Text(
-            amountText,
-            maxLines: 2,
-            overflow: TextOverflow.ellipsis,
-            style: AppTheme.body(
-              size: _s(11.5),
-              color: AppColors.textDark,
-              weight: FontWeight.w600,
-            ),
-          ),
-        ),
+        Expanded(child: amount),
         SizedBox(width: _s(8)),
-        LotBadge(
-          label: supplierPaymentStatusLabel(status),
-          color: lotPaymentColor(status),
-        ),
+        badge,
       ],
     );
   }
