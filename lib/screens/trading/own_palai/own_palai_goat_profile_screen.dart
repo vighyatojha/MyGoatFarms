@@ -13,9 +13,8 @@ import '../../../models/sale_model.dart';
 import '../../../models/trading_goat_health_record.dart';
 import '../../../models/trading_goat_weight_entry.dart';
 import '../../../models/trading_purchase_model.dart';
-import '../../../services/complete_goats_selector_screen.dart';
 import '../../../services/firestore_service.dart';
-
+import '../../../services/goat_photo_service.dart';
 import '../../../services/goat_service.dart';
 import '../../../services/health_reminder_scheduler.dart';
 import '../../../services/image_service.dart';

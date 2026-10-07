@@ -26,21 +26,11 @@ extension DeliverySectionInfo on DeliverySection {
 
   String get title => isWait ? 'Wait on Delivery' : 'Booking & Holding';
 
-  /// Shown under a goat in this section.
-  String get goatStatusLabel => isWait ? 'Wait on Delivery' : 'Booked';
-
   IconData get icon =>
       isWait ? Icons.local_shipping_outlined : Icons.event_available_outlined;
 
   /// Same colours the Trading dashboard uses for these two cards.
   Color get color => isWait ? AppColors.stockTeal : Colors.deepPurple;
-
-  String get emptyTitle =>
-      isWait ? 'No goats waiting for delivery' : 'No booked or held goats';
-
-  String get emptySubtitle => isWait
-      ? 'Customers whose goats are waiting for delivery will show up here.'
-      : 'Customers with booked or held goats will show up here.';
 
   /// Open sales of this section (one Firestore listener).
   Stream<List<Sale>> openSalesStream(String farmId) => isWait
@@ -120,33 +110,6 @@ class SectionCustomer {
   });
 
   int get goatCount => bookings.fold<int>(0, (sum, b) => sum + b.goatCount);
-
-  DateTime get latestBookedAt {
-    var latest = bookings.first.bookedAt;
-    for (final b in bookings) {
-      if (b.bookedAt.isAfter(latest)) latest = b.bookedAt;
-    }
-    return latest;
-  }
-
-  /// Search by name, mobile, goat ID, booking ID or lot ID.
-  bool matches(String query) {
-    final q = query.trim().toLowerCase();
-    if (q.isEmpty) return true;
-    if (name.toLowerCase().contains(q)) return true;
-    if (mobile.toLowerCase().contains(q)) return true;
-
-    for (final b in bookings) {
-      if (b.id.toLowerCase().contains(q)) return true;
-      if (b.isLot && b.sale.lotDisplayId.toLowerCase().contains(q)) {
-        return true;
-      }
-      for (final g in b.goats) {
-        if (g.id.toLowerCase().contains(q)) return true;
-      }
-    }
-    return false;
-  }
 }
 
 // ---------------------------------------------------------------------------
@@ -262,47 +225,6 @@ class DeliveryMessage extends StatelessWidget {
                 textAlign: TextAlign.center, style: AppTheme.body(size: 11)),
           ],
         ),
-      ),
-    );
-  }
-}
-
-/// Small rounded pill with an icon and a number / label.
-class DeliveryPill extends StatelessWidget {
-  final IconData icon;
-  final String text;
-  final Color color;
-
-  const DeliveryPill({
-    super.key,
-    required this.icon,
-    required this.text,
-    required this.color,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-      decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.12),
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: color.withValues(alpha: 0.30)),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(icon, size: 11, color: color),
-          const SizedBox(width: 3),
-          Text(
-            text,
-            style: TextStyle(
-              color: color,
-              fontSize: 10.5,
-              fontWeight: FontWeight.w700,
-            ),
-          ),
-        ],
       ),
     );
   }
