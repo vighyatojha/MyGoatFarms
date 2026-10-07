@@ -9,8 +9,6 @@ import '../../../models/sale_model.dart';
 import '../../../services/booking_delivery_service.dart';
 import '../../../services/goat_service.dart';
 import '../../../widgets/fast_route.dart';
-import '../../home/delivery_flow/delivery_customer_goats_screen.dart';
-import '../../home/delivery_flow/delivery_section.dart';
 import 'completed_deliveries_view.dart';
 import 'booking_delivery_customer_screen.dart';
 
@@ -26,17 +24,9 @@ import 'booking_delivery_customer_screen.dart';
 class BookingDeliveryCustomerListScreen extends StatefulWidget {
   final String farmId;
 
-  /// Dashboard flow (Home → Booking & Holding): tapping a customer
-  /// opens their goat list ([DeliveryCustomerGoatsScreen]) — goat details,
-  /// health / weight / photo updates, and Complete → select goats → the
-  /// existing checkout. False (the default) keeps the original Trading
-  /// behaviour: tapping a customer opens [BookingDeliveryCustomerScreen] directly.
-  final bool openGoatList;
-
   const BookingDeliveryCustomerListScreen({
     super.key,
     required this.farmId,
-    this.openGoatList = false,
   });
 
   @override
@@ -73,20 +63,6 @@ class _BookingDeliveryCustomerListScreenState
   }
 
   Future<void> _openCustomer(BookingDeliveryCustomer customer) async {
-    if (widget.openGoatList) {
-      await Navigator.of(context).push(
-        fastRoute(
-          DeliveryCustomerGoatsScreen(
-            farmId: widget.farmId,
-            section: DeliverySection.bookingHolding,
-            customerKey: customer.key,
-            customerName: customer.name,
-          ),
-        ),
-      );
-      return;
-    }
-
     await Navigator.of(context).push(
       fastRoute(
         BookingDeliveryCustomerScreen(

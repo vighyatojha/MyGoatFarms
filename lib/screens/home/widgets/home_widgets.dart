@@ -52,44 +52,6 @@ class StatCard extends StatelessWidget {
   }
 }
 
-class ModuleTile extends StatelessWidget {
-  final IconData icon;
-  final String label;
-  final String sub;
-  final Color color;
-  final VoidCallback onTap;
-
-  const ModuleTile({
-    super.key,
-    required this.icon,
-    required this.label,
-    required this.sub,
-    required this.color,
-    required this.onTap,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        decoration: AppTheme.card(radius: 16),
-        padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 4),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(icon, color: color, size: 20),
-            const SizedBox(height: 5),
-            Text(label, style: AppTheme.heading(size: 11), textAlign: TextAlign.center, maxLines: 1, overflow: TextOverflow.ellipsis),
-            Text(sub, style: AppTheme.body(size: 8), textAlign: TextAlign.center, maxLines: 1, overflow: TextOverflow.ellipsis),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
 class QuickAction extends StatelessWidget {
   final IconData icon;
   final String label;

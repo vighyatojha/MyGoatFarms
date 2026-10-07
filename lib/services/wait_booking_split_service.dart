@@ -8,6 +8,7 @@ import 'package:mygoatfarms/models/goat_model.dart';
 import 'package:mygoatfarms/models/sale_model.dart';
 import 'package:mygoatfarms/models/trading_purchase_model.dart';
 import 'package:mygoatfarms/services/firestore_service.dart';
+import 'package:mygoatfarms/services/sale_goat_details_service.dart';
 
 /// What happens to the goats that are NOT being delivered now.
 enum LeftoverGoatsAction {
@@ -357,6 +358,7 @@ class WaitBookingSplitService {
     int deliverCount = 0;
     int leftoverCount = 0;
     String customerName = '';
+    bool wasLot = false;
 
     await _db.runTransaction((transaction) async {
       // ---------------------------------------------------------------
@@ -393,6 +395,7 @@ class WaitBookingSplitService {
       }
 
       customerName = sale.customerName;
+      wasLot = sale.isLotSale;
 
       // Goats that really are still held by this booking.
       final goatSnaps = <String, DocumentSnapshot<Map<String, dynamic>>>{};
@@ -762,6 +765,21 @@ class WaitBookingSplitService {
 
       keptSaleId = newSaleId;
     }).timeout(_timeout * 2);
+
+    // Lot booking: the goat photos taken at the sale follow the goats —
+    // Goat 1..N stay on this booking, the rest go with the leftover goats
+    // (or are removed when those went back to stock). Best effort: the
+    // split itself is already saved.
+    if (wasLot) {
+      try {
+        await SaleGoatDetailsService.instance.splitTail(
+          farmId: farmId,
+          saleId: saleId,
+          keepCount: deliverCount,
+          toSaleId: keptSaleId,
+        );
+      } catch (_) {}
+    }
 
     unawaited(
       FirestoreService.instance.notifyPartnerActivity(

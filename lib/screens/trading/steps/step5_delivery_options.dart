@@ -66,11 +66,16 @@ class Step5DeliveryOptions extends StatefulWidget {
   /// wizard) instead of selecting a branch here.
   final VoidCallback? onTransferToPalai;
 
+  /// Called when a delivery option is picked, so the wizard can show or
+  /// hide Step 6 (Goat Photos — Deliver Now only).
+  final ValueChanged<String>? onDeliveryTypeChanged;
+
   const Step5DeliveryOptions({
     super.key,
     required this.draft,
     this.palaiOnly = false,
     this.onTransferToPalai,
+    this.onDeliveryTypeChanged,
   });
 
   @override
@@ -392,6 +397,7 @@ class Step5DeliveryOptionsState extends State<Step5DeliveryOptions> {
 
       widget.draft.deliveryType = type;
     });
+    widget.onDeliveryTypeChanged?.call(type);
   }
 
   // ===========================================================================

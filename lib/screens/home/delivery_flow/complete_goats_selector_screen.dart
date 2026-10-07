@@ -623,6 +623,15 @@ class _CompleteGoatsSelectorScreenState
               ],
             ),
           ),
+        if (qty != null && qty < b.goatCount)
+          Padding(
+            padding: const EdgeInsets.only(left: 12, bottom: 6),
+            child: Text(
+              'Goat 1${qty > 1 ? '–$qty' : ''} go now; the other goats '
+                  '(with their photos) stay booked.',
+              style: AppTheme.body(size: 10.5),
+            ),
+          ),
       ],
     );
   }

@@ -2,12 +2,13 @@ import 'dart:async';
 
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:url_launcher/url_launcher.dart';
 
-import '../../app_theme.dart';
-import '../../models/admin_contact_model.dart';
-import '../../models/farm_model.dart';
-import '../../services/firestore_service.dart';
+import '../app_theme.dart';
+import '../models/admin_contact_model.dart';
+import '../models/farm_model.dart';
+import '../services/firestore_service.dart';
 
 /// Shown after a new farm owner verifies their email and their farm
 /// document is created, replacing the old direct jump to Home.
@@ -24,6 +25,10 @@ import '../../services/firestore_service.dart';
 ///     closed the app and reopened it) — see the initial-route check in
 ///     main.dart. No farmId is passed then, so this screen resolves the
 ///     signed-in user's farm itself first.
+///
+/// The contact card shows everything the admin entered in the admin
+/// panel (Settings → Support contact): name, mobile (with Call and
+/// WhatsApp), any other phone numbers and every email.
 class FarmApprovalPendingScreen extends StatefulWidget {
   final String? farmId;
   final String? farmName;
@@ -43,6 +48,8 @@ class FarmApprovalPendingScreen extends StatefulWidget {
 
 class _FarmApprovalPendingScreenState
     extends State<FarmApprovalPendingScreen> {
+  static const Color _whatsAppGreen = Color(0xFF25D366);
+
   final _firestore = FirestoreService.instance;
 
   StreamSubscription<FarmModel?>? _farmSub;
@@ -140,23 +147,103 @@ class _FarmApprovalPendingScreenState
         .pushNamedAndRemoveUntil('/login', (route) => false);
   }
 
-  Future<void> _call(String phone) async {
-    if (phone.trim().isEmpty) return;
+  // ---------------------------------------------------------------------
+  // Contact actions
+  // ---------------------------------------------------------------------
+
+  Future<bool> _launch(Uri uri, {bool external = false}) async {
     try {
-      await launchUrl(Uri(scheme: 'tel', path: phone.trim()));
+      return await launchUrl(
+        uri,
+        mode: external
+            ? LaunchMode.externalApplication
+            : LaunchMode.platformDefault,
+      );
     } catch (_) {
-      // Phone number is also shown as plain text, so this is best-effort.
+      return false;
     }
   }
 
-  Future<void> _email(String email) async {
-    if (email.trim().isEmpty) return;
-    try {
-      await launchUrl(Uri(scheme: 'mailto', path: email.trim()));
-    } catch (_) {
-      // Email is also shown as plain text, so this is best-effort.
-    }
+  Future<void> _call(String phone) async {
+    final number = phone.replaceAll(RegExp(r'[^0-9+]'), '');
+    if (number.isEmpty) return;
+    final ok = await _launch(Uri(scheme: 'tel', path: number));
+    if (!ok) _showSnack("Couldn't open the dialer. The number is $phone.");
   }
+
+  Future<void> _whatsApp(String phone) async {
+    final number = _whatsAppNumber(phone);
+    if (number == null) {
+      _showSnack("This number can't be opened in WhatsApp.");
+      return;
+    }
+    final farmPart = _farmName.isEmpty ? 'my farm' : '"$_farmName"';
+    final message =
+        'Hello, I need help with $farmPart on My Goat Farms.';
+    final ok = await _launch(
+      Uri.parse(
+        'https://wa.me/$number?text=${Uri.encodeComponent(message)}',
+      ),
+      external: true,
+    );
+    if (!ok) _showSnack("Couldn't open WhatsApp. Is it installed?");
+  }
+
+  Future<void> _email(String email) async {
+    final address = email.trim();
+    if (address.isEmpty) return;
+    final subject = _farmName.isEmpty
+        ? 'My Goat Farms: farm registration'
+        : 'My Goat Farms: $_farmName';
+    final ok = await _launch(
+      Uri.parse(
+        'mailto:$address?subject=${Uri.encodeComponent(subject)}',
+      ),
+    );
+    if (!ok) _showSnack("Couldn't open an email app. The address is $address.");
+  }
+
+  Future<void> _copy(String value, String what) async {
+    await Clipboard.setData(ClipboardData(text: value));
+    _showSnack('$what copied');
+  }
+
+  void _showSnack(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(
+          content: Text(message),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+  }
+
+  /// "98765 43210", "+91 98765 43210", "098765 43210" -> "919876543210",
+  /// which is what wa.me expects. Null if the number isn't usable.
+  String? _whatsAppNumber(String raw) {
+    var digits = raw.replaceAll(RegExp(r'[^0-9]'), '');
+    if (digits.length == 11 && digits.startsWith('0')) {
+      digits = digits.substring(1);
+    }
+    if (digits.length == 10) return '91$digits';
+    if (digits.length >= 11 && digits.length <= 15) return digits;
+    return null;
+  }
+
+  /// Shows a 10-digit mobile as "98765 43210"; anything else as entered.
+  String _formatPhone(String raw) {
+    final digits = raw.replaceAll(RegExp(r'[^0-9]'), '');
+    if (digits.length == 10) {
+      return '${digits.substring(0, 5)} ${digits.substring(5)}';
+    }
+    return raw.trim();
+  }
+
+  // ---------------------------------------------------------------------
+  // Build
+  // ---------------------------------------------------------------------
 
   @override
   Widget build(BuildContext context) {
@@ -388,8 +475,17 @@ class _FarmApprovalPendingScreenState
     );
   }
 
+  // ---------------------------------------------------------------------
+  // Contact card — everything the admin set in Settings → Support contact
+  // ---------------------------------------------------------------------
+
   Widget _contactCard() {
-    final hasPhone = _adminContact.phone.trim().isNotEmpty;
+    final contact = _adminContact;
+    final mobile = contact.mobile.trim();
+    final otherPhones = contact.allPhones
+        .where((p) => p.replaceAll(RegExp(r'[^0-9]'), '') !=
+        mobile.replaceAll(RegExp(r'[^0-9]'), ''))
+        .toList();
 
     return Container(
       width: double.infinity,
@@ -425,7 +521,7 @@ class _FarmApprovalPendingScreenState
                     ),
                     const SizedBox(height: 2),
                     Text(
-                      _adminContact.name,
+                      contact.name,
                       style: AppTheme.heading(size: 15.5),
                     ),
                   ],
@@ -433,20 +529,166 @@ class _FarmApprovalPendingScreenState
               ),
             ],
           ),
-          const SizedBox(height: 16),
-          if (hasPhone)
-            _contactRow(
-              icon: Icons.call_rounded,
-              value: _adminContact.phone,
-              onTap: () => _call(_adminContact.phone),
+
+          // Main mobile: Call + WhatsApp
+          if (mobile.isNotEmpty) ...[
+            const SizedBox(height: 16),
+            _mobileBlock(mobile),
+          ],
+
+          // Other phone numbers
+          if (otherPhones.isNotEmpty) ...[
+            const SizedBox(height: 16),
+            _sectionLabel(
+              mobile.isEmpty
+                  ? (otherPhones.length == 1 ? 'Phone' : 'Phones')
+                  : (otherPhones.length == 1 ? 'Other number' : 'Other numbers'),
             ),
-          if (hasPhone) const SizedBox(height: 10),
-          _contactRow(
-            icon: Icons.email_rounded,
-            value: _adminContact.email,
-            onTap: () => _email(_adminContact.email),
+            for (final phone in otherPhones)
+              _contactRow(
+                icon: Icons.call_rounded,
+                value: _formatPhone(phone),
+                onTap: () => _call(phone),
+                onLongPress: () => _copy(phone, 'Number'),
+              ),
+          ],
+
+          // Emails
+          if (contact.emails.isNotEmpty) ...[
+            const SizedBox(height: 16),
+            _sectionLabel(contact.emails.length == 1 ? 'Email' : 'Emails'),
+            for (final email in contact.emails)
+              _contactRow(
+                icon: Icons.email_rounded,
+                value: email,
+                onTap: () => _email(email),
+                onLongPress: () => _copy(email, 'Email'),
+              ),
+          ],
+
+          const SizedBox(height: 10),
+          Text(
+            'Tap to call or email. Press and hold to copy.',
+            style: AppTheme.body(size: 11.5, color: AppColors.textGrey),
           ),
         ],
+      ),
+    );
+  }
+
+  Widget _mobileBlock(String mobile) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: AppColors.lightGreen,
+        borderRadius: BorderRadius.circular(14),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Mobile',
+            style: AppTheme.body(size: 11, color: AppColors.textGrey, weight: FontWeight.w600),
+          ),
+          const SizedBox(height: 2),
+          GestureDetector(
+            onLongPress: () => _copy(mobile, 'Number'),
+            child: Text(
+              _formatPhone(mobile),
+              style: AppTheme.heading(size: 19, color: AppColors.darkGreen),
+            ),
+          ),
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              Expanded(
+                child: _actionButton(
+                  icon: Icons.call_rounded,
+                  label: 'Call',
+                  color: AppColors.darkGreen,
+                  filled: false,
+                  onTap: () => _call(mobile),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: _actionButton(
+                  icon: Icons.chat_rounded,
+                  label: 'WhatsApp',
+                  color: _whatsAppGreen,
+                  filled: true,
+                  onTap: () => _whatsApp(mobile),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _actionButton({
+    required IconData icon,
+    required String label,
+    required Color color,
+    required bool filled,
+    required VoidCallback onTap,
+  }) {
+    final shape = RoundedRectangleBorder(borderRadius: BorderRadius.circular(12));
+    const padding = EdgeInsets.symmetric(vertical: 12, horizontal: 8);
+    final child = Row(
+      mainAxisSize: MainAxisSize.min,
+      mainAxisAlignment: MainAxisAlignment.center,
+      children: [
+        Icon(icon, size: 18, color: filled ? Colors.white : color),
+        const SizedBox(width: 6),
+        Flexible(
+          child: Text(
+            label,
+            overflow: TextOverflow.ellipsis,
+            style: AppTheme.body(
+              size: 13.5,
+              color: filled ? Colors.white : color,
+              weight: FontWeight.w600,
+            ),
+          ),
+        ),
+      ],
+    );
+
+    if (filled) {
+      return ElevatedButton(
+        onPressed: onTap,
+        style: ElevatedButton.styleFrom(
+          backgroundColor: color,
+          foregroundColor: Colors.white,
+          elevation: 0,
+          padding: padding,
+          shape: shape,
+        ),
+        child: child,
+      );
+    }
+    return OutlinedButton(
+      onPressed: onTap,
+      style: OutlinedButton.styleFrom(
+        backgroundColor: Colors.white,
+        foregroundColor: color,
+        side: BorderSide(color: color.withValues(alpha: 0.35)),
+        padding: padding,
+        shape: shape,
+      ),
+      child: child,
+    );
+  }
+
+  Widget _sectionLabel(String text) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 2),
+      child: Text(
+        text,
+        style: AppTheme.body(size: 11, color: AppColors.textGrey, weight: FontWeight.w600),
       ),
     );
   }
@@ -455,12 +697,14 @@ class _FarmApprovalPendingScreenState
     required IconData icon,
     required String value,
     required VoidCallback onTap,
+    VoidCallback? onLongPress,
   }) {
     return InkWell(
       borderRadius: BorderRadius.circular(10),
       onTap: onTap,
+      onLongPress: onLongPress,
       child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: 6),
+        padding: const EdgeInsets.symmetric(vertical: 8),
         child: Row(
           children: [
             Icon(icon, size: 17, color: AppColors.primaryGreen),

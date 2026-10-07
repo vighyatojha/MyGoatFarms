@@ -6,14 +6,14 @@ import '../../../goat_icons.dart';
 import '../../../models/goat_model.dart';
 import '../../../models/sale_model.dart';
 import '../../../services/goat_service.dart';
+import '../../../services/sale_goat_details_service.dart';
 import '../../../widgets/fast_route.dart';
 import '../../../widgets/lot_origin_card.dart';
 import '../../palai/fullscreen_image_viewer.dart';
 import '../../trading/own_palai/own_palai_goat_profile_screen.dart';
-import '../../trading/register_goats/lot_booking_photos_screen.dart';
-import '../../trading/register_goats/register_lot_goats_screen.dart';
 import 'complete_goats_selector_screen.dart';
 import 'delivery_section.dart';
+import 'lot_goat_profile_screen.dart';
 
 /// Dashboard → section → customer → THIS CUSTOMER'S GOATS.
 ///
@@ -25,8 +25,13 @@ import 'delivery_section.dart';
 /// Both have a COMPLETE button at the bottom that opens
 /// [CompleteGoatsSelectorScreen] → that section's existing checkout.
 ///
-/// Tapping a goat opens its details ([OwnPalaiGoatProfileScreen]) where
-/// health, weight and photos are updated.
+/// Every goat is shown with the photo, approximate age and weight taken on
+/// the sale's Goat Photos step. Tapping a goat opens its profile:
+///  * registered goats → [OwnPalaiGoatProfileScreen];
+///  * a lot booking's goats ("Goat 1..N", at the farm or still at the
+///    supplier) → [LotGoatProfileScreen] (lot details, photos, weight,
+///    health). Goats with nothing saved yet are listed too, so their
+///    photo, age and weight can be added there.
 class DeliveryCustomerGoatsScreen extends StatefulWidget {
   final String farmId;
   final DeliverySection section;
@@ -57,6 +62,10 @@ class _DeliveryCustomerGoatsScreenState
   late final Stream<List<Sale>> _sales =
   widget.section.openSalesStream(widget.farmId);
 
+  /// One live stream per lot booking (kept, so rebuilds do not
+  /// re-subscribe).
+  final Map<String, Stream<List<SaleGoatDetail>>> _lotGoatStreams = {};
+
   /// Blocks a second tap on Complete while the selector is opening.
   bool _opening = false;
 
@@ -66,38 +75,6 @@ class _DeliveryCustomerGoatsScreenState
     Navigator.of(context).push(
       fastRoute(
         OwnPalaiGoatProfileScreen(farmId: widget.farmId, goat: goat),
-      ),
-    );
-  }
-
-  /// Lot booking → registered goats (photo, weight, details of each).
-  Future<void> _registerLotBooking(SectionBooking booking) async {
-    final done = await Navigator.of(context).push<bool>(
-      fastRoute(
-        RegisterLotGoatsScreen.forBooking(
-          farmId: widget.farmId,
-          sale: booking.sale,
-        ),
-      ),
-    );
-    if (done == true && mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            '${booking.goatCount} goat${booking.goatCount == 1 ? '' : 's'} '
-                'of booking ${booking.id} registered.',
-          ),
-          backgroundColor: AppColors.darkGreen,
-        ),
-      );
-    }
-  }
-
-  /// Photos of goats still at the supplier.
-  void _openLotPhotos(SectionBooking booking) {
-    Navigator.of(context).push(
-      fastRoute(
-        LotBookingPhotosScreen(farmId: widget.farmId, sale: booking.sale),
       ),
     );
   }
@@ -227,7 +204,8 @@ class _DeliveryCustomerGoatsScreenState
         ],
         const SizedBox(height: 10),
         Text(
-          'Tap a goat to update its health, weight or photos.',
+          'Tap a goat to see its profile, add photos, or update its '
+              'weight and health.',
           textAlign: TextAlign.center,
           style: AppTheme.body(size: 10.5),
         ),
@@ -296,85 +274,131 @@ class _DeliveryCustomerGoatsScreenState
     );
   }
 
-  /// A lot booking: its goats are not registered yet. Register goats gives
-  /// each one its photo, weight and details; goats still at the supplier
-  /// can get photos first and are registered when they arrive.
+  /// A lot booking: its goats are not registered, so they are shown as
+  /// "Goat 1..N" with the photo, age and weight taken at the sale.
   Widget _lotRow(SectionBooking booking) {
     final atSupplier = booking.sale.sourceLocation == Sale.sourceSupplier;
     final n = booking.goatCount;
 
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 6),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Row(
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Padding(
+          padding: const EdgeInsets.only(top: 4, bottom: 2),
+          child: Text(
+            '$n goat${n == 1 ? '' : 's'} from ${booking.sale.lotDisplayId} · '
+                '${atSupplier ? 'still at the supplier' : 'at the farm'}',
+            style: AppTheme.heading(size: 12.5),
+          ),
+        ),
+        StreamBuilder<List<SaleGoatDetail>>(
+          stream: _lotGoatStreams.putIfAbsent(
+            booking.id,
+                () => SaleGoatDetailsService.instance
+                .streamForSale(widget.farmId, booking.id),
+          ),
+          builder: (context, snap) {
+            if (!snap.hasData && !snap.hasError) {
+              return const Padding(
+                padding: EdgeInsets.all(10),
+                child: Center(
+                  child: SizedBox(
+                    width: 18,
+                    height: 18,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  ),
+                ),
+              );
+            }
+            final goats = SaleGoatDetailsService.withPlaceholders(
+              snap.data ?? const <SaleGoatDetail>[],
+              booking.goatCount,
+            );
+            return Column(
+              children: [for (final g in goats) _lotGoatRow(booking, g)],
+            );
+          },
+        ),
+      ],
+    );
+  }
+
+  void _openLotGoat(SectionBooking booking, SaleGoatDetail g) {
+    Navigator.of(context).push(
+      fastRoute(
+        LotGoatProfileScreen(
+          farmId: widget.farmId,
+          sale: booking.sale,
+          index: g.index,
+        ),
+      ),
+    );
+  }
+
+  Widget _lotGoatRow(SectionBooking booking, SaleGoatDetail g) {
+    final photo = g.photo;
+    final details = [
+      if (g.weight > 0) '${g.weight.toStringAsFixed(1)} kg',
+      if (g.ageMonths > 0) '${g.ageMonths} months',
+      if (g.healthStatus.isNotEmpty) g.healthStatus,
+    ];
+    final missing = [
+      if (!g.hasPhoto) 'photo',
+      if (g.ageMonths <= 0) 'age',
+      if (g.weight <= 0) 'weight',
+    ];
+
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: () => _openLotGoat(booking, g),
+        borderRadius: BorderRadius.circular(12),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 6),
+          child: Row(
             children: [
-              _avatarBox(null),
+              ClipRRect(
+                borderRadius: BorderRadius.circular(11),
+                child: photo != null
+                    ? Image.memory(photo, width: 42, height: 42, fit: BoxFit.cover)
+                    : Container(
+                  width: 42,
+                  height: 42,
+                  color: _section.color.withValues(alpha: 0.12),
+                  child: Icon(Icons.add_a_photo_outlined,
+                      size: 18, color: _section.color),
+                ),
+              ),
               const SizedBox(width: 10),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(
-                      '$n goat${n == 1 ? '' : 's'} · not registered yet',
-                      style: AppTheme.heading(size: 13),
-                    ),
-                    Text(
-                      atSupplier
-                          ? 'Still at the supplier. Upload photos now; '
-                          'register them when they arrive.'
-                          : 'Register each goat with its photo, weight and '
-                          'details.',
-                      style: AppTheme.body(size: 10.5),
-                    ),
+                    Text(g.label, style: AppTheme.heading(size: 13.5)),
+                    if (details.isNotEmpty)
+                      Text(
+                        details.join(' · '),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: AppTheme.body(size: 10.5),
+                      ),
+                    if (missing.isNotEmpty)
+                      Text(
+                        'Tap to add ${missing.join(', ')}',
+                        style: AppTheme.body(
+                          size: 10.5,
+                          color: AppColors.warning,
+                          weight: FontWeight.w600,
+                        ),
+                      ),
                   ],
                 ),
               ),
+              const Icon(Icons.chevron_right_rounded,
+                  size: 20, color: AppColors.textGrey),
             ],
           ),
-          const SizedBox(height: 8),
-          Row(
-            children: [
-              if (atSupplier) ...[
-                Expanded(
-                  child: OutlinedButton.icon(
-                    onPressed: () => _openLotPhotos(booking),
-                    icon: const Icon(Icons.add_a_photo_outlined, size: 16),
-                    label: const Text('Upload photos',
-                        style: TextStyle(fontSize: 12)),
-                    style: OutlinedButton.styleFrom(
-                      foregroundColor: AppColors.darkGreen,
-                      side: const BorderSide(color: AppColors.primaryGreen),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(10),
-                      ),
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 8),
-              ],
-              Expanded(
-                child: ElevatedButton.icon(
-                  onPressed: () => _registerLotBooking(booking),
-                  icon: const Icon(Icons.how_to_reg_outlined, size: 16),
-                  label: Text(
-                    atSupplier ? 'Arrived · Register' : 'Register goats',
-                    style: const TextStyle(fontSize: 12),
-                  ),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: AppColors.primaryGreen,
-                    foregroundColor: Colors.white,
-                    elevation: 0,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(10),
-                    ),
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ],
+        ),
       ),
     );
   }
@@ -410,6 +434,7 @@ class _DeliveryCustomerGoatsScreenState
                       [
                         if (goat.weight > 0)
                           '${goat.weight.toStringAsFixed(1)} kg',
+                        if (goat.currentAgeMonths > 0) goat.age,
                         if (goat.breed.trim().isNotEmpty) goat.breed.trim(),
                         goat.healthStatus.trim().isEmpty
                             ? 'Health not recorded'

@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 
 import '../../../app_theme.dart';
-import '../../../models/goat_model.dart';
 import '../../../models/sale_draft.dart';
 import '../../../services/firestore_service.dart';
 import '../../../services/goat_photo_service.dart';
@@ -14,7 +13,7 @@ import '../steps/step2_customer_lookup.dart';
 import '../steps/step3_selected_goat_details.dart';
 import '../steps/step4_sale_details.dart';
 import '../steps/step5_delivery_options.dart';
-import 'deliver_now_goat_details_screen.dart';
+import '../steps/step6_goat_photos.dart';
 
 /// Sell Goat wizard.
 ///
@@ -24,12 +23,11 @@ import 'deliver_now_goat_details_screen.dart';
 /// Step 3 -> Goat Details
 /// Step 4 -> Sale Details
 /// Step 5 -> Delivery
-/// Deliver Now only -> Goat details (photo + approximate age of each goat,
-///                     for the purchase history) -> save
+/// Step 6 -> Goat Photos (Deliver Now, Booking / Holding, Wait for
+///           Delivery: photo, approximate age and weight of each goat,
+///           shown on the booking and in the purchase history) -> save
 ///
-/// Opened from Sell from Lot with [initialGoats] — goats just registered
-/// out of a lot with their photo, weight and details — the wizard starts
-/// on Customer with those goats already selected.
+/// Transfer to Palai saves on Step 5.
 ///
 /// After a successful save, the user is taken to the Sale Receipt screen
 /// instead of immediately being returned to the Trading dashboard.
@@ -39,10 +37,7 @@ import 'deliver_now_goat_details_screen.dart';
 /// charges / pickup weight aren't known before that), so saving them just
 /// keeps the record and returns to the previous screen.
 class SellGoatWizardScreen extends StatefulWidget {
-  /// Goats to start with (already registered). Empty = pick on Step 1.
-  final List<Goat> initialGoats;
-
-  const SellGoatWizardScreen({super.key, this.initialGoats = const []});
+  const SellGoatWizardScreen({super.key});
 
   @override
   State<SellGoatWizardScreen> createState() =>
@@ -50,9 +45,7 @@ class SellGoatWizardScreen extends StatefulWidget {
 }
 
 class _SellGoatWizardScreenState extends State<SellGoatWizardScreen> {
-  late final PageController _pageController = PageController(
-    initialPage: widget.initialGoats.isEmpty ? 0 : 1,
-  );
+  final PageController _pageController = PageController();
 
   final GlobalKey<Step2CustomerLookupState> _customerKey =
   GlobalKey<Step2CustomerLookupState>();
@@ -66,29 +59,35 @@ class _SellGoatWizardScreenState extends State<SellGoatWizardScreen> {
   final GlobalKey<Step5DeliveryOptionsState> _deliveryKey =
   GlobalKey<Step5DeliveryOptionsState>();
 
+  final GlobalKey<Step6GoatPhotosState> _goatPhotosKey =
+  GlobalKey<Step6GoatPhotosState>();
+
   final SaleDraft _draft = SaleDraft();
 
   String? _farmId;
   bool _loadingFarm = true;
 
-  late int _currentStep = widget.initialGoats.isEmpty ? 0 : 1;
+  int _currentStep = 0;
   bool _moving = false;
   bool _saving = false;
 
-  static const List<String> _stepLabels = [
+  static const int _deliveryStep = 4;
+  static const int _photosStep = 5;
+
+  /// Step 6 (Goat Photos): Deliver Now, Booking / Holding and Wait for
+  /// Delivery — not Transfer to Palai.
+  List<String> get _stepLabels => [
     'Goats',
     'Customer',
     'Details',
     'Sale',
     'Delivery',
+    if (_draft.needsGoatPhotos) 'Photos',
   ];
 
   @override
   void initState() {
     super.initState();
-    if (widget.initialGoats.isNotEmpty) {
-      _draft.selectedGoats = List.of(widget.initialGoats);
-    }
     _loadFarm();
   }
 
@@ -131,6 +130,8 @@ class _SellGoatWizardScreenState extends State<SellGoatWizardScreen> {
         return 'Sale Details';
       case 4:
         return 'Delivery Options';
+      case 5:
+        return 'Goat Photos';
       default:
         return 'Sell Goat';
     }
@@ -208,36 +209,34 @@ class _SellGoatWizardScreenState extends State<SellGoatWizardScreen> {
     // STEP 5
     // -------------------------------------------------------------------------
 
-    if (_currentStep == 4) {
+    if (_currentStep == _deliveryStep) {
       final valid =
           _deliveryKey.currentState?.validate() ?? false;
 
       if (!valid) return;
 
-      // Deliver Now only: the customer takes the goats today, so record
-      // each goat's photo and approximate age before finishing the sale.
-      if (_draft.isDeliverNow && !_draft.isLotSale) {
-        final proceed = await _goatDetailsStep();
-        if (proceed != true || !mounted) return;
+      // Step 6 records each goat's photo and approximate age before the
+      // sale is saved (all options except Transfer to Palai).
+      if (_draft.needsGoatPhotos) {
+        await _goToStep(_photosStep);
+        return;
       }
 
       await _saveSale();
+      return;
     }
-  }
 
-  /// Opens [DeliverNowGoatDetailsScreen]. True = Finish Sale was tapped.
-  Future<bool?> _goatDetailsStep() async {
-    if (_draft.selectedGoats.isEmpty) return true;
+    // -------------------------------------------------------------------------
+    // STEP 6 (Goat Photos)
+    // -------------------------------------------------------------------------
 
-    _moving = true;
-    try {
-      return await Navigator.of(context).push<bool>(
-        MaterialPageRoute(
-          builder: (_) => DeliverNowGoatDetailsScreen(draft: _draft),
-        ),
-      );
-    } finally {
-      _moving = false;
+    if (_currentStep == _photosStep) {
+      final valid =
+          _goatPhotosKey.currentState?.validate() ?? false;
+
+      if (!valid) return;
+
+      await _saveSale();
     }
   }
 
@@ -263,11 +262,10 @@ class _SellGoatWizardScreenState extends State<SellGoatWizardScreen> {
     });
 
     try {
-      // Deliver Now: the photo / approximate age entered on the Goat
-      // details step go onto the goats first, so the sale and the
-      // customer's purchase history show them. (Nothing to save for the
-      // other delivery options.)
-      if (_draft.isDeliverNow) await _saveGoatDetails(farmId);
+      // The photo / approximate age entered on Step 6 (Goat Photos) go
+      // onto the goats first, so the booking and the customer's purchase
+      // history show them. (Transfer to Palai has no Step 6.)
+      if (_draft.needsGoatPhotos) await _saveGoatDetails(farmId);
 
       late final String saleId;
 
@@ -395,7 +393,7 @@ class _SellGoatWizardScreenState extends State<SellGoatWizardScreen> {
     }
   }
 
-  /// Saves the photos and ages changed on the Goat details step onto the
+  /// Saves the photos and ages changed on Step 6 (Goat Photos) onto the
   /// goats.
   Future<void> _saveGoatDetails(String farmId) async {
     for (final entry in _draft.changedPhotos.entries) {
@@ -569,6 +567,16 @@ class _SellGoatWizardScreenState extends State<SellGoatWizardScreen> {
       case 4:
         return Step5DeliveryOptions(
           key: _deliveryKey,
+          draft: _draft,
+          // Shows / hides Step 6 and switches Next <-> Complete Sale.
+          onDeliveryTypeChanged: (_) {
+            if (mounted) setState(() {});
+          },
+        );
+
+      case 5:
+        return Step6GoatPhotos(
+          key: _goatPhotosKey,
           draft: _draft,
         );
 

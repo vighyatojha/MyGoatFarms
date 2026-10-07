@@ -5,7 +5,9 @@ import '../../../app_theme.dart';
 import '../../../models/customer_sales_history.dart';
 import '../../../models/sale_model.dart';
 import '../../../services/customer_account_service.dart';
+import '../../../services/sale_goat_details_service.dart';
 import '../../../widgets/fast_route.dart';
+import '../../home/delivery_flow/lot_goat_profile_screen.dart';
 import '../../palai/fullscreen_image_viewer.dart';
 import '../../trading/sale_receipt_screen.dart';
 import 'hub_widgets.dart';
@@ -507,6 +509,9 @@ class _CustomerSalesHistoryScreenState
         '${l.goatCount} goat${l.goatCount == 1 ? '' : 's'}',
         sub: l.sourceLabel.isEmpty ? null : l.sourceLabel,
       ));
+      // The photo / age / weight of each goat, taken on the sale's Goat
+      // Photos step (none for older lot sales).
+      rows.add(_LotSaleGoats(farmId: widget.farmId, sale: l.sale));
     } else {
       for (final g in l.goats) {
         rows.add(_GoatTile(goat: g));
@@ -551,9 +556,15 @@ class _CustomerSalesHistoryScreenState
 /// One goat the customer bought: photo (tap to enlarge), tag, lot, and
 /// breed · gender · age · weight.
 class _GoatTile extends StatelessWidget {
-  const _GoatTile({required this.goat});
+  const _GoatTile({required this.goat, this.health = '', this.onTap});
 
   final SoldGoatLine goat;
+
+  /// Latest health status (lot sale goats).
+  final String health;
+
+  /// Opens the goat's profile; the photo still opens full screen.
+  final VoidCallback? onTap;
 
   @override
   Widget build(BuildContext context) {
@@ -563,60 +574,131 @@ class _GoatTile extends StatelessWidget {
       goat.gender,
       goat.age,
       if (goat.weight > 0) '${goat.weight.toStringAsFixed(1)} kg',
+      health,
     ].where((s) => s.trim().isNotEmpty).join(' · ');
 
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 5),
-      child: Row(
-        children: [
-          GestureDetector(
-            onTap: photo == null
-                ? null
-                : () => Navigator.of(context).push(
-              fastRoute(
-                FullscreenImageViewer(
-                  imageBytes: photo,
-                  title: goat.tag,
-                ),
-              ),
-            ),
-            child: ClipRRect(
-              borderRadius: BorderRadius.circular(10),
-              child: photo != null
-                  ? Image.memory(photo, width: 52, height: 52, fit: BoxFit.cover)
-                  : Container(
-                width: 52,
-                height: 52,
-                color: AppColors.lightGreen,
-                child: const Icon(Icons.image_not_supported_outlined,
-                    size: 20, color: AppColors.textGrey),
-              ),
-            ),
-          ),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    Expanded(
-                      child: Text(goat.tag, style: AppTheme.heading(size: 13)),
-                    ),
-                    if (goat.lotId.isNotEmpty)
-                      Text(goat.lotId, style: AppTheme.body(size: 10.5)),
-                  ],
-                ),
-                if (details.isNotEmpty)
-                  Text(
-                    details,
-                    style: AppTheme.body(size: 11, color: AppColors.textDark),
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(10),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 5),
+        child: Row(
+          children: [
+            GestureDetector(
+              onTap: photo == null
+                  ? null
+                  : () => Navigator.of(context).push(
+                fastRoute(
+                  FullscreenImageViewer(
+                    imageBytes: photo,
+                    title: goat.tag,
                   ),
-              ],
+                ),
+              ),
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(10),
+                child: photo != null
+                    ? Image.memory(photo, width: 52, height: 52, fit: BoxFit.cover)
+                    : Container(
+                  width: 52,
+                  height: 52,
+                  color: AppColors.lightGreen,
+                  child: const Icon(Icons.image_not_supported_outlined,
+                      size: 20, color: AppColors.textGrey),
+                ),
+              ),
             ),
-          ),
-        ],
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(goat.tag, style: AppTheme.heading(size: 13)),
+                      ),
+                      if (goat.lotId.isNotEmpty)
+                        Text(goat.lotId, style: AppTheme.body(size: 10.5)),
+                    ],
+                  ),
+                  if (details.isNotEmpty)
+                    Text(
+                      details,
+                      style: AppTheme.body(size: 11, color: AppColors.textDark),
+                    ),
+                ],
+              ),
+            ),
+          ],
+        ),
       ),
+    );
+  }
+}
+
+/// The goats of a lot sale (saved on its Goat Photos step),
+/// loaded when the sale is opened. Shows nothing for older lot sales that
+/// have none.
+class _LotSaleGoats extends StatelessWidget {
+  const _LotSaleGoats({required this.farmId, required this.sale});
+
+  final String farmId;
+  final Sale sale;
+
+  @override
+  Widget build(BuildContext context) {
+    return FutureBuilder<List<SaleGoatDetail>>(
+      future: SaleGoatDetailsService.instance.forSale(farmId, sale.id),
+      builder: (context, snap) {
+        if (snap.connectionState != ConnectionState.done) {
+          return const Padding(
+            padding: EdgeInsets.symmetric(vertical: 8),
+            child: Center(
+              child: SizedBox(
+                width: 18,
+                height: 18,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              ),
+            ),
+          );
+        }
+        final goats = snap.data ?? const <SaleGoatDetail>[];
+        if (snap.hasError || goats.isEmpty) return const SizedBox.shrink();
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            for (final g in goats)
+              _GoatTile(
+                goat: SoldGoatLine(
+                  tag: g.label,
+                  lotId: sale.lotDisplayId,
+                  photo: g.photo,
+                  age: g.ageMonths > 0 ? '${g.ageMonths} months' : '',
+                  weight: g.weight,
+                ),
+                health: g.healthStatus,
+                onTap: () => Navigator.of(context).push(
+                  fastRoute(
+                    LotGoatProfileScreen(
+                      farmId: farmId,
+                      sale: sale,
+                      index: g.index,
+                      readOnly: true,
+                    ),
+                  ),
+                ),
+              ),
+            Padding(
+              padding: const EdgeInsets.only(top: 2),
+              child: Text(
+                'Tap a goat to see its photos, weight and health history.',
+                style: AppTheme.body(size: 10.5),
+              ),
+            ),
+          ],
+        );
+      },
     );
   }
 }

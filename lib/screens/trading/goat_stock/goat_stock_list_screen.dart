@@ -935,16 +935,18 @@ class _GoatStockListScreenState
   /// Number shown on a tab / summary stat. [status] null = "All".
   int _count(List<Goat> goats, String? status) {
     if (status == null) {
+      // Lot goats booked for a customer (Booking / Wait for Delivery) are
+      // not stock until that deal is delivered or cancelled.
       return goats.where(_showInAll).length +
-          _lots.fold<int>(0, (sum, l) => sum + l.supplierQty + l.farmQty);
+          _lots.fold<int>(0, (sum, l) => sum + l.availableForSaleQty);
     }
 
     if (status == _kLotFarm) {
-      return _lots.fold<int>(0, (sum, l) => sum + l.farmQty);
+      return _lots.fold<int>(0, (sum, l) => sum + l.farmAvailableQty);
     }
 
     if (status == _kLotSupplier) {
-      return _lots.fold<int>(0, (sum, l) => sum + l.supplierQty);
+      return _lots.fold<int>(0, (sum, l) => sum + l.supplierAvailableQty);
     }
 
     return goats.where((goat) => _matchesTab(goat, status)).length;
@@ -1031,8 +1033,8 @@ class _GoatStockListScreenState
     }
 
     var result = _lots.where((lot) {
-      if (status == _kLotFarm) return lot.farmQty > 0;
-      if (status == _kLotSupplier) return lot.supplierQty > 0;
+      if (status == _kLotFarm) return lot.farmAvailableQty > 0;
+      if (status == _kLotSupplier) return lot.supplierAvailableQty > 0;
       return true;
     }).toList();
 
@@ -2360,9 +2362,12 @@ class _LotStockCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final seller = lot.sellerName.trim();
-    final total = lot.supplierQty + lot.farmQty;
-    final atFarm = lot.farmQty;
-    final atSupplier = lot.supplierQty;
+    // Free goats only: goats booked for a customer are shown apart and
+    // are not counted until the deal is delivered or cancelled.
+    final total = lot.availableForSaleQty;
+    final atFarm = lot.farmAvailableQty;
+    final atSupplier = lot.supplierAvailableQty;
+    final booked = lot.reservedQty;
 
     return Material(
       color: Colors.transparent,
@@ -2424,20 +2429,20 @@ class _LotStockCard extends StatelessWidget {
                         if (atSupplier > 0)
                           _chip(
                             Icons.local_shipping_outlined,
-                            lot.reservedSupplierQty > 0
-                                ? '$atSupplier at supplier '
-                                '(${lot.reservedSupplierQty} booked)'
-                                : '$atSupplier at supplier',
+                            '$atSupplier at supplier',
                             _statusColor(_kLotSupplier),
                           ),
                         if (atFarm > 0)
                           _chip(
                             Icons.home_work_outlined,
-                            lot.reservedFarmQty > 0
-                                ? '$atFarm at farm '
-                                '(${lot.reservedFarmQty} booked)'
-                                : '$atFarm at farm',
+                            '$atFarm at farm',
                             _statusColor(_kLotFarm),
+                          ),
+                        if (booked > 0)
+                          _chip(
+                            Icons.event_available_outlined,
+                            '$booked booked',
+                            AppColors.warning,
                           ),
                         _chip(
                           Icons.calendar_month_outlined,

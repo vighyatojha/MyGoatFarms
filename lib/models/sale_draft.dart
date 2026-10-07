@@ -111,11 +111,11 @@ class SaleDraft {
 
   String genderFor(Goat goat) => goat.gender;
 
-  // Photo and approximate age, entered on the Deliver Now "Goat details"
-  // step so every goat handed over has a photo and an age in the
-  // customer's purchase history. Only CHANGED values are kept here; they
-  // are saved onto the goat right before a Deliver Now sale (see
-  // SellGoatWizardScreen).
+  // Photo and approximate age, entered on Step 6 (Goat Photos — Deliver
+  // Now, Booking / Holding, Wait for Delivery) so every goat sold has a
+  // photo and an age on its booking and in the customer's purchase
+  // history. Only CHANGED values are kept here; they are saved onto the
+  // goat right before the sale is saved (see SellGoatWizardScreen).
 
   final Map<String, Uint8List> _newPhotos = {};
   final Map<String, String> _newPhotoTypes = {};
@@ -151,6 +151,34 @@ class SaleDraft {
 
   /// Ages changed on the Goat details step: goat id -> months.
   Map<String, int> get changedAges => Map.unmodifiable(_ageMonths);
+
+  // ---------------------------------------------------------------------------
+  // STEP 6 — GOAT PHOTOS (lot sale)
+  // ---------------------------------------------------------------------------
+  //
+  // A lot sale has no registered goats, so the photo, approximate age and
+  // weight of each goat handed over are kept here, one entry per goat, and
+  // saved with the sale (SaleGoatDetailsService).
+
+  final List<LotGoatDetail> lotGoatDetails = [];
+
+  /// Makes [lotGoatDetails] hold exactly [lotQuantity] entries. New entries
+  /// start with the average weight of the sale; entries already filled in
+  /// are kept.
+  void ensureLotGoatDetails() {
+    final qty = lotQuantity < 0 ? 0 : lotQuantity;
+    if (lotGoatDetails.length > qty) {
+      lotGoatDetails.removeRange(qty, lotGoatDetails.length);
+    }
+    final average = qty > 0 ? round2(lotSellingWeight / qty) : 0.0;
+    while (lotGoatDetails.length < qty) {
+      lotGoatDetails.add(LotGoatDetail(weight: average));
+    }
+  }
+
+  double get lotGoatDetailsWeight => round2(
+    lotGoatDetails.fold(0.0, (sum, g) => sum + g.weight),
+  );
 
   double get totalSellingWeight => isLotSale
       ? round2(lotSellingWeight)
@@ -248,6 +276,11 @@ class SaleDraft {
 
   bool get isPalaiTransfer =>
       deliveryType == Sale.deliveryTypePalai;
+
+  /// Step 6 (Goat Photos — photo, approximate age and weight of each goat)
+  /// is part of Deliver Now, Booking / Holding and Wait for Delivery.
+  /// Transfer to Palai saves on Step 5.
+  bool get needsGoatPhotos => isDeliverNow || isBooking || isWaitForDelivery;
 
   String paymentMethod = FinancePaymentMethods.cash;
 
@@ -374,4 +407,22 @@ class SaleDraft {
 
     return Sale.paymentStatusPartial;
   }
+}
+
+/// Photo, approximate age and weight of one goat handed over on a Deliver
+/// Now lot sale (Step 6).
+class LotGoatDetail {
+  Uint8List? photo;
+  String photoContentType;
+  int ageMonths;
+  double weight;
+
+  LotGoatDetail({
+    this.photo,
+    this.photoContentType = 'image/jpeg',
+    this.ageMonths = 0,
+    this.weight = 0,
+  });
+
+  bool get hasPhoto => photo != null && photo!.isNotEmpty;
 }

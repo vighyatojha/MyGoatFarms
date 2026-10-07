@@ -3,13 +3,12 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../../../app_theme.dart';
-import '../../../models/goat_model.dart';
 import '../../../models/sale_draft.dart';
 import '../../../models/sale_model.dart';
 import '../../../models/partner_permission_keys.dart';
 import '../../../models/trading_purchase_model.dart';
 import '../../../services/firestore_service.dart';
-import '../../../services/lot_goat_registration_service.dart';
+import '../../../services/sale_goat_details_service.dart';
 import '../../../services/sales_service.dart';
 import '../../../services/trading_service.dart';
 import '../../../widgets/farm_not_linked_state.dart';
@@ -18,32 +17,25 @@ import '../../../widgets/permission_gate.dart';
 import '../purchase_goats/purchase_wizard_widgets.dart';
 import '../lots/receive_lot_screen.dart';
 import '../lots/transfer_to_customer_palai_wizard_screen.dart';
-import '../register_goats/register_lot_goats_screen.dart';
 import '../sale_receipt_screen.dart';
-import '../sell_goat/sell_goat_wizard_screen.dart';
 import '../steps/step2_customer_lookup.dart';
 import '../steps/step4_sale_details.dart';
 import '../steps/step5_delivery_options.dart';
+import '../steps/step6_goat_photos.dart';
 import 'step_select_lot.dart';
 import 'step_source_and_quantity.dart';
 
 /// Sell From Lot — the lot-first counterpart of Sell Goat: no individual
 /// goats are picked, a quantity is taken straight out of a Purchase Lot.
 ///
-/// Flow: Select Lot -> Source & Quantity -> ...
+/// Flow (goats at the farm or at the supplier alike):
+/// Select Lot -> Source & Quantity -> Customer -> Sale Details -> Delivery
+/// -> Goat Photos (photo, approximate age and weight of each goat, saved
+/// with the sale: shown on the Wait on Delivery / Booking & Holding goat
+/// list and in the customer's purchase history) -> save.
 ///
-/// GOATS AT THE FARM: every goat sold must be identifiable at delivery, so
-/// after Source & Quantity each goat is registered (photo, weight, breed,
-/// age — [RegisterLotGoatsScreen]) and the sale continues in the Sell Goat
-/// wizard with those goats selected. Nothing is sold anonymously from the
-/// farm any more.
-///
-/// GOATS AT THE SUPPLIER (cannot be weighed or registered there): the rest
-/// of this wizard, as before — Customer -> Sale Details -> Delivery ->
-/// Save. A Booking / Wait for Delivery made this way gets "Upload photos"
-/// and, once the goats arrive, "Register goats" from its booking. The last step is the same [Step5DeliveryOptions] the
-/// Sell Goat wizard uses, told (through the draft) that this is a lot
-/// sale:
+/// Delivery is the same [Step5DeliveryOptions] the Sell Goat wizard uses,
+/// told (through the draft) that this is a lot sale:
 ///  - every source gets Deliver Now, Booking / Holding and Wait for
 ///    Delivery (held goats are reserved in the lot — at the farm or at the
 ///    supplier — not sold, until the delivery is completed from the
@@ -70,6 +62,7 @@ class _SellFromLotWizardScreenState extends State<SellFromLotWizardScreen> {
   static const int _customerPage = 2;
   static const int _detailsPage = 3;
   static const int _paymentPage = 4;
+  static const int _photosPage = 5;
 
   late final PageController _pageController = PageController(
     initialPage: widget.initialLot == null ? _lotPage : _sourcePage,
@@ -81,6 +74,8 @@ class _SellFromLotWizardScreenState extends State<SellFromLotWizardScreen> {
   final GlobalKey<FormState> _detailsFormKey = GlobalKey<FormState>();
   final GlobalKey<Step5DeliveryOptionsState> _deliveryKey =
   GlobalKey<Step5DeliveryOptionsState>();
+  final GlobalKey<Step6GoatPhotosState> _goatPhotosKey =
+  GlobalKey<Step6GoatPhotosState>();
 
   final SaleDraft _draft = SaleDraft();
 
@@ -96,13 +91,18 @@ class _SellFromLotWizardScreenState extends State<SellFromLotWizardScreen> {
   bool _moving = false;
   bool _saving = false;
 
-  static const Map<int, String> _stepLabels = {
-    _lotPage: 'Lot',
-    _sourcePage: 'Quantity',
-    _customerPage: 'Customer',
-    _detailsPage: 'Sale',
-    _paymentPage: 'Delivery',
-  };
+  /// Step 6 (Goat Photos): Deliver Now, Booking / Holding and Wait for
+  /// Delivery.
+  List<String> get _stepLabels => [
+    'Lot',
+    'Quantity',
+    'Customer',
+    'Sale',
+    'Delivery',
+    if (_draft.needsGoatPhotos) 'Photos',
+  ];
+
+  bool get _isLastStep => _currentStep == _stepLabels.length - 1;
 
   @override
   void initState() {
@@ -150,6 +150,8 @@ class _SellFromLotWizardScreenState extends State<SellFromLotWizardScreen> {
         return 'Sale Details';
       case _paymentPage:
         return 'Delivery Options';
+      case _photosPage:
+        return 'Goat Photos';
       default:
         return 'Sell From Lot';
     }
@@ -173,10 +175,6 @@ class _SellFromLotWizardScreenState extends State<SellFromLotWizardScreen> {
 
       case _sourcePage:
         if (!(_sourceFormKey.currentState?.validate() ?? false)) return;
-        if (_draft.sourceLocation == Sale.sourceFarm) {
-          await _registerAndSell();
-          return;
-        }
         await _goToStep(_customerPage);
         return;
 
@@ -191,6 +189,18 @@ class _SellFromLotWizardScreenState extends State<SellFromLotWizardScreen> {
         return;
 
       case _paymentPage:
+        if (!(_deliveryKey.currentState?.validate() ?? false)) return;
+        // Step 6 records each goat's photo, age and weight before the
+        // sale is saved.
+        if (_draft.needsGoatPhotos) {
+          await _goToStep(_photosPage);
+          return;
+        }
+        await _save();
+        return;
+
+      case _photosPage:
+        if (!(_goatPhotosKey.currentState?.validate() ?? false)) return;
         await _save();
         return;
     }
@@ -312,53 +322,6 @@ class _SellFromLotWizardScreenState extends State<SellFromLotWizardScreen> {
     return result == true;
   }
 
-  /// Goats at the farm: register each one (photo, weight, details), then
-  /// sell them as individual goats in the Sell Goat wizard, which replaces
-  /// this one.
-  Future<void> _registerAndSell() async {
-    final farmId = _farmId;
-    final lot = _lot;
-    final quantity = _draft.lotQuantity;
-
-    if (farmId == null || lot == null) return;
-
-    if (quantity < 1) {
-      wizardSnack(context, 'Enter how many goats to sell.', error: true);
-      return;
-    }
-
-    if (quantity > LotGoatRegistrationService.maxGoatsPerCall) {
-      wizardSnack(
-        context,
-        'Sell at most ${LotGoatRegistrationService.maxGoatsPerCall} goats '
-            'at a time — every goat is registered with its photo.',
-        error: true,
-      );
-      return;
-    }
-
-    _moving = true;
-    try {
-      final goats = await Navigator.of(context).push<List<Goat>>(
-        fastRoute(
-          RegisterLotGoatsScreen.forSale(
-            farmId: farmId,
-            lot: lot,
-            quantity: quantity,
-          ),
-        ),
-      );
-
-      if (!mounted || goats == null || goats.isEmpty) return;
-
-      Navigator.of(context).pushReplacement(
-        fastRoute(SellGoatWizardScreen(initialGoats: goats)),
-      );
-    } finally {
-      _moving = false;
-    }
-  }
-
   /// Palai / Own Palai transfers register goats one by one, so they need
   /// the goats at the farm. When this sale is from the supplier, offer to
   /// receive them first (Receive Lot) and return the refreshed lot, or
@@ -429,9 +392,9 @@ class _SellFromLotWizardScreenState extends State<SellFromLotWizardScreen> {
     );
   }
 
+  /// Saves the sale. Called once the last step is valid (Delivery, or
+  /// Goat Photos for Deliver Now).
   Future<void> _save() async {
-    if (!(_deliveryKey.currentState?.validate() ?? false)) return;
-
     if (!await _confirmSummary()) return;
     if (!mounted) return;
 
@@ -445,16 +408,19 @@ class _SellFromLotWizardScreenState extends State<SellFromLotWizardScreen> {
           farmId: _farmId!,
           draft: _draft,
         );
+        await _saveGoatPhotos(saleId);
       } else if (_draft.isBooking) {
         saleId = await SalesService.instance.saveBooking(
           farmId: _farmId!,
           draft: _draft,
         );
+        await _saveGoatPhotos(saleId);
       } else if (_draft.isWaitForDelivery) {
         saleId = await SalesService.instance.saveWaitForDelivery(
           farmId: _farmId!,
           draft: _draft,
         );
+        await _saveGoatPhotos(saleId);
       } else {
         // Palai is not offered for a lot sale, and Step 5 refuses to
         // validate without a choice — this is only a backstop.
@@ -529,9 +495,38 @@ class _SellFromLotWizardScreenState extends State<SellFromLotWizardScreen> {
     }
   }
 
+  /// Saves the Step 6 photos / ages / weights with the (already saved)
+  /// sale. On a failure the person can retry; skipping keeps the sale
+  /// without them.
+  Future<void> _saveGoatPhotos(String saleId) async {
+    while (true) {
+      try {
+        await SaleGoatDetailsService.instance.saveForSale(
+          farmId: _farmId!,
+          saleId: saleId,
+          lotDisplayId: _draft.lotDisplayId,
+          goats: _draft.lotGoatDetails,
+        );
+        return;
+      } catch (e) {
+        if (!mounted) return;
+        final retry = await showWizardConfirm(
+          context: context,
+          title: 'Goat photos not saved',
+          message: 'Sale $saleId is saved, but the goat photos could not be '
+              'saved (${FirestoreService.instance.describeError(e)}). '
+              'Check the internet connection and try again.',
+          confirmLabel: 'Try again',
+          cancelLabel: 'Skip',
+        );
+        if (!retry || !mounted) return;
+      }
+    }
+  }
+
   Future<void> _goToStep(int step) async {
     if (_moving) return;
-    if (step < _lotPage || step > _paymentPage) return;
+    if (step < _lotPage || step >= _stepLabels.length) return;
 
     if (!_pageController.hasClients) {
       setState(() => _currentStep = step);
@@ -620,6 +615,16 @@ class _SellFromLotWizardScreenState extends State<SellFromLotWizardScreen> {
           key: _deliveryKey,
           draft: _draft,
           onTransferToPalai: _openPalaiTransfer,
+          // Shows / hides Step 6 and switches Next <-> Confirm Lot Sale.
+          onDeliveryTypeChanged: (_) {
+            if (mounted) setState(() {});
+          },
+        );
+
+      case _photosPage:
+        return Step6GoatPhotos(
+          key: _goatPhotosKey,
+          draft: _draft,
         );
 
       default:
@@ -678,7 +683,7 @@ class _SellFromLotWizardScreenState extends State<SellFromLotWizardScreen> {
                 padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
                 child: WizardStepIndicator(
                   currentStep: _currentStep,
-                  labels: _stepLabels.values.toList(),
+                  labels: _stepLabels,
                 ),
               ),
               Padding(
@@ -692,7 +697,7 @@ class _SellFromLotWizardScreenState extends State<SellFromLotWizardScreen> {
                 child: PageView.builder(
                   controller: _pageController,
                   physics: const NeverScrollableScrollPhysics(),
-                  itemCount: 5,
+                  itemCount: _stepLabels.length,
                   itemBuilder: (context, index) => _buildPage(index),
                 ),
               ),
@@ -706,7 +711,7 @@ class _SellFromLotWizardScreenState extends State<SellFromLotWizardScreen> {
 
   Widget _buildBottomBar() {
     final busy = _moving || _saving;
-    final isPayment = _currentStep == _paymentPage;
+    final isPayment = _currentStep >= _paymentPage && _isLastStep;
 
     return Container(
       decoration: BoxDecoration(

@@ -178,12 +178,20 @@ class _LotTile extends StatelessWidget {
               Text(lot.sellerName, style: AppTheme.body(size: 12)),
               const SizedBox(height: 10),
 
-              // Lot | Total | Sold | Remaining | Status (PDF §8).
+              // Total | Sold | Booked | Remaining | Status. Remaining is
+              // what can still be sold: goats sold, and goats held on a
+              // Booking / Wait for Delivery, are taken off until that deal
+              // is delivered or cancelled.
               Row(
                 children: [
                   _figure('Total', '${lot.totalGoats}'),
                   _figure('Sold', '${lot.soldQty}'),
-                  _figure('Remaining', '${lot.remainingQty}'),
+                  _figure(
+                    'Booked',
+                    '${lot.reservedQty}',
+                    color: lot.reservedQty > 0 ? AppColors.warning : null,
+                  ),
+                  _figure('Remaining', '${lot.availableForSaleQty}'),
                   _figure(
                     'Status',
                     lot.isActive ? 'Active' : 'Completed',
