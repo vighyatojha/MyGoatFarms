@@ -9,6 +9,8 @@ import '../../../models/wait_delivery_group.dart';
 import '../../../services/goat_service.dart';
 import '../../../services/wait_delivery_service.dart';
 import '../../../widgets/fast_route.dart';
+import '../../home/delivery_flow/delivery_customer_goats_screen.dart';
+import '../../home/delivery_flow/delivery_section.dart';
 import 'completed_deliveries_view.dart';
 import 'wait_delivery_customer_screen.dart';
 
@@ -23,9 +25,17 @@ import 'wait_delivery_customer_screen.dart';
 class WaitDeliveryCustomerListScreen extends StatefulWidget {
   final String farmId;
 
+  /// Dashboard flow (Home → Wait on Delivery): tapping a customer
+  /// opens their goat list ([DeliveryCustomerGoatsScreen]) — goat details,
+  /// health / weight / photo updates, and Complete → select goats → the
+  /// existing checkout. False (the default) keeps the original Trading
+  /// behaviour: tapping a customer opens [WaitDeliveryCustomerScreen] directly.
+  final bool openGoatList;
+
   const WaitDeliveryCustomerListScreen({
     super.key,
     required this.farmId,
+    this.openGoatList = false,
   });
 
   @override
@@ -62,6 +72,20 @@ class _WaitDeliveryCustomerListScreenState
   }
 
   Future<void> _openCustomer(WaitDeliveryCustomer customer) async {
+    if (widget.openGoatList) {
+      await Navigator.of(context).push(
+        fastRoute(
+          DeliveryCustomerGoatsScreen(
+            farmId: widget.farmId,
+            section: DeliverySection.waitOnDelivery,
+            customerKey: customer.key,
+            customerName: customer.name,
+          ),
+        ),
+      );
+      return;
+    }
+
     await Navigator.of(context).push(
       fastRoute(
         WaitDeliveryCustomerScreen(

@@ -11,7 +11,9 @@ import '../../models/activity_model.dart';
 import '../../models/partner_model.dart';
 import '../../models/palai_models.dart';
 import '../../models/stock_model.dart';
+import '../../models/trading_summary_model.dart';
 import '../../services/firestore_service.dart';
+import '../../services/trading_service.dart';
 import '../../widgets/fast_route.dart';
 import '../../widgets/profile_completion_dialog.dart';
 import '../../widgets/customer_selection_sheet.dart';
@@ -30,6 +32,8 @@ import '../palai/goat_list_screen.dart';
 import '../palai/receive_payment_screen.dart';
 import '../trading/own_palai/own_palai_list_screen.dart';
 import 'death_history_screen.dart';
+import '../customers/hub/customer_hub_list_screen.dart';
+import 'delivery_flow/delivery_section.dart';
 import '../../widgets/goat_count_builder.dart';
 
 /// Home / dashboard screen. Quick, at-a-glance view of the whole farm —
@@ -337,6 +341,12 @@ class _HomeScreenState extends State<HomeScreen> {
                 const SizedBox(height: 16),
                 if (_farmId != null) _buildStatGrid(_farmId!) else _buildStatGridLoading(),
                 const SizedBox(height: 24),
+                if (_farmId != null) ...[
+                  Text('Deliveries', style: AppTheme.heading(size: 16)),
+                  const SizedBox(height: 12),
+                  _buildDeliverySections(_farmId!),
+                  const SizedBox(height: 24),
+                ],
                 Text('Quick Actions', style: AppTheme.heading(size: 16)),
                 const SizedBox(height: 12),
                 if (_farmId != null) _buildQuickActions(_farmId!),
@@ -528,6 +538,64 @@ class _HomeScreenState extends State<HomeScreen> {
             ],
           ),
         ],
+      ),
+    );
+  }
+
+  /// Entry point of the delivery flow:
+  ///
+  ///   Dashboard → Wait on Delivery  → customers → goats → details / Complete
+  ///   Dashboard → Booking & Holding → customers → goats → details
+  ///
+  /// Counts come from the same trading summary the Trading dashboard
+  /// shows, so both screens always agree.
+  Widget _buildDeliverySections(String farmId) {
+    // The Customers screen, showing only this section's customers;
+    // tapping one opens their goat list.
+    void open(DeliverySection section) {
+      Navigator.of(context).push(
+        fastRoute(
+          CustomerHubListScreen(
+            farmId: farmId,
+            focus: section.isWait
+                ? HubFocus.waitOnDelivery
+                : HubFocus.bookingHolding,
+          ),
+        ),
+      );
+    }
+
+    return FadeInUp(
+      delay: const Duration(milliseconds: 62),
+      duration: const Duration(milliseconds: 220),
+      child: StreamBuilder<TradingSummary>(
+        stream: TradingService.instance.dashboardSummaryStream(farmId),
+        builder: (context, snap) {
+          final s = snap.data;
+          return Row(
+            children: [
+              Expanded(
+                child: StatCard(
+                  icon: DeliverySection.waitOnDelivery.icon,
+                  label: DeliverySection.waitOnDelivery.title,
+                  value: s == null ? '—' : '${s.waitOnDelivery}',
+                  color: DeliverySection.waitOnDelivery.color,
+                  onTap: () => open(DeliverySection.waitOnDelivery),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: StatCard(
+                  icon: DeliverySection.bookingHolding.icon,
+                  label: DeliverySection.bookingHolding.title,
+                  value: s == null ? '—' : '${s.booking}',
+                  color: DeliverySection.bookingHolding.color,
+                  onTap: () => open(DeliverySection.bookingHolding),
+                ),
+              ),
+            ],
+          );
+        },
       ),
     );
   }

@@ -13,7 +13,9 @@ import '../../../models/sale_model.dart';
 import '../../../models/trading_goat_health_record.dart';
 import '../../../models/trading_goat_weight_entry.dart';
 import '../../../models/trading_purchase_model.dart';
+import '../../../services/complete_goats_selector_screen.dart';
 import '../../../services/firestore_service.dart';
+
 import '../../../services/goat_service.dart';
 import '../../../services/health_reminder_scheduler.dart';
 import '../../../services/image_service.dart';
@@ -126,6 +128,18 @@ class _OwnPalaiGoatProfileScreenState extends State<OwnPalaiGoatProfileScreen>
   /// Sold on Wait for Delivery and not yet picked up (see class doc).
   bool get _waiting => widget.goat.isWaitOnDelivery;
 
+  /// Booked / held for a customer (Booking & Holding) and not yet
+  /// delivered. Same full profile as a waiting goat (weight, photos,
+  /// health), with a Booking card instead of the Sale card.
+  bool get _booked => widget.goat.isBooked;
+
+  /// The goat's main photo. Starts as the saved one and is replaced in
+  /// place after Upload / Change photo, so the header and Photos tab show
+  /// the new photo straight away.
+  late Uint8List? _photo = widget.goat.photo;
+
+  bool _savingPhoto = false;
+
   /// The open sale this goat is waiting on — read once, for the Overview
   /// Sale card. Null for every goat that is not waiting on delivery.
   Future<Sale?>? _saleFuture;
@@ -186,7 +200,7 @@ class _OwnPalaiGoatProfileScreenState extends State<OwnPalaiGoatProfileScreen>
         : TradingService.instance.getPurchase(widget.farmId, purchaseId);
 
     final saleId = (widget.goat.saleId ?? '').trim();
-    _saleFuture = (_waiting && saleId.isNotEmpty)
+    _saleFuture = ((_waiting || _booked) && saleId.isNotEmpty)
         ? SalesService.instance.getSale(widget.farmId, saleId)
         : Future<Sale?>.value(null);
 
@@ -209,6 +223,53 @@ class _OwnPalaiGoatProfileScreenState extends State<OwnPalaiGoatProfileScreen>
   void dispose() {
     _tabController.dispose();
     super.dispose();
+  }
+
+  /// Upload or change the goat's main photo (camera or gallery).
+  Future<void> _changePhoto() async {
+    if (_savingPhoto) return;
+
+    final messenger = ScaffoldMessenger.of(context);
+
+    try {
+      final picked = await showImageSourceSheet(context, isGoatPhoto: true);
+      if (picked == null || !mounted) return;
+
+      setState(() => _savingPhoto = true);
+
+      await GoatPhotoService.instance.setPhoto(
+        farmId: widget.farmId,
+        goatId: widget.goat.id,
+        bytes: picked.bytes,
+        contentType: picked.contentType,
+      );
+
+      if (!mounted) return;
+      setState(() => _photo = picked.bytes);
+
+      messenger.showSnackBar(
+        const SnackBar(
+          content: Text('Photo updated.'),
+          backgroundColor: AppColors.darkGreen,
+        ),
+      );
+    } on ImageTooLargeException {
+      messenger.showSnackBar(
+        const SnackBar(
+          content: Text('That photo is too large. Please choose another one.'),
+          backgroundColor: AppColors.error,
+        ),
+      );
+    } catch (e) {
+      messenger.showSnackBar(
+        SnackBar(
+          content: Text(FirestoreService.instance.describeError(e)),
+          backgroundColor: AppColors.error,
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => _savingPhoto = false);
+    }
   }
 
   Future<void> _recordDeath() async {
@@ -252,7 +313,7 @@ class _OwnPalaiGoatProfileScreenState extends State<OwnPalaiGoatProfileScreen>
           // (breed, colour, purchase & origin) stay one tap away. A Wait on
           // Delivery goat gets the same button, which is also the way to
           // its sale receipt.
-          if (_stock || _waiting)
+          if (_stock || _waiting || _booked)
             IconButton(
               tooltip: 'Goat details',
               icon: const Icon(Icons.info_outline_rounded),
@@ -326,6 +387,9 @@ class _OwnPalaiGoatProfileScreenState extends State<OwnPalaiGoatProfileScreen>
         return _PhotosTab(
           farmId: widget.farmId,
           goat: goat,
+          profilePhoto: _photo,
+          saving: _savingPhoto,
+          onChangePhoto: _changePhoto,
           emptyMessage: _stock
               ? 'No photos yet. The photo taken when the goat was '
               'registered shows here.'
@@ -373,7 +437,8 @@ class _OwnPalaiGoatProfileScreenState extends State<OwnPalaiGoatProfileScreen>
   Widget _buildHeaderCard(Goat goat) {
     final color = _healthColor(goat.healthStatus);
     final daysOwned = DateTime.now().difference(goat.purchaseDate).inDays;
-    final hasPhoto = goat.photo != null;
+    final photo = _photo;
+    final hasPhoto = photo != null;
 
     return Container(
       margin: const EdgeInsets.fromLTRB(14, 10, 14, 8),
@@ -382,30 +447,65 @@ class _OwnPalaiGoatProfileScreenState extends State<OwnPalaiGoatProfileScreen>
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          GestureDetector(
-            onTap: !hasPhoto
-                ? null
-                : () => Navigator.of(context).push(
-              fastRoute(
-                FullscreenImageViewer(
-                  imageBytes: goat.photo!,
-                  title: goat.id,
+          Stack(
+            clipBehavior: Clip.none,
+            children: [
+              GestureDetector(
+                // No photo yet: tapping the empty box adds one.
+                onTap: !hasPhoto
+                    ? _changePhoto
+                    : () => Navigator.of(context).push(
+                  fastRoute(
+                    FullscreenImageViewer(
+                      imageBytes: photo!,
+                      title: goat.id,
+                    ),
+                  ),
+                ),
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(12),
+                  child: hasPhoto
+                      ? Image.memory(photo!,
+                      width: 64, height: 64, fit: BoxFit.cover)
+                      : Container(
+                    width: 64,
+                    height: 64,
+                    color: AppColors.stockTeal.withValues(alpha: 0.10),
+                    child: const Icon(GoatIcons.paw,
+                        color: AppColors.stockTeal, size: 26),
+                  ),
                 ),
               ),
-            ),
-            child: ClipRRect(
-              borderRadius: BorderRadius.circular(12),
-              child: hasPhoto
-                  ? Image.memory(goat.photo!,
-                  width: 64, height: 64, fit: BoxFit.cover)
-                  : Container(
-                width: 64,
-                height: 64,
-                color: AppColors.stockTeal.withValues(alpha: 0.10),
-                child: const Icon(GoatIcons.paw,
-                    color: AppColors.stockTeal, size: 26),
+              // Upload / change photo (camera or gallery).
+              Positioned(
+                right: -6,
+                bottom: -6,
+                child: Material(
+                  color: AppColors.primaryGreen,
+                  shape: const CircleBorder(
+                    side: BorderSide(color: Colors.white, width: 2),
+                  ),
+                  child: InkWell(
+                    customBorder: const CircleBorder(),
+                    onTap: _savingPhoto ? null : _changePhoto,
+                    child: Padding(
+                      padding: const EdgeInsets.all(5),
+                      child: _savingPhoto
+                          ? const SizedBox(
+                        width: 12,
+                        height: 12,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 1.8,
+                          color: Colors.white,
+                        ),
+                      )
+                          : const Icon(Icons.photo_camera_outlined,
+                          size: 12, color: Colors.white),
+                    ),
+                  ),
+                ),
               ),
-            ),
+            ],
           ),
           const SizedBox(width: 12),
           Expanded(
@@ -427,6 +527,8 @@ class _OwnPalaiGoatProfileScreenState extends State<OwnPalaiGoatProfileScreen>
                         ? _pill('Available', AppColors.success)
                         : _waiting
                         ? _pill('Wait on Delivery', AppColors.info)
+                        : _booked
+                        ? _pill('Booked / Holding', Colors.deepPurple)
                         : _pill('Own Palai', AppColors.stockTeal),
                     const SizedBox(width: 4),
                     Flexible(
@@ -449,6 +551,8 @@ class _OwnPalaiGoatProfileScreenState extends State<OwnPalaiGoatProfileScreen>
                           'Gender', goat.gender.isEmpty ? '—' : goat.gender),
                       if (goat.breed.trim().isNotEmpty)
                         _miniStat('Breed', goat.breed.trim()),
+                    ] else if (_booked) ...[
+                      _miniStat('Status', 'Booked'),
                     ] else if (_waiting && goat.waitOnDeliveryAt != null) ...[
                       _miniStat(
                           'Waiting',
@@ -540,18 +644,24 @@ class _OwnPalaiGoatProfileScreenState extends State<OwnPalaiGoatProfileScreen>
             children: [
               Icon(Icons.circle,
                   size: 10,
-                  color: _waiting ? AppColors.info : AppColors.success),
+                  color: _waiting
+                      ? AppColors.info
+                      : _booked
+                      ? Colors.deepPurple
+                      : AppColors.success),
               const SizedBox(width: 8),
               Text(
                 _waiting
                     ? 'Wait on Delivery — awaiting pickup'
+                    : _booked
+                    ? 'Booked / Holding — held for the customer'
                     : 'Active in Own Palai',
                 style: AppTheme.body(size: 12.5),
               ),
             ],
           ),
         ),
-        if (_waiting) ...[
+        if (_waiting || _booked) ...[
           const SizedBox(height: 12),
           _buildSaleCard(),
         ],
@@ -592,6 +702,23 @@ class _OwnPalaiGoatProfileScreenState extends State<OwnPalaiGoatProfileScreen>
               Icons.info_outline,
               'No linked sale record was found for this goat.',
             ),
+          );
+        }
+
+        if (_booked) {
+          return _SectionCard(
+            title: 'Booking',
+            child: _kvColumn([
+              ('Customer', sale.customerName),
+              if (sale.mobile.trim().isNotEmpty) ('Mobile', sale.mobile),
+              ('Booking', sale.id),
+              ('Booking Amount Paid', _money(sale.bookingAmount ?? 0)),
+              if ((sale.holdingChargePerDay ?? 0) > 0)
+                ('Holding Charge',
+                '${_money(sale.holdingChargePerDay!)} / day'),
+              ('Holding Since',
+              DateFormat('d MMM yyyy').format(sale.holdingStart)),
+            ]),
           );
         }
 
@@ -1303,10 +1430,22 @@ class _PhotosTab extends StatefulWidget {
   final Goat goat;
   final String emptyMessage;
 
+  /// The goat's current main photo (may be newer than [goat.photo]).
+  final Uint8List? profilePhoto;
+
+  /// True while a new main photo is being saved.
+  final bool saving;
+
+  /// Opens camera / gallery to upload or change the main photo.
+  final VoidCallback onChangePhoto;
+
   const _PhotosTab({
     required this.farmId,
     required this.goat,
     required this.emptyMessage,
+    required this.profilePhoto,
+    required this.saving,
+    required this.onChangePhoto,
   });
 
   @override
@@ -1347,8 +1486,8 @@ class _PhotosTabState extends State<_PhotosTab> {
             .toList();
 
         final tiles = <(dynamic, String, String)>[
-          if (goat.photo != null)
-            (goat.photo, 'Profile', DateFormat('d MMM yyyy').format(goat.purchaseDate)),
+          if (widget.profilePhoto != null)
+            (widget.profilePhoto, 'Profile', 'Main photo'),
           for (final e in entries)
             (
             e.photo,
@@ -1360,6 +1499,32 @@ class _PhotosTabState extends State<_PhotosTab> {
         return ListView(
           padding: const EdgeInsets.fromLTRB(14, 12, 14, 24),
           children: [
+            SizedBox(
+              height: 44,
+              child: OutlinedButton.icon(
+                onPressed: widget.saving ? null : widget.onChangePhoto,
+                icon: widget.saving
+                    ? const SizedBox(
+                  width: 16,
+                  height: 16,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+                    : const Icon(Icons.add_a_photo_outlined, size: 18),
+                label: Text(
+                  widget.profilePhoto == null
+                      ? 'Upload Photo'
+                      : 'Change Main Photo',
+                ),
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: AppColors.darkGreen,
+                  side: const BorderSide(color: AppColors.primaryGreen),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(height: 10),
             _SectionCard(
               title: 'Photos & Growth',
               child: snapshot.hasError

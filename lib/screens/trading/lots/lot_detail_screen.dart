@@ -560,12 +560,15 @@ class _LotDetailScreenState extends State<LotDetailScreen> {
       ('PURCHASED', lot.totalGoats, null),
       ('SOLD', lot.soldQty, null),
       ('DIED', lot.mortality, lot.mortality > 0 ? AppColors.error : null),
-      ('TO PALAI', lot.registeredCount, null),
+      ('REGISTERED', lot.registeredCount, null),
     ]
         : [
       ('PURCHASED', lot.totalGoats, null),
       ('SOLD', lot.soldQty, null),
-      ('REMAINING', lot.remainingQty, const Color(0xFF1E8A57)),
+      // Booked goats are promised to customers: shown on their own and not
+      // counted as remaining until the deal is cancelled.
+      if (lot.reservedQty > 0) ('BOOKED', lot.reservedQty, AppColors.warning),
+      ('REMAINING', lot.availableForSaleQty, const Color(0xFF1E8A57)),
     ];
 
     return Container(
@@ -685,7 +688,7 @@ class _LotDetailScreenState extends State<LotDetailScreen> {
                   const Icon(Icons.warehouse_outlined, size: 15, color: AppColors.textGrey),
                   const SizedBox(width: 5),
                   Text(
-                    'At Supplier: ${lot.supplierQty}',
+                    'At Supplier: ${lot.supplierAvailableQty}',
                     style: AppTheme.body(
                         size: 12, color: AppColors.textDark, weight: FontWeight.w600),
                   ),
@@ -693,11 +696,13 @@ class _LotDetailScreenState extends State<LotDetailScreen> {
                   Icon(
                     Icons.home_outlined,
                     size: 15,
-                    color: lot.farmQty > 0 ? AppColors.darkGreen : AppColors.textGrey,
+                    color: lot.farmAvailableQty > 0
+                        ? AppColors.darkGreen
+                        : AppColors.textGrey,
                   ),
                   const SizedBox(width: 5),
                   Text(
-                    'At Farm: ${lot.farmQty}',
+                    'At Farm: ${lot.farmAvailableQty}',
                     style: AppTheme.body(
                         size: 12, color: AppColors.textDark, weight: FontWeight.w600),
                   ),
@@ -788,9 +793,10 @@ class _LotDetailScreenState extends State<LotDetailScreen> {
             icon: Icons.inventory_2_outlined,
             color: AppColors.primaryGreen,
             title: 'Stock left in lot',
-            value: '${lot.remainingQty} of ${lot.totalGoats}',
+            value: '${lot.availableForSaleQty} of ${lot.totalGoats}',
             lines: [
-              'At supplier ${lot.supplierQty}  •  At farm ${lot.farmQty}',
+              'At supplier ${lot.supplierAvailableQty}  •  '
+                  'At farm ${lot.farmAvailableQty}',
               'Available to sell now ${lot.availableForSaleQty}'
                   '${lot.reservedQty > 0 ? '  •  Booked ${lot.reservedQty}' : ''}',
               if (lot.unsoldOutLabel.isNotEmpty) '${lot.unsoldOutLabel} (not sold)',
@@ -999,8 +1005,9 @@ class _LotDetailScreenState extends State<LotDetailScreen> {
 
     final segments = <(String, int, Color)>[
       ('Sold', lot.soldQty, sold),
-      ('At supplier', lot.supplierQty, supplier),
-      ('At farm', lot.farmQty, farm),
+      ('Booked', lot.reservedQty, AppColors.warning),
+      ('At supplier', lot.supplierAvailableQty, supplier),
+      ('At farm', lot.farmAvailableQty, farm),
       ('Died', lot.mortality, died),
       ('Individual goats', lot.registeredCount, moved),
     ].where((e) => e.$2 > 0).toList();
@@ -1104,7 +1111,7 @@ class _LotDetailScreenState extends State<LotDetailScreen> {
               Text.rich(
                 TextSpan(children: [
                   TextSpan(
-                    text: '${lot.remainingQty}',
+                    text: '${lot.availableForSaleQty}',
                     style: AppTheme.heading(size: 18, color: farm),
                   ),
                   TextSpan(
@@ -1189,16 +1196,24 @@ class _LotDetailScreenState extends State<LotDetailScreen> {
             children: [
               tile(
                 'At supplier',
-                lot.supplierQty,
-                lot.supplierQty == 0 ? 'All received' : 'Not received yet',
+                lot.supplierAvailableQty,
+                lot.supplierQty == 0
+                    ? 'All received'
+                    : lot.reservedSupplierQty > 0
+                    ? 'Not received · ${lot.reservedSupplierQty} booked'
+                    : 'Not received yet',
                 supplier,
                 Icons.local_shipping_outlined,
               ),
               const SizedBox(width: 10),
               tile(
                 'At farm',
-                lot.farmQty,
-                lot.farmQty == 0 ? 'None at the farm' : 'Received, not sold',
+                lot.farmAvailableQty,
+                lot.farmQty == 0
+                    ? 'None at the farm'
+                    : lot.reservedFarmQty > 0
+                    ? 'Free · ${lot.reservedFarmQty} booked'
+                    : 'Received, not sold',
                 farm,
                 Icons.home_outlined,
               ),
@@ -1225,8 +1240,14 @@ class _LotDetailScreenState extends State<LotDetailScreen> {
           if (lot.farmDeathQty > 0)
             wentRow(died, 'Died at farm', '${lot.farmDeathQty}'),
           const Divider(height: 18, color: AppColors.divider),
-          wentRow(farm, 'Still in the lot', '${lot.remainingQty}',
-              sub: 'At supplier ${lot.supplierQty}  •  At farm ${lot.farmQty}'),
+          if (lot.reservedQty > 0)
+            wentRow(AppColors.warning, 'Booked for customers',
+                '${lot.reservedQty}',
+                sub: 'At supplier ${lot.reservedSupplierQty}  •  '
+                    'At farm ${lot.reservedFarmQty}'),
+          wentRow(farm, 'Still free in the lot', '${lot.availableForSaleQty}',
+              sub: 'At supplier ${lot.supplierAvailableQty}  •  '
+                  'At farm ${lot.farmAvailableQty}'),
         ],
       ),
     );

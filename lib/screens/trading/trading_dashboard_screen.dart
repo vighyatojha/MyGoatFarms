@@ -18,15 +18,13 @@ import '../../widgets/farm_not_linked_state.dart';
 import '../../widgets/fast_route.dart';
 import '../customers/hub/customer_hub_list_screen.dart';
 import 'suppliers/goat_supplier_list_screen.dart';
-import 'goat_stock/booking_delivery_customer_list_screen.dart';
 import 'goat_stock/goat_stock_list_screen.dart';
-import 'goat_stock/sold_customer_list_screen.dart';
-import 'goat_stock/wait_delivery_customer_list_screen.dart';
 import 'lots/legacy_conversion_sheet.dart';
 import 'lots/lot_management_screen.dart';
 import 'lots/lot_sales_list_screen.dart';
 import 'lots/lot_stock_screen.dart';
 import 'lots/receive_lot_screen.dart';
+import 'own_palai/own_palai_list_screen.dart';
 import 'purchase_goats/complete_receiving_screen.dart';
 import 'purchase_goats/purchase_goats_wizard_screen.dart';
 import 'sell_from_lot/sell_from_lot_wizard_screen.dart';
@@ -283,8 +281,13 @@ class _TradingDashboardScreenState extends State<TradingDashboardScreen> {
     final farmId = _farmId;
     if (farmId == null) return Future.value();
 
-    return _push(SoldCustomerListScreen(farmId: farmId));
+    return _push(
+      CustomerHubListScreen(farmId: farmId, focus: HubFocus.sales),
+    );
   }
+
+  /// Own Palai list — where goats are moved into Own Palai.
+  Future<void> _openOwnPalai() => _push(const OwnPalaiListScreen());
 
   /// Booking / Holding opens its own customer-grouped screen (not a flat
   /// goat-stock filter), so a customer's booked goats are delivered — and
@@ -292,7 +295,9 @@ class _TradingDashboardScreenState extends State<TradingDashboardScreen> {
   Future<void> _openBooking() {
     final farmId = _farmId;
     if (farmId == null) return Future.value();
-    return _push(BookingDeliveryCustomerListScreen(farmId: farmId));
+    return _push(
+      CustomerHubListScreen(farmId: farmId, focus: HubFocus.bookingHolding),
+    );
   }
 
   /// Wait on Delivery opens its own customer-grouped screen (not a flat
@@ -300,7 +305,9 @@ class _TradingDashboardScreenState extends State<TradingDashboardScreen> {
   Future<void> _openWaitOnDelivery() {
     final farmId = _farmId;
     if (farmId == null) return Future.value();
-    return _push(WaitDeliveryCustomerListScreen(farmId: farmId));
+    return _push(
+      CustomerHubListScreen(farmId: farmId, focus: HubFocus.waitOnDelivery),
+    );
   }
 
   /// Lot Management: all purchase lots, receiving, lot selling and
@@ -714,6 +721,25 @@ class _TradingDashboardScreenState extends State<TradingDashboardScreen> {
               ),
             ),
             divider,
+            // Own Palai: goats the farm keeps as its own. Not a sale, so it
+            // is not offered in any sale flow — goats are moved here from
+            // the Own Palai section itself.
+            _StripRow(
+              icon: Icons.holiday_village_outlined,
+              color: AppColors.stockTeal,
+              title: 'Own Palai',
+              subtitle: 'Goats the farm keeps · move goats here',
+              onTap: _openOwnPalai,
+              trailing: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  _Pill('$_ownPalaiCount goats', AppColors.stockTeal),
+                  const SizedBox(width: 4),
+                  chevron(),
+                ],
+              ),
+            ),
+            divider,
             _StripRow(
               icon: Icons.receipt_long_outlined,
               color: AppColors.warning,
@@ -909,12 +935,16 @@ class _TradingDashboardScreenState extends State<TradingDashboardScreen> {
                 title: 'Goats in Lots',
                 subtitle:
                 '${lotOverview.totalPurchasedQty} bought • '
-                    '${lotOverview.lotSoldQty} sold',
+                    '${lotOverview.lotSoldQty} sold'
+                    '${lotOverview.reservedQty > 0 ? ' • ${lotOverview.reservedQty} booked' : ''}',
                 trailing: Text.rich(
                   TextSpan(
                     children: [
+                      // Booked / waiting goats are promised to customers,
+                      // so they are not counted as remaining.
                       TextSpan(
-                        text: '${lotOverview.remainingQty}',
+                        text:
+                        '${lotOverview.supplierAvailableQty + lotOverview.farmAvailableQty}',
                         style: AppTheme.heading(
                           size: 15,
                           color: AppColors.primaryGreen,
@@ -1260,7 +1290,11 @@ class _TradingDashboardScreenState extends State<TradingDashboardScreen> {
       _InfoRow(
         GoatIcons.paw,
         'At Supplier',
-        '${lot.supplierQty} of ${lot.totalGoats}',
+        // Booked goats are promised to customers, not stock.
+        lot.reservedSupplierQty > 0
+            ? '${lot.supplierAvailableQty} of ${lot.totalGoats} '
+            '(+${lot.reservedSupplierQty} booked)'
+            : '${lot.supplierQty} of ${lot.totalGoats}',
       ),
       _InfoRow(
         Icons.calendar_today_outlined,

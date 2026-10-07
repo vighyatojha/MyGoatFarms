@@ -3,11 +3,13 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../../../app_theme.dart';
+import '../../../models/goat_model.dart';
 import '../../../models/sale_draft.dart';
 import '../../../models/sale_model.dart';
 import '../../../models/partner_permission_keys.dart';
 import '../../../models/trading_purchase_model.dart';
 import '../../../services/firestore_service.dart';
+import '../../../services/lot_goat_registration_service.dart';
 import '../../../services/sales_service.dart';
 import '../../../services/trading_service.dart';
 import '../../../widgets/farm_not_linked_state.dart';
@@ -16,8 +18,9 @@ import '../../../widgets/permission_gate.dart';
 import '../purchase_goats/purchase_wizard_widgets.dart';
 import '../lots/receive_lot_screen.dart';
 import '../lots/transfer_to_customer_palai_wizard_screen.dart';
-import '../lots/transfer_to_own_palai_screen.dart';
+import '../register_goats/register_lot_goats_screen.dart';
 import '../sale_receipt_screen.dart';
+import '../sell_goat/sell_goat_wizard_screen.dart';
 import '../steps/step2_customer_lookup.dart';
 import '../steps/step4_sale_details.dart';
 import '../steps/step5_delivery_options.dart';
@@ -27,17 +30,28 @@ import 'step_source_and_quantity.dart';
 /// Sell From Lot — the lot-first counterpart of Sell Goat: no individual
 /// goats are picked, a quantity is taken straight out of a Purchase Lot.
 ///
-/// Flow: Select Lot -> Source & Quantity -> Customer -> Sale Details ->
-/// Delivery -> Save. The last step is the same [Step5DeliveryOptions] the
+/// Flow: Select Lot -> Source & Quantity -> ...
+///
+/// GOATS AT THE FARM: every goat sold must be identifiable at delivery, so
+/// after Source & Quantity each goat is registered (photo, weight, breed,
+/// age — [RegisterLotGoatsScreen]) and the sale continues in the Sell Goat
+/// wizard with those goats selected. Nothing is sold anonymously from the
+/// farm any more.
+///
+/// GOATS AT THE SUPPLIER (cannot be weighed or registered there): the rest
+/// of this wizard, as before — Customer -> Sale Details -> Delivery ->
+/// Save. A Booking / Wait for Delivery made this way gets "Upload photos"
+/// and, once the goats arrive, "Register goats" from its booking. The last step is the same [Step5DeliveryOptions] the
 /// Sell Goat wizard uses, told (through the draft) that this is a lot
 /// sale:
 ///  - every source gets Deliver Now, Booking / Holding and Wait for
 ///    Delivery (held goats are reserved in the lot — at the farm or at the
 ///    supplier — not sold, until the delivery is completed from the
 ///    Booking / Wait for Delivery lists);
-///  - Transfer to Palai / Own Palai hand over to the lot's own transfer
-///    screens (goats must be registered one by one). Goats still at the
-///    supplier are received at the farm first (Receive Lot).
+///  - Transfer to Palai hands over to the lot's own Palai transfer
+///    (goats must be registered one by one). Goats still at the supplier
+///    are received at the farm first (Receive Lot). Transfer to Own Palai
+///    is not a sale; it is in Lot details.
 class SellFromLotWizardScreen extends StatefulWidget {
   /// When given (e.g. from the "Lot Created" screen) the wizard skips Select
   /// Lot and opens on Source & Quantity for this lot.
@@ -159,6 +173,10 @@ class _SellFromLotWizardScreenState extends State<SellFromLotWizardScreen> {
 
       case _sourcePage:
         if (!(_sourceFormKey.currentState?.validate() ?? false)) return;
+        if (_draft.sourceLocation == Sale.sourceFarm) {
+          await _registerAndSell();
+          return;
+        }
         await _goToStep(_customerPage);
         return;
 
@@ -294,6 +312,53 @@ class _SellFromLotWizardScreenState extends State<SellFromLotWizardScreen> {
     return result == true;
   }
 
+  /// Goats at the farm: register each one (photo, weight, details), then
+  /// sell them as individual goats in the Sell Goat wizard, which replaces
+  /// this one.
+  Future<void> _registerAndSell() async {
+    final farmId = _farmId;
+    final lot = _lot;
+    final quantity = _draft.lotQuantity;
+
+    if (farmId == null || lot == null) return;
+
+    if (quantity < 1) {
+      wizardSnack(context, 'Enter how many goats to sell.', error: true);
+      return;
+    }
+
+    if (quantity > LotGoatRegistrationService.maxGoatsPerCall) {
+      wizardSnack(
+        context,
+        'Sell at most ${LotGoatRegistrationService.maxGoatsPerCall} goats '
+            'at a time — every goat is registered with its photo.',
+        error: true,
+      );
+      return;
+    }
+
+    _moving = true;
+    try {
+      final goats = await Navigator.of(context).push<List<Goat>>(
+        fastRoute(
+          RegisterLotGoatsScreen.forSale(
+            farmId: farmId,
+            lot: lot,
+            quantity: quantity,
+          ),
+        ),
+      );
+
+      if (!mounted || goats == null || goats.isEmpty) return;
+
+      Navigator.of(context).pushReplacement(
+        fastRoute(SellGoatWizardScreen(initialGoats: goats)),
+      );
+    } finally {
+      _moving = false;
+    }
+  }
+
   /// Palai / Own Palai transfers register goats one by one, so they need
   /// the goats at the farm. When this sale is from the supplier, offer to
   /// receive them first (Receive Lot) and return the refreshed lot, or
@@ -345,34 +410,6 @@ class _SellFromLotWizardScreenState extends State<SellFromLotWizardScreen> {
     });
 
     return fresh.farmAvailableQty > 0 ? fresh : null;
-  }
-
-  /// Transfer to Own Palai: the lot's own transfer screen (the farm keeps
-  /// them; not a sale). On success this wizard closes with a confirmation.
-  Future<void> _openOwnPalaiTransfer() async {
-    final farmId = _farmId;
-    if (farmId == null) return;
-
-    final lot = await _lotAtFarmForTransfer('Own Palai');
-    if (lot == null || !mounted) return;
-
-    final ids = await Navigator.of(context).push<List<String>>(
-      fastRoute(TransferToOwnPalaiScreen(farmId: farmId, lot: lot)),
-    );
-
-    if (!mounted || ids == null || ids.isEmpty) return;
-
-    final messenger = ScaffoldMessenger.of(context);
-    Navigator.of(context).pop();
-    messenger.showSnackBar(
-      SnackBar(
-        content: Text(
-          '${ids.length} goat${ids.length == 1 ? '' : 's'} transferred to '
-              'Own Palai.',
-        ),
-        backgroundColor: AppColors.darkGreen,
-      ),
-    );
   }
 
   /// Transfer to Palai for goats at the farm. A lot's goats are anonymous,
@@ -583,7 +620,6 @@ class _SellFromLotWizardScreenState extends State<SellFromLotWizardScreen> {
           key: _deliveryKey,
           draft: _draft,
           onTransferToPalai: _openPalaiTransfer,
-          onTransferToOwnPalai: _openOwnPalaiTransfer,
         );
 
       default:

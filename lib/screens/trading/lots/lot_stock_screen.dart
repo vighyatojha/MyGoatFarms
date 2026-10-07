@@ -103,8 +103,10 @@ class _LotStockScreenState extends State<LotStockScreen> {
   }
 
   Widget _totals(List<TradingPurchase> lots) {
-    final supplier = lots.fold<int>(0, (s, l) => s + l.supplierQty);
-    final farm = lots.fold<int>(0, (s, l) => s + l.farmQty);
+    // Free goats only: booked ones are promised to customers and shown
+    // under Booked, not counted as stock until the deal is cancelled.
+    final supplier = lots.fold<int>(0, (s, l) => s + l.supplierAvailableQty);
+    final farm = lots.fold<int>(0, (s, l) => s + l.farmAvailableQty);
     final reserved = lots.fold<int>(0, (s, l) => s + l.reservedQty);
     final available = lots.fold<int>(0, (s, l) => s + l.availableForSaleQty);
 
@@ -120,7 +122,8 @@ class _LotStockScreenState extends State<LotStockScreen> {
         children: [
           Text(
             '${lots.length} active lot${lots.length == 1 ? '' : 's'} • '
-                '${supplier + farm} goats',
+                '${supplier + farm} goats'
+                '${reserved > 0 ? ' (+$reserved booked)' : ''}',
             style: AppTheme.heading(size: 14.5),
           ),
           const SizedBox(height: 10),
@@ -128,7 +131,7 @@ class _LotStockScreenState extends State<LotStockScreen> {
             children: [
               _stat('At Supplier', supplier),
               _stat('At Farm', farm),
-              _stat('Reserved', reserved),
+              _stat('Booked', reserved),
               _stat('Available', available, emphasize: true),
             ],
           ),
@@ -202,9 +205,9 @@ class _LotStockScreenState extends State<LotStockScreen> {
               const SizedBox(height: 10),
               Row(
                 children: [
-                  _stat('At Supplier', lot.supplierQty),
-                  _stat('At Farm', lot.farmQty),
-                  _stat('Reserved', lot.reservedQty),
+                  _stat('At Supplier', lot.supplierAvailableQty),
+                  _stat('At Farm', lot.farmAvailableQty),
+                  _stat('Booked', lot.reservedQty),
                   _stat('Available', lot.availableForSaleQty, emphasize: true),
                 ],
               ),

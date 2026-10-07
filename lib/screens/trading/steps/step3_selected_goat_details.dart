@@ -1,10 +1,13 @@
+import 'dart:typed_data';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../../../app_theme.dart';
-import '../../../goat_icons.dart';
 import '../../../models/goat_model.dart';
 import '../../../models/sale_draft.dart';
+import '../../../services/image_service.dart';
+import '../../../widgets/image_source_sheet.dart';
 import '../purchase_goats/purchase_wizard_widgets.dart';
 
 /// Step 3 — Selected Goat Details.
@@ -12,6 +15,13 @@ import '../purchase_goats/purchase_wizard_widgets.dart';
 /// For each selected goat: Photo/ID/Breed/Gender/Age/Current Weight,
 /// with weight editable (selling weight may differ slightly from last
 /// recorded weight) — Task 2.3.
+///
+/// Every goat sold must also have a PHOTO and an APPROXIMATE AGE, shown in
+/// the customer's purchase history: tap the photo to take / choose one,
+/// and check the age (pre-filled from the goat's record). Both are kept in
+/// the [SaleDraft] and saved onto the goat right before the sale. This
+/// stays before Sale Details because the price is worked out from the
+/// weight entered here.
 ///
 /// Gender is shown here read-only. It's assigned once, at Trading's Goat
 /// Registration, from the purchase's Male/Female split (see Goat.gender's
@@ -42,6 +52,10 @@ class Step3SelectedGoatDetailsState
     extends State<Step3SelectedGoatDetails> {
   final GlobalKey<FormState> _formKey = GlobalKey<FormState>();
   final Map<String, TextEditingController> _weightControllers = {};
+  final Map<String, TextEditingController> _ageControllers = {};
+
+  /// Goat whose photo is being picked (shows a spinner on its photo).
+  String? _pickingFor;
 
   @override
   void initState() {
@@ -51,6 +65,41 @@ class Step3SelectedGoatDetailsState
       _weightControllers[goat.id] = TextEditingController(
         text: SaleDraft.formatWeight(widget.draft.weightFor(goat)),
       );
+      final age = widget.draft.ageMonthsFor(goat);
+      _ageControllers[goat.id] = TextEditingController(
+        text: age > 0 ? '$age' : '',
+      );
+    }
+  }
+
+  void _onAgeChanged(Goat goat, String text) {
+    final months = int.tryParse(text.trim());
+    if (months != null && months > 0) {
+      widget.draft.setAgeMonths(goat, months);
+    }
+  }
+
+  Future<void> _pickPhoto(Goat goat) async {
+    if (_pickingFor != null) return;
+    setState(() => _pickingFor = goat.id);
+    try {
+      final picked = await showImageSourceSheet(context, isGoatPhoto: true);
+      if (picked == null || !mounted) return;
+      setState(() {
+        widget.draft.setPhoto(goat, picked.bytes, picked.contentType);
+      });
+    } on ImageTooLargeException {
+      if (mounted) {
+        wizardSnack(context, 'That photo is too large. Choose another.',
+            error: true);
+      }
+    } catch (_) {
+      if (mounted) {
+        wizardSnack(context, 'Could not add the photo. Try again.',
+            error: true);
+      }
+    } finally {
+      if (mounted) setState(() => _pickingFor = null);
     }
   }
 
@@ -70,6 +119,9 @@ class Step3SelectedGoatDetailsState
   @override
   void dispose() {
     for (final controller in _weightControllers.values) {
+      controller.dispose();
+    }
+    for (final controller in _ageControllers.values) {
       controller.dispose();
     }
     super.dispose();
@@ -95,6 +147,23 @@ class Step3SelectedGoatDetailsState
       }
 
       widget.draft.setWeight(goat, weight);
+    }
+
+    // Photo and approximate age are required for every goat sold.
+    for (final goat in widget.draft.selectedGoats) {
+      if (!widget.draft.hasPhoto(goat)) {
+        setState(() {});
+        wizardSnack(context, 'Add a photo of ${goat.id}.', error: true);
+        return false;
+      }
+      final months =
+      int.tryParse(_ageControllers[goat.id]?.text.trim() ?? '');
+      if (months == null || months <= 0) {
+        wizardSnack(context, 'Enter the approximate age of ${goat.id}.',
+            error: true);
+        return false;
+      }
+      widget.draft.setAgeMonths(goat, months);
     }
 
     if (firstInvalidGoatId != null) {
@@ -134,6 +203,11 @@ class Step3SelectedGoatDetailsState
 
                 return _GoatDetailCard(
                   goat: goat,
+                  photo: draft.photoFor(goat),
+                  pickingPhoto: _pickingFor == goat.id,
+                  onPickPhoto: () => _pickPhoto(goat),
+                  ageController: _ageControllers[goat.id]!,
+                  onAgeChanged: (value) => _onAgeChanged(goat, value),
                   weightController: _weightControllers[goat.id]!,
                   onWeightChanged: (value) =>
                       _onWeightChanged(goat, value),
@@ -235,11 +309,21 @@ class Step3SelectedGoatDetailsState
 
 class _GoatDetailCard extends StatelessWidget {
   final Goat goat;
+  final Uint8List? photo;
+  final bool pickingPhoto;
+  final VoidCallback onPickPhoto;
+  final TextEditingController ageController;
+  final ValueChanged<String> onAgeChanged;
   final TextEditingController weightController;
   final ValueChanged<String> onWeightChanged;
 
   const _GoatDetailCard({
     required this.goat,
+    required this.photo,
+    required this.pickingPhoto,
+    required this.onPickPhoto,
+    required this.ageController,
+    required this.onAgeChanged,
     required this.weightController,
     required this.onWeightChanged,
   });
@@ -258,20 +342,61 @@ class _GoatDetailCard extends StatelessWidget {
 
           Row(
             children: [
-              Container(
-                width: 56,
-                height: 56,
-                decoration: BoxDecoration(
-                  color: AppColors.stockTeal.withValues(alpha: 0.10),
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                clipBehavior: Clip.antiAlias,
-                child: goat.photo != null
-                    ? Image.memory(goat.photo!, fit: BoxFit.cover)
-                    : const Icon(
-                  GoatIcons.paw,
-                  color: AppColors.stockTeal,
-                  size: 26,
+              // Tap to take / choose the goat's photo (required).
+              GestureDetector(
+                onTap: onPickPhoto,
+                child: Stack(
+                  clipBehavior: Clip.none,
+                  children: [
+                    Container(
+                      width: 64,
+                      height: 64,
+                      decoration: BoxDecoration(
+                        color: AppColors.stockTeal.withValues(alpha: 0.10),
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(
+                          color: photo == null
+                              ? AppColors.error.withValues(alpha: 0.6)
+                              : AppColors.divider,
+                        ),
+                      ),
+                      clipBehavior: Clip.antiAlias,
+                      child: pickingPhoto
+                          ? const Center(
+                        child: SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        ),
+                      )
+                          : photo != null
+                          ? Image.memory(photo!, fit: BoxFit.cover)
+                          : const Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(Icons.add_a_photo_outlined,
+                              color: AppColors.stockTeal, size: 22),
+                          SizedBox(height: 2),
+                          Text('Photo', style: TextStyle(fontSize: 10)),
+                        ],
+                      ),
+                    ),
+                    if (photo != null)
+                      Positioned(
+                        right: -4,
+                        bottom: -4,
+                        child: Container(
+                          padding: const EdgeInsets.all(3),
+                          decoration: BoxDecoration(
+                            color: AppColors.primaryGreen,
+                            shape: BoxShape.circle,
+                            border: Border.all(color: Colors.white, width: 1.5),
+                          ),
+                          child: const Icon(Icons.photo_camera_outlined,
+                              size: 11, color: Colors.white),
+                        ),
+                      ),
+                  ],
                 ),
               ),
               const SizedBox(width: 12),
@@ -340,6 +465,51 @@ class _GoatDetailCard extends StatelessWidget {
 
           const SizedBox(height: 14),
           Divider(color: AppColors.divider, height: 1),
+          const SizedBox(height: 14),
+
+          // ---------------------------------------------------------------
+          // APPROXIMATE AGE
+          // ---------------------------------------------------------------
+
+          Text(
+            'Approx. Age',
+            style: AppTheme.body(
+              size: 11,
+              color: AppColors.textGrey,
+              weight: FontWeight.w600,
+            ),
+          ),
+          const SizedBox(height: 8),
+          TextFormField(
+            controller: ageController,
+            onChanged: onAgeChanged,
+            keyboardType: TextInputType.number,
+            inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+            style: AppTheme.body(size: 13, color: AppColors.textDark),
+            decoration: InputDecoration(
+              hintText: '0',
+              suffixText: 'months',
+              prefixIcon: const Icon(
+                Icons.cake_outlined,
+                color: AppColors.primaryGreen,
+                size: 20,
+              ),
+              filled: true,
+              fillColor: AppColors.paleGreen,
+              contentPadding: const EdgeInsets.symmetric(
+                horizontal: 14,
+                vertical: 12,
+              ),
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(12),
+                borderSide: BorderSide.none,
+              ),
+            ),
+            validator: (value) {
+              final n = int.tryParse(value?.trim() ?? '');
+              return n == null || n <= 0 ? 'Enter the approximate age' : null;
+            },
+          ),
           const SizedBox(height: 14),
 
           // ---------------------------------------------------------------

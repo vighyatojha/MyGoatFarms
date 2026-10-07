@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 import 'booking_delivery_group.dart';
 import 'customer_account.dart';
 import 'customer_credit.dart';
@@ -7,19 +9,32 @@ import 'sale_settlement.dart';
 import 'wait_delivery_group.dart';
 
 /// One goat on a sale, as shown in the purchase history. Only what the
-/// customer bought: tag, breed, gender and the lot it came from. Never the
-/// lot's purchase cost.
+/// customer bought: tag, photo, breed, gender, approximate age, weight and
+/// the lot it came from. Never the lot's purchase cost.
 class SoldGoatLine {
   final String tag;
   final String breed;
   final String gender;
   final String lotId;
 
+  /// The goat's photo (taken at registration / on the sale).
+  final Uint8List? photo;
+
+  /// e.g. "14 months"; '' when not recorded.
+  final String age;
+
+  /// Weight on the sale (the selling / pickup weight written to the goat);
+  /// 0 when not recorded.
+  final double weight;
+
   const SoldGoatLine({
     required this.tag,
     this.breed = '',
     this.gender = '',
     this.lotId = '',
+    this.photo,
+    this.age = '',
+    this.weight = 0,
   });
 }
 
@@ -408,6 +423,9 @@ class CustomerSalesHistory {
               breed: goat?.breed ?? '',
               gender: goat?.gender ?? '',
               lotId: lot,
+              photo: goat?.photo,
+              age: goat == null || goat.currentAgeMonths <= 0 ? '' : goat.age,
+              weight: goat?.weight ?? 0,
             ),
           );
         }

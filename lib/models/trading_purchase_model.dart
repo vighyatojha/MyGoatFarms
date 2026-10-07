@@ -392,12 +392,15 @@ class TradingPurchase {
   /// "bought • sold • remaining" line reconciles.
   int get unsoldOutQty => mortality + registeredCount;
 
-  /// "Died 2 • Moved to Palai 1" (only the non-zero parts), or '' when
-  /// nothing left the lot that way.
+  /// "Died 2 • Registered 3" (only the non-zero parts), or '' when nothing
+  /// left the lot that way. "Registered" covers every goat that left the
+  /// lot as an individual goat record: Own / Customer Palai transfers and
+  /// goats registered to be sold or booked (each sale of those goats is
+  /// then recorded on the goat, not on the lot).
   String get unsoldOutLabel {
     final parts = <String>[
       if (mortality > 0) 'Died $mortality',
-      if (registeredCount > 0) 'Moved to Palai $registeredCount',
+      if (registeredCount > 0) 'Registered $registeredCount',
     ];
     return parts.join(' • ');
   }

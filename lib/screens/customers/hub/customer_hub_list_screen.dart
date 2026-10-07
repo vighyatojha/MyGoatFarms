@@ -4,10 +4,13 @@ import 'package:flutter/material.dart';
 
 import '../../../app_theme.dart';
 import '../../../models/customer_account.dart';
+import '../../../models/sale_model.dart';
 import '../../../services/customer_account_service.dart';
 import '../../../services/payment_reminder_service.dart';
 import '../../../widgets/fast_route.dart';
 import '../../finance/credit_customers_screen.dart';
+import '../../home/delivery_flow/delivery_customer_goats_screen.dart';
+import '../../home/delivery_flow/delivery_section.dart';
 import 'customer_hub_profile_screen.dart';
 import 'hub_widgets.dart';
 
@@ -20,15 +23,65 @@ import 'hub_widgets.dart';
 /// uses: total sale pending = Finance ▸ Trading ▸ Receivable. Due at
 /// delivery is an estimate for open bookings and is not in Finance until
 /// the goats are delivered.
+///
+/// FOCUSED MODE ([focus] set) — how the dashboards open Wait on Delivery,
+/// Booking & Holding and Sales: the same screen, showing ONLY that group's
+/// customers (no filter chips). Tapping a customer opens:
+///   * Wait on Delivery / Booking & Holding → their goats in that section
+///     (goat details, health / weight / photo updates, Complete →
+///     checkout);
+///   * Sales → their account and purchase history.
+enum HubFocus { waitOnDelivery, bookingHolding, sales }
+
+extension HubFocusInfo on HubFocus {
+  String get title {
+    switch (this) {
+      case HubFocus.waitOnDelivery:
+        return 'Wait on Delivery';
+      case HubFocus.bookingHolding:
+        return 'Booking & Holding';
+      case HubFocus.sales:
+        return 'Sales';
+    }
+  }
+
+  IconData get icon {
+    switch (this) {
+      case HubFocus.waitOnDelivery:
+        return Icons.local_shipping_outlined;
+      case HubFocus.bookingHolding:
+        return Icons.event_available_outlined;
+      case HubFocus.sales:
+        return Icons.sell_outlined;
+    }
+  }
+
+  Color get color {
+    switch (this) {
+      case HubFocus.waitOnDelivery:
+        return HubColors.wait;
+      case HubFocus.bookingHolding:
+        return HubColors.holding;
+      case HubFocus.sales:
+        return AppColors.error;
+    }
+  }
+}
+
 class CustomerHubListScreen extends StatefulWidget {
   const CustomerHubListScreen({
     super.key,
     required this.farmId,
     this.initialFilter = CustomerFilter.all,
+    this.focus,
   });
 
   final String farmId;
   final CustomerFilter initialFilter;
+
+  /// Show only this group's customers (see class doc). Null = every
+  /// customer with the filter chips, the original screen.
+  final HubFocus? focus;
 
   @override
   State<CustomerHubListScreen> createState() => _CustomerHubListScreenState();
@@ -37,6 +90,14 @@ class CustomerHubListScreen extends StatefulWidget {
 class _CustomerHubListScreenState extends State<CustomerHubListScreen> {
   late final Stream<CustomerAccountBook> _book =
   CustomerAccountService.instance.bookStream(widget.farmId);
+
+  /// Every sale — only read in the Sales focus, to count each customer's
+  /// sold goats.
+  late final Stream<List<Sale>>? _sales = widget.focus == HubFocus.sales
+      ? CustomerAccountService.instance.allSalesStream(widget.farmId)
+      : null;
+
+  HubFocus? get _focus => widget.focus;
 
   final TextEditingController _search = TextEditingController();
   late CustomerFilter _filter = widget.initialFilter;
@@ -60,6 +121,29 @@ class _CustomerHubListScreenState extends State<CustomerHubListScreen> {
   }
 
   void _open(CustomerAccount account) {
+    final focus = _focus;
+    final group = focus == HubFocus.waitOnDelivery
+        ? account.wait
+        : focus == HubFocus.bookingHolding
+        ? account.booking
+        : null;
+
+    if (group != null) {
+      Navigator.of(context).push(
+        fastRoute(
+          DeliveryCustomerGoatsScreen(
+            farmId: widget.farmId,
+            section: focus == HubFocus.waitOnDelivery
+                ? DeliverySection.waitOnDelivery
+                : DeliverySection.bookingHolding,
+            customerKey: group.key,
+            customerName: group.name.trim().isEmpty ? account.name : group.name,
+          ),
+        ),
+      );
+      return;
+    }
+
     Navigator.of(context).push(
       fastRoute(
         CustomerHubProfileScreen(
@@ -126,7 +210,21 @@ class _CustomerHubListScreenState extends State<CustomerHubListScreen> {
                     );
                   }
                   if (!snap.hasData) return const _ListSkeleton();
-                  return _body(snap.data!);
+                  final sales = _sales;
+                  if (sales == null) return _body(snap.data!);
+                  return StreamBuilder<List<Sale>>(
+                    stream: sales,
+                    builder: (context, saleSnap) {
+                      if (!saleSnap.hasData) return const _ListSkeleton();
+                      return _body(
+                        snap.data!,
+                        sold: _soldGoatsByAccount(
+                          snap.data!,
+                          saleSnap.data!,
+                        ),
+                      );
+                    },
+                  );
                 },
               ),
             ),
@@ -160,13 +258,20 @@ class _CustomerHubListScreenState extends State<CustomerHubListScreen> {
           )
               : Row(
             children: [
-              const HubIconBox(
-                icon: Icons.groups_2_outlined,
-                color: HubColors.customers,
+              HubIconBox(
+                icon: _focus?.icon ?? Icons.groups_2_outlined,
+                color: _focus?.color ?? HubColors.customers,
                 size: 38,
               ),
               const SizedBox(width: 10),
-              Text('Customers', style: AppTheme.heading(size: 20)),
+              Flexible(
+                child: Text(
+                  _focus?.title ?? 'Customers',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: AppTheme.heading(size: 20),
+                ),
+              ),
             ],
           ),
         ),
@@ -180,9 +285,57 @@ class _CustomerHubListScreenState extends State<CustomerHubListScreen> {
     );
   }
 
-  Widget _body(CustomerAccountBook book) {
+  /// Goats sold (delivered, not Palai transfers) per account key.
+  Map<String, int> _soldGoatsByAccount(
+      CustomerAccountBook book,
+      List<Sale> sales,
+      ) {
+    final byMobile = <String, String>{};
+    final byTradingId = <String, String>{};
+    final byName = <String, String>{};
+
+    for (final a in book.accounts) {
+      final digits = CustomerAccountBook.digitsOf(a.mobile);
+      if (digits.isNotEmpty) byMobile[digits] = a.key;
+      for (final t in a.tradingCustomers) {
+        byTradingId[t.id] = a.key;
+      }
+      byName[a.name.trim().toLowerCase()] = a.key;
+    }
+
+    final sold = <String, int>{};
+    for (final sale in sales) {
+      if (!sale.isDelivered) continue;
+      if (sale.status == Sale.statusTransferredToPalai) continue;
+
+      final digits = CustomerAccountBook.digitsOf(sale.mobile);
+      final key = (digits.isNotEmpty ? byMobile[digits] : null) ??
+          byTradingId[sale.customerId] ??
+          byName[sale.customerName.trim().toLowerCase()];
+      if (key == null) continue;
+
+      final goats = sale.isLotSale ? sale.lotQuantity : sale.goatIds.length;
+      sold[key] = (sold[key] ?? 0) + (goats <= 0 ? 1 : goats);
+    }
+    return sold;
+  }
+
+  bool _inFocus(CustomerAccount a, Map<String, int>? sold) {
+    switch (_focus) {
+      case null:
+        return _filter.test(a);
+      case HubFocus.waitOnDelivery:
+        return a.waitGoats > 0;
+      case HubFocus.bookingHolding:
+        return a.holdingGoats > 0;
+      case HubFocus.sales:
+        return (sold?[a.key] ?? 0) > 0;
+    }
+  }
+
+  Widget _body(CustomerAccountBook book, {Map<String, int>? sold}) {
     final visible = book.accounts
-        .where(_filter.test)
+        .where((a) => _inFocus(a, sold))
         .where((a) => a.matches(_query))
         .toList();
 
@@ -192,15 +345,21 @@ class _CustomerHubListScreenState extends State<CustomerHubListScreen> {
       children: [
         _summary(book),
         const SizedBox(height: 14),
-        _chips(book),
-        const SizedBox(height: 12),
+        if (_focus == null) ...[
+          _chips(book),
+          const SizedBox(height: 12),
+        ] else ...[
+          _focusBar(visible.length),
+          const SizedBox(height: 12),
+        ],
         if (visible.isEmpty)
           HubMessage(
             icon: Icons.person_search_outlined,
             title: _query.isNotEmpty
                 ? 'No customer matches "${_query.trim()}"'
                 : 'No customers in this filter',
-            action: _filter == CustomerFilter.all && _query.isEmpty
+            action: (_focus != null && _query.isEmpty) ||
+                (_filter == CustomerFilter.all && _query.isEmpty)
                 ? null
                 : TextButton(
               onPressed: () => setState(() {
@@ -215,12 +374,40 @@ class _CustomerHubListScreenState extends State<CustomerHubListScreen> {
           for (final account in visible) ...[
             _CustomerRow(
               account: account,
+              soldGoats: sold?[account.key],
               onTap: () => _open(account),
               onRemind: () => unawaited(_remind(account)),
             ),
             const SizedBox(height: 10),
           ],
       ],
+    );
+  }
+
+  /// The single chip shown in a focused list (in place of the filters).
+  Widget _focusBar(int count) {
+    final focus = _focus!;
+    return Align(
+      alignment: Alignment.centerLeft,
+      child: Container(
+        height: 34,
+        padding: const EdgeInsets.symmetric(horizontal: 14),
+        decoration: ShapeDecoration(
+          color: focus.color,
+          shape: const StadiumBorder(),
+        ),
+        child: Center(
+          widthFactor: 1,
+          child: Text(
+            '${focus.title}  $count',
+            style: AppTheme.body(
+              size: 11.5,
+              weight: FontWeight.w600,
+              color: Colors.white,
+            ),
+          ),
+        ),
+      ),
     );
   }
 
@@ -360,15 +547,20 @@ class _CustomerRow extends StatelessWidget {
     required this.account,
     required this.onTap,
     required this.onRemind,
+    this.soldGoats,
   });
 
   final CustomerAccount account;
+
+  /// Goats sold to this customer (Sales focus only).
+  final int? soldGoats;
   final VoidCallback onTap;
   final VoidCallback onRemind;
 
   @override
   Widget build(BuildContext context) {
     final pills = <Widget>[
+      if ((soldGoats ?? 0) > 0) HubPill('Sold $soldGoats', AppColors.error),
       if (account.waitGoats > 0) HubPill('Wait ${account.waitGoats}', HubColors.wait),
       if (account.holdingGoats > 0)
         HubPill('Holding ${account.holdingGoats}', HubColors.holding),

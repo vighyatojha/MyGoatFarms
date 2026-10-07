@@ -6,6 +6,7 @@ import '../../../models/customer_sales_history.dart';
 import '../../../models/sale_model.dart';
 import '../../../services/customer_account_service.dart';
 import '../../../widgets/fast_route.dart';
+import '../../palai/fullscreen_image_viewer.dart';
 import '../../trading/sale_receipt_screen.dart';
 import 'hub_widgets.dart';
 import 'sale_money_widgets.dart';
@@ -508,11 +509,7 @@ class _CustomerSalesHistoryScreenState
       ));
     } else {
       for (final g in l.goats) {
-        rows.add(_Row(
-          g.tag,
-          g.lotId,
-          sub: [g.breed, g.gender].where((s) => s.trim().isNotEmpty).join(' · '),
-        ));
+        rows.add(_GoatTile(goat: g));
       }
     }
 
@@ -550,6 +547,79 @@ class _CustomerSalesHistoryScreenState
 // =============================================================================
 // SMALL PIECES
 // =============================================================================
+
+/// One goat the customer bought: photo (tap to enlarge), tag, lot, and
+/// breed · gender · age · weight.
+class _GoatTile extends StatelessWidget {
+  const _GoatTile({required this.goat});
+
+  final SoldGoatLine goat;
+
+  @override
+  Widget build(BuildContext context) {
+    final photo = goat.photo;
+    final details = [
+      goat.breed,
+      goat.gender,
+      goat.age,
+      if (goat.weight > 0) '${goat.weight.toStringAsFixed(1)} kg',
+    ].where((s) => s.trim().isNotEmpty).join(' · ');
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 5),
+      child: Row(
+        children: [
+          GestureDetector(
+            onTap: photo == null
+                ? null
+                : () => Navigator.of(context).push(
+              fastRoute(
+                FullscreenImageViewer(
+                  imageBytes: photo,
+                  title: goat.tag,
+                ),
+              ),
+            ),
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(10),
+              child: photo != null
+                  ? Image.memory(photo, width: 52, height: 52, fit: BoxFit.cover)
+                  : Container(
+                width: 52,
+                height: 52,
+                color: AppColors.lightGreen,
+                child: const Icon(Icons.image_not_supported_outlined,
+                    size: 20, color: AppColors.textGrey),
+              ),
+            ),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text(goat.tag, style: AppTheme.heading(size: 13)),
+                    ),
+                    if (goat.lotId.isNotEmpty)
+                      Text(goat.lotId, style: AppTheme.body(size: 10.5)),
+                  ],
+                ),
+                if (details.isNotEmpty)
+                  Text(
+                    details,
+                    style: AppTheme.body(size: 11, color: AppColors.textDark),
+                  ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
 
 class _Fact extends StatelessWidget {
   const _Fact(this.label, this.value, {this.color});

@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
 
 import '../../../app_theme.dart';
+import '../../../models/goat_model.dart';
 import '../../../models/sale_draft.dart';
 import '../../../services/firestore_service.dart';
+import '../../../services/goat_photo_service.dart';
 import '../../../services/sales_service.dart';
 import '../../../widgets/farm_not_linked_state.dart';
 import '../sale_receipt_screen.dart';
@@ -12,6 +14,7 @@ import '../steps/step2_customer_lookup.dart';
 import '../steps/step3_selected_goat_details.dart';
 import '../steps/step4_sale_details.dart';
 import '../steps/step5_delivery_options.dart';
+import 'deliver_now_goat_details_screen.dart';
 
 /// Sell Goat wizard.
 ///
@@ -21,6 +24,12 @@ import '../steps/step5_delivery_options.dart';
 /// Step 3 -> Goat Details
 /// Step 4 -> Sale Details
 /// Step 5 -> Delivery
+/// Deliver Now only -> Goat details (photo + approximate age of each goat,
+///                     for the purchase history) -> save
+///
+/// Opened from Sell from Lot with [initialGoats] — goats just registered
+/// out of a lot with their photo, weight and details — the wizard starts
+/// on Customer with those goats already selected.
 ///
 /// After a successful save, the user is taken to the Sale Receipt screen
 /// instead of immediately being returned to the Trading dashboard.
@@ -30,7 +39,10 @@ import '../steps/step5_delivery_options.dart';
 /// charges / pickup weight aren't known before that), so saving them just
 /// keeps the record and returns to the previous screen.
 class SellGoatWizardScreen extends StatefulWidget {
-  const SellGoatWizardScreen({super.key});
+  /// Goats to start with (already registered). Empty = pick on Step 1.
+  final List<Goat> initialGoats;
+
+  const SellGoatWizardScreen({super.key, this.initialGoats = const []});
 
   @override
   State<SellGoatWizardScreen> createState() =>
@@ -38,7 +50,9 @@ class SellGoatWizardScreen extends StatefulWidget {
 }
 
 class _SellGoatWizardScreenState extends State<SellGoatWizardScreen> {
-  final PageController _pageController = PageController();
+  late final PageController _pageController = PageController(
+    initialPage: widget.initialGoats.isEmpty ? 0 : 1,
+  );
 
   final GlobalKey<Step2CustomerLookupState> _customerKey =
   GlobalKey<Step2CustomerLookupState>();
@@ -57,7 +71,7 @@ class _SellGoatWizardScreenState extends State<SellGoatWizardScreen> {
   String? _farmId;
   bool _loadingFarm = true;
 
-  int _currentStep = 0;
+  late int _currentStep = widget.initialGoats.isEmpty ? 0 : 1;
   bool _moving = false;
   bool _saving = false;
 
@@ -72,6 +86,9 @@ class _SellGoatWizardScreenState extends State<SellGoatWizardScreen> {
   @override
   void initState() {
     super.initState();
+    if (widget.initialGoats.isNotEmpty) {
+      _draft.selectedGoats = List.of(widget.initialGoats);
+    }
     _loadFarm();
   }
 
@@ -197,7 +214,30 @@ class _SellGoatWizardScreenState extends State<SellGoatWizardScreen> {
 
       if (!valid) return;
 
+      // Deliver Now only: the customer takes the goats today, so record
+      // each goat's photo and approximate age before finishing the sale.
+      if (_draft.isDeliverNow && !_draft.isLotSale) {
+        final proceed = await _goatDetailsStep();
+        if (proceed != true || !mounted) return;
+      }
+
       await _saveSale();
+    }
+  }
+
+  /// Opens [DeliverNowGoatDetailsScreen]. True = Finish Sale was tapped.
+  Future<bool?> _goatDetailsStep() async {
+    if (_draft.selectedGoats.isEmpty) return true;
+
+    _moving = true;
+    try {
+      return await Navigator.of(context).push<bool>(
+        MaterialPageRoute(
+          builder: (_) => DeliverNowGoatDetailsScreen(draft: _draft),
+        ),
+      );
+    } finally {
+      _moving = false;
     }
   }
 
@@ -223,6 +263,12 @@ class _SellGoatWizardScreenState extends State<SellGoatWizardScreen> {
     });
 
     try {
+      // Deliver Now: the photo / approximate age entered on the Goat
+      // details step go onto the goats first, so the sale and the
+      // customer's purchase history show them. (Nothing to save for the
+      // other delivery options.)
+      if (_draft.isDeliverNow) await _saveGoatDetails(farmId);
+
       late final String saleId;
 
       // -----------------------------------------------------------------------
@@ -345,6 +391,26 @@ class _SellGoatWizardScreenState extends State<SellGoatWizardScreen> {
 
       _showMessage(
         _friendlySaveError(e),
+      );
+    }
+  }
+
+  /// Saves the photos and ages changed on the Goat details step onto the
+  /// goats.
+  Future<void> _saveGoatDetails(String farmId) async {
+    for (final entry in _draft.changedPhotos.entries) {
+      await GoatPhotoService.instance.setPhoto(
+        farmId: farmId,
+        goatId: entry.key,
+        bytes: entry.value.$1,
+        contentType: entry.value.$2,
+      );
+    }
+    for (final entry in _draft.changedAges.entries) {
+      await GoatPhotoService.instance.setAgeMonths(
+        farmId: farmId,
+        goatId: entry.key,
+        months: entry.value,
       );
     }
   }

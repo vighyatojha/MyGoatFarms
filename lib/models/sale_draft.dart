@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 import '../models/goat_model.dart';
 import '../services/sales_service.dart';
 import 'expense_categories.dart';
@@ -108,6 +110,47 @@ class SaleDraft {
   }
 
   String genderFor(Goat goat) => goat.gender;
+
+  // Photo and approximate age, entered on the Deliver Now "Goat details"
+  // step so every goat handed over has a photo and an age in the
+  // customer's purchase history. Only CHANGED values are kept here; they
+  // are saved onto the goat right before a Deliver Now sale (see
+  // SellGoatWizardScreen).
+
+  final Map<String, Uint8List> _newPhotos = {};
+  final Map<String, String> _newPhotoTypes = {};
+  final Map<String, int> _ageMonths = {};
+
+  Uint8List? photoFor(Goat goat) => _newPhotos[goat.id] ?? goat.photo;
+
+  bool hasPhoto(Goat goat) {
+    final photo = photoFor(goat);
+    return photo != null && photo.isNotEmpty;
+  }
+
+  void setPhoto(Goat goat, Uint8List bytes, String contentType) {
+    _newPhotos[goat.id] = bytes;
+    _newPhotoTypes[goat.id] = contentType;
+  }
+
+  int ageMonthsFor(Goat goat) => _ageMonths[goat.id] ?? goat.currentAgeMonths;
+
+  void setAgeMonths(Goat goat, int months) {
+    if (months == goat.currentAgeMonths) {
+      _ageMonths.remove(goat.id);
+    } else {
+      _ageMonths[goat.id] = months;
+    }
+  }
+
+  /// Photos picked on the Goat details step: goat id -> (bytes, content type).
+  Map<String, (Uint8List, String)> get changedPhotos => {
+    for (final e in _newPhotos.entries)
+      e.key: (e.value, _newPhotoTypes[e.key] ?? 'image/jpeg'),
+  };
+
+  /// Ages changed on the Goat details step: goat id -> months.
+  Map<String, int> get changedAges => Map.unmodifiable(_ageMonths);
 
   double get totalSellingWeight => isLotSale
       ? round2(lotSellingWeight)

@@ -10,6 +10,7 @@ import 'package:mygoatfarms/models/sale_model.dart';
 import 'package:mygoatfarms/models/sale_settlement.dart';
 import 'package:mygoatfarms/models/wait_delivery_group.dart';
 import 'package:mygoatfarms/services/goat_service.dart';
+import 'package:mygoatfarms/widgets/lot_origin_card.dart';
 import 'package:mygoatfarms/widgets/excess_action_picker.dart';
 import 'package:mygoatfarms/widgets/fast_route.dart';
 import 'package:mygoatfarms/widgets/sale_actions.dart';
@@ -70,11 +71,21 @@ class WaitDeliveryCustomerScreen extends StatefulWidget {
   /// Only used for the header while loading, or once nothing is left.
   final String customerName;
 
+  /// When set, ONLY these bookings (sale IDs) are shown and delivered —
+  /// used by the dashboard's Complete → Select goats flow
+  /// (CompleteGoatsSelectorScreen), which passes the bookings of the goats
+  /// that were ticked. Everything else on this screen (pickup weights,
+  /// advance, remaining balance, discount, transport, credit, excess
+  /// handling and saving) works exactly as before. Null = every open
+  /// booking of the customer, the original behaviour.
+  final Set<String>? onlySaleIds;
+
   const WaitDeliveryCustomerScreen({
     super.key,
     required this.farmId,
     required this.customerKey,
     required this.customerName,
+    this.onlySaleIds,
   });
 
   @override
@@ -1240,6 +1251,26 @@ class _WaitDeliveryCustomerScreenState
                 }
               }
 
+              // Checkout opened from "Select goats to complete": keep only
+              // the bookings of the selected goats.
+              final only = widget.onlySaleIds;
+
+              if (customer != null && only != null) {
+                final kept = customer.sales
+                    .where((entry) => only.contains(entry.id))
+                    .toList();
+
+                customer = kept.isEmpty
+                    ? null
+                    : WaitDeliveryCustomer(
+                  key: customer.key,
+                  name: customer.name,
+                  mobile: customer.mobile,
+                  address: customer.address,
+                  sales: kept,
+                );
+              }
+
               if (customer == null) {
                 return _shell(
                   title: widget.customerName,
@@ -1334,9 +1365,12 @@ class _WaitDeliveryCustomerScreenState
                   style: AppTheme.heading(size: 19),
                 ),
                 Text(
-                  subtitle == null
-                      ? 'Wait on Delivery'
-                      : 'Wait on Delivery · $subtitle',
+                  [
+                    widget.onlySaleIds == null
+                        ? 'Wait on Delivery'
+                        : 'Checkout · selected goats',
+                    if (subtitle != null) subtitle,
+                  ].join(' · '),
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: AppTheme.body(
@@ -1596,6 +1630,19 @@ class _WaitDeliveryCustomerScreenState
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
+          // Which lot these goats came from, with the booking ID.
+          Padding(
+            padding: const EdgeInsets.fromLTRB(8, 4, 0, 4),
+            child: LotOriginCard(
+              farmId: widget.farmId,
+              bookingId: entry.id,
+              lotDocIds: LotOriginCard.lotsOf(entry.sale, entry.goats),
+              note: entry.isLotSale &&
+                  entry.sale.sourceLocation == Sale.sourceSupplier
+                  ? 'At supplier'
+                  : null,
+            ),
+          ),
           // Header: tick + booking + live amount due.
           InkWell(
             onTap: _delivering

@@ -837,15 +837,22 @@ class _LotCard extends StatelessWidget {
   static const Color _panelBg = Color(0xFFF6F8F6);
   static const Color _remainingGreen = Color(0xFF1E8A57);
 
-  /// Active lot: Purchased / Sold / Remaining, then where the remaining
-  /// goats are (at the supplier / at the farm).
+  /// Active lot: Purchased / Sold / (Booked) / Remaining, then where the
+  /// remaining goats are (at the supplier / at the farm).
+  ///
+  /// Goats booked for a customer (Booking / Wait for Delivery) are
+  /// promised, not stock: they are shown as BOOKED and are NOT counted in
+  /// Remaining or in the supplier / farm figures — until the deal is
+  /// cancelled, which puts them back.
   Widget _activeStats() {
     return Column(
       children: [
         _panel([
           ('PURCHASED', lot.totalGoats, null),
           ('SOLD', lot.soldQty, null),
-          ('REMAINING', lot.remainingQty, _remainingGreen),
+          if (lot.reservedQty > 0)
+            ('BOOKED', lot.reservedQty, AppColors.warning),
+          ('REMAINING', lot.availableForSaleQty, _remainingGreen),
         ]),
         SizedBox(height: _s(8)),
         _locationStrip(),
@@ -854,13 +861,14 @@ class _LotCard extends StatelessWidget {
   }
 
   /// Completed lot: where every goat went.
-  ///   Purchased = Sold + Died + Moved to Palai
+  ///   Purchased = Sold + Died + Registered (goats that left the lot as
+  ///   individual goats: Palai transfers and goats registered to sell)
   Widget _completedStats() {
     return _panel([
       ('PURCHASED', lot.totalGoats, null),
       ('SOLD', lot.soldQty, null),
       ('DIED', lot.mortality, lot.mortality > 0 ? AppColors.error : null),
-      ('TO PALAI', lot.registeredCount, null),
+      ('REGISTERED', lot.registeredCount, null),
     ]);
   }
 
@@ -949,10 +957,13 @@ class _LotCard extends StatelessWidget {
       ),
       child: Row(
         children: [
-          item(Icons.warehouse_outlined, 'At Supplier: ${lot.supplierQty}',
-              lot.supplierQty > 0),
+          // Free goats only — booked ones are in the BOOKED column.
+          item(Icons.warehouse_outlined,
+              'At Supplier: ${lot.supplierAvailableQty}',
+              lot.supplierAvailableQty > 0),
           const Spacer(),
-          item(Icons.home_outlined, 'At Farm: ${lot.farmQty}', lot.farmQty > 0),
+          item(Icons.home_outlined, 'At Farm: ${lot.farmAvailableQty}',
+              lot.farmAvailableQty > 0),
         ],
       ),
     );

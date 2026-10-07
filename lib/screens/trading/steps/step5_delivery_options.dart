@@ -18,6 +18,9 @@ import '../purchase_goats/purchase_wizard_widgets.dart';
 ///  - C: Wait for Delivery
 ///  - D: Transfer to Palai
 ///
+/// Transfer to OWN Palai is not a sale option (the farm keeping goats is
+/// not a sale); it stays in Lot details.
+///
 /// Each branch's own "Complete Delivery" follow-up action (B and C only)
 /// is out of scope for this phase per the plan's Pair 7 note — this step
 /// only ever creates the sale in its initial state (Booked /
@@ -63,18 +66,11 @@ class Step5DeliveryOptions extends StatefulWidget {
   /// wizard) instead of selecting a branch here.
   final VoidCallback? onTransferToPalai;
 
-  /// Lot sales only. When given, goats at the farm get a "Transfer to Own
-  /// Palai" card that calls it (the lot wizard opens the lot's Own Palai
-  /// transfer). Own Palai is the farm keeping the goats itself, so it is
-  /// not a sale and has no form here.
-  final VoidCallback? onTransferToOwnPalai;
-
   const Step5DeliveryOptions({
     super.key,
     required this.draft,
     this.palaiOnly = false,
     this.onTransferToPalai,
-    this.onTransferToOwnPalai,
   });
 
   @override
@@ -450,8 +446,8 @@ class Step5DeliveryOptionsState extends State<Step5DeliveryOptions> {
               child: Text(
                 'These goats are still at the supplier. Booking and Wait '
                     'for Delivery keep them reserved there and hand them '
-                    'over straight from the supplier. Transfer to Palai / '
-                    'Own Palai first receives them at the farm.',
+                    'over straight from the supplier. Transfer to Palai '
+                    'first receives them at the farm.',
                 style: AppTheme.body(size: 11.5, color: AppColors.textDark),
               ),
             ),
@@ -512,17 +508,6 @@ class Step5DeliveryOptionsState extends State<Step5DeliveryOptions> {
             ),
           ],
 
-          if (_isLot && widget.onTransferToOwnPalai != null) ...[
-            const SizedBox(height: 10),
-            _BranchCard(
-              title: 'Transfer to Own Palai',
-              subtitle: _fromSupplier
-                  ? 'Receive at the farm first, then keep'
-                  : 'The farm keeps ${_theGoats(draft)} as its own',
-              icon: Icons.home_work_outlined,
-              onTap: widget.onTransferToOwnPalai,
-            ),
-          ],
         ],
 
         const SizedBox(height: 18),
