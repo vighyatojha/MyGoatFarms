@@ -52,6 +52,20 @@ class CustomerAccountService {
     );
   }
 
+  /// The [CustomerAccount.key] of the person who owns the delivery group
+  /// [groupKey], read once from [bookStream] so the match is exactly the
+  /// one the Customers hub makes. Null when no open booking has that key
+  /// any more (e.g. it was just delivered).
+  Future<String?> personKeyForDeliveryGroup(
+      String farmId,
+      String groupKey,
+      ) async {
+    final book = await bookStream(farmId)
+        .first
+        .timeout(const Duration(seconds: 30));
+    return book.byDeliveryKey(groupKey)?.key;
+  }
+
   /// Every sale of the farm plus every trading goat: what a customer's
   /// purchase history is built from (same full read the Total Sold
   /// screen uses). Read-only.
