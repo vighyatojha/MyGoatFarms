@@ -6,11 +6,12 @@ import '../../../goat_icons.dart';
 import '../../../models/goat_model.dart';
 import '../../../models/sale_model.dart';
 import '../../../models/wait_delivery_group.dart';
+import '../../../services/customer_account_service.dart';
 import '../../../services/goat_service.dart';
 import '../../../services/wait_delivery_service.dart';
 import '../../../widgets/fast_route.dart';
+import '../../customers/hub/customer_hub_profile_screen.dart';
 import 'completed_deliveries_view.dart';
-import 'wait_delivery_customer_screen.dart';
 
 /// Wait on Delivery — customer list.
 ///
@@ -18,8 +19,9 @@ import 'wait_delivery_customer_screen.dart';
 /// list. Rather than the flat goat list every other tab shows, this one
 /// groups waiting goats by customer — the natural unit for delivery, since
 /// a customer's goats are picked up (and paid for) together. Tapping a
-/// customer opens [WaitDeliveryCustomerScreen], where the goats can be
-/// delivered one booking at a time or several at once.
+/// customer opens their profile ([CustomerHubProfileScreen]); its Wait on
+/// Delivery entry lists this customer's waiting goats, and Complete there
+/// leads to the delivery checkout.
 class WaitDeliveryCustomerListScreen extends StatefulWidget {
   final String farmId;
 
@@ -61,13 +63,45 @@ class _WaitDeliveryCustomerListScreenState
     super.dispose();
   }
 
+  /// The customer whose profile is being opened (spinner on their card).
+  String? _openingKey;
+
+  /// Opens the customer's profile — the same one the Customers hub shows.
+  /// Their Wait on Delivery goats are reached from the profile.
   Future<void> _openCustomer(WaitDeliveryCustomer customer) async {
+    if (_openingKey != null) return;
+    setState(() => _openingKey = customer.key);
+
+    String? personKey;
+    try {
+      personKey = await CustomerAccountService.instance
+          .personKeyForDeliveryGroup(widget.farmId, customer.key);
+    } catch (_) {
+      personKey = null;
+    }
+
+    if (!mounted) return;
+    setState(() => _openingKey = null);
+
+    if (personKey == null) {
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          const SnackBar(
+            content: Text(
+              "Couldn't open this customer's profile. Please try again.",
+            ),
+          ),
+        );
+      return;
+    }
+
     await Navigator.of(context).push(
       fastRoute(
-        WaitDeliveryCustomerScreen(
+        CustomerHubProfileScreen(
           farmId: widget.farmId,
-          customerKey: customer.key,
-          customerName: customer.name,
+          personKey: personKey,
+          initialName: customer.name,
         ),
       ),
     );
@@ -362,9 +396,18 @@ class _WaitDeliveryCustomerListScreenState
 
               const SizedBox(width: 6),
 
-              const Padding(
-                padding: EdgeInsets.only(top: 20),
-                child: Icon(
+              Padding(
+                padding: const EdgeInsets.only(top: 20),
+                child: _openingKey == customer.key
+                    ? const SizedBox(
+                  width: 18,
+                  height: 18,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    color: AppColors.primaryGreen,
+                  ),
+                )
+                    : const Icon(
                   Icons.chevron_right_rounded,
                   size: 20,
                   color: AppColors.textGrey,

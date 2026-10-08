@@ -1,6 +1,6 @@
 import 'dart:io';
 import 'dart:typed_data';
-
+import '../utils/pdf_download.dart';
 import 'package:intl/intl.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:pdf/pdf.dart';
@@ -9,6 +9,7 @@ import 'package:printing/printing.dart';
 
 import '../models/bill_settings_model.dart';
 import '../models/sale_model.dart';
+import '../utils/pdf_download.dart';
 
 class SaleReceiptPdfService {
   SaleReceiptPdfService._();
@@ -162,6 +163,23 @@ class SaleReceiptPdfService {
       bytes: bytes,
       filename: _fileName(sale),
     );
+  }
+
+  /// Download: opens the phone's own "Save as" screen (the file name can
+  /// be changed and any folder picked), same as a monthly bill's
+  /// Download. See [savePdfAs].
+  Future<PdfSaveResult> saveAs({
+    required Sale sale,
+    required BillSettings billSettings,
+    Uint8List? farmLogo,
+  }) async {
+    final bytes = await generatePdf(
+      sale: sale,
+      billSettings: billSettings,
+      farmLogo: farmLogo,
+    );
+
+    return savePdfAs(bytes, _fileName(sale));
   }
 
   Future<String> save({

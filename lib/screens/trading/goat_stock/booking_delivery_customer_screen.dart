@@ -11,17 +11,22 @@ import 'package:mygoatfarms/models/sale_model.dart';
 import 'package:mygoatfarms/models/sale_settlement.dart';
 import 'package:mygoatfarms/models/wait_delivery_group.dart';
 import 'package:mygoatfarms/services/booking_delivery_service.dart';
+import 'package:mygoatfarms/services/firestore_service.dart';
 import 'package:mygoatfarms/services/goat_service.dart';
 import 'package:mygoatfarms/widgets/lot_origin_card.dart';
 import 'package:mygoatfarms/widgets/edit_wait_booking_sheet.dart';
 import 'package:mygoatfarms/widgets/sale_actions.dart';
 import 'package:mygoatfarms/widgets/excess_action_picker.dart';
 import 'package:mygoatfarms/screens/trading/purchase_goats/purchase_wizard_widgets.dart';
+import 'package:mygoatfarms/screens/home/delivery_flow/delivery_section.dart';
 
 /// Booking / Holding — one customer.
 ///
-/// Flow: Goat Stock -> Booked tab -> this customer's goats, grouped by
-/// booking -> Deliver All at Once.
+/// Flow: Booking & Holding (customers) -> customer profile -> Booking &
+/// Holding -> select goats -> THIS SCREEN: a photo + age card for each
+/// selected goat ([DeliveryGoatUpdatesCard]), then the bookings with
+/// their calculation -> Complete Sale -> receipts (view / download /
+/// share).
 ///
 /// Unlike Wait for Delivery, a Booking sale is never repriced by weight:
 /// its final amount is
@@ -161,6 +166,9 @@ class _BookingDeliveryCustomerScreenState
   /// there is an extra.
   ExcessAction _excessAction = ExcessAction.carryToAdvance;
 
+  /// Photo + age per goat, saved when the sale is completed.
+  final DeliveryGoatUpdates _goatUpdates = DeliveryGoatUpdates();
+
   bool _submitted = false;
   bool _delivering = false;
 
@@ -181,6 +189,8 @@ class _BookingDeliveryCustomerScreenState
     for (final controller in _discounts.values) {
       controller.dispose();
     }
+
+    _goatUpdates.dispose();
 
     super.dispose();
   }
@@ -637,6 +647,14 @@ class _BookingDeliveryCustomerScreenState
       return;
     }
 
+    final pickedIds = <String>{for (final entry in picked) entry.id};
+    final goatProblem = _goatUpdates.validate(pickedIds);
+
+    if (goatProblem != null) {
+      _snack(goatProblem, error: true);
+      return;
+    }
+
     final deliveryDate = _deliveryDateOr(customer);
     final confirmed = await _confirmSheet(customer, picked, deliveryDate);
 
@@ -673,6 +691,25 @@ class _BookingDeliveryCustomerScreenState
     setState(() {
       _delivering = true;
     });
+
+    // The photos and ages typed at the top are saved first. If that
+    // fails, nothing is completed and the person can try again.
+    try {
+      await _goatUpdates.save(widget.farmId, pickedIds);
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _delivering = false;
+      });
+      _snack(
+        'Could not save the goat photos / ages: '
+            '${FirestoreService.instance.describeError(e)}',
+        error: true,
+      );
+      return;
+    }
+
+    if (!mounted) return;
 
     final result = await BookingDeliveryService.instance.deliverSales(
       farmId: widget.farmId,
@@ -723,6 +760,17 @@ class _BookingDeliveryCustomerScreenState
             borderRadius: BorderRadius.circular(12),
           ),
         ),
+      );
+    }
+
+    // Receipts of the bookings that were completed: view, download or
+    // share them.
+    final deliveredIds = [for (final o in result.delivered) o.saleId];
+    if (deliveredIds.isNotEmpty && mounted) {
+      await showDeliveryReceiptsSheet(
+        context,
+        farmId: widget.farmId,
+        saleIds: deliveredIds,
       );
     }
 
@@ -1339,6 +1387,17 @@ class _BookingDeliveryCustomerScreenState
         children: [
           _summaryCard(customer),
           const SizedBox(height: 12),
+          DeliveryGoatUpdatesCard(
+            farmId: widget.farmId,
+            bookings: [
+              for (final entry in _picked(customer))
+                SectionBooking(sale: entry.sale, goats: entry.goats),
+            ],
+            updates: _goatUpdates,
+            color: DeliverySection.bookingHolding.color,
+            enabled: !_delivering,
+          ),
+          const SizedBox(height: 2),
           _deliveryDateCard(customer),
           const SizedBox(height: 12),
           _selectorBar(customer),
@@ -2492,9 +2551,9 @@ class _BookingDeliveryCustomerScreenState
                   height: 18,
                   child: CircularProgressIndicator(strokeWidth: 2.2, color: Colors.white),
                 )
-                    : const Icon(Icons.local_shipping_outlined, size: 18),
+                    : const Icon(Icons.check_circle_outline_rounded, size: 18),
                 label: Text(
-                  _delivering ? 'Delivering…' : (all ? 'Deliver All at Once' : 'Deliver Selected'),
+                  _delivering ? 'Completing…' : (all ? 'Complete Sale' : 'Complete Selected'),
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: AppTheme.heading(size: 13.5, color: Colors.white),

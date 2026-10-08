@@ -206,6 +206,22 @@ class CustomerAccountBook {
     return null;
   }
 
+  /// The person who owns the Wait on Delivery or Booking & Holding group
+  /// [groupKey] (the customerKey the delivery screens use). Lets the
+  /// Goat stock delivery lists open the same customer profile as the
+  /// Customers hub.
+  CustomerAccount? byDeliveryKey(String groupKey) {
+    for (final a in accounts) {
+      for (final g in a.waitGroups) {
+        if (g.key == groupKey) return a;
+      }
+      for (final g in a.bookingGroups) {
+        if (g.key == groupKey) return a;
+      }
+    }
+    return null;
+  }
+
   int countFor(CustomerFilter filter) => accounts.where(filter.test).length;
 
   /// Last 10 digits, same rule as [CustomerCredit.keyFromParts].

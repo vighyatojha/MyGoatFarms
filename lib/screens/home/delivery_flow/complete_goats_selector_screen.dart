@@ -13,11 +13,14 @@ import '../../trading/goat_stock/booking_delivery_customer_screen.dart';
 import '../../trading/goat_stock/wait_delivery_customer_screen.dart';
 import 'delivery_section.dart';
 
-/// Wait on Delivery OR Booking & Holding → customer → goats → COMPLETE →
-/// THIS SCREEN (goat checklist) → Continue → EXISTING checkout of that
-/// section:
+/// Wait on Delivery OR Booking & Holding → customer → customer profile →
+/// that section's entry → THIS SCREEN (goat selection, same pattern as
+/// the Progress Report) → Continue → the section's checkout:
 ///   * Wait on Delivery  → [WaitDeliveryCustomerScreen]
 ///   * Booking & Holding → [BookingDeliveryCustomerScreen]
+///
+/// The checkout shows a photo + age card for every selected goat, then
+/// the bookings with their calculation, then Complete Sale → receipts.
 ///
 /// This screen does no money maths and completes nothing itself. On
 /// Continue it:
@@ -444,8 +447,8 @@ class _CompleteGoatsSelectorScreenState
                   child: Column(
                     children: [
                       DeliveryHeader(
-                        title: 'Select goats to complete',
-                        subtitle: widget.customerName,
+                        title: _section.title,
+                        subtitle: '${widget.customerName} · Select goats',
                         enabled: !_busy,
                       ),
                       Expanded(child: body),
@@ -462,44 +465,48 @@ class _CompleteGoatsSelectorScreenState
 
   Widget _body(SectionCustomer customer) {
     final all = _allSelected(customer);
-    final none = _selectedGoatCount == 0;
 
     return ListView(
       padding: const EdgeInsets.fromLTRB(14, 2, 14, 24),
       children: [
-        Material(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(14),
-          child: InkWell(
-            onTap: () => _toggleAll(customer),
-            borderRadius: BorderRadius.circular(14),
-            child: Container(
-              padding: const EdgeInsets.fromLTRB(4, 2, 12, 2),
-              decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(14),
-                border: Border.all(color: AppColors.divider),
+        Container(
+          padding: const EdgeInsets.fromLTRB(16, 12, 8, 12),
+          decoration: AppTheme.card(radius: 16),
+          child: Row(
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      customer.name,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: AppTheme.heading(size: 15),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      '$_selectedGoatCount of ${_totalGoats(customer)} '
+                          'goats selected',
+                      style: AppTheme.body(size: 11.5),
+                    ),
+                  ],
+                ),
               ),
-              child: Row(
-                children: [
-                  Checkbox(
-                    value: all ? true : (none ? false : null),
-                    tristate: true,
-                    activeColor: AppColors.darkGreen,
-                    onChanged: _busy ? null : (_) => _toggleAll(customer),
+              TextButton(
+                onPressed: _busy ? null : () => _toggleAll(customer),
+                style: TextButton.styleFrom(
+                  foregroundColor: AppColors.darkGreen,
+                ),
+                child: Text(
+                  all ? 'Clear' : 'Select All',
+                  style: const TextStyle(
+                    fontWeight: FontWeight.w700,
+                    fontSize: 13,
                   ),
-                  Expanded(
-                    child: Text('Select all goats',
-                        style: AppTheme.body(
-                          size: 12,
-                          color: AppColors.textDark,
-                          weight: FontWeight.w600,
-                        )),
-                  ),
-                  Text('$_selectedGoatCount of ${_totalGoats(customer)}',
-                      style: AppTheme.body(size: 10.5)),
-                ],
+                ),
               ),
-            ),
+            ],
           ),
         ),
         const SizedBox(height: 10),
@@ -550,9 +557,15 @@ class _CompleteGoatsSelectorScreenState
       contentPadding: EdgeInsets.zero,
       title: Text(goat.id, style: AppTheme.heading(size: 13)),
       subtitle: Text(
-        goat.weight > 0
-            ? '${goat.weight.toStringAsFixed(1)} kg'
-            : 'Weight not recorded',
+        [
+          goat.weight > 0
+              ? '${goat.weight.toStringAsFixed(1)} kg'
+              : 'Weight not recorded',
+          if (goat.currentAgeMonths > 0) goat.age,
+          if (goat.breed.trim().isNotEmpty) goat.breed.trim(),
+        ].join(' · '),
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
         style: AppTheme.body(size: 10.5),
       ),
       secondary: ClipRRect(
