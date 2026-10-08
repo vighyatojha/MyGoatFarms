@@ -2578,6 +2578,10 @@ class SalesService {
       if (item.discount < 0) {
         throw StateError('The discount cannot be negative.');
       }
+
+      if (item.pickupWeight != null && item.pickupWeight! <= 0) {
+        throw StateError('Pickup weight must be greater than zero.');
+      }
     }
 
     final method = _paymentMethodOrCash(paymentMethod);
@@ -2712,10 +2716,21 @@ class SalesService {
         final holdingCharges = SaleDraft.round2(holdingDays * holdingRate);
         final bookingAmount = sale.bookingAmount ?? 0;
 
-        // Goat Sale (already after any discount) + Holding Charges +
-        // Transportation, against the booking amount already paid.
+        // Goat Sale + Holding Charges + Transportation, against the
+        // booking amount already paid.
+        //
+        // WEIGHT-BASED PRICE: with a pickup weight the goat value is the
+        // agreed amount x pickup weight / booked weight
+        // ([Sale.goatValueAtWeight]) less the discount given at booking.
+        // Without one (older screens) it is the booked amount, already
+        // after any booking discount.
+        final pickupWeight = item.pickupWeight;
+        final goatAmountAtPickup = pickupWeight == null
+            ? null
+            : sale.goatValueAtWeight(pickupWeight);
+
         final settlement = SaleSettlement.fromAmount(
-          goatAmount: sale.totalSaleAmount,
+          goatAmount: sale.bookingGoatAmountAt(pickupWeight),
           discount: item.discount,
           holdingCharges: holdingCharges,
           transportCharge: SaleDraft.round2(item.transportCharges),
@@ -2728,7 +2743,9 @@ class SalesService {
             .doc(_saleRevenueDocId(saleId, 'initial'));
         DocumentSnapshot<Map<String, dynamic>>? initialRevenueSnap;
 
-        if (settlement.appliedDiscount > 0) {
+        // A delivery discount, or a lower pickup weight, can bring the
+        // sale below what the booking amount was counted as.
+        if (settlement.appliedDiscount > 0 || goatAmountAtPickup != null) {
           initialRevenueSnap = await transaction.get(initialRevenueRef);
         }
 
@@ -2750,6 +2767,8 @@ class SalesService {
             settlement: settlement,
             initialRevenueRef: initialRevenueRef,
             initialRevenueSnap: initialRevenueSnap,
+            pickupWeight: pickupWeight,
+            goatAmountAtPickup: goatAmountAtPickup,
           ),
         );
       }
@@ -2855,10 +2874,14 @@ class SalesService {
           'holdingChargePerDay': plan.holdingRate,
           'transportCost': transport > 0 ? transport : FieldValue.delete(),
           'finalAmountAfterHolding': finalAmount,
-          if (deliveryDiscount > 0) ...{
+          if (deliveryDiscount > 0)
             'discount':
             SaleDraft.round2(sale.appliedDiscount + deliveryDiscount),
+          if (deliveryDiscount > 0 || plan.goatAmountAtPickup != null)
             'totalSaleAmount': settlement.netGoatAmount,
+          if (plan.pickupWeight != null) ...{
+            'pickupWeight': plan.pickupWeight,
+            'goatAmountAtPickup': plan.goatAmountAtPickup,
           },
           'excessToAdvance':
           item.excessAction == ExcessAction.carryToAdvance &&
@@ -2907,7 +2930,7 @@ class SalesService {
               transaction.update(plan.initialRevenueRef, {
                 'amount': allowed,
                 'note': 'Sold Goat Revenue — Sale $saleId '
-                    '(lowered for a delivery discount)',
+                    '(lowered to the delivered goat value)',
               });
             }
           }
@@ -3092,12 +3115,14 @@ class SalesService {
   ///   Final Price = Pickup Weight x Booking Price/Kg
   ///                 + Transportation - Advance Paid
   ///
-  /// A Fixed Price sale ([Sale.isFixedPrice]) is not re-priced by the
-  /// pickup weight at all: the pickup weight is only recorded, and
+  /// A Fixed Price sale ([Sale.isFixedPrice]) is converted to a locked
+  /// rate per KG and repriced the same way:
   ///
-  ///   Final Price = Fixed Price + Transportation - Advance Paid
+  ///   Final Price = Fixed Price x Pickup Weight / Booked Weight
+  ///                 + Transportation - Advance Paid
   ///
-  /// The goat value comes from [Sale.goatValueAtWeight].
+  /// The goat value comes from [Sale.goatValueAtWeight] and is saved on
+  /// the sale as `goatAmountAtPickup`.
   ///
   /// [transportCharges] is the optional transportation charge collected
   /// from the customer at pickup (0 when there is none). It is added to
@@ -3456,6 +3481,9 @@ class SalesService {
         transaction.update(plan.saleRef, {
           'status': Sale.statusPickupCompleted,
           'pickupWeight': item.pickupWeight,
+          // Goat value at the pickup weight (agreed amount x pickup weight
+          // / booked weight), so the bill keeps the figure charged.
+          'goatAmountAtPickup': settlement.goatAmount,
           // Cleared when there is none, so a stale value can never linger
           // on the bill.
           'transportCost':
@@ -4479,6 +4507,11 @@ class BookingPickupInput {
   /// rate.
   final double? holdingChargePerDay;
 
+  /// Total weight of the booking's goats at delivery. When given, the goat
+  /// value is repriced by weight ([Sale.goatValueAtWeight]); null keeps
+  /// the amount agreed at booking.
+  final double? pickupWeight;
+
   const BookingPickupInput({
     required this.saleId,
     this.transportCharges = 0,
@@ -4487,6 +4520,7 @@ class BookingPickupInput {
     this.excessAction = ExcessAction.carryToAdvance,
     this.discount = 0,
     this.holdingChargePerDay,
+    this.pickupWeight,
   });
 }
 
@@ -4514,6 +4548,12 @@ class _BookingPickupPlan {
   final DocumentReference<Map<String, dynamic>> initialRevenueRef;
   final DocumentSnapshot<Map<String, dynamic>>? initialRevenueSnap;
 
+  /// Weight at delivery (null when the screen did not ask for one).
+  final double? pickupWeight;
+
+  /// Goat value at [pickupWeight], before any discount.
+  final double? goatAmountAtPickup;
+
   late WaitDeliverySaleAllocation alloc;
   List<WaitDeliveryTransfer> transfersIn = const [];
   List<WaitDeliveryTransfer> transfersOut = const [];
@@ -4537,6 +4577,8 @@ class _BookingPickupPlan {
     required this.settlement,
     required this.initialRevenueRef,
     required this.initialRevenueSnap,
+    this.pickupWeight,
+    this.goatAmountAtPickup,
   });
 }
 

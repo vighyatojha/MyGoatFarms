@@ -1292,10 +1292,8 @@ class _CompleteWaitForDeliveryScreenState
           Divider(color: AppColors.divider, height: 1),
           const SizedBox(height: 10),
           _summaryRow(
-            sale.isFixedPrice
-                ? 'Goat Sale (fixed price)'
-                : 'Goat Sale (${_trimZeros(_pickupWeight)} kg × '
-                '${_currency(rate)})',
+            'Goat Sale (${_trimZeros(_pickupWeight)} kg × '
+                '${_currency(sale.lockedRatePerKg)})',
             _currency(_goatSaleValue),
           ),
           if (_discount > 0) ...[
@@ -1420,8 +1418,10 @@ class _CompleteWaitForDeliveryScreenState
             icon: Icons.lock_clock_outlined,
             color: AppColors.textGrey,
             text: sale.isFixedPrice
-                ? 'Fixed Price sale — the agreed amount stays the same '
-                'whatever the pickup weight.'
+                ? 'Fixed price ${_currency(sale.agreedGoatAmount)} for '
+                '${_trimZeros(sale.bookedWeightTotal)} kg = '
+                '${_currency(sale.lockedRatePerKg)} / kg locked — charged '
+                'on the pickup weight.'
                 : 'Uses the rate fixed at booking time (${_currency(rate)} '
                 '/ kg), not today\'s rate.',
           ),

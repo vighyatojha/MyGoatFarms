@@ -12,6 +12,7 @@ import '../../../models/sale_model.dart';
 import '../../../models/wait_delivery_group.dart';
 import '../../../services/booking_delivery_service.dart';
 import '../../../services/firestore_service.dart';
+import '../../../services/goat_service.dart';
 import '../../../services/goat_photo_service.dart';
 import '../../../services/image_service.dart';
 import '../../../services/sale_goat_details_service.dart';
@@ -1053,4 +1054,57 @@ class _ReceiptData {
     required this.billSettings,
     required this.logo,
   });
+}
+
+// =============================================================================
+// LATEST RECORDED WEIGHTS — what the pickup-weight fields start from
+// =============================================================================
+
+/// The newest weight on record for the goats of [booking], so a weight
+/// updated on a goat's profile (Weight & health) is what the complete
+/// screen starts from:
+///
+///  * a registered goat → its latest weight-history entry, or the weight
+///    recorded on the goat when it has none (key: the goat ID);
+///  * a lot booking → the total of Goat 1..N's saved weights, only when
+///    every one of them has a weight (key: `lot:<saleId>`).
+Future<Map<String, double>> latestRecordedWeights(
+    String farmId,
+    SectionBooking booking,
+    ) async {
+  final out = <String, double>{};
+
+  if (booking.isLot) {
+    // Read fresh (not the session cache), so a weight just updated on the
+    // lot goat's profile is included.
+    final saved = await SaleGoatDetailsService.instance
+        .streamForSale(farmId, booking.id)
+        .first;
+    final byIndex = {for (final g in saved) g.index: g.weight};
+    final n = booking.goatCount;
+    var total = 0.0;
+
+    for (var i = 1; i <= n; i++) {
+      final weight = byIndex[i] ?? 0;
+      if (weight <= 0) return out;
+      total += weight;
+    }
+
+    if (n > 0) out['lot:${booking.id}'] = (total * 1000).round() / 1000;
+    return out;
+  }
+
+  for (final goat in booking.goats) {
+    out[goat.id] = await latestGoatWeight(farmId, goat);
+  }
+  return out;
+}
+
+/// A registered goat's newest weight: its latest weight-history entry,
+/// or the weight recorded on the goat when it has none.
+Future<double> latestGoatWeight(String farmId, Goat goat) async {
+  final history = await GoatService.instance
+      .weightHistoryStream(farmId: farmId, goatId: goat.id)
+      .first;
+  return history.isEmpty ? goat.weight : history.last.weight;
 }

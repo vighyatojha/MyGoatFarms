@@ -1,6 +1,6 @@
 import 'dart:io';
 import 'dart:typed_data';
-import '../utils/pdf_download.dart';
+
 import 'package:intl/intl.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:pdf/pdf.dart';
@@ -650,7 +650,29 @@ class SaleReceiptPdfService {
       child: pw.Column(
         crossAxisAlignment: pw.CrossAxisAlignment.start,
         children: [
-          if (sale.hasPickupSettlement) ...[
+          if (sale.isWeightRepriced) ...[
+            _calculationRow(
+              'Booked Weight',
+              '${sale.bookedWeightTotal.toStringAsFixed(2)} kg',
+            ),
+            _calculationRow(
+              'Pickup Weight',
+              '${sale.pickupWeight!.toStringAsFixed(2)} kg',
+            ),
+            if (sale.isFixedPrice)
+              _calculationRow(
+                'Agreed Amount',
+                _currency(sale.agreedGoatAmount),
+                note: 'Fixed price for '
+                    '${sale.bookedWeightTotal.toStringAsFixed(2)} kg',
+              ),
+            _calculationRow(
+              'Locked Rate / kg',
+              _currency(sale.lockedRatePerKg),
+              note: 'Agreed amount ÷ booked weight, charged on the '
+                  'pickup weight',
+            ),
+          ] else if (sale.hasPickupSettlement) ...[
             _calculationRow(
               'Pickup Weight',
               '${sale.pickupWeight!.toStringAsFixed(2)} kg',

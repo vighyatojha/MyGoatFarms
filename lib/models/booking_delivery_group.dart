@@ -5,10 +5,12 @@ import 'sale_settlement.dart';
 /// One booking (a Booking / Holding sale) still open, together with the
 /// goats being held for it.
 ///
-/// A Booking/Holding sale is never repriced by weight at delivery — its
-/// final amount is [Sale.totalSaleAmount] plus holding charges (holding
-/// days x [Sale.holdingChargePerDay]) minus the booking amount already
-/// paid. This is exactly the formula CompleteBookingDeliveryScreen shows
+/// WEIGHT-BASED PRICE: at delivery the goat value is the amount agreed
+/// at booking x the weight at delivery / the booked weight
+/// ([Sale.goatValueAtWeight]), less the booking discount. To that come
+/// the holding charges (holding days x [Sale.holdingChargePerDay]) and
+/// transport, minus the booking amount already paid. Without a pickup
+/// weight the booked [Sale.totalSaleAmount] is used. This is exactly the formula CompleteBookingDeliveryScreen shows
 /// and SalesService.completeBookingDelivery stores, so the figure shown
 /// here is the figure that gets saved. Holding days are counted
 /// inclusively from [Sale.holdingStart] to the delivery date, both days
@@ -40,10 +42,19 @@ class BookingDeliverySale {
   bool get isLotSale => sale.isLotSale;
 
   /// True when the goats were sold for one agreed price instead of a
-  /// price per KG. Kept for parity with the Wait for Delivery batch
-  /// screen's fixed-price tag — Booking's total is not repriced either
-  /// way, so this only affects display.
+  /// price per KG. It is converted to a locked rate per KG and repriced
+  /// by weight like every other booking.
   bool get isFixedPrice => sale.isFixedPrice;
+
+  /// Total weight recorded at booking.
+  double get bookedWeight => sale.bookedWeightTotal;
+
+  /// Locked price per KG (agreed amount / booked weight), for display.
+  double get ratePerKg => sale.lockedRatePerKg;
+
+  /// Goat value at [pickupWeight] before any discount.
+  double saleValueAt(double pickupWeight) =>
+      sale.goatValueAtWeight(pickupWeight);
 
   double get bookingAmount => sale.bookingAmount ?? 0;
 
@@ -90,15 +101,19 @@ class BookingDeliverySale {
   /// [discount] is an EXTRA discount given at delivery, on top of the
   /// booking discount already taken off [Sale.totalSaleAmount]. It comes off
   /// the goat value only, never holding charges or transport.
+  ///
+  /// [pickupWeight] is the total weight at delivery; null keeps the booked
+  /// amount.
   SaleSettlement settlementAt(
       DateTime deliveryDate, {
         double transport = 0,
         double discount = 0,
         double? holdingRate,
+        double? pickupWeight,
         ExcessAction excessAction = ExcessAction.carryToAdvance,
       }) {
     return SaleSettlement.fromAmount(
-      goatAmount: sale.totalSaleAmount,
+      goatAmount: sale.bookingGoatAmountAt(pickupWeight),
       discount: discount < 0 ? 0 : discount,
       holdingCharges: holdingChargesAt(deliveryDate, ratePerDay: holdingRate),
       transportCharge: transport < 0 ? 0 : transport,
@@ -119,12 +134,14 @@ class BookingDeliverySale {
         double transport = 0,
         double discount = 0,
         double? holdingRate,
+        double? pickupWeight,
       }) {
     return settlementAt(
       deliveryDate,
       transport: transport,
       discount: discount,
       holdingRate: holdingRate,
+      pickupWeight: pickupWeight,
     ).balanceDue;
   }
 
@@ -135,12 +152,14 @@ class BookingDeliverySale {
         double transport = 0,
         double discount = 0,
         double? holdingRate,
+        double? pickupWeight,
       }) {
     return settlementAt(
       deliveryDate,
       transport: transport,
       discount: discount,
       holdingRate: holdingRate,
+      pickupWeight: pickupWeight,
     ).excess;
   }
 }

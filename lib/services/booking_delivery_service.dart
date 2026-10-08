@@ -38,6 +38,11 @@ class BookingDeliveryPayment {
   /// bill.
   final ExcessAction excessAction;
 
+  /// Total weight of the booking's goats at delivery. The goat value is
+  /// the agreed amount x this / the booked weight. Null keeps the amount
+  /// agreed at booking.
+  final double? pickupWeight;
+
   const BookingDeliveryPayment({
     required this.expectedRemaining,
     required this.amountReceivedNow,
@@ -46,6 +51,7 @@ class BookingDeliveryPayment {
     this.discount = 0,
     this.holdingChargePerDay,
     this.excessAction = ExcessAction.carryToAdvance,
+    this.pickupWeight,
   });
 }
 
@@ -190,7 +196,7 @@ class BookingDeliveryService {
         final advance = sale.bookingAmount ?? 0;
 
         final settlement = SaleSettlement.fromAmount(
-          goatAmount: sale.totalSaleAmount,
+          goatAmount: sale.bookingGoatAmountAt(payment.pickupWeight),
           discount: payment.discount < 0 ? 0 : payment.discount,
           holdingCharges: Sale.roundMoney(days * (rate < 0 ? 0 : rate)),
           transportCharge:
@@ -265,6 +271,7 @@ class BookingDeliveryService {
                 excessAction: payments[saleId]!.excessAction,
                 discount: payments[saleId]!.discount,
                 holdingChargePerDay: payments[saleId]!.holdingChargePerDay,
+                pickupWeight: payments[saleId]!.pickupWeight,
               ),
           ],
         );

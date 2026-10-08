@@ -21,13 +21,36 @@ class LotOriginCard extends StatelessWidget {
   /// Shown as a pill, e.g. "At supplier".
   final String? note;
 
+  /// False on screens that already show the booking ID in their own
+  /// header: the card then reads "Lots" instead of "Booking S-xxxx".
+  final bool showBookingHeader;
+
+  /// How many of the booking's goats came from each lot (by lot doc ID),
+  /// shown at the end of the lot's line. Null hides the count.
+  final Map<String, int>? goatsByLot;
+
   const LotOriginCard({
     super.key,
     required this.farmId,
     required this.bookingId,
     required this.lotDocIds,
     this.note,
+    this.showBookingHeader = true,
+    this.goatsByLot,
   });
+
+  /// How many goats of [sale] came from each lot: the sale's quantity for
+  /// a lot booking, otherwise its goats counted by `Goat.purchaseId`.
+  static Map<String, int> goatsByLotOf(Sale sale, Iterable<Goat> goats) {
+    if (sale.isLotSale) return {sale.lotDocId: sale.lotQuantity};
+    final counts = <String, int>{};
+    for (final g in goats) {
+      final id = g.purchaseId.trim();
+      if (id.isEmpty) continue;
+      counts[id] = (counts[id] ?? 0) + 1;
+    }
+    return counts;
+  }
 
   /// The lots of [sale] (and its [goats]).
   static List<String> lotsOf(Sale sale, Iterable<Goat> goats) {
@@ -42,17 +65,23 @@ class LotOriginCard extends StatelessWidget {
   /// One read per lot per app session: these cards are rebuilt often.
   static final Map<String, Future<TradingPurchase?>> _cache = {};
 
-  Future<TradingPurchase?> _lot(String id) => _cache.putIfAbsent(
-    '$farmId/$id',
-        () => TradingService.instance
-        .getPurchase(farmId, id)
-        .catchError((_) => null),
-  );
+  static Future<TradingPurchase?> lotFor(String farmId, String id) =>
+      _cache.putIfAbsent(
+        '$farmId/$id',
+            () => TradingService.instance
+            .getPurchase(farmId, id)
+            .catchError((_) => null),
+      );
 
-  static String _display(String docId) {
+  Future<TradingPurchase?> _lot(String id) => lotFor(farmId, id);
+
+  /// "LOT-0001" from a lot doc ID, used until the lot itself is loaded.
+  static String displayId(String docId) {
     final dash = docId.indexOf('-');
     return dash < 0 ? docId : 'LOT-${docId.substring(dash + 1)}';
   }
+
+  static String _display(String docId) => displayId(docId);
 
   @override
   Widget build(BuildContext context) {
@@ -74,7 +103,11 @@ class LotOriginCard extends StatelessWidget {
               const SizedBox(width: 6),
               Expanded(
                 child: Text(
-                  'Booking $bookingId',
+                  showBookingHeader
+                      ? 'Booking $bookingId'
+                      : lotDocIds.length == 1
+                      ? 'Lot'
+                      : 'Lots (${lotDocIds.length})',
                   style: AppTheme.heading(size: 12.5),
                 ),
               ),
@@ -106,20 +139,63 @@ class LotOriginCard extends StatelessWidget {
                 future: _lot(id),
                 builder: (context, snap) {
                   final lot = snap.data;
+                  final count = goatsByLot?[id];
                   final parts = <String>[
                     lot?.lotId ?? _display(id),
                     if (lot != null && lot.sellerName.trim().isNotEmpty)
                       'Supplier: ${lot.sellerName.trim()}',
                     if (lot != null)
                       'Bought ${DateFormat('d MMM yyyy').format(lot.purchaseDate)}',
+                    if (count != null)
+                      count == 1 ? '1 goat' : '$count goats',
                   ];
-                  return Text(
-                    'From ${parts.join(' · ')}',
-                    style: AppTheme.body(size: 11, color: AppColors.textDark),
+                  return Padding(
+                    padding: const EdgeInsets.only(top: 1),
+                    child: Text(
+                      showBookingHeader
+                          ? 'From ${parts.join(' · ')}'
+                          : '• ${parts.join(' · ')}',
+                      style:
+                      AppTheme.body(size: 11, color: AppColors.textDark),
+                    ),
                   );
                 },
               ),
         ],
+      ),
+    );
+  }
+}
+
+/// A goat's lot number ("LOT-0001"), read from the lot itself (cached).
+class LotIdText extends StatelessWidget {
+  final String farmId;
+
+  /// The lot doc ID (`Goat.purchaseId`, or the sale's lot for a lot
+  /// booking). Empty shows "No lot".
+  final String lotDocId;
+  final TextStyle? style;
+
+  const LotIdText({
+    super.key,
+    required this.farmId,
+    required this.lotDocId,
+    this.style,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final id = lotDocId.trim();
+    final textStyle = style ?? AppTheme.body(size: 10.5);
+    if (id.isEmpty) return Text('No lot', style: textStyle);
+
+    return FutureBuilder<TradingPurchase?>(
+      future: LotOriginCard.lotFor(farmId, id),
+      builder: (context, snap) => Text(
+        snap.data?.lotId ?? LotOriginCard.displayId(id),
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: textStyle,
       ),
     );
   }

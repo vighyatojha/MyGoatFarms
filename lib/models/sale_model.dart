@@ -284,6 +284,14 @@ class Sale {
   /// action. Final Price = pickupWeight * bookingPricePerKg (never the
   /// current rate) + transportation - bookingAdvanceAmount.
   final double? pickupWeight;
+
+  /// Goat value (before any discount) worked out from [pickupWeight] when
+  /// a Wait for Delivery or Booking / Holding sale was completed:
+  /// agreed amount x pickup weight / booked weight (see
+  /// [goatValueAtWeight]). Stored so the bill always shows the figure that
+  /// was actually charged. Null on sales completed before weight-based
+  /// pricing, which keep their old figures.
+  final double? goatAmountAtPickup;
   final double? finalPriceAfterPickup;
 
   // ---------------------------------------------------------------------
@@ -398,6 +406,7 @@ class Sale {
     this.bookingAdvanceAmount,
     this.bookingWeight,
     this.pickupWeight,
+    this.goatAmountAtPickup,
     this.finalPriceAfterPickup,
     this.transferDate,
     this.palaiPackage,
@@ -560,13 +569,25 @@ class Sale {
 
   /// Goat sale value on the bill.
   ///
-  /// Normally [totalSaleAmount]. After a Wait for Delivery pickup it is
-  /// pickup weight x the booking-time rate (never today's rate), which is
-  /// the same figure SalesService records as revenue at pickup. Note that
-  /// [totalSaleAmount] itself keeps the booking-weight value.
-  double get billGoatSale => hasPickupSettlement
-      ? _nonNegative(goatValueAtWeight(pickupWeight!) - appliedDiscount)
-      : _round2(totalSaleAmount);
+  /// Normally [totalSaleAmount]. Once a Wait for Delivery or Booking /
+  /// Holding sale is completed with weight-based pricing, it is the goat
+  /// value saved at completion ([goatAmountAtPickup]) less the discount.
+  /// Wait for Delivery pickups saved before that keep their old figure
+  /// (pickup weight x the booking-time rate, or the fixed price). Note
+  /// that for Wait for Delivery [totalSaleAmount] itself keeps the
+  /// booking-weight value.
+  double get billGoatSale {
+    final atPickup = goatAmountAtPickup;
+
+    if (atPickup != null &&
+        (hasPickupSettlement || hasBookingDeliverySettlement)) {
+      return _nonNegative(atPickup - appliedDiscount);
+    }
+
+    return hasPickupSettlement
+        ? _nonNegative(_legacyGoatValueAtWeight(pickupWeight!) - appliedDiscount)
+        : _round2(totalSaleAmount);
+  }
 
   /// Discount on the bill, never negative.
   double get appliedDiscount => _nonNegative(discount);
@@ -588,12 +609,90 @@ class Sale {
   /// price per KG.
   bool get isFixedPrice => pricingMode == pricingModeFixed;
 
-  /// What the goats are worth if weighed in at [weight] — used when a
-  /// Wait for Delivery goat is picked up.
-  ///
-  /// Per-KG: [weight] x the booking-time rate (never today's rate).
-  /// Fixed price: the agreed price, whatever the weight turns out to be.
+  // ---------------------------------------------------------------------
+  // WEIGHT-BASED PRICE (Wait for Delivery and Booking / Holding)
+  // ---------------------------------------------------------------------
+  //
+  // The amount agreed when the goats were booked is locked as a price per
+  // KG, and the goats are charged for what they weigh when they are
+  // handed over — up or down:
+  //
+  //   Locked rate = agreed amount / booked weight
+  //   Goat value  = agreed amount x pickup weight / booked weight
+  //
+  //   Booked 100 kg for ₹45,000  -> ₹450/kg locked
+  //   Picked up at 110 kg        -> ₹49,500
+  //   Picked up at  95 kg        -> ₹42,750
+  //
+  // A fixed-price deal is converted the same way. Discounts, holding
+  // charges, transport and the advance / booking amount are then applied
+  // exactly as before.
+
+  /// Total weight recorded when the goats were sold / booked.
+  double get bookedWeightTotal =>
+      _nonNegative(bookingWeight ?? sellingWeight);
+
+  /// The goat amount agreed at booking, before any discount.
+  double get agreedGoatAmount {
+    if (isFixedPrice) {
+      return _round2(
+        fixedSalePrice ?? (totalSaleAmount + appliedDiscount),
+      );
+    }
+
+    return _round2(
+      bookedWeightTotal * (bookingPricePerKg ?? sellingPricePerKg),
+    );
+  }
+
+  /// The locked price per KG (agreed amount / booked weight), rounded for
+  /// display. 0 when no weight was recorded. Money is always worked out
+  /// with [goatValueAtWeight], never by multiplying this rounded rate.
+  double get lockedRatePerKg {
+    final booked = bookedWeightTotal;
+    if (booked <= 0) return 0;
+
+    return isFixedPrice
+        ? _round2(agreedGoatAmount / booked)
+        : _round2(bookingPricePerKg ?? sellingPricePerKg);
+  }
+
+  /// What the goats are worth if weighed in at [weight] (before any
+  /// discount): agreed amount x [weight] / booked weight. Per-KG deals
+  /// come to [weight] x the booking-time rate (never today's rate). When
+  /// no booked weight was recorded the agreed amount is used as it is.
   double goatValueAtWeight(double weight) {
+    if (!isFixedPrice) {
+      return _round2(weight * (bookingPricePerKg ?? sellingPricePerKg));
+    }
+
+    final booked = bookedWeightTotal;
+    if (booked <= 0 || weight <= 0) return agreedGoatAmount;
+
+    return _round2(agreedGoatAmount * weight / booked);
+  }
+
+  /// True for a completed Wait for Delivery / Booking sale charged by its
+  /// pickup weight (the bill then shows booked weight, pickup weight and
+  /// the locked rate).
+  bool get isWeightRepriced =>
+      goatAmountAtPickup != null &&
+          pickupWeight != null &&
+          (hasPickupSettlement || hasBookingDeliverySettlement);
+
+  /// Booking / Holding goat amount after the booking discount: repriced by
+  /// [pickupWeight] when one is given ([goatValueAtWeight] less the
+  /// booking discount), otherwise the booked [totalSaleAmount].
+  double bookingGoatAmountAt(double? pickupWeight) {
+    if (pickupWeight == null) return _round2(totalSaleAmount);
+
+    return _nonNegative(goatValueAtWeight(pickupWeight) - appliedDiscount);
+  }
+
+  /// The pre-weight-pricing rule, kept only so Wait for Delivery pickups
+  /// saved before [goatAmountAtPickup] existed show their old figures:
+  /// a fixed price never changed with the weight.
+  double _legacyGoatValueAtWeight(double weight) {
     if (isFixedPrice) {
       return _round2(fixedSalePrice ?? totalSaleAmount);
     }
@@ -889,6 +988,7 @@ class Sale {
       bookingAdvanceAmount: nullableNumFrom('bookingAdvanceAmount'),
       bookingWeight: nullableNumFrom('bookingWeight'),
       pickupWeight: nullableNumFrom('pickupWeight'),
+      goatAmountAtPickup: nullableNumFrom('goatAmountAtPickup'),
       finalPriceAfterPickup: nullableNumFrom('finalPriceAfterPickup'),
 
       transferDate: dateFrom('transferDate'),
@@ -980,6 +1080,7 @@ class Sale {
     );
     putIfNotNull('bookingWeight', bookingWeight);
     putIfNotNull('pickupWeight', pickupWeight);
+    putIfNotNull('goatAmountAtPickup', goatAmountAtPickup);
     putIfNotNull(
       'finalPriceAfterPickup',
       finalPriceAfterPickup,

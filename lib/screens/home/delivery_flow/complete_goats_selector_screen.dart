@@ -7,11 +7,14 @@ import '../../../models/goat_model.dart';
 import '../../../models/sale_model.dart';
 import '../../../services/firestore_service.dart';
 import '../../../services/goat_service.dart';
+import '../../../services/sale_goat_details_service.dart';
 import '../../../services/wait_booking_split_service.dart';
 import '../../../widgets/fast_route.dart';
 import '../../trading/goat_stock/booking_delivery_customer_screen.dart';
 import '../../trading/goat_stock/wait_delivery_customer_screen.dart';
+import '../../trading/own_palai/own_palai_goat_profile_screen.dart';
 import 'delivery_section.dart';
+import 'lot_goat_profile_screen.dart';
 
 /// Wait on Delivery OR Booking & Holding → customer → customer profile →
 /// that section's entry → THIS SCREEN (goat selection, same pattern as
@@ -21,6 +24,10 @@ import 'delivery_section.dart';
 ///
 /// The checkout shows a photo + age card for every selected goat, then
 /// the bookings with their calculation, then Complete Sale → receipts.
+///
+/// Tapping a goat (not its tick box) opens its profile, where its weight,
+/// photos and health can be updated. The newest weight on record is
+/// shown here and is what the checkout's pickup-weight fields start from.
 ///
 /// This screen does no money maths and completes nothing itself. On
 /// Continue it:
@@ -89,6 +96,40 @@ class _CompleteGoatsSelectorScreenState
 
   /// Latest data from the streams, used when Continue is tapped.
   SectionCustomer? _customer;
+
+  /// One live stream per lot booking's goats ("Goat 1..N"), kept so
+  /// rebuilds do not re-subscribe.
+  final Map<String, Stream<List<SaleGoatDetail>>> _lotGoatStreams = {};
+
+  /// One live weight-history stream per registered goat.
+  final Map<String, Stream<double>> _latestWeights = {};
+
+  Stream<double> _latestWeightOf(Goat goat) => _latestWeights.putIfAbsent(
+    goat.id,
+        () => GoatService.instance
+        .weightHistoryStream(farmId: widget.farmId, goatId: goat.id)
+        .map((h) => h.isEmpty ? goat.weight : h.last.weight),
+  );
+
+  void _openGoat(Goat goat) {
+    if (_busy) return;
+    Navigator.of(context).push(
+      fastRoute(OwnPalaiGoatProfileScreen(farmId: widget.farmId, goat: goat)),
+    );
+  }
+
+  void _openLotGoat(SectionBooking booking, SaleGoatDetail goat) {
+    if (_busy) return;
+    Navigator.of(context).push(
+      fastRoute(
+        LotGoatProfileScreen(
+          farmId: widget.farmId,
+          sale: booking.sale,
+          index: goat.index,
+        ),
+      ),
+    );
+  }
 
   bool _busy = false;
 
@@ -540,45 +581,86 @@ class _CompleteGoatsSelectorScreenState
   Widget _goatTile(Goat goat) {
     final ticked = _goatIds.contains(goat.id);
 
-    return CheckboxListTile(
-      value: ticked,
-      onChanged: _busy
-          ? null
-          : (v) => setState(() {
-        if (v == true) {
-          _goatIds.add(goat.id);
-        } else {
-          _goatIds.remove(goat.id);
-        }
-      }),
-      controlAffinity: ListTileControlAffinity.leading,
-      activeColor: AppColors.darkGreen,
-      dense: true,
-      contentPadding: EdgeInsets.zero,
-      title: Text(goat.id, style: AppTheme.heading(size: 13)),
-      subtitle: Text(
-        [
-          goat.weight > 0
-              ? '${goat.weight.toStringAsFixed(1)} kg'
-              : 'Weight not recorded',
-          if (goat.currentAgeMonths > 0) goat.age,
-          if (goat.breed.trim().isNotEmpty) goat.breed.trim(),
-        ].join(' · '),
-        maxLines: 1,
-        overflow: TextOverflow.ellipsis,
-        style: AppTheme.body(size: 10.5),
-      ),
-      secondary: ClipRRect(
-        borderRadius: BorderRadius.circular(9),
-        child: goat.photo != null
-            ? Image.memory(goat.photo!, width: 36, height: 36, fit: BoxFit.cover)
-            : Container(
-          width: 36,
-          height: 36,
-          color: _section.color.withValues(alpha: 0.12),
-          child: Icon(GoatIcons.paw, size: 16, color: _section.color),
+    return InkWell(
+      onTap: () => _openGoat(goat),
+      borderRadius: BorderRadius.circular(12),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(10, 6, 0, 6),
+        child: Row(
+          children: [
+            ClipRRect(
+              borderRadius: BorderRadius.circular(10),
+              child: goat.photo != null
+                  ? Image.memory(goat.photo!,
+                  width: 42, height: 42, fit: BoxFit.cover)
+                  : Container(
+                width: 42,
+                height: 42,
+                color: _section.color.withValues(alpha: 0.12),
+                child: Icon(GoatIcons.paw, size: 17, color: _section.color),
+              ),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(goat.id, style: AppTheme.heading(size: 13)),
+                  StreamBuilder<double>(
+                    stream: _latestWeightOf(goat),
+                    builder: (context, snap) {
+                      final weight = snap.data ?? goat.weight;
+                      return Text(
+                        [
+                          weight > 0
+                              ? '${weight.toStringAsFixed(1)} kg'
+                              : 'Weight not recorded',
+                          if (goat.currentAgeMonths > 0) goat.age,
+                          if (goat.breed.trim().isNotEmpty) goat.breed.trim(),
+                        ].join(' · '),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: AppTheme.body(size: 10.5),
+                      );
+                    },
+                  ),
+                  _profileHint(),
+                ],
+              ),
+            ),
+            Checkbox(
+              value: ticked,
+              activeColor: AppColors.darkGreen,
+              onChanged: _busy
+                  ? null
+                  : (v) => setState(() {
+                if (v == true) {
+                  _goatIds.add(goat.id);
+                } else {
+                  _goatIds.remove(goat.id);
+                }
+              }),
+            ),
+          ],
         ),
       ),
+    );
+  }
+
+  Widget _profileHint() {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text(
+          'Profile · weight & health',
+          style: AppTheme.body(
+            size: 10.5,
+            color: _section.color,
+            weight: FontWeight.w600,
+          ),
+        ),
+        Icon(Icons.chevron_right, size: 14, color: _section.color),
+      ],
     );
   }
 
@@ -587,31 +669,45 @@ class _CompleteGoatsSelectorScreenState
     final ticked = qty != null;
 
     return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        CheckboxListTile(
-          value: ticked,
-          onChanged: _busy
-              ? null
-              : (v) => setState(() {
-            if (v == true) {
-              _lotQty[b.id] = b.goatCount;
-            } else {
-              _lotQty.remove(b.id);
-            }
-          }),
-          controlAffinity: ListTileControlAffinity.leading,
-          activeColor: AppColors.darkGreen,
-          dense: true,
-          contentPadding: EdgeInsets.zero,
-          title: Text(b.sale.lotDisplayId, style: AppTheme.heading(size: 13)),
-          subtitle: Text(
-            '${b.goatCount} goat${b.goatCount == 1 ? '' : 's'} from a lot',
-            style: AppTheme.body(size: 10.5),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(10, 4, 0, 2),
+          child: Row(
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(b.sale.lotDisplayId,
+                        style: AppTheme.heading(size: 13)),
+                    Text(
+                      '${b.goatCount} goat${b.goatCount == 1 ? '' : 's'} '
+                          'from a lot',
+                      style: AppTheme.body(size: 10.5),
+                    ),
+                  ],
+                ),
+              ),
+              Checkbox(
+                value: ticked,
+                activeColor: AppColors.darkGreen,
+                onChanged: _busy
+                    ? null
+                    : (v) => setState(() {
+                  if (v == true) {
+                    _lotQty[b.id] = b.goatCount;
+                  } else {
+                    _lotQty.remove(b.id);
+                  }
+                }),
+              ),
+            ],
           ),
         ),
         if (qty != null && b.goatCount > 1)
           Padding(
-            padding: const EdgeInsets.only(left: 12, bottom: 6),
+            padding: const EdgeInsets.only(left: 10, bottom: 2),
             child: Row(
               children: [
                 Expanded(
@@ -638,14 +734,113 @@ class _CompleteGoatsSelectorScreenState
           ),
         if (qty != null && qty < b.goatCount)
           Padding(
-            padding: const EdgeInsets.only(left: 12, bottom: 6),
+            padding: const EdgeInsets.only(left: 10, bottom: 4),
             child: Text(
               'Goat 1${qty > 1 ? '–$qty' : ''} go now; the other goats '
                   '(with their photos) stay booked.',
               style: AppTheme.body(size: 10.5),
             ),
           ),
+        // Each goat of the lot, tap to open its profile (photo, age,
+        // weight, health).
+        StreamBuilder<List<SaleGoatDetail>>(
+          stream: _lotGoatStreams.putIfAbsent(
+            b.id,
+                () => SaleGoatDetailsService.instance
+                .streamForSale(widget.farmId, b.id),
+          ),
+          builder: (context, snap) {
+            if (!snap.hasData && !snap.hasError) {
+              return const Padding(
+                padding: EdgeInsets.all(8),
+                child: Center(
+                  child: SizedBox(
+                    width: 16,
+                    height: 16,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  ),
+                ),
+              );
+            }
+            final goats = SaleGoatDetailsService.withPlaceholders(
+              snap.data ?? const <SaleGoatDetail>[],
+              b.goatCount,
+            ).where((g) => g.index <= b.goatCount);
+
+            return Column(
+              children: [
+                for (final g in goats)
+                  _lotGoatRow(b, g, qty != null && g.index <= qty),
+              ],
+            );
+          },
+        ),
       ],
+    );
+  }
+
+  Widget _lotGoatRow(SectionBooking b, SaleGoatDetail g, bool goingNow) {
+    final photo = g.hasPhoto ? g.photo : null;
+    final details = [
+      g.weight > 0 ? '${g.weight.toStringAsFixed(1)} kg' : 'Weight not recorded',
+      if (g.ageMonths > 0) '${g.ageMonths} months',
+      if (g.healthStatus.isNotEmpty) g.healthStatus,
+    ];
+
+    return InkWell(
+      onTap: () => _openLotGoat(b, g),
+      borderRadius: BorderRadius.circular(12),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(10, 5, 12, 5),
+        child: Row(
+          children: [
+            ClipRRect(
+              borderRadius: BorderRadius.circular(10),
+              child: photo != null
+                  ? Image.memory(photo, width: 38, height: 38, fit: BoxFit.cover)
+                  : Container(
+                width: 38,
+                height: 38,
+                color: _section.color.withValues(alpha: 0.12),
+                child: Icon(Icons.add_a_photo_outlined,
+                    size: 16, color: _section.color),
+              ),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(g.label, style: AppTheme.heading(size: 12.5)),
+                  Text(
+                    details.join(' · '),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: AppTheme.body(size: 10.5),
+                  ),
+                  _profileHint(),
+                ],
+              ),
+            ),
+            if (goingNow)
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+                decoration: BoxDecoration(
+                  color: AppColors.darkGreen.withValues(alpha: 0.10),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Text(
+                  'Going now',
+                  style: AppTheme.body(
+                    size: 9.5,
+                    color: AppColors.darkGreen,
+                    weight: FontWeight.w700,
+                  ),
+                ),
+              ),
+          ],
+        ),
+      ),
     );
   }
 

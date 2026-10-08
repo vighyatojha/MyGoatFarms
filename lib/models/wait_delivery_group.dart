@@ -30,25 +30,25 @@ class WaitDeliverySale {
   bool get isLotSale => sale.isLotSale;
 
   /// True when the goats were sold for one agreed price instead of a
-  /// price per KG — the pickup weight is then only recorded, never used
-  /// to reprice.
+  /// price per KG. It is converted to a locked rate per KG (agreed amount
+  /// / booked weight) and repriced by the pickup weight like a per-KG deal.
   bool get isFixedPrice => sale.isFixedPrice;
 
-  /// The rate fixed at booking time. Meaningless for a fixed-price sale
-  /// (kept there only for reference — see [Sale.fixedSalePrice] doc).
-  double get ratePerKg => sale.bookingPricePerKg ?? 0;
+  /// The locked price per KG (for display): the booking-time rate, or the
+  /// fixed price / booked weight.
+  double get ratePerKg => sale.lockedRatePerKg;
 
   double get advancePaid => sale.bookingAdvanceAmount ?? 0;
 
   /// Total weight recorded at booking.
-  double get bookedWeight => sale.bookingWeight ?? 0;
+  double get bookedWeight => sale.bookedWeightTotal;
 
   DateTime get bookedAt => sale.saleDate ?? sale.holdingStart;
 
-  /// What the goats are worth at [pickupWeight]: pickup weight x the
-  /// booking-time rate, or the agreed fixed price, whatever the weight
-  /// turns out to be. Delivery is never re-priced at today's rate — same
-  /// rule as SalesService.completeWaitForDeliveryPickup.
+  /// What the goats are worth at [pickupWeight]: the agreed amount x
+  /// pickup weight / booked weight (per-KG: pickup weight x the
+  /// booking-time rate). Delivery is never re-priced at today's rate —
+  /// same rule as SalesService.completeWaitForDeliveryPickup.
   double saleValueAt(double pickupWeight) {
     return sale.goatValueAtWeight(pickupWeight);
   }

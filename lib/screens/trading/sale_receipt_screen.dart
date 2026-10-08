@@ -600,7 +600,31 @@ class _SaleReceiptScreenState extends State<SaleReceiptScreen> {
       'Price Calculation',
       Icons.calculate_outlined,
       [
-        if (sale.hasPickupSettlement) ...[
+        if (sale.isWeightRepriced) ...[
+          _moneyRow(
+            'Booked Weight',
+            sale.bookedWeightTotal,
+            suffix: ' kg',
+          ),
+          _moneyRow(
+            'Pickup Weight',
+            sale.pickupWeight!,
+            suffix: ' kg',
+          ),
+          if (sale.isFixedPrice)
+            _moneyRow(
+              'Agreed Amount',
+              sale.agreedGoatAmount,
+              subtitle: 'Fixed price for '
+                  '${sale.bookedWeightTotal.toStringAsFixed(2)} kg',
+            ),
+          _moneyRow(
+            'Locked Rate / kg',
+            sale.lockedRatePerKg,
+            subtitle: 'Agreed amount ÷ booked weight — charged on the '
+                'pickup weight',
+          ),
+        ] else if (sale.hasPickupSettlement) ...[
           _moneyRow(
             'Pickup Weight',
             sale.pickupWeight!,

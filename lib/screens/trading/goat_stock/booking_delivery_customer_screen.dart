@@ -110,6 +110,23 @@ class _BookingDeliveryCustomerScreenState
   /// next stream update).
   final Set<String> _seen = <String>{};
 
+  /// Pickup weight per goat, keyed by goat ID (a lot booking has one
+  /// total under `lot:<saleId>`). The goat value is the agreed amount x
+  /// pickup weight / booked weight (WEIGHT-BASED PRICE).
+  final Map<String, TextEditingController> _weights =
+  <String, TextEditingController>{};
+
+  /// Newest weight on record per goat (and `lot:<saleId>` totals), from
+  /// the goats' profiles — what the pickup-weight fields start from.
+  final Map<String, double> _latest = <String, double>{};
+
+  /// Bookings whose latest weights were already asked for.
+  final Set<String> _latestRequested = <String>{};
+
+  /// Text each pickup-weight field started with: a field still showing it
+  /// has not been typed in, so it may follow a newer weight.
+  final Map<String, String> _weightInitial = <String, String>{};
+
   /// Amount received now per booking, keyed by sale ID.
   final Map<String, TextEditingController> _amounts =
   <String, TextEditingController>{};
@@ -174,6 +191,10 @@ class _BookingDeliveryCustomerScreenState
 
   @override
   void dispose() {
+    for (final controller in _weights.values) {
+      controller.dispose();
+    }
+
     for (final controller in _amounts.values) {
       controller.dispose();
     }
@@ -200,6 +221,112 @@ class _BookingDeliveryCustomerScreenState
   // ===========================================================================
 
   static DateTime _dayOnly(DateTime d) => DateTime(d.year, d.month, d.day);
+
+  String _trim(double value) {
+    if (value == value.roundToDouble()) return value.toStringAsFixed(0);
+    return value
+        .toStringAsFixed(3)
+        .replaceFirst(RegExp(r'0+$'), '')
+        .replaceFirst(RegExp(r'\.$'), '');
+  }
+
+  // ---------------------------------------------------------------------------
+  // PICKUP WEIGHT
+  // ---------------------------------------------------------------------------
+
+  /// Pickup-weight field of a registered goat, starting from its last
+  /// recorded weight.
+  TextEditingController _weightControllerFor(Goat goat) {
+    return _weights.putIfAbsent(goat.id, () {
+      final weight = _latest[goat.id] ?? goat.weight;
+      final controller = TextEditingController(
+        text: weight <= 0 ? '' : _trim(weight),
+      );
+      _weightInitial[goat.id] = controller.text;
+      return controller;
+    });
+  }
+
+  /// The goat's newest weight on record (profile weight history), or the
+  /// weight recorded on the goat.
+  double _lastWeightOf(Goat goat) => _latest[goat.id] ?? goat.weight;
+
+  /// Asks once per booking for the newest recorded weights, then moves
+  /// every pickup-weight field nobody has typed in to them.
+  void _requestLatestWeights(BookingDeliverySale entry) {
+    if (!_latestRequested.add(entry.id)) return;
+
+    latestRecordedWeights(
+      widget.farmId,
+      SectionBooking(sale: entry.sale, goats: entry.goats),
+    ).then((weights) {
+      if (!mounted || weights.isEmpty) return;
+      setState(() {
+        weights.forEach((key, weight) {
+          _latest[key] = weight;
+          final controller = _weights[key];
+          if (controller != null &&
+              controller.text == _weightInitial[key]) {
+            controller.text = weight <= 0 ? '' : _trim(weight);
+            _weightInitial[key] = controller.text;
+          }
+        });
+      });
+    }).catchError((Object _) {
+      // Keep the recorded weights; the person can still type them.
+    });
+  }
+
+  /// One total pickup weight for a booking made from a lot (its goats are
+  /// not weighed one by one), starting from the booked weight.
+  TextEditingController _lotWeightControllerFor(BookingDeliverySale entry) {
+    final key = 'lot:${entry.id}';
+    return _weights.putIfAbsent(key, () {
+      final weight = _latest[key] ?? entry.bookedWeight;
+      final controller = TextEditingController(
+        text: weight <= 0 ? '' : _trim(weight),
+      );
+      _weightInitial[key] = controller.text;
+      return controller;
+    });
+  }
+
+  double _weightOf(Goat goat) {
+    return double.tryParse(_weightControllerFor(goat).text.trim()) ?? 0;
+  }
+
+  /// Total pickup weight of a booking (rounded so 34.5 + 12.3 leaves no
+  /// float noise).
+  double _pickupWeightOf(BookingDeliverySale entry) {
+    final total = entry.isLotSale
+        ? double.tryParse(_lotWeightControllerFor(entry).text.trim()) ?? 0
+        : entry.goats.fold<double>(0, (t, goat) => t + _weightOf(goat));
+
+    return (total * 1000).round() / 1000;
+  }
+
+  /// The pickup weight to price with, or null while it is not entered yet
+  /// (the booked amount is shown until then).
+  double? _pickupOrNull(BookingDeliverySale entry) {
+    final weight = _pickupWeightOf(entry);
+    return weight > 0 ? weight : null;
+  }
+
+  bool _missingWeight(BookingDeliverySale entry) => entry.isLotSale
+      ? _pickupWeightOf(entry) <= 0
+      : entry.goats.any((goat) => _weightOf(goat) <= 0);
+
+  /// Goat value at the pickup weight, before any discount.
+  double _goatValueOf(BookingDeliverySale entry) {
+    final weight = _pickupOrNull(entry);
+    return weight == null
+        ? entry.sale.agreedGoatAmount
+        : entry.saleValueAt(weight);
+  }
+
+  /// Goat amount after the booking discount, before the delivery discount.
+  double _goatAmountOf(BookingDeliverySale entry) =>
+      entry.sale.bookingGoatAmountAt(_pickupOrNull(entry));
 
   String _plainMoney(double value) {
     return value == value.roundToDouble()
@@ -232,6 +359,7 @@ class _BookingDeliveryCustomerScreenState
       transport: _transportOf(entry),
       discount: _discountOf(entry),
       holdingRate: _holdingRateOf(entry),
+      pickupWeight: _pickupOrNull(entry),
     );
   }
 
@@ -250,6 +378,7 @@ class _BookingDeliveryCustomerScreenState
         transport: _transportOf(entry),
         discount: _discountOf(entry),
         holdingRate: _holdingRateOf(entry),
+        pickupWeight: _pickupOrNull(entry),
       );
 
       bills.add(
@@ -297,6 +426,7 @@ class _BookingDeliveryCustomerScreenState
       transport: _transportOf(entry),
       discount: _discountOf(entry),
       holdingRate: _holdingRateOf(entry),
+      pickupWeight: _pickupOrNull(entry),
     );
   }
 
@@ -372,7 +502,7 @@ class _BookingDeliveryCustomerScreenState
     if (number <= 0) return 0;
 
     final value = Sale.roundMoney(number);
-    final goatAmount = entry.sale.totalSaleAmount;
+    final goatAmount = _goatAmountOf(entry);
 
     return value > goatAmount ? goatAmount : value;
   }
@@ -473,7 +603,21 @@ class _BookingDeliveryCustomerScreenState
       // one.
       if (before != null && before != now) {
         _amountEdited.remove(entry.id);
+
+        // A lot booking's total pickup weight follows its new booked
+        // weight (goats were split off).
+        final lot = _weights['lot:${entry.id}'];
+        if (lot != null) {
+          lot.text = entry.bookedWeight <= 0 ? '' : _trim(entry.bookedWeight);
+          _weightInitial['lot:${entry.id}'] = lot.text;
+        }
+
+        // Goats were split off: ask again for the remaining goats' weights.
+        _latest.remove('lot:${entry.id}');
+        _latestRequested.remove(entry.id);
       }
+
+      _requestLatestWeights(entry);
     }
 
     _syncAllAutoAmounts(customer);
@@ -631,16 +775,19 @@ class _BookingDeliveryCustomerScreenState
 
     if (picked.isEmpty) return;
 
+    final missingWeight = picked.any(_missingWeight);
     final invalidAmount =
     picked.any((entry) => !_amountValid(customer, entry));
 
-    if (invalidAmount) {
+    if (missingWeight || invalidAmount) {
       setState(() {
         _submitted = true;
       });
 
       _snack(
-        'Check the amount received for every selected booking.',
+        missingWeight
+            ? 'Enter a pickup weight for every selected goat.'
+            : 'Check the amount received for every selected booking.',
         error: true,
       );
 
@@ -681,6 +828,7 @@ class _BookingDeliveryCustomerScreenState
         transportCharges: transport,
         discount: discount,
         holdingChargePerDay: holdingRate,
+        pickupWeight: _pickupWeightOf(entry),
         expectedRemaining: due,
         amountReceivedNow: due > 0 ? _receivedNowOf(customer, entry) : 0,
         onCredit: due > 0 && _onCredit,
@@ -1086,7 +1234,9 @@ class _BookingDeliveryCustomerScreenState
               ),
               const SizedBox(height: 1),
               Text(
-                '$days holding day${days == 1 ? '' : 's'} × '
+                '${_trim(_pickupWeightOf(entry))} kg × '
+                    '${_money.format(entry.ratePerKg)}/kg + '
+                    '$days holding day${days == 1 ? '' : 's'} × '
                     '${_money.format(_holdingRateOf(entry))} − '
                     '${_money.format(entry.bookingAmount)} booking amount'
                     '${_discountOf(entry) > 0 ? ' − ${_money.format(_discountOf(entry))} discount' : ''}'
@@ -1407,6 +1557,10 @@ class _BookingDeliveryCustomerScreenState
             _bookingCard(customer, customer.sales[i]),
           ],
           const SizedBox(height: 12),
+          if (_picked(customer).isNotEmpty) ...[
+            _totalsCard(customer, _picked(customer)),
+            const SizedBox(height: 12),
+          ],
           _batchPaymentCard(customer, _picked(customer)),
         ],
       ),
@@ -1587,19 +1741,7 @@ class _BookingDeliveryCustomerScreenState
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          // Which lot these goats came from, with the booking ID.
-          Padding(
-            padding: const EdgeInsets.fromLTRB(8, 4, 0, 4),
-            child: LotOriginCard(
-              farmId: widget.farmId,
-              bookingId: entry.id,
-              lotDocIds: LotOriginCard.lotsOf(entry.sale, entry.goats),
-              note: entry.isLotSale &&
-                  entry.sale.sourceLocation == Sale.sourceSupplier
-                  ? 'At supplier'
-                  : null,
-            ),
-          ),
+          // 1. HEADER: tick + booking + booked date + live amount due.
           InkWell(
             onTap: _delivering
                 ? null
@@ -1637,11 +1779,21 @@ class _BookingDeliveryCustomerScreenState
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text(
-                        'Booking ${entry.id}',
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: AppTheme.heading(size: 14),
+                      Row(
+                        children: [
+                          Flexible(
+                            child: Text(
+                              'Booking ${entry.id}',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: AppTheme.heading(size: 14),
+                            ),
+                          ),
+                          if (entry.isFixedPrice) ...[
+                            const SizedBox(width: 6),
+                            _tag('Fixed price'),
+                          ],
+                        ],
                       ),
                       Text(
                         '${_goats(entry.goatCount)} · Booked '
@@ -1687,10 +1839,28 @@ class _BookingDeliveryCustomerScreenState
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
                 const SizedBox(height: 6),
+
+                // 2. PRICE: locked rate per KG, the agreed amount and
+                // weight it came from, holding since, booking amount.
                 Wrap(
                   spacing: 5,
                   runSpacing: 5,
                   children: [
+                    _infoChip(
+                      Icons.lock_outline_rounded,
+                      '${_money.format(entry.ratePerKg)}/kg locked',
+                    ),
+                    if (entry.isFixedPrice)
+                      _infoChip(
+                        Icons.sell_outlined,
+                        '${_money.format(entry.sale.agreedGoatAmount)} '
+                            'fixed for ${_trim(entry.bookedWeight)} kg',
+                      )
+                    else if (entry.bookedWeight > 0)
+                      _infoChip(
+                        Icons.scale_outlined,
+                        'Booked ${_trim(entry.bookedWeight)} kg',
+                      ),
                     _infoChip(
                       Icons.calendar_today_outlined,
                       'Holding since ${_dateFormat.format(entry.holdingStart)}',
@@ -1701,6 +1871,25 @@ class _BookingDeliveryCustomerScreenState
                     ),
                   ],
                 ),
+
+                const SizedBox(height: 10),
+
+                // 3. LOTS: every lot this booking's goats came from, with
+                // supplier, purchase date and how many goats.
+                LotOriginCard(
+                  farmId: widget.farmId,
+                  bookingId: entry.id,
+                  lotDocIds: LotOriginCard.lotsOf(entry.sale, entry.goats),
+                  goatsByLot:
+                  LotOriginCard.goatsByLotOf(entry.sale, entry.goats),
+                  showBookingHeader: false,
+                  note: entry.isLotSale
+                      ? (entry.sale.sourceLocation == Sale.sourceSupplier
+                      ? 'At supplier'
+                      : 'At farm')
+                      : null,
+                ),
+
                 const Divider(height: 18, color: AppColors.divider),
 
                 // Edit the deal or cancel it while nothing is delivered.
@@ -1722,17 +1911,25 @@ class _BookingDeliveryCustomerScreenState
 
                 // Deliver only some of the goats, and keep or remove the rest.
                 if (entry.goatCount > 1) _editBookingButton(entry),
+
+                // 4. GOATS: lot, last recorded weight, pickup weight and
+                // what each goat comes to at the locked rate.
+                _sectionLabel('Goats · pickup weight'),
                 if (entry.isLotSale)
-                  _lotRow(entry)
+                  _lotRow(customer, entry, selected)
                 else
-                  for (final goat in entry.goats) _goatRow(goat),
+                  for (final goat in entry.goats)
+                    _goatRow(customer, entry, goat, selected),
                 const SizedBox(height: 3),
+
+                // 5. CHARGES
                 _holdingRateField(customer, entry, selected),
                 const SizedBox(height: 10),
                 _discountField(customer, entry, selected),
                 const SizedBox(height: 10),
                 _transportField(customer, entry, selected),
                 const SizedBox(height: 12),
+                // 6. CALCULATION
                 _calcBox(customer, entry, due),
                 if (selected && due > 0) ...[
                   const SizedBox(height: 10),
@@ -1803,8 +2000,14 @@ class _BookingDeliveryCustomerScreenState
     );
   }
 
-  Widget _goatRow(Goat goat) {
+  Widget _goatRow(
+      BookingDeliveryCustomer customer,
+      BookingDeliverySale entry,
+      Goat goat,
+      bool selected,
+      ) {
     final breed = goat.breed.trim().isEmpty ? 'Breed not specified' : goat.breed.trim();
+    final weight = _weightOf(goat);
 
     return Padding(
       padding: const EdgeInsets.only(bottom: 9),
@@ -1831,9 +2034,51 @@ class _BookingDeliveryCustomerScreenState
                     overflow: TextOverflow.ellipsis,
                     style: AppTheme.body(size: 10.5),
                   ),
+                  Row(
+                    children: [
+                      Flexible(
+                        child: LotIdText(
+                          farmId: widget.farmId,
+                          lotDocId: goat.purchaseId,
+                          style: AppTheme.body(
+                            size: 10.5,
+                            color: AppColors.info,
+                            weight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                      Flexible(
+                        child: Text(
+                          [
+                            if (_lastWeightOf(goat) > 0)
+                              ' · Last ${_trim(_lastWeightOf(goat))} kg',
+                            weight > 0
+                                ? ' · ${_money.format(entry.saleValueAt(weight))}'
+                                : ' · enter pickup wt',
+                          ].join(),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: AppTheme.body(
+                            size: 10.5,
+                            color: AppColors.textDark,
+                            weight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
                 ],
               ),
             ),
+          ),
+          const SizedBox(width: 8),
+          _weightField(
+            customer: customer,
+            entry: entry,
+            controller: _weightControllerFor(goat),
+            selected: selected,
+            label: 'Pickup wt',
+            width: 108,
           ),
         ],
       ),
@@ -1841,12 +2086,18 @@ class _BookingDeliveryCustomerScreenState
   }
 
   /// A booking made straight from a lot has no goat records, so it shows
-  /// the lot and the quantity held instead of a list of goats.
-  Widget _lotRow(BookingDeliverySale entry) {
+  /// the lot and the quantity held, with ONE total pickup weight.
+  Widget _lotRow(
+      BookingDeliveryCustomer customer,
+      BookingDeliverySale entry,
+      bool selected,
+      ) {
+    final pickup = _pickupWeightOf(entry);
+
     return Padding(
       padding: const EdgeInsets.only(bottom: 9),
       child: Row(
-        crossAxisAlignment: CrossAxisAlignment.center,
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Container(
             width: 44,
@@ -1865,27 +2116,237 @@ class _BookingDeliveryCustomerScreenState
           ),
           const SizedBox(width: 9),
           Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  entry.sale.lotDisplayId,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: AppTheme.heading(size: 13.5),
-                ),
-                Text(
-                  '${_goats(entry.goatCount)} held from this lot',
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: AppTheme.body(size: 10.5),
-                ),
-              ],
+            child: Padding(
+              padding: const EdgeInsets.only(top: 4),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    entry.sale.lotDisplayId,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: AppTheme.heading(size: 13.5),
+                  ),
+                  Text(
+                    '${_goats(entry.goatCount)} held from this lot',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: AppTheme.body(size: 10.5),
+                  ),
+                  Text(
+                    [
+                      if (entry.bookedWeight > 0)
+                        'Booked ${_trim(entry.bookedWeight)} kg',
+                      if (pickup > 0)
+                        _money.format(entry.saleValueAt(pickup)),
+                    ].join(' · '),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: AppTheme.body(
+                      size: 10.5,
+                      color: AppColors.textDark,
+                      weight: FontWeight.w600,
+                    ),
+                  ),
+                ],
+              ),
             ),
+          ),
+          const SizedBox(width: 8),
+          _weightField(
+            customer: customer,
+            entry: entry,
+            controller: _lotWeightControllerFor(entry),
+            selected: selected,
+            label: 'Total pickup wt',
+            width: 118,
           ),
         ],
       ),
     );
+  }
+
+  Widget _weightField({
+    required BookingDeliveryCustomer customer,
+    required BookingDeliverySale entry,
+    required TextEditingController controller,
+    required bool selected,
+    required String label,
+    required double width,
+  }) {
+    final invalid = _submitted &&
+        selected &&
+        (double.tryParse(controller.text.trim()) ?? 0) <= 0;
+
+    OutlineInputBorder border(Color color, [double w = 1]) =>
+        OutlineInputBorder(
+          borderRadius: BorderRadius.circular(10),
+          borderSide: BorderSide(color: color, width: w),
+        );
+
+    return SizedBox(
+      width: width,
+      child: TextField(
+        controller: controller,
+        enabled: selected && !_delivering,
+        keyboardType: const TextInputType.numberWithOptions(decimal: true),
+        inputFormatters: [
+          FilteringTextInputFormatter.allow(RegExp(r'^\d*\.?\d{0,2}')),
+        ],
+        textAlign: TextAlign.right,
+        onChanged: (_) {
+          setState(() {
+            _syncAutoAmount(customer, entry);
+          });
+        },
+        style: AppTheme.body(
+          size: 12.5,
+          color: AppColors.textDark,
+          weight: FontWeight.w600,
+        ),
+        decoration: InputDecoration(
+          isDense: true,
+          labelText: label,
+          labelStyle: AppTheme.body(size: 10.5),
+          suffixText: 'kg',
+          suffixStyle: AppTheme.body(size: 11),
+          errorText: invalid ? 'Required' : null,
+          errorStyle: const TextStyle(fontSize: 9.5),
+          filled: true,
+          fillColor: selected ? Colors.white : AppColors.paleGreen,
+          contentPadding: const EdgeInsets.symmetric(
+            horizontal: 10,
+            vertical: 9,
+          ),
+          border: border(AppColors.divider),
+          enabledBorder: border(AppColors.divider),
+          disabledBorder: border(AppColors.divider.withValues(alpha: 0.6)),
+          focusedBorder: border(AppColors.darkGreen, 1.4),
+          errorBorder: border(AppColors.error),
+          focusedErrorBorder: border(AppColors.error, 1.4),
+        ),
+      ),
+    );
+  }
+
+  /// Every ticked booking added up: weight booked vs weight now, goat
+  /// value at the locked rates, discounts, holding, transport, what was
+  /// paid and what is due.
+  Widget _totalsCard(
+      BookingDeliveryCustomer customer,
+      List<BookingDeliverySale> picked,
+      ) {
+    double sum(double Function(BookingDeliverySale e) f) =>
+        Sale.roundMoney(picked.fold<double>(0, (t, e) => t + f(e)));
+
+    final booked = picked.fold<double>(0, (t, e) => t + e.bookedWeight);
+    final pickup = picked.fold<double>(0, (t, e) => t + _pickupWeightOf(e));
+    final goatValue = sum(_goatValueOf);
+    final discount =
+    sum((e) => Sale.roundMoney(e.bookingDiscount + _discountOf(e)));
+    final holding = sum((e) => _holdingChargesOf(customer, e));
+    final transport = sum(_transportOf);
+    final paid = sum((e) => e.bookingAmount);
+    final due = sum((e) => _finalAmountOf(customer, e));
+    final extra = sum((e) => _excessOf(customer, e));
+    final goats = _goatCountOf(picked);
+
+    return Container(
+      padding: const EdgeInsets.all(13),
+      decoration: AppTheme.card(radius: 18).copyWith(
+        border: Border.all(color: AppColors.darkGreen.withValues(alpha: 0.4)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Text(
+            'Total · ${_goats(goats)} · ${picked.length} '
+                '${picked.length == 1 ? 'booking' : 'bookings'}',
+            style: AppTheme.heading(size: 14),
+          ),
+          const SizedBox(height: 8),
+          if (booked > 0) ...[
+            _calcRow('Booked weight', '${_trim(booked)} kg'),
+            const SizedBox(height: 6),
+          ],
+          _calcRow(
+            'Pickup weight',
+            '${_trim(pickup)} kg${_weightChange(booked, pickup)}',
+          ),
+          const SizedBox(height: 6),
+          _calcRow('Goat value', _money.format(goatValue)),
+          if (discount > 0) ...[
+            const SizedBox(height: 6),
+            _calcRow('Discount', '− ${_money.format(discount)}'),
+          ],
+          if (holding > 0) ...[
+            const SizedBox(height: 6),
+            _calcRow('Holding charges', '+ ${_money.format(holding)}'),
+          ],
+          if (transport > 0) ...[
+            const SizedBox(height: 6),
+            _calcRow('Transportation', '+ ${_money.format(transport)}'),
+          ],
+          const SizedBox(height: 6),
+          _calcRow('Booking amount paid', '− ${_money.format(paid)}'),
+          const Padding(
+            padding: EdgeInsets.symmetric(vertical: 7),
+            child: Divider(height: 1, color: AppColors.divider),
+          ),
+          _calcRow('Total due', _money.format(due), emphasized: true),
+          if (extra > 0) ...[
+            const SizedBox(height: 6),
+            _calcRow(
+              'Extra (booking amount over the bill)',
+              _money.format(extra),
+              emphasized: true,
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _sectionLabel(String text) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 7),
+      child: Text(
+        text.toUpperCase(),
+        style: AppTheme.body(
+          size: 9.5,
+          color: AppColors.textGrey,
+          weight: FontWeight.w700,
+        ),
+      ),
+    );
+  }
+
+  Widget _tag(String text) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+      decoration: BoxDecoration(
+        color: AppColors.info.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(6),
+      ),
+      child: Text(
+        text,
+        style: AppTheme.body(
+          size: 9.5,
+          color: AppColors.info,
+          weight: FontWeight.w700,
+        ),
+      ),
+    );
+  }
+
+  /// " (+10 kg)" / " (−5 kg)" against the booked weight; empty when the
+  /// same or nothing was booked.
+  String _weightChange(double booked, double pickup) {
+    if (booked <= 0 || pickup <= 0) return '';
+    final diff = (pickup - booked) * 1000;
+    if (diff.round() == 0) return '';
+    final kg = (diff.abs().round()) / 1000;
+    return ' (${diff > 0 ? '+' : '−'}${_trim(kg)} kg)';
   }
 
   Widget _goatAvatar(Goat goat) {
@@ -2011,7 +2472,7 @@ class _BookingDeliveryCustomerScreenState
       bool selected,
       ) {
     final typed = double.tryParse(_discountControllerFor(entry).text.trim()) ?? 0;
-    final tooMuch = typed > entry.sale.totalSaleAmount;
+    final tooMuch = typed > _goatAmountOf(entry);
 
     return TextField(
       controller: _discountControllerFor(entry),
@@ -2034,7 +2495,7 @@ class _BookingDeliveryCustomerScreenState
         label: 'Discount (optional)',
         helper: tooMuch
             ? 'Capped at the goat amount '
-            '(${_money.format(entry.sale.totalSaleAmount)}).'
+            '(${_money.format(_goatAmountOf(entry))}).'
             : 'Comes off the goat amount, not holding or transport.',
         icon: Icons.local_offer_outlined,
         selected: selected,
@@ -2114,12 +2575,38 @@ class _BookingDeliveryCustomerScreenState
       ),
       child: Column(
         children: [
-          _calcRow('Goat Sale Amount', _money.format(entry.sale.totalSaleAmount)),
+          if (entry.bookedWeight > 0) ...[
+            _calcRow('Booked weight', '${_trim(entry.bookedWeight)} kg'),
+            const SizedBox(height: 6),
+          ],
+          _calcRow(
+            'Pickup weight',
+            _pickupOrNull(entry) == null
+                ? 'Not entered'
+                : '${_trim(_pickupWeightOf(entry))} kg'
+                '${_weightChange(entry.bookedWeight, _pickupWeightOf(entry))}',
+          ),
+          const SizedBox(height: 6),
+          _calcRow(
+            entry.isFixedPrice
+                ? 'Locked rate (${_money.format(entry.sale.agreedGoatAmount)}'
+                ' ÷ ${_trim(entry.bookedWeight)} kg)'
+                : 'Locked rate',
+            '${_money.format(entry.ratePerKg)}/kg',
+          ),
+          const SizedBox(height: 6),
+          _calcRow(
+            _pickupOrNull(entry) == null
+                ? 'Goat value (booked)'
+                : 'Goat value (${_trim(_pickupWeightOf(entry))} kg × '
+                '${_money.format(entry.ratePerKg)})',
+            _money.format(_goatValueOf(entry)),
+          ),
           if (entry.bookingDiscount > 0) ...[
             const SizedBox(height: 6),
             _calcRow(
-              'Discount (already taken off)',
-              _money.format(entry.bookingDiscount),
+              'Booking discount',
+              '− ${_money.format(entry.bookingDiscount)}',
             ),
           ],
           if (deliveryDiscount > 0) ...[
