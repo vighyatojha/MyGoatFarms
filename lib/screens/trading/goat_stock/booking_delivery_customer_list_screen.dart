@@ -7,20 +7,21 @@ import '../../../models/booking_delivery_group.dart';
 import '../../../models/goat_model.dart';
 import '../../../models/sale_model.dart';
 import '../../../services/booking_delivery_service.dart';
+import '../../../services/customer_account_service.dart';
 import '../../../services/goat_service.dart';
 import '../../../widgets/fast_route.dart';
+import '../../customers/hub/customer_hub_profile_screen.dart';
 import 'completed_deliveries_view.dart';
-import 'booking_delivery_customer_screen.dart';
 
 /// Booking / Holding — customer list.
 ///
 /// Reached from the Booked tab on the Goat Stock list. Mirrors
 /// [WaitDeliveryCustomerListScreen] exactly, but groups the customer-wise
 /// view around open Booking / Holding sales (via [BookingDeliveryGroup])
-/// instead of Wait for Delivery ones. Tapping a customer opens
-/// [BookingDeliveryCustomerScreen], where their goats can be delivered
-/// one booking at a time or several at once — including the "Sell on
-/// Credit" option the old single-sale-only flow didn't offer here.
+/// instead of Wait for Delivery ones. Tapping a customer opens their
+/// profile ([CustomerHubProfileScreen]); its Booking & Holding entry lists
+/// this customer's booked / held goats, and Complete there leads to the
+/// delivery checkout.
 class BookingDeliveryCustomerListScreen extends StatefulWidget {
   final String farmId;
 
@@ -62,13 +63,45 @@ class _BookingDeliveryCustomerListScreenState
     super.dispose();
   }
 
+  /// The customer whose profile is being opened (spinner on their card).
+  String? _openingKey;
+
+  /// Opens the customer's profile — the same one the Customers hub shows.
+  /// Their Booking & Holding goats are reached from the profile.
   Future<void> _openCustomer(BookingDeliveryCustomer customer) async {
+    if (_openingKey != null) return;
+    setState(() => _openingKey = customer.key);
+
+    String? personKey;
+    try {
+      personKey = await CustomerAccountService.instance
+          .personKeyForDeliveryGroup(widget.farmId, customer.key);
+    } catch (_) {
+      personKey = null;
+    }
+
+    if (!mounted) return;
+    setState(() => _openingKey = null);
+
+    if (personKey == null) {
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          const SnackBar(
+            content: Text(
+              "Couldn't open this customer's profile. Please try again.",
+            ),
+          ),
+        );
+      return;
+    }
+
     await Navigator.of(context).push(
       fastRoute(
-        BookingDeliveryCustomerScreen(
+        CustomerHubProfileScreen(
           farmId: widget.farmId,
-          customerKey: customer.key,
-          customerName: customer.name,
+          personKey: personKey,
+          initialName: customer.name,
         ),
       ),
     );
@@ -345,9 +378,18 @@ class _BookingDeliveryCustomerListScreenState
                 ),
               ),
               const SizedBox(width: 6),
-              const Padding(
-                padding: EdgeInsets.only(top: 20),
-                child: Icon(
+              Padding(
+                padding: const EdgeInsets.only(top: 20),
+                child: _openingKey == customer.key
+                    ? const SizedBox(
+                  width: 18,
+                  height: 18,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    color: AppColors.primaryGreen,
+                  ),
+                )
+                    : const Icon(
                   Icons.chevron_right_rounded,
                   size: 20,
                   color: AppColors.textGrey,

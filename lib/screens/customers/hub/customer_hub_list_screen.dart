@@ -9,8 +9,6 @@ import '../../../services/customer_account_service.dart';
 import '../../../services/payment_reminder_service.dart';
 import '../../../widgets/fast_route.dart';
 import '../../finance/credit_customers_screen.dart';
-import '../../home/delivery_flow/delivery_customer_goats_screen.dart';
-import '../../home/delivery_flow/delivery_section.dart';
 import 'customer_hub_profile_screen.dart';
 import 'hub_widgets.dart';
 
@@ -26,11 +24,12 @@ import 'hub_widgets.dart';
 ///
 /// FOCUSED MODE ([focus] set) — how the dashboards open Wait on Delivery,
 /// Booking & Holding and Sales: the same screen, showing ONLY that group's
-/// customers (no filter chips). Tapping a customer opens:
+/// customers (no filter chips). Tapping a customer always opens their
+/// profile ([CustomerHubProfileScreen]). From the profile:
 ///   * Wait on Delivery / Booking & Holding → their goats in that section
 ///     (goat details, health / weight / photo updates, Complete →
 ///     checkout);
-///   * Sales → their account and purchase history.
+///   * Purchase history / Trading ledger → sales and money.
 enum HubFocus { waitOnDelivery, bookingHolding, sales }
 
 extension HubFocusInfo on HubFocus {
@@ -120,30 +119,10 @@ class _CustomerHubListScreenState extends State<CustomerHubListScreen> {
     });
   }
 
+  /// Every customer row opens the customer's profile. In Wait on
+  /// Delivery / Booking & Holding the goats are reached from there (the
+  /// profile's entry for that section), never straight from this list.
   void _open(CustomerAccount account) {
-    final focus = _focus;
-    final group = focus == HubFocus.waitOnDelivery
-        ? account.wait
-        : focus == HubFocus.bookingHolding
-        ? account.booking
-        : null;
-
-    if (group != null) {
-      Navigator.of(context).push(
-        fastRoute(
-          DeliveryCustomerGoatsScreen(
-            farmId: widget.farmId,
-            section: focus == HubFocus.waitOnDelivery
-                ? DeliverySection.waitOnDelivery
-                : DeliverySection.bookingHolding,
-            customerKey: group.key,
-            customerName: group.name.trim().isEmpty ? account.name : group.name,
-          ),
-        ),
-      );
-      return;
-    }
-
     Navigator.of(context).push(
       fastRoute(
         CustomerHubProfileScreen(

@@ -11,8 +11,8 @@ import '../../../services/customer_account_service.dart';
 import '../../../services/payment_reminder_service.dart';
 import '../../../widgets/fast_route.dart';
 import '../../finance/credit_customer_detail_screen.dart';
-import '../../trading/goat_stock/booking_delivery_customer_screen.dart';
-import '../../trading/goat_stock/wait_delivery_customer_screen.dart';
+import '../../home/delivery_flow/complete_goats_selector_screen.dart';
+import '../../home/delivery_flow/delivery_section.dart';
 import '../customer_profile_screen.dart';
 import 'customer_sales_history_screen.dart';
 import 'customer_trading_ledger_screen.dart';
@@ -23,10 +23,10 @@ import 'sale_money_widgets.dart';
 /// their trading balance, and one named entry per thing, each opening its
 /// own screen:
 ///
-///   Wait on Delivery   → the existing Goat stock Wait on Delivery
-///                        customer screen, opened for this customer
-///   Booking & Holding  → the existing Goat stock Booking customer
-///                        screen, opened for this customer
+///   Wait on Delivery   → select this customer's waiting goats
+///                        ([CompleteGoatsSelectorScreen]) → photo + age
+///                        and calculation → Complete Sale → receipts
+///   Booking & Holding  → the same, for their booked / held goats
 ///   Purchase history   → only delivered purchases (lots, pricing, goats)
 ///   Trading ledger     → only bills, payments and what is pending
 ///   Palai profile      → the existing Palai screen
@@ -58,28 +58,82 @@ class _CustomerHubProfileScreenState extends State<CustomerHubProfileScreen> {
 
   void _push(Widget screen) => Navigator.of(context).push(fastRoute(screen));
 
-  /// The existing Wait on Delivery customer screen (Trading ▸ Goat stock),
-  /// already opened for this customer.
-  void _openWait(CustomerAccount a) {
-    final g = a.wait;
-    if (g == null) return;
-    _push(WaitDeliveryCustomerScreen(
+  /// This customer's Wait on Delivery goats.
+  Future<void> _openWait(CustomerAccount a) =>
+      _openGoats(a, DeliverySection.waitOnDelivery, a.waitGroups);
+
+  /// This customer's Booking & Holding goats.
+  Future<void> _openHolding(CustomerAccount a) =>
+      _openGoats(a, DeliverySection.bookingHolding, a.bookingGroups);
+
+  /// Opens goat selection for one of [groups] in [section]. A person whose
+  /// bookings were saved under more than one name has more than one
+  /// group: they choose which one, so none of their goats is hidden.
+  Future<void> _openGoats(
+      CustomerAccount a,
+      DeliverySection section,
+      List<DeliveryGroupSummary> groups,
+      ) async {
+    if (groups.isEmpty) return;
+
+    final group = groups.length == 1
+        ? groups.single
+        : await _pickGroup(section, groups);
+    if (group == null || !mounted) return;
+
+    _push(CompleteGoatsSelectorScreen(
       farmId: widget.farmId,
-      customerKey: g.key,
-      customerName: g.name.trim().isEmpty ? a.name : g.name,
+      section: section,
+      customerKey: group.key,
+      customerName: group.name.trim().isEmpty ? a.name : group.name,
     ));
   }
 
-  /// The existing Booking & Holding customer screen (Trading ▸ Goat stock),
-  /// already opened for this customer.
-  void _openHolding(CustomerAccount a) {
-    final g = a.booking;
-    if (g == null) return;
-    _push(BookingDeliveryCustomerScreen(
-      farmId: widget.farmId,
-      customerKey: g.key,
-      customerName: g.name.trim().isEmpty ? a.name : g.name,
-    ));
+  Future<DeliveryGroupSummary?> _pickGroup(
+      DeliverySection section,
+      List<DeliveryGroupSummary> groups,
+      ) {
+    String goats(int n) => n == 1 ? '1 goat' : '$n goats';
+    String bookings(int n) => n == 1 ? '1 booking' : '$n bookings';
+
+    return showModalBottomSheet<DeliveryGroupSummary>(
+      context: context,
+      backgroundColor: Colors.white,
+      showDragHandle: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (sheetContext) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 0, 20, 8),
+              child: Text(section.title, style: AppTheme.heading(size: 16)),
+            ),
+            for (final g in groups)
+              ListTile(
+                leading: HubIconBox(icon: section.icon, color: section.color),
+                title: Text(
+                  g.name.trim().isEmpty ? 'Customer' : g.name,
+                  style: AppTheme.heading(size: 13.5),
+                ),
+                subtitle: Text(
+                  '${goats(g.goatCount)} · ${bookings(g.bookingCount)}',
+                  style: AppTheme.body(size: 11),
+                ),
+                trailing: const Icon(
+                  Icons.chevron_right_rounded,
+                  color: AppColors.textGrey,
+                ),
+                onTap: () => Navigator.of(sheetContext).pop(g),
+              ),
+            const SizedBox(height: 8),
+          ],
+        ),
+      ),
+    );
   }
 
   void _openHistory(CustomerAccount a) {
@@ -240,7 +294,7 @@ class _CustomerHubProfileScreenState extends State<CustomerHubProfileScreen> {
                 : '${goats(a.waitGoats)} · ${bookings(waitCount)}',
             value: waitCount == 0 ? null : hubMoney(a.waitDue),
             valueNote: waitCount == 0 ? null : 'due (est.)',
-            onTap: a.wait == null ? null : () => _openWait(a),
+            onTap: a.waitGroups.isEmpty ? null : () => unawaited(_openWait(a)),
           ),
           _Entry(
             icon: Icons.event_available_outlined,
@@ -251,7 +305,9 @@ class _CustomerHubProfileScreenState extends State<CustomerHubProfileScreen> {
                 : '${goats(a.holdingGoats)} · ${bookings(holdCount)}',
             value: holdCount == 0 ? null : hubMoney(a.holdingDue),
             valueNote: holdCount == 0 ? null : 'due today (est.)',
-            onTap: a.booking == null ? null : () => _openHolding(a),
+            onTap: a.bookingGroups.isEmpty
+                ? null
+                : () => unawaited(_openHolding(a)),
           ),
         ]),
 

@@ -9,6 +9,7 @@ import 'package:mygoatfarms/models/goat_model.dart';
 import 'package:mygoatfarms/models/sale_model.dart';
 import 'package:mygoatfarms/models/sale_settlement.dart';
 import 'package:mygoatfarms/models/wait_delivery_group.dart';
+import 'package:mygoatfarms/services/firestore_service.dart';
 import 'package:mygoatfarms/services/goat_service.dart';
 import 'package:mygoatfarms/widgets/lot_origin_card.dart';
 import 'package:mygoatfarms/widgets/excess_action_picker.dart';
@@ -18,6 +19,7 @@ import 'package:mygoatfarms/screens/palai/fullscreen_image_viewer.dart';
 import 'package:mygoatfarms/services/wait_delivery_service.dart';
 import 'package:mygoatfarms/widgets/edit_wait_booking_sheet.dart';
 import 'package:mygoatfarms/screens/trading/own_palai/own_palai_goat_profile_screen.dart';
+import 'package:mygoatfarms/screens/home/delivery_flow/delivery_section.dart';
 
 /// The figures of a booking that other fields on this screen are filled in
 /// from (see [_WaitDeliveryCustomerScreenState._syncBookingFields]).
@@ -31,8 +33,11 @@ double fixed,
 
 /// Wait on Delivery — one customer.
 ///
-/// Flow: Goat Stock -> Wait on Delivery tab (customers) -> this screen
-/// (that customer's goats, grouped by booking) -> Deliver All at Once.
+/// Flow: Wait on Delivery (customers) -> customer profile -> Wait on
+/// Delivery -> select goats -> THIS SCREEN: a photo + age card for each
+/// selected goat ([DeliveryGoatUpdatesCard]), then the bookings with
+/// their calculation -> Complete Sale -> receipts (view / download /
+/// share).
 ///
 /// A booking (Sale) has one rate — or one agreed [Sale.isFixedPrice]
 /// price — one advance and one pickup weight, so all of its goats are
@@ -168,6 +173,9 @@ class _WaitDeliveryCustomerScreenState
   /// each other.
   List<WaitDeliverySale> _ordered = const <WaitDeliverySale>[];
 
+  /// Photo + age per goat, saved when the sale is completed.
+  final DeliveryGoatUpdates _goatUpdates = DeliveryGoatUpdates();
+
   bool _submitted = false;
   bool _delivering = false;
 
@@ -188,6 +196,8 @@ class _WaitDeliveryCustomerScreenState
     for (final controller in _discounts.values) {
       controller.dispose();
     }
+
+    _goatUpdates.dispose();
 
     super.dispose();
   }
@@ -686,6 +696,14 @@ class _WaitDeliveryCustomerScreenState
       return;
     }
 
+    final pickedIds = <String>{for (final entry in picked) entry.id};
+    final goatProblem = _goatUpdates.validate(pickedIds);
+
+    if (goatProblem != null) {
+      _snack(goatProblem, error: true);
+      return;
+    }
+
     final confirmed = await _confirmSheet(customer, picked);
 
     if (confirmed != true || !mounted) return;
@@ -718,6 +736,25 @@ class _WaitDeliveryCustomerScreenState
     setState(() {
       _delivering = true;
     });
+
+    // The photos and ages typed at the top are saved first. If that
+    // fails, nothing is completed and the person can try again.
+    try {
+      await _goatUpdates.save(widget.farmId, pickedIds);
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _delivering = false;
+      });
+      _snack(
+        'Could not save the goat photos / ages: '
+            '${FirestoreService.instance.describeError(e)}',
+        error: true,
+      );
+      return;
+    }
+
+    if (!mounted) return;
 
     final result = await WaitDeliveryService.instance.deliverSales(
       farmId: widget.farmId,
@@ -767,6 +804,17 @@ class _WaitDeliveryCustomerScreenState
             borderRadius: BorderRadius.circular(12),
           ),
         ),
+      );
+    }
+
+    // Receipts of the bookings that were completed: view, download or
+    // share them.
+    final deliveredIds = [for (final o in result.delivered) o.saleId];
+    if (deliveredIds.isNotEmpty && mounted) {
+      await showDeliveryReceiptsSheet(
+        context,
+        farmId: widget.farmId,
+        saleIds: deliveredIds,
       );
     }
 
@@ -1440,6 +1488,19 @@ class _WaitDeliveryCustomerScreenState
           _summaryCard(customer),
 
           const SizedBox(height: 12),
+
+          DeliveryGoatUpdatesCard(
+            farmId: widget.farmId,
+            bookings: [
+              for (final entry in _picked(customer))
+                SectionBooking(sale: entry.sale, goats: entry.goats),
+            ],
+            updates: _goatUpdates,
+            color: DeliverySection.waitOnDelivery.color,
+            enabled: !_delivering,
+          ),
+
+          const SizedBox(height: 2),
 
           _selectorBar(customer),
 
@@ -2904,13 +2965,13 @@ class _WaitDeliveryCustomerScreenState
                     color: Colors.white,
                   ),
                 )
-                    : const Icon(Icons.local_shipping_outlined, size: 18),
+                    : const Icon(Icons.check_circle_outline_rounded, size: 18),
                 label: Text(
                   _delivering
-                      ? 'Delivering…'
+                      ? 'Completing…'
                       : all
-                      ? 'Deliver All at Once'
-                      : 'Deliver Selected',
+                      ? 'Complete Sale'
+                      : 'Complete Selected',
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: AppTheme.heading(
