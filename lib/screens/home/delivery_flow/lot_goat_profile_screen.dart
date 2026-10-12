@@ -14,6 +14,7 @@ import '../../../services/sale_goat_details_service.dart';
 import '../../../widgets/fast_route.dart';
 import '../../../widgets/image_source_sheet.dart';
 import '../../../widgets/lot_origin_card.dart';
+import '../../../models/trading_purchase_model.dart';
 import '../../palai/fullscreen_image_viewer.dart';
 
 /// Profile of one goat of a LOT booking or lot sale ("Goat 1", "Goat 2" —
@@ -382,9 +383,13 @@ class _LotGoatProfileScreenState extends State<LotGoatProfileScreen> {
               children: [
                 Text(goat.label, style: AppTheme.heading(size: 18)),
                 const SizedBox(height: 2),
-                Text(
-                  '${_sale.customerName} · ${_sale.lotDisplayId}',
-                  style: AppTheme.body(size: 11.5),
+                FutureBuilder<TradingPurchase?>(
+                  future: LotOriginCard.lotFor(widget.farmId, _sale.lotDocId),
+                  builder: (context, snap) => Text(
+                    '${_sale.customerName} · '
+                        '${LotIdText.label(snap.data, _sale.lotDocId)}',
+                    style: AppTheme.body(size: 11.5),
+                  ),
                 ),
                 const SizedBox(height: 6),
                 Wrap(
@@ -428,7 +433,11 @@ class _LotGoatProfileScreenState extends State<LotGoatProfileScreen> {
           action: widget.readOnly ? null : () => _addHealth(goat),
           actionLabel: 'Add record',
         ),
-        _row('Lot', _sale.lotDisplayId),
+        FutureBuilder<TradingPurchase?>(
+          future: LotOriginCard.lotFor(widget.farmId, _sale.lotDocId),
+          builder: (context, snap) =>
+              _row('Lot', LotIdText.label(snap.data, _sale.lotDocId)),
+        ),
         _row('Booking', _sale.id),
       ],
     );

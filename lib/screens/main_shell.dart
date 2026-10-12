@@ -8,6 +8,7 @@ import '../models/farm_model.dart';
 import '../widgets/app_bottom_nav.dart';
 import '../services/firestore_service.dart';
 import '../services/notification_service.dart';
+import '../services/background_refresh.dart';
 import '../services/health_reminder_scheduler.dart';
 import 'home/home_screen.dart';
 import 'palai/palai_screen.dart';
@@ -97,14 +98,6 @@ class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
     unawaited(HealthReminderScheduler.instance.runDueCheck(farmId));
   }
 
-  /// Requests notification permission and saves this device's FCM token
-  /// under the current farm, so the backend notification engine (see
-  /// NotificationService docs) knows where to deliver pushes.
-  ///
-  /// Runs every time MainShell is reached (app start, or right after
-  /// login) rather than only once at registration — this is what keeps
-  /// a rotated/expired token fresh and re-enables a device that was
-  /// disabled on a previous logout.
   void _watchFarmAccess(String farmId) {
     _farmAccessSub?.cancel();
     _farmAccessRedirected = false;
@@ -127,12 +120,22 @@ class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
     );
   }
 
+  /// Requests notification permission, starts the background refresh
+  /// job and re-arms the health digest.
+  ///
+  /// Runs every time MainShell is reached (app start, or right after
+  /// login) rather than only once at registration — this is what
+  /// re-enables a device that was disabled on a previous logout.
   Future<void> _initPushNotifications() async {
     final farmId = await FirestoreService.instance.currentFarmId();
     if (farmId == null || !mounted) return;
     setState(() => _farmId = farmId);
     _watchFarmAccess(farmId);
     await NotificationService.instance.initForFarm(farmId);
+
+    // Keeps notifications coming while the app is closed: refreshes the
+    // health digest and shows new feed items every few hours.
+    unawaited(BackgroundRefresh.start());
 
     // Re-arm any health due-date reminders lost to a device reboot, and
     // backfill Firestore's notification history for anything already

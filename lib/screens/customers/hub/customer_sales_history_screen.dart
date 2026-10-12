@@ -6,7 +6,9 @@ import '../../../models/customer_sales_history.dart';
 import '../../../models/sale_model.dart';
 import '../../../services/customer_account_service.dart';
 import '../../../services/sale_goat_details_service.dart';
+import '../../../models/trading_purchase_model.dart';
 import '../../../widgets/fast_route.dart';
+import '../../../widgets/lot_origin_card.dart';
 import '../../home/delivery_flow/lot_goat_profile_screen.dart';
 import '../../palai/fullscreen_image_viewer.dart';
 import '../../trading/sale_receipt_screen.dart';
@@ -307,7 +309,13 @@ class _CustomerSalesHistoryScreenState
                     ),
                     const SizedBox(width: 10),
                     Expanded(
-                      child: Text(lot.lotId, style: AppTheme.heading(size: 13)),
+                      child: lot.lotId == CustomerSalesHistory.unknownLot
+                          ? Text(lot.lotId, style: AppTheme.heading(size: 13))
+                          : LotIdText(
+                        farmId: widget.farmId,
+                        lotDocId: LotIdText.docIdFromLotNumber(lot.lotId),
+                        style: AppTheme.heading(size: 13),
+                      ),
                     ),
                     Text(
                       '${lot.goats} goat${lot.goats == 1 ? '' : 's'} · '
@@ -504,17 +512,20 @@ class _CustomerSalesHistoryScreenState
     rows.add(const SizedBox(height: 8));
     rows.add(_Heading(l.sale.isLotSale ? 'Lot' : 'Goats'));
     if (l.sale.isLotSale) {
-      rows.add(_Row(
-        l.sale.lotDisplayId,
-        '${l.goatCount} goat${l.goatCount == 1 ? '' : 's'}',
-        sub: l.sourceLabel.isEmpty ? null : l.sourceLabel,
+      rows.add(FutureBuilder<TradingPurchase?>(
+        future: LotOriginCard.lotFor(widget.farmId, l.sale.lotDocId),
+        builder: (context, snap) => _Row(
+          LotIdText.label(snap.data, l.sale.lotDocId),
+          '${l.goatCount} goat${l.goatCount == 1 ? '' : 's'}',
+          sub: l.sourceLabel.isEmpty ? null : l.sourceLabel,
+        ),
       ));
       // The photo / age / weight of each goat, taken on the sale's Goat
       // Photos step (none for older lot sales).
       rows.add(_LotSaleGoats(farmId: widget.farmId, sale: l.sale));
     } else {
       for (final g in l.goats) {
-        rows.add(_GoatTile(goat: g));
+        rows.add(_GoatTile(goat: g, farmId: widget.farmId));
       }
     }
 
@@ -556,9 +567,17 @@ class _CustomerSalesHistoryScreenState
 /// One goat the customer bought: photo (tap to enlarge), tag, lot, and
 /// breed · gender · age · weight.
 class _GoatTile extends StatelessWidget {
-  const _GoatTile({required this.goat, this.health = '', this.onTap});
+  const _GoatTile({
+    required this.goat,
+    this.health = '',
+    this.onTap,
+    this.farmId = '',
+  });
 
   final SoldGoatLine goat;
+
+  /// Used to show the lot's supplier next to its number.
+  final String farmId;
 
   /// Latest health status (lot sale goats).
   final String health;
@@ -618,7 +637,16 @@ class _GoatTile extends StatelessWidget {
                       Expanded(
                         child: Text(goat.tag, style: AppTheme.heading(size: 13)),
                       ),
-                      if (goat.lotId.isNotEmpty)
+                      if (goat.lotId.isNotEmpty &&
+                          goat.lotId != CustomerSalesHistory.unknownLot &&
+                          farmId.isNotEmpty)
+                        Flexible(
+                          child: LotIdText(
+                            farmId: farmId,
+                            lotDocId: LotIdText.docIdFromLotNumber(goat.lotId),
+                          ),
+                        )
+                      else if (goat.lotId.isNotEmpty)
                         Text(goat.lotId, style: AppTheme.body(size: 10.5)),
                     ],
                   ),
@@ -670,6 +698,7 @@ class _LotSaleGoats extends StatelessWidget {
           children: [
             for (final g in goats)
               _GoatTile(
+                farmId: farmId,
                 goat: SoldGoatLine(
                   tag: g.label,
                   lotId: sale.lotDisplayId,

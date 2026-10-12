@@ -3,7 +3,6 @@ import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
 
 import 'package:mygoatfarms/app_theme.dart';
-import 'package:mygoatfarms/goat_icons.dart';
 import 'package:mygoatfarms/models/expense_categories.dart';
 import 'package:mygoatfarms/models/goat_model.dart';
 import 'package:mygoatfarms/models/sale_model.dart';
@@ -11,15 +10,15 @@ import 'package:mygoatfarms/models/sale_settlement.dart';
 import 'package:mygoatfarms/models/wait_delivery_group.dart';
 import 'package:mygoatfarms/services/firestore_service.dart';
 import 'package:mygoatfarms/services/goat_service.dart';
+import 'package:mygoatfarms/services/sale_goat_details_service.dart';
 import 'package:mygoatfarms/widgets/lot_origin_card.dart';
 import 'package:mygoatfarms/widgets/excess_action_picker.dart';
 import 'package:mygoatfarms/widgets/fast_route.dart';
 import 'package:mygoatfarms/widgets/sale_actions.dart';
-import 'package:mygoatfarms/screens/palai/fullscreen_image_viewer.dart';
 import 'package:mygoatfarms/services/wait_delivery_service.dart';
-import 'package:mygoatfarms/widgets/edit_wait_booking_sheet.dart';
 import 'package:mygoatfarms/screens/trading/own_palai/own_palai_goat_profile_screen.dart';
 import 'package:mygoatfarms/screens/home/delivery_flow/delivery_section.dart';
+import 'package:mygoatfarms/screens/home/delivery_flow/lot_goat_profile_screen.dart';
 
 /// The figures of a booking that other fields on this screen are filled in
 /// from (see [_WaitDeliveryCustomerScreenState._syncBookingFields]).
@@ -34,10 +33,15 @@ double fixed,
 /// Wait on Delivery — one customer.
 ///
 /// Flow: Wait on Delivery (customers) -> customer profile -> Wait on
-/// Delivery -> select goats -> THIS SCREEN: a photo + age card for each
-/// selected goat ([DeliveryGoatUpdatesCard]), then the bookings with
-/// their calculation -> Complete Sale -> receipts (view / download /
-/// share).
+/// Delivery -> select goats -> THIS SCREEN: ONE card for the whole sale —
+/// every selected goat (photo, lot and supplier, booking, locked rate,
+/// pickup weight, value), the bookings, one transport, one discount, one
+/// calculation and one "received now" -> Complete Sale -> receipts (view
+/// / download / share).
+///
+/// Every booking is still saved as its own sale: the shared fields are
+/// split onto the bookings (see [_WaitDeliveryCustomerScreenState
+/// ._applySharedFields]).
 ///
 /// A booking (Sale) has one rate — or one agreed [Sale.isFixedPrice]
 /// price — one advance and one pickup weight, so all of its goats are
@@ -173,8 +177,26 @@ class _WaitDeliveryCustomerScreenState
   /// each other.
   List<WaitDeliverySale> _ordered = const <WaitDeliverySale>[];
 
-  /// Photo + age per goat, saved when the sale is completed.
+  /// New photo per goat, saved (with the weights) when the sale is
+  /// completed.
   final DeliveryGoatUpdates _goatUpdates = DeliveryGoatUpdates();
+
+  // ONE CARD: the whole sale has ONE transport, ONE discount and ONE
+  // "received now" field. They are split onto the bookings behind the
+  // scenes (see [_applySharedFields]), because every booking is still
+  // saved as its own sale (receipt, finance, lot profit).
+  final TextEditingController _sharedTransport = TextEditingController();
+  final TextEditingController _sharedDiscount = TextEditingController();
+  final TextEditingController _sharedReceived = TextEditingController();
+
+  /// False while the discount still shows the bookings' own discounts.
+  bool _discountTouched = false;
+
+  /// False while "received now" follows the total due by itself.
+  bool _receivedTouched = false;
+
+  /// One live stream per lot booking's goats ("Goat 1..N").
+  final Map<String, Stream<List<SaleGoatDetail>>> _lotGoatStreams = {};
 
   /// Newest weight on record per goat (and `lot:<saleId>` totals), from
   /// the goats' profiles — what the pickup-weight fields start from.
@@ -209,6 +231,9 @@ class _WaitDeliveryCustomerScreenState
     }
 
     _goatUpdates.dispose();
+    _sharedTransport.dispose();
+    _sharedDiscount.dispose();
+    _sharedReceived.dispose();
 
     super.dispose();
   }
@@ -273,20 +298,42 @@ class _WaitDeliveryCustomerScreenState
     });
   }
 
-  /// Pickup-weight field for a booking made from a lot. Goats in a lot are
-  /// not weighed one by one, so the whole booking has ONE total weight,
-  /// starting from the weight recorded when it was booked. Kept in
-  /// [_weights] (under a `lot:` key) so it is disposed with the rest.
-  TextEditingController _lotWeightControllerFor(WaitDeliverySale entry) {
-    final key = 'lot:${entry.id}';
+  /// Pickup weight of "Goat [index]" of a lot booking. Starts from the
+  /// goat's saved weight, or an even share of the booked weight.
+  TextEditingController _lotGoatWeightControllerFor(
+      WaitDeliverySale entry,
+      int index,
+      ) {
+    final key = 'lot:${entry.id}:$index';
     return _weights.putIfAbsent(key, () {
-      final weight = _latest[key] ?? entry.bookedWeight;
+      final share = entry.goatCount <= 0
+          ? 0.0
+          : (entry.bookedWeight / entry.goatCount * 100).round() / 100;
+      final weight = _latest[key] ?? share;
       final controller = TextEditingController(
         text: weight <= 0 ? '' : _trim(weight),
       );
       _weightInitial[key] = controller.text;
       return controller;
     });
+  }
+
+  double _lotGoatWeightOf(WaitDeliverySale entry, int index) {
+    return double.tryParse(
+      _lotGoatWeightControllerFor(entry, index).text.trim(),
+    ) ??
+        0;
+  }
+
+  /// True when a selected goat of [entry] has no pickup weight yet.
+  bool _missingWeight(WaitDeliverySale entry) {
+    if (entry.isLotSale) {
+      for (var i = 1; i <= entry.goatCount; i++) {
+        if (_lotGoatWeightOf(entry, i) <= 0) return true;
+      }
+      return false;
+    }
+    return entry.goats.any((goat) => _weightOf(goat) <= 0);
   }
 
   double _weightOf(Goat goat) {
@@ -297,12 +344,11 @@ class _WaitDeliveryCustomerScreenState
   /// adding decimals (34.5 + 12.3) never leaves float noise in the total.
   double _pickupWeightOf(WaitDeliverySale entry) {
     if (entry.isLotSale) {
-      final typed = double.tryParse(
-        _lotWeightControllerFor(entry).text.trim(),
-      ) ??
-          0;
-
-      return (typed * 1000).round() / 1000;
+      var total = 0.0;
+      for (var i = 1; i <= entry.goatCount; i++) {
+        total += _lotGoatWeightOf(entry, i);
+      }
+      return (total * 1000).round() / 1000;
     }
 
     final sum = entry.goats.fold<double>(
@@ -511,19 +557,154 @@ class _WaitDeliveryCustomerScreenState
     return left <= 0 ? 0 : left;
   }
 
-  /// While Sell on Credit is off, a booking's amount field simply follows
-  /// its full remaining amount as pickup weight changes, until the
-  /// person types their own figure.
-  void _syncAutoAmount(WaitDeliverySale entry) {
-    if (_onCredit || _amountEdited.contains(entry.id)) return;
+  /// Amounts received now come from the one "Received now" field (see
+  /// [_applySharedFields]); nothing to do per booking.
+  void _syncAutoAmount(WaitDeliverySale entry) {}
 
-    final due = _remainingOf(entry);
-    final text = due > 0 ? _plainMoney(due) : '';
-    final controller = _amountControllerFor(entry);
+  // ---------------------------------------------------------------------------
+  // ONE CARD — shared Transport / Discount / Received now
+  // ---------------------------------------------------------------------------
 
-    if (controller.text != text) {
-      controller.text = text;
+  double _numberIn(TextEditingController controller) {
+    final value = double.tryParse(controller.text.trim()) ?? 0;
+    return value <= 0 ? 0 : Sale.roundMoney(value);
+  }
+
+  /// Splits [total] in proportion to [weights], to the paisa. The rounding
+  /// remainder goes on the last share, so the shares always add up to
+  /// [total]. Equal shares when every weight is 0.
+  static List<double> _split(double total, List<double> weights) {
+    if (weights.isEmpty) return const <double>[];
+    final sum = weights.fold<double>(0, (a, b) => a + b);
+    final out = <double>[];
+    var given = 0.0;
+    for (var i = 0; i < weights.length; i++) {
+      if (i == weights.length - 1) {
+        out.add(Sale.roundMoney(total - given));
+        break;
+      }
+      final share = sum <= 0
+          ? Sale.roundMoney(total / weights.length)
+          : Sale.roundMoney(total * weights[i] / sum);
+      out.add(share);
+      given = Sale.roundMoney(given + share);
     }
+    return out;
+  }
+
+  /// Puts the shared fields onto the selected bookings:
+  ///
+  ///  * Transport — split by number of goats.
+  ///  * Discount  — each booking's own booking discount until the field is
+  ///    changed; after that the typed total is split by goat value.
+  ///  * Received now — follows the total due while Sell on Credit is off
+  ///    (until typed in); it pays the OLDEST booking first, then the next.
+  ///
+  /// Every booking then works exactly as before (settlement, extra
+  /// advance moved between bookings, credit), so what is saved is what is
+  /// shown.
+  void _applySharedFields(WaitDeliveryCustomer customer) {
+    final picked = _picked(customer);
+    if (picked.isEmpty) return;
+
+    String plain(double v) => v > 0 ? _plainMoney(v) : '';
+
+    if (!_discountTouched) {
+      final own = Sale.roundMoney(
+        picked.fold<double>(0, (t, e) => t + e.bookingDiscount),
+      );
+      if (_sharedDiscount.text != plain(own)) {
+        _sharedDiscount.text = plain(own);
+      }
+    }
+
+    final transports = _split(
+      _numberIn(_sharedTransport),
+      [for (final e in picked) e.goatCount.toDouble()],
+    );
+    final discounts = _discountTouched
+        ? _split(
+      _numberIn(_sharedDiscount),
+      [for (final e in picked) e.saleValueAt(_pickupWeightOf(e))],
+    )
+        : [for (final e in picked) e.bookingDiscount];
+
+    for (var i = 0; i < picked.length; i++) {
+      final transport = _transportControllerFor(picked[i]);
+      if (transport.text != plain(transports[i])) {
+        transport.text = plain(transports[i]);
+      }
+      final discount = _discountControllerFor(picked[i]);
+      if (discount.text != plain(discounts[i])) {
+        discount.text = plain(discounts[i]);
+      }
+    }
+
+    final totalDue = _totalRemaining(picked);
+
+    if (!_onCredit && !_receivedTouched &&
+        _sharedReceived.text != plain(totalDue)) {
+      _sharedReceived.text = plain(totalDue);
+    }
+
+    // Oldest booking first.
+    final oldestFirst = [...picked]
+      ..sort((a, b) => a.bookedAt.compareTo(b.bookedAt));
+    var left = _numberIn(_sharedReceived);
+
+    for (final entry in oldestFirst) {
+      final due = _remainingOf(entry);
+      final take = Sale.roundMoney(due <= 0 ? 0 : (left < due ? left : due));
+      left = Sale.roundMoney(left - take);
+      final controller = _amountControllerFor(entry);
+      if (controller.text != plain(take)) controller.text = plain(take);
+      _amountEdited.add(entry.id);
+    }
+  }
+
+  /// The one "Received now" figure is valid: never more than the total
+  /// due, and the full total while Sell on Credit is off.
+  bool _receivedValid(List<WaitDeliverySale> picked) {
+    final due = _totalRemaining(picked);
+    if (due <= 0) return true;
+    final received = _numberIn(_sharedReceived);
+    if (received > due + 0.004) return false;
+    if (!_onCredit && received < due - 0.004) return false;
+    return true;
+  }
+
+  /// The one discount is never more than the goat value of the sale.
+  bool _sharedDiscountValid(List<WaitDeliverySale> picked) {
+    if (!_discountTouched) return true;
+    final value = picked.fold<double>(
+      0,
+          (t, e) => t + e.saleValueAt(_pickupWeightOf(e)),
+    );
+    return value <= 0 || _numberIn(_sharedDiscount) <= value + 0.004;
+  }
+
+  /// Every selected goat with the weight typed here, to save on Complete.
+  List<DeliveryGoatWeight> _goatWeights(List<WaitDeliverySale> picked) {
+    return [
+      for (final e in picked)
+        if (e.isLotSale)
+          for (var i = 1; i <= e.goatCount; i++)
+            DeliveryGoatWeight.lot(
+              saleId: e.id,
+              index: i,
+              lotDisplayId: e.sale.lotDisplayId,
+              weight: _lotGoatWeightOf(e, i),
+              lastWeight: _latest['lot:${e.id}:$i'] ?? 0,
+            )
+        else
+          for (final g in e.goats)
+            DeliveryGoatWeight.registered(
+              goatId: g.id,
+              saleId: e.id,
+              weight: _weightOf(g),
+              lastWeight: _lastWeightOf(g),
+            ),
+    ];
   }
 
   /// Ticks new bookings, drops bookings that are no longer waiting, and
@@ -550,6 +731,8 @@ class _WaitDeliveryCustomerScreenState
         _syncAutoAmount(entry);
       }
     }
+
+    _applySharedFields(customer);
   }
 
   /// Resets the fields that were filled in from a booking's figures when
@@ -575,15 +758,20 @@ class _WaitDeliveryCustomerScreenState
     // different number of goats the old total no longer makes sense.
     if (entry.isLotSale &&
         (before.goats != now.goats || before.weight != now.weight)) {
-      final controller = _weights['lot:${entry.id}'];
-
-      if (controller != null) {
-        controller.text = entry.bookedWeight <= 0 ? '' : _trim(entry.bookedWeight);
-        _weightInitial['lot:${entry.id}'] = controller.text;
+      // Goats were split off: start again from an even share of the new
+      // booked weight and ask again for the remaining goats' weights.
+      final share = entry.goatCount <= 0
+          ? 0.0
+          : (entry.bookedWeight / entry.goatCount * 100).round() / 100;
+      for (var i = 1; i <= entry.goatCount; i++) {
+        final key = 'lot:${entry.id}:$i';
+        _latest.remove(key);
+        final controller = _weights[key];
+        if (controller != null) {
+          controller.text = share <= 0 ? '' : _trim(share);
+          _weightInitial[key] = controller.text;
+        }
       }
-
-      // Goats were split off: ask again for the remaining goats' weights.
-      _latest.remove('lot:${entry.id}');
       _latestRequested.remove(entry.id);
     }
 
@@ -599,47 +787,6 @@ class _WaitDeliveryCustomerScreenState
 
     // Let the amount received follow the new remaining amount again.
     _amountEdited.remove(entry.id);
-  }
-
-  /// Edit booking: pick how many (or which) goats go out now and what
-  /// happens to the rest. The booking is trimmed to the goats being
-  /// delivered; the person then delivers it as usual.
-  Future<void> _openEditBooking(WaitDeliverySale entry) async {
-    if (_delivering) return;
-
-    final result = await showEditWaitBookingSheet(
-      context,
-      farmId: widget.farmId,
-      sale: entry.sale,
-      goats: entry.goats,
-    );
-
-    if (result == null || !mounted) return;
-
-    setState(() {
-      // The goats to deliver stay on this booking, so tick it. A kept
-      // booking is marked as seen WITHOUT being ticked, otherwise it would
-      // be selected for delivery automatically as a "new" booking.
-      _selected.add(result.deliverSaleId);
-
-      final kept = result.keptSaleId;
-
-      if (kept != null) {
-        _seen.add(kept);
-        _selected.remove(kept);
-      }
-    });
-
-    final deliver = _goats(result.deliverCount);
-    final left = _goats(result.leftoverCount);
-
-    _snack(
-      result.keptSaleId != null
-          ? 'Booking ${result.deliverSaleId} now has $deliver to deliver. '
-          '$left kept on booking ${result.keptSaleId}.'
-          : 'Booking ${result.deliverSaleId} now has $deliver to deliver. '
-          '$left went back to stock.',
-    );
   }
 
   List<WaitDeliverySale> _picked(WaitDeliveryCustomer customer) {
@@ -722,14 +869,12 @@ class _WaitDeliveryCustomerScreenState
 
     if (picked.isEmpty) return;
 
-    final missingWeight = picked.any(
-          (entry) => entry.isLotSale
-          ? _pickupWeightOf(entry) <= 0
-          : entry.goats.any((goat) => _weightOf(goat) <= 0),
-    );
+    final missingWeight = picked.any(_missingWeight);
 
-    final invalidAmount = picked.any((entry) => !_amountValid(entry));
-    final invalidDiscount = picked.any((entry) => !_discountValid(entry));
+    final invalidAmount = !_receivedValid(picked) ||
+        picked.any((entry) => !_amountValid(entry));
+    final invalidDiscount = !_sharedDiscountValid(picked) ||
+        picked.any((entry) => !_discountValid(entry));
 
     if (missingWeight || invalidDiscount || invalidAmount) {
       setState(() {
@@ -745,14 +890,6 @@ class _WaitDeliveryCustomerScreenState
         error: true,
       );
 
-      return;
-    }
-
-    final pickedIds = <String>{for (final entry in picked) entry.id};
-    final goatProblem = _goatUpdates.validate(pickedIds);
-
-    if (goatProblem != null) {
-      _snack(goatProblem, error: true);
       return;
     }
 
@@ -789,17 +926,24 @@ class _WaitDeliveryCustomerScreenState
       _delivering = true;
     });
 
-    // The photos and ages typed at the top are saved first. If that
+    // The new photos and weights are saved onto the goats first. If that
     // fails, nothing is completed and the person can try again.
+    final goatWeights = _goatWeights(picked);
     try {
-      await _goatUpdates.save(widget.farmId, pickedIds);
+      await _goatUpdates.save(widget.farmId, goatWeights);
+
+      // Saved: a second try must not save the same weights again.
+      for (final g in goatWeights) {
+        if (g.weight <= 0) continue;
+        _latest[g.isLot ? 'lot:${g.saleId}:${g.index}' : g.goatId] = g.weight;
+      }
     } catch (e) {
       if (!mounted) return;
       setState(() {
         _delivering = false;
       });
       _snack(
-        'Could not save the goat photos / ages: '
+        'Could not save the goat photos / weights: '
             '${FirestoreService.instance.describeError(e)}',
         error: true,
       );
@@ -1528,6 +1672,8 @@ class _WaitDeliveryCustomerScreenState
   // ===========================================================================
 
   Widget _body(WaitDeliveryCustomer customer) {
+    final picked = _picked(customer);
+
     // A plain scroll view (not a lazy list) so every pickup-weight /
     // amount field stays mounted and keeps its value while scrolling.
     return SingleChildScrollView(
@@ -1539,38 +1685,583 @@ class _WaitDeliveryCustomerScreenState
 
           const SizedBox(height: 12),
 
-          DeliveryGoatUpdatesCard(
-            farmId: widget.farmId,
-            bookings: [
-              for (final entry in _picked(customer))
-                SectionBooking(sale: entry.sale, goats: entry.goats),
-            ],
-            updates: _goatUpdates,
-            color: DeliverySection.waitOnDelivery.color,
-            enabled: !_delivering,
-          ),
-
-          const SizedBox(height: 2),
-
-          _selectorBar(customer),
-
-          const SizedBox(height: 9),
-
-          for (var i = 0; i < customer.sales.length; i++) ...[
-            if (i > 0) const SizedBox(height: 10),
-            _bookingCard(customer.sales[i]),
-          ],
+          _saleCard(customer, picked),
 
           const SizedBox(height: 12),
 
-          if (_picked(customer).isNotEmpty) ...[
-            _totalsCard(_picked(customer)),
-            const SizedBox(height: 12),
-          ],
-
-          _batchPaymentCard(_picked(customer)),
+          _batchPaymentCard(picked),
         ],
       ),
+    );
+  }
+
+  // ===========================================================================
+  // ONE CARD — every selected goat, every booking, one calculation
+  // ===========================================================================
+
+  Widget _saleCard(
+      WaitDeliveryCustomer customer,
+      List<WaitDeliverySale> picked,
+      ) {
+    final goats = _goatCountOf(picked);
+    final anyDue = picked.any((entry) => _remainingOf(entry) > 0);
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(14),
+      decoration: AppTheme.card(radius: 18).copyWith(
+        border: Border.all(color: AppColors.darkGreen.withValues(alpha: 0.35)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Text(
+            '${customer.name} · ${_goats(goats)} · ${picked.length} '
+                '${picked.length == 1 ? 'booking' : 'bookings'}',
+            style: AppTheme.heading(size: 15),
+          ),
+          Text(
+            'Wait on Delivery · one bill for every selected goat',
+            style: AppTheme.body(size: 10.5),
+          ),
+
+          const SizedBox(height: 14),
+
+          // 1. GOATS — photo, lot (supplier), booking, rate, weight, value.
+          _sectionLabel('Goats · photo & pickup weight'),
+          for (final entry in picked)
+            if (entry.isLotSale)
+              _lotGoatLines(entry)
+            else
+              for (final goat in entry.goats) _goatLine(entry, goat),
+
+          const Divider(height: 22, color: AppColors.divider),
+
+          // 2. BOOKINGS — lot, supplier, locked rate, advance, ⋮ menu.
+          _sectionLabel('Bookings'),
+          for (final entry in picked) _bookingLine(entry),
+
+          const Divider(height: 22, color: AppColors.divider),
+
+          // 3. CHARGES — one transport and one discount for the sale.
+          _sectionLabel('Charges'),
+          _sharedMoneyField(
+            controller: _sharedTransport,
+            label: 'Transportation (optional)',
+            icon: Icons.local_shipping_outlined,
+            helper: 'Added to the bill, shared by the goats — not farm '
+                'revenue.',
+            onChanged: (_) => setState(() {}),
+          ),
+          const SizedBox(height: 10),
+          _sharedMoneyField(
+            controller: _sharedDiscount,
+            label: 'Discount',
+            icon: Icons.local_offer_outlined,
+            helper: _sharedDiscountValid(picked)
+                ? 'Off the goat value only. Starts at the booking '
+                'discounts; shared by goat value.'
+                : null,
+            error: _sharedDiscountValid(picked)
+                ? null
+                : 'More than the goat value of this sale.',
+            onChanged: (_) => setState(() => _discountTouched = true),
+          ),
+
+          const Divider(height: 22, color: AppColors.divider),
+
+          // 4. CALCULATION
+          _sectionLabel('Calculation'),
+          _calculation(picked),
+
+          if (anyDue) ...[
+            const SizedBox(height: 12),
+            _receivedField(picked),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _goatLine(WaitDeliverySale entry, Goat goat) {
+    final weight = _weightOf(goat);
+    final last = _lastWeightOf(goat);
+    final breed = goat.breed.trim();
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          DeliveryGoatPhoto(
+            updates: _goatUpdates,
+            photoKey: 'g:${goat.id}',
+            currentPhoto: goat.photo,
+            color: AppColors.stockTeal,
+            enabled: !_delivering,
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: InkWell(
+              onTap: _delivering ? null : () => _openProfile(goat),
+              borderRadius: BorderRadius.circular(8),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    breed.isEmpty ? goat.id : '${goat.id} · $breed',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: AppTheme.heading(size: 13),
+                  ),
+                  LotIdText(
+                    farmId: widget.farmId,
+                    lotDocId: goat.purchaseId,
+                    style: AppTheme.body(
+                      size: 10.5,
+                      color: AppColors.info,
+                      weight: FontWeight.w600,
+                    ),
+                  ),
+                  Text(
+                    'Booking ${entry.id} · '
+                        '${_money.format(entry.ratePerKg)}/kg',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: AppTheme.body(size: 10.5),
+                  ),
+                  Text(
+                    last > 0 ? 'Last ${_trim(last)} kg' : 'No weight on record',
+                    style: AppTheme.body(size: 10),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(width: 8),
+          _weightAndValue(
+            controller: _weightControllerFor(goat),
+            weight: weight,
+            value: weight > 0 ? entry.saleValueAt(weight) : null,
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// "Goat 1..N" of a lot booking, each with its own photo and weight.
+  Widget _lotGoatLines(WaitDeliverySale entry) {
+    return StreamBuilder<List<SaleGoatDetail>>(
+      stream: _lotGoatStreams.putIfAbsent(
+        entry.id,
+            () => SaleGoatDetailsService.instance
+            .streamForSale(widget.farmId, entry.id),
+      ),
+      builder: (context, snap) {
+        final goats = SaleGoatDetailsService.withPlaceholders(
+          snap.data ?? const <SaleGoatDetail>[],
+          entry.goatCount,
+        ).where((g) => g.index <= entry.goatCount);
+
+        return Column(
+          children: [
+            for (final g in goats) _lotGoatLine(entry, g),
+          ],
+        );
+      },
+    );
+  }
+
+  Widget _lotGoatLine(WaitDeliverySale entry, SaleGoatDetail goat) {
+    final weight = _lotGoatWeightOf(entry, goat.index);
+    final last = _latest['lot:${entry.id}:${goat.index}'] ?? goat.weight;
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          DeliveryGoatPhoto(
+            updates: _goatUpdates,
+            photoKey: 'l:${entry.id}:${goat.index}',
+            currentPhoto: goat.hasPhoto ? goat.photo : null,
+            color: AppColors.stockTeal,
+            enabled: !_delivering,
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: InkWell(
+              onTap: _delivering
+                  ? null
+                  : () => Navigator.of(context).push(
+                fastRoute(
+                  LotGoatProfileScreen(
+                    farmId: widget.farmId,
+                    sale: entry.sale,
+                    index: goat.index,
+                  ),
+                ),
+              ),
+              borderRadius: BorderRadius.circular(8),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(goat.label, style: AppTheme.heading(size: 13)),
+                  LotIdText(
+                    farmId: widget.farmId,
+                    lotDocId: entry.sale.lotDocId,
+                    style: AppTheme.body(
+                      size: 10.5,
+                      color: AppColors.info,
+                      weight: FontWeight.w600,
+                    ),
+                  ),
+                  Text(
+                    'Booking ${entry.id} · '
+                        '${_money.format(entry.ratePerKg)}/kg',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: AppTheme.body(size: 10.5),
+                  ),
+                  Text(
+                    last > 0 ? 'Last ${_trim(last)} kg' : 'No weight on record',
+                    style: AppTheme.body(size: 10),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(width: 8),
+          _weightAndValue(
+            controller: _lotGoatWeightControllerFor(entry, goat.index),
+            weight: weight,
+            value: weight > 0 ? entry.saleValueAt(weight) : null,
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Pickup-weight field with the goat's value under it.
+  Widget _weightAndValue({
+    required TextEditingController controller,
+    required double weight,
+    required double? value,
+  }) {
+    final invalid = _submitted && weight <= 0;
+
+    OutlineInputBorder border(Color color, [double w = 1]) =>
+        OutlineInputBorder(
+          borderRadius: BorderRadius.circular(10),
+          borderSide: BorderSide(color: color, width: w),
+        );
+
+    return SizedBox(
+      width: 108,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.end,
+        children: [
+          TextField(
+            controller: controller,
+            enabled: !_delivering,
+            keyboardType: const TextInputType.numberWithOptions(decimal: true),
+            inputFormatters: [
+              FilteringTextInputFormatter.allow(RegExp(r'^\d*\.?\d{0,2}')),
+            ],
+            textAlign: TextAlign.right,
+            onChanged: (_) => setState(() {}),
+            style: AppTheme.body(
+              size: 12.5,
+              color: AppColors.textDark,
+              weight: FontWeight.w600,
+            ),
+            decoration: InputDecoration(
+              isDense: true,
+              labelText: 'Weight',
+              labelStyle: AppTheme.body(size: 10.5),
+              suffixText: 'kg',
+              suffixStyle: AppTheme.body(size: 11),
+              errorText: invalid ? 'Required' : null,
+              errorStyle: const TextStyle(fontSize: 9.5),
+              filled: true,
+              fillColor: Colors.white,
+              contentPadding:
+              const EdgeInsets.symmetric(horizontal: 10, vertical: 9),
+              border: border(_fieldBorderColor),
+              enabledBorder: border(_fieldBorderColor),
+              disabledBorder: border(AppColors.divider),
+              focusedBorder: border(AppColors.darkGreen, 1.4),
+              errorBorder: border(AppColors.error),
+              focusedErrorBorder: border(AppColors.error, 1.4),
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            value == null ? '—' : _money.format(value),
+            style: AppTheme.heading(size: 12.5, color: AppColors.darkGreen),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// One booking of the sale: its lots (with supplier), locked rate,
+  /// advance, and the Edit / Cancel deal / Delete menu.
+  Widget _bookingLine(WaitDeliverySale entry) {
+    final atSupplier = entry.isLotSale &&
+        entry.sale.sourceLocation == Sale.sourceSupplier;
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.fromLTRB(10, 8, 0, 8),
+      decoration: BoxDecoration(
+        color: AppColors.paleGreen,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: AppColors.divider),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Row(
+                  children: [
+                    Flexible(
+                      child: Text(
+                        'Booking ${entry.id}',
+                        style: AppTheme.heading(size: 13),
+                      ),
+                    ),
+                    if (entry.isFixedPrice) ...[
+                      const SizedBox(width: 6),
+                      _fixedPriceTag(),
+                    ],
+                  ],
+                ),
+                Text(
+                  '${_goats(entry.goatCount)} · Booked '
+                      '${_dateFormat.format(entry.bookedAt)}',
+                  style: AppTheme.body(size: 10.5),
+                ),
+                const SizedBox(height: 6),
+                LotOriginCard(
+                  farmId: widget.farmId,
+                  bookingId: entry.id,
+                  lotDocIds: LotOriginCard.lotsOf(entry.sale, entry.goats),
+                  goatsByLot:
+                  LotOriginCard.goatsByLotOf(entry.sale, entry.goats),
+                  showBookingHeader: false,
+                  note: entry.isLotSale
+                      ? (atSupplier ? 'At supplier' : 'At farm')
+                      : null,
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  entry.isFixedPrice
+                      ? '${_money.format(entry.sale.agreedGoatAmount)} fixed '
+                      'for ${_trim(entry.bookedWeight)} kg = '
+                      '${_money.format(entry.ratePerKg)}/kg locked'
+                      : '${_money.format(entry.ratePerKg)}/kg locked · '
+                      'booked ${_trim(entry.bookedWeight)} kg',
+                  style: AppTheme.body(
+                    size: 10.5,
+                    color: AppColors.textDark,
+                    weight: FontWeight.w600,
+                  ),
+                ),
+                Text(
+                  'Advance ${_money.format(entry.advancePaid)}'
+                      '${entry.bookingDiscount > 0 ? ' · booking discount '
+                      '${_money.format(entry.bookingDiscount)}' : ''}',
+                  style: AppTheme.body(size: 10.5),
+                ),
+              ],
+            ),
+          ),
+          SaleActionsMenu(
+            farmId: widget.farmId,
+            sale: entry.sale,
+            // The open-bookings stream refreshes this list by itself
+            // after an edit, a cancel or a delete.
+            onResult: (_) {
+              if (mounted) {
+                setState(() => _selected.remove(entry.id));
+              }
+            },
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _sharedMoneyField({
+    required TextEditingController controller,
+    required String label,
+    required IconData icon,
+    required ValueChanged<String> onChanged,
+    String? helper,
+    String? error,
+  }) {
+    return TextField(
+      controller: controller,
+      enabled: !_delivering,
+      keyboardType: const TextInputType.numberWithOptions(decimal: true),
+      inputFormatters: [
+        FilteringTextInputFormatter.allow(RegExp(r'^\d*\.?\d{0,2}')),
+      ],
+      onChanged: onChanged,
+      style: AppTheme.body(
+        size: 12.5,
+        color: AppColors.textDark,
+        weight: FontWeight.w600,
+      ),
+      decoration: InputDecoration(
+        isDense: true,
+        labelText: label,
+        labelStyle: AppTheme.body(size: 11),
+        prefixIcon: Icon(icon, size: 18),
+        prefixText: '₹ ',
+        helperText: helper,
+        helperMaxLines: 2,
+        helperStyle: AppTheme.body(size: 10),
+        errorText: error,
+        filled: true,
+        fillColor: Colors.white,
+        border: _fieldBorder(_fieldBorderColor),
+        enabledBorder: _fieldBorder(_fieldBorderColor),
+        disabledBorder: _fieldBorder(AppColors.divider),
+        focusedBorder: _fieldBorder(AppColors.darkGreen, 1.5),
+        errorBorder: _fieldBorder(AppColors.error),
+        focusedErrorBorder: _fieldBorder(AppColors.error, 1.5),
+      ),
+    );
+  }
+
+  /// Visible outline for every input on this screen (the app theme draws
+  /// fields without one).
+  static const Color _fieldBorderColor = Color(0xFF9EB3A6);
+
+  OutlineInputBorder _fieldBorder(Color color, [double width = 1.1]) {
+    return OutlineInputBorder(
+      borderRadius: BorderRadius.circular(12),
+      borderSide: BorderSide(color: color, width: width),
+    );
+  }
+
+  /// The whole sale worked out: each booking's goats at its own locked
+  /// rate, then the shared charges and every advance.
+  Widget _calculation(List<WaitDeliverySale> picked) {
+    double sum(double Function(WaitDeliverySale e) f) =>
+        Sale.roundMoney(picked.fold<double>(0, (t, e) => t + f(e)));
+
+    final booked = picked.fold<double>(0, (t, e) => t + e.bookedWeight);
+    final pickup = picked.fold<double>(0, (t, e) => t + _pickupWeightOf(e));
+    final goatValue = sum((e) => e.saleValueAt(_pickupWeightOf(e)));
+    final discount = sum(_appliedDiscountOf);
+    final transport = sum(_transportOf);
+    final advance = sum((e) => e.advancePaid);
+    final due = _totalRemaining(picked);
+    final extra = _totalExcess(picked);
+    final received = _totalReceivedNow(picked);
+    final onCredit = _totalLeftAfterReceipt(picked);
+
+    return Container(
+      padding: const EdgeInsets.all(11),
+      decoration: BoxDecoration(
+        color: AppColors.paleGreen,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: AppColors.divider),
+      ),
+      child: Column(
+        children: [
+          if (booked > 0) ...[
+            _calcRow('Booked weight', '${_trim(booked)} kg'),
+            const SizedBox(height: 6),
+          ],
+          _calcRow(
+            'Pickup weight',
+            '${_trim(pickup)} kg${_weightChange(booked, pickup)}',
+          ),
+          const Padding(
+            padding: EdgeInsets.symmetric(vertical: 7),
+            child: Divider(height: 1, color: AppColors.divider),
+          ),
+          for (final e in picked) ...[
+            _calcRow(
+              '${e.id} · ${_trim(_pickupWeightOf(e))} kg × '
+                  '${_money.format(e.ratePerKg)}',
+              _money.format(e.saleValueAt(_pickupWeightOf(e))),
+            ),
+            const SizedBox(height: 6),
+          ],
+          _calcRow('Goat value', _money.format(goatValue), emphasized: true),
+          if (discount > 0) ...[
+            const SizedBox(height: 6),
+            _calcRow('Discount', '− ${_money.format(discount)}'),
+          ],
+          if (transport > 0) ...[
+            const SizedBox(height: 6),
+            _calcRow('Transportation', '+ ${_money.format(transport)}'),
+          ],
+          const SizedBox(height: 6),
+          _calcRow(
+            'Advance paid (${picked.length} '
+                '${picked.length == 1 ? 'booking' : 'bookings'})',
+            '− ${_money.format(advance)}',
+          ),
+          const Padding(
+            padding: EdgeInsets.symmetric(vertical: 7),
+            child: Divider(height: 1, color: AppColors.divider),
+          ),
+          _calcRow('Total due', _money.format(due), emphasized: true),
+          if (extra > 0) ...[
+            const SizedBox(height: 6),
+            _calcRow(
+              'Extra (advance over the bill)',
+              _money.format(extra),
+              emphasized: true,
+            ),
+          ],
+          if (due > 0 && (received > 0 || _onCredit)) ...[
+            const SizedBox(height: 6),
+            _calcRow('Received now', '− ${_money.format(received)}'),
+            if (onCredit > 0) ...[
+              const SizedBox(height: 6),
+              _calcRow(
+                'Goes on credit',
+                _money.format(onCredit),
+                emphasized: true,
+              ),
+            ],
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _receivedField(List<WaitDeliverySale> picked) {
+    final due = _totalRemaining(picked);
+    final received = _numberIn(_sharedReceived);
+    final invalid = _submitted && !_receivedValid(picked);
+
+    return _sharedMoneyField(
+      controller: _sharedReceived,
+      label: 'Amount received now',
+      icon: Icons.payments_outlined,
+      helper: invalid
+          ? null
+          : _onCredit
+          ? 'Pays the oldest booking first; the rest goes on credit.'
+          : 'The full amount due (${_money.format(due)}). Turn on Sell '
+          'on Credit to take less.',
+      error: !invalid
+          ? null
+          : received > due
+          ? 'More than the total due (${_money.format(due)}).'
+          : 'Enter the full amount due, or turn on Sell on Credit.',
+      onChanged: (_) => setState(() => _receivedTouched = true),
     );
   }
 
@@ -1648,381 +2339,8 @@ class _WaitDeliveryCustomerScreenState
   }
 
   // ---------------------------------------------------------------------------
-  // SELECTOR
+  // CARD PIECES
   // ---------------------------------------------------------------------------
-
-  Widget _selectorBar(WaitDeliveryCustomer customer) {
-    final total = customer.sales.length;
-    final count = _picked(customer).length;
-
-    final bool? value = count == total
-        ? true
-        : count == 0
-        ? false
-        : null;
-
-    void toggleAll() {
-      if (_delivering) return;
-
-      setState(() {
-        if (count == total) {
-          _selected.clear();
-        } else {
-          _selected
-            ..clear()
-            ..addAll(customer.sales.map((entry) => entry.id));
-
-          for (final entry in customer.sales) {
-            _syncAutoAmount(entry);
-          }
-        }
-      });
-    }
-
-    return Material(
-      color: Colors.transparent,
-      child: InkWell(
-        onTap: toggleAll,
-        borderRadius: BorderRadius.circular(14),
-        child: Container(
-          padding: const EdgeInsets.fromLTRB(4, 2, 12, 2),
-          decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(14),
-            border: Border.all(color: AppColors.divider),
-          ),
-          child: Row(
-            children: [
-              Checkbox(
-                value: value,
-                tristate: true,
-                activeColor: AppColors.darkGreen,
-                visualDensity: VisualDensity.compact,
-                materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                onChanged: _delivering ? null : (_) => toggleAll(),
-              ),
-              Expanded(
-                child: Text(
-                  'Select all bookings',
-                  style: AppTheme.body(
-                    size: 11.5,
-                    color: AppColors.textDark,
-                    weight: FontWeight.w600,
-                  ),
-                ),
-              ),
-              Text(
-                '$count of $total selected',
-                style: AppTheme.body(size: 10.5),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  // ---------------------------------------------------------------------------
-  // BOOKING CARD
-  // ---------------------------------------------------------------------------
-
-  Widget _bookingCard(WaitDeliverySale entry) {
-    final selected = _selected.contains(entry.id);
-    final pickup = _pickupWeightOf(entry);
-    final due = _remainingOf(entry);
-    final excess = _excessOf(entry);
-    final atSupplier = entry.isLotSale &&
-        entry.sale.sourceLocation == Sale.sourceSupplier;
-
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.fromLTRB(4, 4, 12, 12),
-      decoration: AppTheme.card(radius: 18).copyWith(
-        border: Border.all(
-          color: selected
-              ? AppColors.darkGreen.withValues(alpha: 0.55)
-              : AppColors.divider.withValues(alpha: 0.6),
-          width: selected ? 1.4 : 1,
-        ),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          // 1. HEADER: tick + booking + booked date + live amount due.
-          InkWell(
-            onTap: _delivering
-                ? null
-                : () {
-              setState(() {
-                if (selected) {
-                  _selected.remove(entry.id);
-                } else {
-                  _selected.add(entry.id);
-                  _syncAutoAmount(entry);
-                }
-              });
-            },
-            borderRadius: BorderRadius.circular(14),
-            child: Row(
-              children: [
-                Checkbox(
-                  value: selected,
-                  activeColor: AppColors.darkGreen,
-                  materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                  onChanged: _delivering
-                      ? null
-                      : (value) {
-                    setState(() {
-                      if (value == true) {
-                        _selected.add(entry.id);
-                        _syncAutoAmount(entry);
-                      } else {
-                        _selected.remove(entry.id);
-                      }
-                    });
-                  },
-                ),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
-                        children: [
-                          Flexible(
-                            child: Text(
-                              'Booking ${entry.id}',
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: AppTheme.heading(size: 14),
-                            ),
-                          ),
-                          if (entry.isFixedPrice) ...[
-                            const SizedBox(width: 6),
-                            _fixedPriceTag(),
-                          ],
-                        ],
-                      ),
-                      Text(
-                        '${_goats(entry.goatCount)} · Booked '
-                            '${_dateFormat.format(entry.bookedAt)}',
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: AppTheme.body(size: 10.5),
-                      ),
-                    ],
-                  ),
-                ),
-                const SizedBox(width: 8),
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.end,
-                  children: [
-                    Text(
-                      _money.format(due <= 0 && excess > 0 ? excess : due),
-                      style: AppTheme.heading(
-                        size: 14,
-                        color: selected
-                            ? AppColors.darkGreen
-                            : AppColors.textGrey,
-                      ),
-                    ),
-                    Text(
-                      due <= 0 && excess > 0 ? 'Extra' : 'Due',
-                      style: AppTheme.body(size: 9.5),
-                    ),
-                  ],
-                ),
-                SaleActionsMenu(
-                  farmId: widget.farmId,
-                  sale: entry.sale,
-                  // The open-bookings stream refreshes this list by itself
-                  // after an edit, a cancel or a delete.
-                  onResult: (_) {
-                    if (mounted) {
-                      setState(() => _selected.remove(entry.id));
-                    }
-                  },
-                ),
-              ],
-            ),
-          ),
-
-
-          Padding(
-            padding: const EdgeInsets.only(left: 8),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                const SizedBox(height: 6),
-
-                // 2. PRICE: locked rate per KG, the agreed amount and
-                // weight it came from, and the advance paid.
-                Wrap(
-                  spacing: 5,
-                  runSpacing: 5,
-                  children: [
-                    _infoChip(
-                      Icons.lock_outline_rounded,
-                      '${_money.format(entry.ratePerKg)}/kg locked',
-                    ),
-                    if (entry.isFixedPrice)
-                      _infoChip(
-                        Icons.sell_outlined,
-                        '${_money.format(entry.sale.agreedGoatAmount)} '
-                            'fixed for ${_trim(entry.bookedWeight)} kg',
-                      )
-                    else if (entry.bookedWeight > 0)
-                      _infoChip(
-                        Icons.scale_outlined,
-                        'Booked ${_trim(entry.bookedWeight)} kg',
-                      ),
-                    _infoChip(
-                      Icons.payments_outlined,
-                      '${_money.format(entry.advancePaid)} advance',
-                    ),
-                  ],
-                ),
-
-                const SizedBox(height: 10),
-
-                // 3. LOTS: every lot this booking's goats came from, with
-                // supplier, purchase date and how many goats.
-                LotOriginCard(
-                  farmId: widget.farmId,
-                  bookingId: entry.id,
-                  lotDocIds: LotOriginCard.lotsOf(entry.sale, entry.goats),
-                  goatsByLot:
-                  LotOriginCard.goatsByLotOf(entry.sale, entry.goats),
-                  showBookingHeader: false,
-                  note: entry.isLotSale
-                      ? (atSupplier ? 'At supplier' : 'At farm')
-                      : null,
-                ),
-
-                const Divider(height: 18, color: AppColors.divider),
-
-                // Edit the deal or cancel it while nothing is delivered.
-                // Cancel puts the goats back in stock (or the lot) and
-                // removes the sale; the open-deals stream refreshes this
-                // list by itself.
-                Padding(
-                  padding: const EdgeInsets.only(bottom: 9),
-                  child: OpenDealButtons(
-                    farmId: widget.farmId,
-                    sale: entry.sale,
-                    onResult: (_) {
-                      if (mounted) {
-                        setState(() => _selected.remove(entry.id));
-                      }
-                    },
-                  ),
-                ),
-
-                // Deliver only some of the goats, and keep or remove the rest.
-                if (entry.goatCount > 1) _editBookingButton(entry),
-
-                // 4. GOATS: lot, last recorded weight, pickup weight and
-                // what each goat comes to at the locked rate.
-                _sectionLabel('Goats · pickup weight'),
-
-                if (entry.isLotSale)
-                  _lotRow(entry, selected)
-                else
-                  for (final goat in entry.goats)
-                    _goatRow(entry, goat, selected),
-
-                const SizedBox(height: 3),
-
-                // 5. CHARGES
-                _transportField(entry, selected),
-
-                const SizedBox(height: 10),
-
-                _discountField(entry, selected),
-
-                const SizedBox(height: 12),
-
-                // 6. CALCULATION
-                _calcBox(entry, pickup, due),
-
-                if (selected && due > 0) ...[
-                  const SizedBox(height: 10),
-                  _bookingAmountField(entry, due),
-                ],
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  /// Every ticked booking added up: weight booked vs weight now, goat
-  /// value at the locked rates, charges, what was paid and what is due.
-  Widget _totalsCard(List<WaitDeliverySale> picked) {
-    double sum(double Function(WaitDeliverySale e) f) =>
-        Sale.roundMoney(picked.fold<double>(0, (t, e) => t + f(e)));
-
-    final booked = picked.fold<double>(0, (t, e) => t + e.bookedWeight);
-    final pickup = picked.fold<double>(0, (t, e) => t + _pickupWeightOf(e));
-    final goatValue = sum((e) => e.saleValueAt(_pickupWeightOf(e)));
-    final discount = sum(_appliedDiscountOf);
-    final transport = sum(_transportOf);
-    final advance = sum((e) => e.advancePaid);
-    final due = sum(_remainingOf);
-    final extra = sum(_excessOf);
-    final goats = _goatCountOf(picked);
-
-    return Container(
-      padding: const EdgeInsets.all(13),
-      decoration: AppTheme.card(radius: 18).copyWith(
-        border: Border.all(color: AppColors.darkGreen.withValues(alpha: 0.4)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Text(
-            'Total · ${_goats(goats)} · ${picked.length} '
-                '${picked.length == 1 ? 'booking' : 'bookings'}',
-            style: AppTheme.heading(size: 14),
-          ),
-          const SizedBox(height: 8),
-          if (booked > 0) ...[
-            _calcRow('Booked weight', '${_trim(booked)} kg'),
-            const SizedBox(height: 6),
-          ],
-          _calcRow(
-            'Pickup weight',
-            '${_trim(pickup)} kg${_weightChange(booked, pickup)}',
-          ),
-          const SizedBox(height: 6),
-          _calcRow('Goat value', _money.format(goatValue)),
-          if (discount > 0) ...[
-            const SizedBox(height: 6),
-            _calcRow('Discount', '− ${_money.format(discount)}'),
-          ],
-          if (transport > 0) ...[
-            const SizedBox(height: 6),
-            _calcRow('Transportation', '+ ${_money.format(transport)}'),
-          ],
-          const SizedBox(height: 6),
-          _calcRow('Advance paid', '− ${_money.format(advance)}'),
-          const Padding(
-            padding: EdgeInsets.symmetric(vertical: 7),
-            child: Divider(height: 1, color: AppColors.divider),
-          ),
-          _calcRow('Total due', _money.format(due), emphasized: true),
-          if (extra > 0) ...[
-            const SizedBox(height: 6),
-            _calcRow(
-              'Extra (advance over the bill)',
-              _money.format(extra),
-              emphasized: true,
-            ),
-          ],
-        ],
-      ),
-    );
-  }
 
   Widget _sectionLabel(String text) {
     return Padding(
@@ -2046,63 +2364,6 @@ class _WaitDeliveryCustomerScreenState
     if (diff.round() == 0) return '';
     final kg = (diff.abs().round()) / 1000;
     return ' (${diff > 0 ? '+' : '−'}${_trim(kg)} kg)';
-  }
-
-  /// Opens Edit booking — deliver one or any number of the booking's goats
-  /// and keep or remove the rest.
-  Widget _editBookingButton(WaitDeliverySale entry) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 9),
-      child: InkWell(
-        onTap: _delivering ? null : () => _openEditBooking(entry),
-        borderRadius: BorderRadius.circular(12),
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
-          decoration: BoxDecoration(
-            color: AppColors.stockTeal.withValues(alpha: 0.08),
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(
-              color: AppColors.stockTeal.withValues(alpha: 0.4),
-            ),
-          ),
-          child: Row(
-            children: [
-              const Icon(
-                Icons.edit_outlined,
-                size: 16,
-                color: AppColors.stockTeal,
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      'Edit booking',
-                      style: AppTheme.heading(
-                        size: 12,
-                        color: AppColors.darkGreen,
-                      ),
-                    ),
-                    Text(
-                      'Deliver some goats now · keep or remove the rest',
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: AppTheme.body(size: 10),
-                    ),
-                  ],
-                ),
-              ),
-              const Icon(
-                Icons.chevron_right,
-                size: 18,
-                color: AppColors.stockTeal,
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
   }
 
   Widget _fixedPriceTag() {
@@ -2137,468 +2398,6 @@ class _WaitDeliveryCustomerScreenState
     );
   }
 
-  /// A booking made straight from a lot: the lot and quantity, plus ONE
-  /// total pickup-weight field for all of its goats.
-  Widget _lotRow(WaitDeliverySale entry, bool selected) {
-    final controller = _lotWeightControllerFor(entry);
-
-    final invalid = _submitted &&
-        selected &&
-        (double.tryParse(controller.text.trim()) ?? 0) <= 0;
-
-    OutlineInputBorder border(Color color, [double width = 1]) =>
-        OutlineInputBorder(
-          borderRadius: BorderRadius.circular(10),
-          borderSide: BorderSide(color: color, width: width),
-        );
-
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 9),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Container(
-            width: 44,
-            height: 44,
-            decoration: BoxDecoration(
-              color: AppColors.stockTeal.withValues(alpha: 0.12),
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: const Center(
-              child: Icon(
-                Icons.inventory_2_outlined,
-                size: 19,
-                color: AppColors.stockTeal,
-              ),
-            ),
-          ),
-          const SizedBox(width: 9),
-          Expanded(
-            child: Padding(
-              padding: const EdgeInsets.only(top: 4),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    entry.sale.lotDisplayId,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: AppTheme.heading(size: 13.5),
-                  ),
-                  Text(
-                    '${_goats(entry.goatCount)} held from this lot',
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: AppTheme.body(size: 10.5),
-                  ),
-                  Text(
-                    [
-                      if (entry.bookedWeight > 0)
-                        'Booked ${_trim(entry.bookedWeight)} kg',
-                      if (_pickupWeightOf(entry) > 0)
-                        _money.format(
-                          entry.saleValueAt(_pickupWeightOf(entry)),
-                        ),
-                    ].join(' · '),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: AppTheme.body(
-                      size: 10.5,
-                      color: AppColors.textDark,
-                      weight: FontWeight.w600,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-          const SizedBox(width: 8),
-          SizedBox(
-            width: 118,
-            child: TextField(
-              controller: controller,
-              enabled: selected && !_delivering,
-              keyboardType: const TextInputType.numberWithOptions(
-                decimal: true,
-              ),
-              inputFormatters: [
-                FilteringTextInputFormatter.allow(
-                  RegExp(r'^\d*\.?\d{0,2}'),
-                ),
-              ],
-              textAlign: TextAlign.right,
-              onChanged: (_) => setState(() {}),
-              style: AppTheme.body(
-                size: 12.5,
-                color: AppColors.textDark,
-                weight: FontWeight.w600,
-              ),
-              decoration: InputDecoration(
-                isDense: true,
-                labelText: 'Total pickup wt',
-                labelStyle: AppTheme.body(size: 10.5),
-                suffixText: 'kg',
-                suffixStyle: AppTheme.body(size: 11),
-                errorText: invalid ? 'Required' : null,
-                errorStyle: const TextStyle(fontSize: 9.5),
-                filled: true,
-                fillColor: selected ? Colors.white : AppColors.paleGreen,
-                contentPadding: const EdgeInsets.symmetric(
-                  horizontal: 10,
-                  vertical: 9,
-                ),
-                border: border(AppColors.divider),
-                enabledBorder: border(AppColors.divider),
-                disabledBorder:
-                border(AppColors.divider.withValues(alpha: 0.6)),
-                focusedBorder: border(AppColors.darkGreen, 1.4),
-                errorBorder: border(AppColors.error),
-                focusedErrorBorder: border(AppColors.error, 1.4),
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _goatRow(WaitDeliverySale entry, Goat goat, bool selected) {
-    final controller = _weightControllerFor(goat);
-    final weight = _weightOf(goat);
-
-    final invalid = _submitted &&
-        selected &&
-        (double.tryParse(controller.text.trim()) ?? 0) <= 0;
-
-    final breed = goat.breed.trim().isEmpty
-        ? 'Breed not specified'
-        : goat.breed.trim();
-
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 9),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          _goatAvatar(goat),
-
-          const SizedBox(width: 9),
-
-          Expanded(
-            child: InkWell(
-              onTap: _delivering ? null : () => _openProfile(goat),
-              borderRadius: BorderRadius.circular(8),
-              child: Padding(
-                padding: const EdgeInsets.only(top: 4, bottom: 2),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      goat.id,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: AppTheme.heading(size: 13.5),
-                    ),
-                    Text(
-                      '$breed · ${goat.age}',
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: AppTheme.body(size: 10.5),
-                    ),
-                    Row(
-                      children: [
-                        Flexible(
-                          child: LotIdText(
-                            farmId: widget.farmId,
-                            lotDocId: goat.purchaseId,
-                            style: AppTheme.body(
-                              size: 10.5,
-                              color: AppColors.info,
-                              weight: FontWeight.w600,
-                            ),
-                          ),
-                        ),
-                        Flexible(
-                          child: Text(
-                            [
-                              if (_lastWeightOf(goat) > 0)
-                                ' · Last ${_trim(_lastWeightOf(goat))} kg',
-                              weight > 0
-                                  ? ' · ${_money.format(entry.saleValueAt(weight))}'
-                                  : ' · enter pickup wt',
-                            ].join(),
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: AppTheme.body(
-                              size: 10.5,
-                              color: AppColors.textDark,
-                              weight: FontWeight.w600,
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 2),
-                    Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Text(
-                          'Weight & health',
-                          style: AppTheme.body(
-                            size: 10.5,
-                            color: AppColors.stockTeal,
-                            weight: FontWeight.w600,
-                          ),
-                        ),
-                        const Icon(
-                          Icons.chevron_right,
-                          size: 14,
-                          color: AppColors.stockTeal,
-                        ),
-                      ],
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ),
-
-          const SizedBox(width: 8),
-
-          SizedBox(
-            width: 108,
-            child: TextField(
-              controller: controller,
-              enabled: selected && !_delivering,
-              keyboardType: const TextInputType.numberWithOptions(
-                decimal: true,
-              ),
-              inputFormatters: [
-                FilteringTextInputFormatter.allow(
-                  RegExp(r'^\d*\.?\d{0,2}'),
-                ),
-              ],
-              textAlign: TextAlign.right,
-              onChanged: (_) => setState(() {}),
-              style: AppTheme.body(
-                size: 12.5,
-                color: AppColors.textDark,
-                weight: FontWeight.w600,
-              ),
-              decoration: InputDecoration(
-                isDense: true,
-                labelText: 'Pickup wt',
-                labelStyle: AppTheme.body(size: 10.5),
-                suffixText: 'kg',
-                suffixStyle: AppTheme.body(size: 11),
-                errorText: invalid ? 'Required' : null,
-                errorStyle: const TextStyle(fontSize: 9.5),
-                filled: true,
-                fillColor: selected ? Colors.white : AppColors.paleGreen,
-                contentPadding: const EdgeInsets.symmetric(
-                  horizontal: 10,
-                  vertical: 9,
-                ),
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(10),
-                  borderSide: const BorderSide(color: AppColors.divider),
-                ),
-                enabledBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(10),
-                  borderSide: const BorderSide(color: AppColors.divider),
-                ),
-                disabledBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(10),
-                  borderSide: BorderSide(
-                    color: AppColors.divider.withValues(alpha: 0.6),
-                  ),
-                ),
-                focusedBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(10),
-                  borderSide: const BorderSide(
-                    color: AppColors.darkGreen,
-                    width: 1.4,
-                  ),
-                ),
-                errorBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(10),
-                  borderSide: const BorderSide(color: AppColors.error),
-                ),
-                focusedErrorBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(10),
-                  borderSide: const BorderSide(
-                    color: AppColors.error,
-                    width: 1.4,
-                  ),
-                ),
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  /// Tap the photo to view it full-screen (pinch to zoom). With no photo
-  /// the paw logo is shown and is not tappable.
-  Widget _goatAvatar(Goat goat) {
-    final box = _goatAvatarBox(goat);
-    final photo = goat.photo;
-    if (photo == null || photo.isEmpty) return box;
-
-    return GestureDetector(
-      behavior: HitTestBehavior.opaque,
-      onTap: () => Navigator.of(context).push(
-        fastRoute(FullscreenImageViewer(imageBytes: photo, title: goat.id)),
-      ),
-      child: box,
-    );
-  }
-
-  Widget _goatAvatarBox(Goat goat) {
-    return Container(
-      width: 44,
-      height: 44,
-      decoration: BoxDecoration(
-        color: AppColors.stockTeal.withValues(alpha: 0.12),
-        borderRadius: BorderRadius.circular(12),
-      ),
-      clipBehavior: Clip.antiAlias,
-      child: goat.photo != null
-          ? Image.memory(
-        goat.photo!,
-        fit: BoxFit.cover,
-        gaplessPlayback: true,
-        cacheWidth: 132,
-      )
-          : const Center(
-        child: Icon(
-          GoatIcons.paw,
-          size: 19,
-          color: AppColors.stockTeal,
-        ),
-      ),
-    );
-  }
-
-  Widget _infoChip(IconData icon, String text) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 4),
-      decoration: BoxDecoration(
-        color: AppColors.paleGreen,
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: AppColors.divider),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(icon, size: 12, color: AppColors.textGrey),
-          const SizedBox(width: 4),
-          Text(
-            text,
-            style: AppTheme.body(
-              size: 10,
-              color: AppColors.textDark,
-              weight: FontWeight.w500,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _calcBox(WaitDeliverySale entry, double pickup, double due) {
-    final transport = _transportOf(entry);
-    final discount = _appliedDiscountOf(entry);
-    final excess = _excessOf(entry);
-
-    return Container(
-      padding: const EdgeInsets.all(11),
-      decoration: BoxDecoration(
-        color: AppColors.paleGreen,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: AppColors.divider),
-      ),
-      child: Column(
-        children: [
-          if (entry.bookedWeight > 0) ...[
-            _calcRow('Booked weight', '${_trim(entry.bookedWeight)} kg'),
-            const SizedBox(height: 6),
-          ],
-          _calcRow(
-            'Pickup weight',
-            '${_trim(pickup)} kg'
-                '${_weightChange(entry.bookedWeight, pickup)}',
-          ),
-          const SizedBox(height: 6),
-          _calcRow(
-            entry.isFixedPrice
-                ? 'Locked rate (${_money.format(entry.sale.agreedGoatAmount)}'
-                ' ÷ ${_trim(entry.bookedWeight)} kg)'
-                : 'Locked rate',
-            '${_money.format(entry.ratePerKg)}/kg',
-          ),
-          const SizedBox(height: 6),
-          _calcRow(
-            'Goat value (${_trim(pickup)} kg × '
-                '${_money.format(entry.ratePerKg)})',
-            _money.format(entry.saleValueAt(pickup)),
-          ),
-          if (discount > 0) ...[
-            const SizedBox(height: 6),
-            _calcRow(
-              'Discount',
-              '− ${_money.format(discount)}',
-            ),
-          ],
-          if (transport > 0) ...[
-            const SizedBox(height: 6),
-            _calcRow(
-              'Transportation',
-              '+ ${_money.format(transport)}',
-            ),
-          ],
-          const SizedBox(height: 6),
-          _calcRow(
-            'Advance paid',
-            '− ${_money.format(entry.advancePaid)}',
-          ),
-          for (final t in _transfersInto(entry)) ...[
-            const SizedBox(height: 6),
-            _calcRow(
-              'Covered by extra from ${t.fromSaleId}',
-              '− ${_money.format(t.amount)}',
-            ),
-          ],
-          const Padding(
-            padding: EdgeInsets.symmetric(vertical: 7),
-            child: Divider(height: 1, color: AppColors.divider),
-          ),
-          _calcRow(
-            'Final Amount Due',
-            _money.format(due),
-            emphasized: true,
-          ),
-          for (final t in _transfersFrom(entry)) ...[
-            const SizedBox(height: 6),
-            _calcRow(
-              'Extra applied to ${t.toSaleId}',
-              _money.format(t.amount),
-              emphasized: true,
-            ),
-          ],
-          if (excess > 0) ...[
-            const SizedBox(height: 6),
-            _calcRow(
-              'Extra (advance over the bill)',
-              _money.format(excess),
-              emphasized: true,
-            ),
-          ],
-        ],
-      ),
-    );
-  }
-
   Widget _calcRow(
       String label,
       String value, {
@@ -2626,255 +2425,6 @@ class _WaitDeliveryCustomerScreenState
             color: AppColors.textDark,
             weight: FontWeight.w600,
           ),
-        ),
-      ],
-    );
-  }
-
-  /// Optional transportation charge for one booking, entered at pickup.
-  /// It is added to the amount due and shown on the bill, but it is not
-  /// farm revenue (it is passed on to the transport team).
-  Widget _transportField(WaitDeliverySale entry, bool selected) {
-    return TextField(
-      controller: _transportControllerFor(entry),
-      enabled: selected && !_delivering,
-      keyboardType: const TextInputType.numberWithOptions(decimal: true),
-      inputFormatters: [
-        FilteringTextInputFormatter.allow(
-          RegExp(r'^\d*\.?\d{0,2}'),
-        ),
-      ],
-      onChanged: (_) => setState(() {}),
-      style: AppTheme.body(
-        size: 12.5,
-        color: AppColors.textDark,
-        weight: FontWeight.w600,
-      ),
-      decoration: InputDecoration(
-        isDense: true,
-        labelText: 'Transportation Charge (optional)',
-        labelStyle: AppTheme.body(size: 10.5),
-        helperText: 'Added to the amount due — not farm revenue.',
-        helperStyle: AppTheme.body(size: 9.5),
-        prefixText: '₹ ',
-        prefixStyle: AppTheme.body(size: 12),
-        prefixIcon: const Icon(
-          Icons.directions_car_outlined,
-          size: 18,
-          color: AppColors.textGrey,
-        ),
-        filled: true,
-        fillColor: selected ? Colors.white : AppColors.paleGreen,
-        contentPadding: const EdgeInsets.symmetric(
-          horizontal: 10,
-          vertical: 10,
-        ),
-        border: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(10),
-          borderSide: const BorderSide(color: AppColors.divider),
-        ),
-        enabledBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(10),
-          borderSide: const BorderSide(color: AppColors.divider),
-        ),
-        disabledBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(10),
-          borderSide: BorderSide(
-            color: AppColors.divider.withValues(alpha: 0.6),
-          ),
-        ),
-        focusedBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(10),
-          borderSide: const BorderSide(
-            color: AppColors.darkGreen,
-            width: 1.4,
-          ),
-        ),
-      ),
-    );
-  }
-
-  /// Optional discount for one booking, entered at pickup. It starts at
-  /// the discount given when the goats were booked. Taken off the goat
-  /// value only — never off transportation.
-  Widget _discountField(WaitDeliverySale entry, bool selected) {
-    final invalid = !_discountValid(entry);
-
-    return TextField(
-      controller: _discountControllerFor(entry),
-      enabled: selected && !_delivering,
-      keyboardType: const TextInputType.numberWithOptions(decimal: true),
-      inputFormatters: [
-        FilteringTextInputFormatter.allow(
-          RegExp(r'^\d*\.?\d{0,2}'),
-        ),
-      ],
-      onChanged: (_) => setState(() {}),
-      style: AppTheme.body(
-        size: 12.5,
-        color: AppColors.textDark,
-        weight: FontWeight.w600,
-      ),
-      decoration: InputDecoration(
-        isDense: true,
-        labelText: 'Discount (optional)',
-        labelStyle: AppTheme.body(size: 10.5),
-        helperText: 'Off the goat value only. Starts at the booking '
-            'discount.',
-        helperStyle: AppTheme.body(size: 9.5),
-        errorText: invalid ? 'More than the goat amount' : null,
-        errorStyle: const TextStyle(fontSize: 9.5),
-        prefixText: '₹ ',
-        prefixStyle: AppTheme.body(size: 12),
-        prefixIcon: const Icon(
-          Icons.local_offer_outlined,
-          size: 18,
-          color: AppColors.textGrey,
-        ),
-        filled: true,
-        fillColor: selected ? Colors.white : AppColors.paleGreen,
-        contentPadding: const EdgeInsets.symmetric(
-          horizontal: 10,
-          vertical: 10,
-        ),
-        border: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(10),
-          borderSide: const BorderSide(color: AppColors.divider),
-        ),
-        enabledBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(10),
-          borderSide: const BorderSide(color: AppColors.divider),
-        ),
-        disabledBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(10),
-          borderSide: BorderSide(
-            color: AppColors.divider.withValues(alpha: 0.6),
-          ),
-        ),
-        focusedBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(10),
-          borderSide: const BorderSide(
-            color: AppColors.darkGreen,
-            width: 1.4,
-          ),
-        ),
-        errorBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(10),
-          borderSide: const BorderSide(color: AppColors.error),
-        ),
-        focusedErrorBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(10),
-          borderSide: const BorderSide(color: AppColors.error, width: 1.4),
-        ),
-      ),
-    );
-  }
-
-  /// Per-booking "amount received now" field, shown once a booking with
-  /// something due is selected.
-  Widget _bookingAmountField(WaitDeliverySale entry, double due) {
-    final controller = _amountControllerFor(entry);
-    final invalid = _submitted && !_amountValid(entry);
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(
-          children: [
-            Expanded(
-              child: TextField(
-                controller: controller,
-                enabled: !_delivering,
-                keyboardType: const TextInputType.numberWithOptions(
-                  decimal: true,
-                ),
-                inputFormatters: [
-                  FilteringTextInputFormatter.allow(
-                    RegExp(r'^\d*\.?\d{0,2}'),
-                  ),
-                ],
-                onChanged: (_) {
-                  setState(() {
-                    _amountEdited.add(entry.id);
-                  });
-                },
-                style: AppTheme.body(
-                  size: 12.5,
-                  color: AppColors.textDark,
-                  weight: FontWeight.w600,
-                ),
-                decoration: InputDecoration(
-                  isDense: true,
-                  labelText: 'Amount Received Now',
-                  labelStyle: AppTheme.body(size: 10.5),
-                  prefixText: '₹ ',
-                  prefixStyle: AppTheme.body(size: 12),
-                  errorText: invalid
-                      ? (_onCredit
-                      ? 'More than the amount due'
-                      : 'Must equal the full ${_money.format(due)}')
-                      : null,
-                  errorStyle: const TextStyle(fontSize: 9.5),
-                  filled: true,
-                  fillColor: Colors.white,
-                  contentPadding: const EdgeInsets.symmetric(
-                    horizontal: 10,
-                    vertical: 10,
-                  ),
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(10),
-                    borderSide: const BorderSide(color: AppColors.divider),
-                  ),
-                  enabledBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(10),
-                    borderSide: const BorderSide(color: AppColors.divider),
-                  ),
-                  focusedBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(10),
-                    borderSide: const BorderSide(
-                      color: AppColors.darkGreen,
-                      width: 1.4,
-                    ),
-                  ),
-                  errorBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(10),
-                    borderSide: const BorderSide(color: AppColors.error),
-                  ),
-                  focusedErrorBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(10),
-                    borderSide: const BorderSide(
-                      color: AppColors.error,
-                      width: 1.4,
-                    ),
-                  ),
-                ),
-              ),
-            ),
-            if (_onCredit) ...[
-              const SizedBox(width: 8),
-              TextButton(
-                onPressed: _delivering
-                    ? null
-                    : () {
-                  setState(() {
-                    _amountEdited.remove(entry.id);
-                    controller.text = _plainMoney(due);
-                  });
-                },
-                style: TextButton.styleFrom(
-                  padding: const EdgeInsets.symmetric(horizontal: 8),
-                ),
-                child: Text(
-                  'Full',
-                  style: AppTheme.body(
-                    size: 11,
-                    color: AppColors.darkGreen,
-                    weight: FontWeight.w700,
-                  ),
-                ),
-              ),
-            ],
-          ],
         ),
       ],
     );
@@ -3013,10 +2563,9 @@ class _WaitDeliveryCustomerScreenState
                 ),
                 Text(
                   _onCredit
-                      ? 'Whatever is not received now is added to each '
+                      ? 'Whatever is not received now is added to the '
                       'customer\'s outstanding balance.'
-                      : 'Off — the full amount due is received now on '
-                      'every selected booking.',
+                      : 'Off — the full amount due is received now.',
                   style: AppTheme.body(
                     size: 10,
                     color: AppColors.textGrey,
@@ -3036,17 +2585,10 @@ class _WaitDeliveryCustomerScreenState
 
                 if (value) {
                   // Nothing is assumed paid until the person says so.
-                  for (final controller in _amounts.entries) {
-                    if (!_amountEdited.contains(controller.key)) {
-                      controller.value.text = '';
-                    }
-                  }
+                  if (!_receivedTouched) _sharedReceived.text = '';
                 } else {
-                  // Off -> the full amount is expected on every booking.
-                  _amountEdited.clear();
-                  _amounts.forEach((id, controller) {
-                    controller.text = '';
-                  });
+                  // Off -> the full amount due is received now.
+                  _receivedTouched = false;
                 }
               });
             },

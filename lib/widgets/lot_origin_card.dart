@@ -167,7 +167,8 @@ class LotOriginCard extends StatelessWidget {
   }
 }
 
-/// A goat's lot number ("LOT-0001"), read from the lot itself (cached).
+/// A lot number with its supplier — "LOT-0001 (Yusuf)" — read from the
+/// lot itself (cached). Used wherever the delivery flow names a lot.
 class LotIdText extends StatelessWidget {
   final String farmId;
 
@@ -176,12 +177,31 @@ class LotIdText extends StatelessWidget {
   final String lotDocId;
   final TextStyle? style;
 
+  /// False shows the lot number alone.
+  final bool showSupplier;
+
   const LotIdText({
     super.key,
     required this.farmId,
     required this.lotDocId,
     this.style,
+    this.showSupplier = true,
   });
+
+  /// The lot's doc ID from its number: LOT-0007 -> PUR-0007 (the rule
+  /// TradingPurchase.lotId uses the other way round).
+  static String docIdFromLotNumber(String lotNumber) {
+    final id = lotNumber.trim();
+    return id.startsWith('LOT-') ? 'PUR-${id.substring(4)}' : id;
+  }
+
+  /// "LOT-0001 (Yusuf)", or just the lot number when no supplier is saved.
+  static String label(TradingPurchase? lot, String lotDocId,
+      {bool showSupplier = true}) {
+    final id = lot?.lotId ?? LotOriginCard.displayId(lotDocId);
+    final seller = lot?.sellerName.trim() ?? '';
+    return showSupplier && seller.isNotEmpty ? '$id ($seller)' : id;
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -192,7 +212,7 @@ class LotIdText extends StatelessWidget {
     return FutureBuilder<TradingPurchase?>(
       future: LotOriginCard.lotFor(farmId, id),
       builder: (context, snap) => Text(
-        snap.data?.lotId ?? LotOriginCard.displayId(id),
+        label(snap.data, id, showSupplier: showSupplier),
         maxLines: 1,
         overflow: TextOverflow.ellipsis,
         style: textStyle,

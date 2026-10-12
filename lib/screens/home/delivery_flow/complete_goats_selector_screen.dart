@@ -10,6 +10,7 @@ import '../../../services/goat_service.dart';
 import '../../../services/sale_goat_details_service.dart';
 import '../../../services/wait_booking_split_service.dart';
 import '../../../widgets/fast_route.dart';
+import '../../../widgets/lot_origin_card.dart';
 import '../../trading/goat_stock/booking_delivery_customer_screen.dart';
 import '../../trading/goat_stock/wait_delivery_customer_screen.dart';
 import '../../trading/own_palai/own_palai_goat_profile_screen.dart';
@@ -606,6 +607,15 @@ class _CompleteGoatsSelectorScreenState
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(goat.id, style: AppTheme.heading(size: 13)),
+                  LotIdText(
+                    farmId: widget.farmId,
+                    lotDocId: goat.purchaseId,
+                    style: AppTheme.body(
+                      size: 10.5,
+                      color: AppColors.info,
+                      weight: FontWeight.w600,
+                    ),
+                  ),
                   StreamBuilder<double>(
                     stream: _latestWeightOf(goat),
                     builder: (context, snap) {
@@ -679,8 +689,11 @@ class _CompleteGoatsSelectorScreenState
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(b.sale.lotDisplayId,
-                        style: AppTheme.heading(size: 13)),
+                    LotIdText(
+                      farmId: widget.farmId,
+                      lotDocId: b.sale.lotDocId,
+                      style: AppTheme.heading(size: 13),
+                    ),
                     Text(
                       '${b.goatCount} goat${b.goatCount == 1 ? '' : 's'} '
                           'from a lot',

@@ -8,6 +8,7 @@ import '../../../goat_icons.dart';
 import '../../../models/bill_settings_model.dart';
 import '../../../models/booking_delivery_group.dart';
 import '../../../models/goat_model.dart';
+import '../../../models/trading_goat_weight_entry.dart';
 import '../../../models/sale_model.dart';
 import '../../../models/wait_delivery_group.dart';
 import '../../../services/booking_delivery_service.dart';
@@ -22,6 +23,7 @@ import '../../../services/wait_delivery_service.dart';
 import '../../../utils/pdf_download.dart';
 import '../../../widgets/fast_route.dart';
 import '../../../widgets/image_source_sheet.dart';
+import '../../../widgets/lot_origin_card.dart';
 import '../../trading/sale_receipt_screen.dart';
 
 /// The two dashboard sections of the delivery flow:
@@ -29,8 +31,8 @@ import '../../trading/sale_receipt_screen.dart';
 ///   WAIT ON DELIVERY / BOOKING & HOLDING
 ///     → customers → customer profile → section entry
 ///     → select goats (CompleteGoatsSelectorScreen)
-///     → checkout: photo + age per goat ([DeliveryGoatUpdatesCard]),
-///       then the section's calculation cards → Complete Sale
+///     → checkout: ONE card with every selected goat (photo + weight),
+///       the bookings and one calculation → Complete Sale
 ///     → receipts: view / download / share ([showDeliveryReceiptsSheet])
 ///
 /// Nothing here creates or changes data. The customers and goats are
@@ -249,217 +251,77 @@ class DeliveryMessage extends StatelessWidget {
   }
 }
 // =============================================================================
-// GOAT UPDATES — one photo + age per goat, on the checkout screen
+// GOAT UPDATES — one photo per goat + the weight typed at completion
 // =============================================================================
 
-/// What will be saved for one goat when the sale is completed.
-class _GoatUpdate {
-  _GoatUpdate.registered({
-    required this.saleId,
-    required this.goatId,
-    required this.originalAge,
-  })  : isLot = false,
-        index = 0,
-        lotDisplayId = '';
-
-  _GoatUpdate.lot({
-    required this.saleId,
-    required this.index,
-    required this.lotDisplayId,
-    required this.originalAge,
-  })  : isLot = true,
-        goatId = '';
-
+/// One goat's weight to save when the sale is completed.
+///
+/// [key] is `g:<goatId>` for a registered goat, or `l:<saleId>:<index>`
+/// for "Goat N" of a lot booking.
+class DeliveryGoatWeight {
+  final String key;
   final bool isLot;
-  final String saleId;
-
-  /// Registered goat ID (empty for a lot goat).
   final String goatId;
-
-  /// "Goat N" number inside a lot booking (0 for a registered goat).
+  final String saleId;
   final int index;
   final String lotDisplayId;
 
-  /// Age in months the goat has on record (0 = not recorded). Moved to
-  /// the new age once it is saved.
-  int originalAge;
+  /// Weight typed on the complete screen (its pickup weight).
+  final double weight;
 
-  late final TextEditingController age = TextEditingController(
-    text: originalAge > 0 ? '$originalAge' : '',
-  );
+  /// Newest weight already on record. When [weight] is the same, nothing
+  /// new is written.
+  final double lastWeight;
 
-  /// New photo picked on this screen, not saved yet.
-  PickedImage? photo;
+  const DeliveryGoatWeight.registered({
+    required this.goatId,
+    required this.saleId,
+    required this.weight,
+    required this.lastWeight,
+  })  : key = 'g:$goatId',
+        isLot = false,
+        index = 0,
+        lotDisplayId = '';
 
-  String get label => isLot ? 'Goat $index ($lotDisplayId)' : goatId;
+  DeliveryGoatWeight.lot({
+    required this.saleId,
+    required this.index,
+    required this.lotDisplayId,
+    required this.weight,
+    required this.lastWeight,
+  })  : key = 'l:$saleId:$index',
+        isLot = true,
+        goatId = '';
 
-  /// The typed age when it is a change, null when nothing to save.
-  int? get changedAge {
-    final n = int.tryParse(age.text.trim());
-    if (n == null || n == originalAge) return null;
-    return n;
-  }
-
-  bool get hasChanges => photo != null || changedAge != null;
+  bool get weightChanged =>
+      weight > 0 && ((weight - lastWeight) * 1000).round() != 0;
 }
 
-/// Holds the photos and ages typed on the checkout screen until Complete
-/// Sale, then saves them onto the goats ([save]). Nothing is written
-/// before that, so backing out of the checkout changes nothing.
+/// Holds the photos picked on the complete screen until Complete Sale,
+/// then saves them — with each goat's new weight — onto the goats
+/// ([save]). Nothing is written before that, so backing out of the
+/// screen changes nothing.
 ///
-/// Registered goats are saved with [GoatPhotoService] (the goat's main
-/// photo and age, same as the goat profile). A lot booking's goats
-/// ("Goat 1..N") are saved with [SaleGoatDetailsService] (same as the lot
-/// goat profile).
+///  * Registered goat: the weight becomes a new weight-history entry
+///    (same as Weight & health on the goat profile, with the new photo
+///    attached); the photo also becomes the goat's main photo.
+///  * Lot goat ("Goat N"): saved on the lot goat's record (same as its
+///    profile).
 class DeliveryGoatUpdates extends ChangeNotifier {
-  final Map<String, _GoatUpdate> _byKey = <String, _GoatUpdate>{};
+  final Map<String, PickedImage> _photos = <String, PickedImage>{};
 
-  _GoatUpdate _registered(String saleId, Goat goat) {
-    return _byKey.putIfAbsent(
-      'g:${goat.id}',
-          () => _GoatUpdate.registered(
-        saleId: saleId,
-        goatId: goat.id,
-        originalAge: goat.currentAgeMonths,
-      ),
-    );
-  }
+  /// New photo picked for [key] (see [DeliveryGoatWeight.key]), if any.
+  PickedImage? photoFor(String key) => _photos[key];
 
-  _GoatUpdate _lot(Sale sale, SaleGoatDetail goat) {
-    return _byKey.putIfAbsent(
-      'l:${sale.id}:${goat.index}',
-          () => _GoatUpdate.lot(
-        saleId: sale.id,
-        index: goat.index,
-        lotDisplayId: sale.lotDisplayId,
-        originalAge: goat.ageMonths,
-      ),
-    );
-  }
-
-  void _setPhoto(_GoatUpdate update, PickedImage photo) {
-    update.photo = photo;
-    notifyListeners();
-  }
-
-  void _ageChanged() => notifyListeners();
-
-  Iterable<_GoatUpdate> _inSales(Set<String> saleIds) =>
-      _byKey.values.where((u) => saleIds.contains(u.saleId));
-
-  /// Null when every age typed for [saleIds] is valid; otherwise what to
-  /// fix.
-  String? validate(Set<String> saleIds) {
-    for (final u in _inSales(saleIds)) {
-      final text = u.age.text.trim();
-      if (text.isEmpty) continue;
-      final n = int.tryParse(text);
-      if (n == null || n < 0 || n > 240) {
-        return 'Enter the age of ${u.label} in whole months (0 to 240).';
-      }
-    }
-    return null;
-  }
-
-  /// Saves every changed photo and age of the goats in [saleIds]. Throws
-  /// on the first failure (the sale is then not completed).
-  Future<void> save(String farmId, Set<String> saleIds) async {
-    for (final u in _inSales(saleIds).toList()) {
-      if (!u.hasChanges) continue;
-      final photo = u.photo;
-      final age = u.changedAge;
-
-      if (u.isLot) {
-        if (photo != null) {
-          await SaleGoatDetailsService.instance.setPhoto(
-            farmId: farmId,
-            saleId: u.saleId,
-            index: u.index,
-            lotDisplayId: u.lotDisplayId,
-            bytes: photo.bytes,
-            contentType: photo.contentType,
-          );
-        }
-        if (age != null) {
-          await SaleGoatDetailsService.instance.setAgeMonths(
-            farmId: farmId,
-            saleId: u.saleId,
-            index: u.index,
-            lotDisplayId: u.lotDisplayId,
-            months: age,
-          );
-        }
-      } else {
-        if (photo != null) {
-          await GoatPhotoService.instance.setPhoto(
-            farmId: farmId,
-            goatId: u.goatId,
-            bytes: photo.bytes,
-            contentType: photo.contentType,
-          );
-        }
-        if (age != null) {
-          await GoatPhotoService.instance.setAgeMonths(
-            farmId: farmId,
-            goatId: u.goatId,
-            months: age,
-          );
-        }
-      }
-
-      // Saved: a second Complete must not save it again.
-      u.photo = null;
-      if (age != null) u.originalAge = age;
-    }
-    notifyListeners();
-  }
-
-  @override
-  void dispose() {
-    for (final u in _byKey.values) {
-      u.age.dispose();
-    }
-    _byKey.clear();
-    super.dispose();
-  }
-}
-
-/// "Update photo & age for each goat": one card per goat of [bookings],
-/// with the goat's photo (Upload when there is none, Update when there
-/// is) and its age in months. Changes are held in [updates] and saved
-/// when the sale is completed.
-class DeliveryGoatUpdatesCard extends StatefulWidget {
-  final String farmId;
-  final List<SectionBooking> bookings;
-  final DeliveryGoatUpdates updates;
-  final Color color;
-  final bool enabled;
-
-  const DeliveryGoatUpdatesCard({
-    super.key,
-    required this.farmId,
-    required this.bookings,
-    required this.updates,
-    required this.color,
-    this.enabled = true,
-  });
-
-  @override
-  State<DeliveryGoatUpdatesCard> createState() =>
-      _DeliveryGoatUpdatesCardState();
-}
-
-class _DeliveryGoatUpdatesCardState extends State<DeliveryGoatUpdatesCard> {
-  /// One live stream per lot booking, kept so rebuilds do not
-  /// re-subscribe.
-  final Map<String, Stream<List<SaleGoatDetail>>> _lotStreams = {};
-
-  Future<void> _pickPhoto(_GoatUpdate update) async {
+  /// Opens the camera / gallery sheet and keeps the picked photo for
+  /// [key].
+  Future<void> pickPhoto(BuildContext context, String key) async {
     final messenger = ScaffoldMessenger.of(context);
     try {
       final picked = await showImageSourceSheet(context, isGoatPhoto: true);
-      if (picked == null || !mounted) return;
-      widget.updates._setPhoto(update, picked);
+      if (picked == null) return;
+      _photos[key] = picked;
+      notifyListeners();
     } on ImageTooLargeException catch (e) {
       messenger.showSnackBar(SnackBar(
         content: Text(e.message),
@@ -473,251 +335,148 @@ class _DeliveryGoatUpdatesCardState extends State<DeliveryGoatUpdatesCard> {
     }
   }
 
-  @override
-  Widget build(BuildContext context) {
-    final goatCount =
-    widget.bookings.fold<int>(0, (sum, b) => sum + b.goatCount);
+  /// Saves every new photo and every changed weight in [goats]. Throws on
+  /// the first failure (the sale is then not completed). What was saved
+  /// is dropped from this holder, so a retry never saves it twice.
+  Future<void> save(String farmId, List<DeliveryGoatWeight> goats) async {
+    final now = DateTime.now();
 
-    return ListenableBuilder(
-      listenable: widget.updates,
-      builder: (context, _) => Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          _header(goatCount),
-          for (final b in widget.bookings)
-            if (b.isLot)
-              _lotGoats(b)
-            else
-              for (final g in b.goats)
-                _goatCard(
-                  update: widget.updates._registered(b.id, g),
-                  title: g.id,
-                  subtitle: [
-                    if (g.breed.trim().isNotEmpty) g.breed.trim(),
-                    'Booking ${b.id}',
-                  ].join(' · '),
-                  currentPhoto: g.photo,
-                ),
-        ],
-      ),
-    );
-  }
+    for (final g in goats) {
+      final photo = _photos[g.key];
 
-  Widget _header(int goatCount) {
-    return Container(
-      margin: const EdgeInsets.only(bottom: 10),
-      padding: const EdgeInsets.fromLTRB(14, 12, 12, 12),
-      decoration: AppTheme.card(radius: 16),
-      child: Row(
-        children: [
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text('Update photo & age for each goat',
-                    style: AppTheme.heading(size: 13.5)),
-                const SizedBox(height: 2),
-                Text(
-                  '$goatCount goat${goatCount == 1 ? '' : 's'} · '
-                      'saved when you complete the sale',
-                  style: AppTheme.body(size: 10.5),
-                ),
-              ],
-            ),
-          ),
-          Icon(Icons.photo_camera_outlined, color: widget.color, size: 22),
-        ],
-      ),
-    );
-  }
-
-  Widget _lotGoats(SectionBooking booking) {
-    return StreamBuilder<List<SaleGoatDetail>>(
-      stream: _lotStreams.putIfAbsent(
-        booking.id,
-            () => SaleGoatDetailsService.instance
-            .streamForSale(widget.farmId, booking.id),
-      ),
-      builder: (context, snap) {
-        if (!snap.hasData && !snap.hasError) {
-          return const Padding(
-            padding: EdgeInsets.all(12),
-            child: Center(
-              child: SizedBox(
-                width: 18,
-                height: 18,
-                child: CircularProgressIndicator(strokeWidth: 2),
-              ),
+      if (g.isLot) {
+        if (photo != null) {
+          await SaleGoatDetailsService.instance.setPhoto(
+            farmId: farmId,
+            saleId: g.saleId,
+            index: g.index,
+            lotDisplayId: g.lotDisplayId,
+            bytes: photo.bytes,
+            contentType: photo.contentType,
+          );
+        }
+        if (g.weightChanged) {
+          await SaleGoatDetailsService.instance.updateWeight(
+            farmId: farmId,
+            saleId: g.saleId,
+            index: g.index,
+            lotDisplayId: g.lotDisplayId,
+            weight: g.weight,
+            date: now,
+          );
+        }
+      } else {
+        if (g.weightChanged) {
+          await GoatService.instance.addWeightEntry(
+            farmId: farmId,
+            goatId: g.goatId,
+            entry: GoatWeightEntry(
+              id: '',
+              weight: g.weight,
+              date: now,
+              photo: photo?.bytes,
+              photoContentType: photo?.contentType,
+              notes: 'Weighed at delivery (Sale ${g.saleId})',
             ),
           );
         }
-        final goats = SaleGoatDetailsService.withPlaceholders(
-          snap.data ?? const <SaleGoatDetail>[],
-          booking.goatCount,
-        ).where((g) => g.index <= booking.goatCount);
+        if (photo != null) {
+          await GoatPhotoService.instance.setPhoto(
+            farmId: farmId,
+            goatId: g.goatId,
+            bytes: photo.bytes,
+            contentType: photo.contentType,
+          );
+        }
+      }
+
+      _photos.remove(g.key);
+    }
+    notifyListeners();
+  }
+}
+
+/// The goat's photo with one button: Upload when it has none, Update when
+/// it has one. A new photo is kept in [updates] until Complete Sale.
+class DeliveryGoatPhoto extends StatelessWidget {
+  final DeliveryGoatUpdates updates;
+  final String photoKey;
+  final Uint8List? currentPhoto;
+  final Color color;
+  final bool enabled;
+
+  const DeliveryGoatPhoto({
+    super.key,
+    required this.updates,
+    required this.photoKey,
+    required this.currentPhoto,
+    required this.color,
+    this.enabled = true,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return ListenableBuilder(
+      listenable: updates,
+      builder: (context, _) {
+        final newPhoto = updates.photoFor(photoKey)?.bytes;
+        final shown = newPhoto ?? currentPhoto;
+        final hasPhoto = shown != null;
 
         return Column(
+          mainAxisSize: MainAxisSize.min,
           children: [
-            for (final g in goats)
-              _goatCard(
-                update: widget.updates._lot(booking.sale, g),
-                title: g.label,
-                subtitle:
-                '${booking.sale.lotDisplayId} · Booking ${booking.id}',
-                currentPhoto: g.hasPhoto ? g.photo : null,
+            ClipRRect(
+              borderRadius: BorderRadius.circular(11),
+              child: shown != null
+                  ? Image.memory(shown, width: 48, height: 48, fit: BoxFit.cover)
+                  : Container(
+                width: 48,
+                height: 48,
+                color: color.withValues(alpha: 0.10),
+                child: Icon(GoatIcons.paw, size: 18, color: color),
               ),
-          ],
-        );
-      },
-    );
-  }
-
-  Widget _goatCard({
-    required _GoatUpdate update,
-    required String title,
-    required String subtitle,
-    required Uint8List? currentPhoto,
-  }) {
-    final newPhoto = update.photo?.bytes;
-    final shown = newPhoto ?? currentPhoto;
-    final hasPhoto = currentPhoto != null || newPhoto != null;
-
-    final photoNote = newPhoto != null
-        ? 'New photo · saved on Complete Sale'
-        : currentPhoto != null
-        ? 'Current photo'
-        : 'No photo yet';
-
-    return Container(
-      margin: const EdgeInsets.only(bottom: 10),
-      padding: const EdgeInsets.all(12),
-      decoration: AppTheme.card(radius: 16),
-      child: Column(
-        children: [
-          Row(
-            children: [
-              ClipRRect(
-                borderRadius: BorderRadius.circular(12),
-                child: shown != null
-                    ? Image.memory(shown,
-                    width: 54, height: 54, fit: BoxFit.cover)
-                    : Container(
-                  width: 54,
-                  height: 54,
-                  color: widget.color.withValues(alpha: 0.10),
-                  child: Icon(GoatIcons.paw,
-                      size: 20, color: widget.color),
-                ),
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+            ),
+            const SizedBox(height: 3),
+            InkWell(
+              onTap: enabled
+                  ? () => updates.pickPhoto(context, photoKey)
+                  : null,
+              borderRadius: BorderRadius.circular(6),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
                   children: [
-                    Text(title,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: AppTheme.heading(size: 13.5)),
-                    Text(subtitle,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: AppTheme.body(size: 10.5)),
-                    const SizedBox(height: 2),
+                    Icon(
+                      hasPhoto
+                          ? Icons.photo_camera_outlined
+                          : Icons.add_a_photo_outlined,
+                      size: 12,
+                      color: AppColors.primaryGreen,
+                    ),
+                    const SizedBox(width: 2),
                     Text(
-                      photoNote,
+                      newPhoto != null
+                          ? 'New'
+                          : hasPhoto
+                          ? 'Update'
+                          : 'Upload',
                       style: AppTheme.body(
-                        size: 10.5,
-                        weight: FontWeight.w600,
+                        size: 10,
                         color: newPhoto != null
                             ? AppColors.success
-                            : currentPhoto != null
-                            ? AppColors.textGrey
-                            : AppColors.warning,
+                            : AppColors.primaryGreen,
+                        weight: FontWeight.w700,
                       ),
                     ),
                   ],
                 ),
               ),
-              const SizedBox(width: 8),
-              OutlinedButton.icon(
-                onPressed: widget.enabled ? () => _pickPhoto(update) : null,
-                icon: Icon(
-                  hasPhoto
-                      ? Icons.photo_camera_outlined
-                      : Icons.add_a_photo_outlined,
-                  size: 17,
-                ),
-                label: Text(hasPhoto ? 'Update' : 'Upload'),
-                style: OutlinedButton.styleFrom(
-                  foregroundColor: AppColors.primaryGreen,
-                  side: const BorderSide(color: AppColors.primaryGreen),
-                  padding:
-                  const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-                  textStyle: const TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w700,
-                  ),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                ),
-              ),
-            ],
-          ),
-          const Divider(height: 20, color: AppColors.divider),
-          Row(
-            children: [
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text('Current age', style: AppTheme.body(size: 10.5)),
-                    Text(
-                      update.originalAge > 0
-                          ? '${update.originalAge} months'
-                          : 'Not recorded',
-                      style: AppTheme.heading(size: 13),
-                    ),
-                  ],
-                ),
-              ),
-              const Icon(Icons.arrow_forward_rounded,
-                  size: 18, color: AppColors.textGrey),
-              const SizedBox(width: 10),
-              SizedBox(
-                width: 150,
-                child: TextField(
-                  controller: update.age,
-                  enabled: widget.enabled,
-                  keyboardType: TextInputType.number,
-                  inputFormatters: [
-                    FilteringTextInputFormatter.digitsOnly,
-                    LengthLimitingTextInputFormatter(3),
-                  ],
-                  onChanged: (_) => widget.updates._ageChanged(),
-                  style: AppTheme.heading(size: 13),
-                  decoration: InputDecoration(
-                    isDense: true,
-                    labelText: 'Age (months)',
-                    labelStyle:
-                    AppTheme.body(size: 11, color: AppColors.textGrey),
-                    prefixIcon: const Icon(Icons.cake_outlined, size: 18),
-                    prefixIconConstraints:
-                    const BoxConstraints(minWidth: 36, minHeight: 36),
-                    contentPadding: const EdgeInsets.symmetric(
-                      horizontal: 10,
-                      vertical: 10,
-                    ),
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ],
-      ),
+            ),
+          ],
+        );
+      },
     );
   }
 }
@@ -769,14 +528,21 @@ class _DeliveryReceiptsSheetState extends State<_DeliveryReceiptsSheet> {
   Future<_ReceiptData> _load() async {
     final farm = await FirestoreService.instance.getFarmById(widget.farmId);
     final sales = <Sale>[];
+    final lotLabels = <String, String>{};
     for (final id in widget.saleIds) {
       final sale = await SalesService.instance.getSale(widget.farmId, id);
-      if (sale != null) sales.add(sale);
+      if (sale == null) continue;
+      sales.add(sale);
+      if (sale.isLotSale) {
+        final lot = await LotOriginCard.lotFor(widget.farmId, sale.lotDocId);
+        lotLabels[sale.id] = LotIdText.label(lot, sale.lotDocId);
+      }
     }
     return _ReceiptData(
       sales: sales,
       billSettings: farm?.billSettings ?? const BillSettings(),
       logo: farm?.profileImage,
+      lotLabels: lotLabels,
     );
   }
 
@@ -818,6 +584,7 @@ class _DeliveryReceiptsSheetState extends State<_DeliveryReceiptsSheet> {
       sale: sale,
       billSettings: d.billSettings,
       farmLogo: d.logo,
+      lotLabel: d.lotLabels[sale.id],
     );
     switch (result.status) {
       case PdfSaveStatus.saved:
@@ -833,6 +600,7 @@ class _DeliveryReceiptsSheetState extends State<_DeliveryReceiptsSheet> {
       sale: sale,
       billSettings: d.billSettings,
       farmLogo: d.logo,
+      lotLabel: d.lotLabels[sale.id],
     );
     return null;
   });
@@ -997,9 +765,19 @@ class _DeliveryReceiptsSheetState extends State<_DeliveryReceiptsSheet> {
                   size: 18, color: AppColors.primaryGreen),
               const SizedBox(width: 8),
               Expanded(
-                child: Text(
-                  'Receipt · Booking ${sale.id}',
-                  style: AppTheme.heading(size: 13),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Receipt · Booking ${sale.id}',
+                      style: AppTheme.heading(size: 13),
+                    ),
+                    if (d.lotLabels[sale.id] != null)
+                      Text(
+                        d.lotLabels[sale.id]!,
+                        style: AppTheme.body(size: 10.5),
+                      ),
+                  ],
                 ),
               ),
               if (busy)
@@ -1049,10 +827,14 @@ class _ReceiptData {
   final BillSettings billSettings;
   final Uint8List? logo;
 
+  /// "LOT-0008 (Raju)" per lot sale, by sale ID.
+  final Map<String, String> lotLabels;
+
   const _ReceiptData({
     required this.sales,
     required this.billSettings,
     required this.logo,
+    this.lotLabels = const {},
   });
 }
 
@@ -1066,8 +848,8 @@ class _ReceiptData {
 ///
 ///  * a registered goat → its latest weight-history entry, or the weight
 ///    recorded on the goat when it has none (key: the goat ID);
-///  * a lot booking → the total of Goat 1..N's saved weights, only when
-///    every one of them has a weight (key: `lot:<saleId>`).
+///  * a lot booking → each of Goat 1..N's saved weights
+///    (key: `lot:<saleId>:<index>`).
 Future<Map<String, double>> latestRecordedWeights(
     String farmId,
     SectionBooking booking,
@@ -1080,17 +862,12 @@ Future<Map<String, double>> latestRecordedWeights(
     final saved = await SaleGoatDetailsService.instance
         .streamForSale(farmId, booking.id)
         .first;
-    final byIndex = {for (final g in saved) g.index: g.weight};
-    final n = booking.goatCount;
-    var total = 0.0;
 
-    for (var i = 1; i <= n; i++) {
-      final weight = byIndex[i] ?? 0;
-      if (weight <= 0) return out;
-      total += weight;
+    for (final g in saved) {
+      if (g.index <= booking.goatCount && g.weight > 0) {
+        out['lot:${booking.id}:${g.index}'] = g.weight;
+      }
     }
-
-    if (n > 0) out['lot:${booking.id}'] = (total * 1000).round() / 1000;
     return out;
   }
 

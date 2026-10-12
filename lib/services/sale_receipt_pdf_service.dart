@@ -21,6 +21,7 @@ class SaleReceiptPdfService {
     required Sale sale,
     required BillSettings billSettings,
     Uint8List? farmLogo,
+    String? lotLabel,
   }) async {
     final regularFont = await PdfGoogleFonts.notoSansRegular();
     final boldFont = await PdfGoogleFonts.notoSansBold();
@@ -87,7 +88,7 @@ class SaleReceiptPdfService {
 
               pw.SizedBox(height: 3),
 
-              _goatDetails(sale),
+              _goatDetails(sale, lotLabel: lotLabel),
 
               pw.SizedBox(height: 5),
 
@@ -135,11 +136,13 @@ class SaleReceiptPdfService {
     required Sale sale,
     required BillSettings billSettings,
     Uint8List? farmLogo,
+    String? lotLabel,
   }) async {
     final bytes = await generatePdf(
       sale: sale,
       billSettings: billSettings,
       farmLogo: farmLogo,
+      lotLabel: lotLabel,
     );
 
     await Printing.layoutPdf(
@@ -152,11 +155,13 @@ class SaleReceiptPdfService {
     required Sale sale,
     required BillSettings billSettings,
     Uint8List? farmLogo,
+    String? lotLabel,
   }) async {
     final bytes = await generatePdf(
       sale: sale,
       billSettings: billSettings,
       farmLogo: farmLogo,
+      lotLabel: lotLabel,
     );
 
     await Printing.sharePdf(
@@ -172,11 +177,13 @@ class SaleReceiptPdfService {
     required Sale sale,
     required BillSettings billSettings,
     Uint8List? farmLogo,
+    String? lotLabel,
   }) async {
     final bytes = await generatePdf(
       sale: sale,
       billSettings: billSettings,
       farmLogo: farmLogo,
+      lotLabel: lotLabel,
     );
 
     return savePdfAs(bytes, _fileName(sale));
@@ -186,11 +193,13 @@ class SaleReceiptPdfService {
     required Sale sale,
     required BillSettings billSettings,
     Uint8List? farmLogo,
+    String? lotLabel,
   }) async {
     final bytes = await generatePdf(
       sale: sale,
       billSettings: billSettings,
       farmLogo: farmLogo,
+      lotLabel: lotLabel,
     );
 
     final directory = await getApplicationDocumentsDirectory();
@@ -608,13 +617,18 @@ class SaleReceiptPdfService {
   // GOAT DETAILS
   // ---------------------------------------------------------------------------
 
-  pw.Widget _goatDetails(Sale sale) {
+  /// [lotLabel] is the lot with its supplier — "LOT-0008 (Raju)" — for a
+  /// lot sale; without it the lot number alone is shown.
+  pw.Widget _goatDetails(Sale sale, {String? lotLabel}) {
     return _card(
       child: pw.Column(
         children: [
           _detailRow(
             sale.isLotSale ? 'Lot' : 'Goat ID(s)',
-            sale.goatsReceiptLabel,
+            sale.isLotSale && lotLabel != null
+                ? '$lotLabel - ${sale.lotQuantity} '
+                'goat${sale.lotQuantity == 1 ? '' : 's'}'
+                : sale.goatsReceiptLabel,
           ),
           _detailRow(
             'Selling Weight',

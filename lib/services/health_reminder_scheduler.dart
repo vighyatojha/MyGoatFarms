@@ -26,9 +26,12 @@ import 'notification_service.dart';
 /// times a day at RANDOM times picked by [NotificationSchedule.minutesFor]
 /// — anywhere between 6 AM and 11 PM, at least 4 hours apart. Each
 /// digest lists what is overdue, due today, tomorrow, in 2 days and in
-/// 7 days. Opening the app only REBUILDS the upcoming digests from fresh
-/// data; it never shows a notification. A day with nothing to report gets
-/// no notification at all.
+/// 7 days. Opening the app REBUILDS the upcoming digests from fresh
+/// data. If one of today's digest times has already passed and its
+/// notification never showed (phone killed the alarm, app was closed,
+/// battery saver…), opening or resuming the app shows it INSTANTLY —
+/// at most once per missed time, and never in quiet hours (11 PM–6 AM).
+/// A day with nothing to report gets no notification at all.
 ///
 /// The in-app Notifications feed (Firestore) is still written as before.
 ///
@@ -169,8 +172,8 @@ class HealthReminderScheduler {
   /// from fresh data. Also re-arms them after a reboot cleared the OS
   /// alarms.
   ///
-  /// Shows NO notification itself — this is the fix for "a notification
-  /// every time the app is opened".
+  /// If today's last passed digest time never delivered its notification,
+  /// shows it now (once per missed time, see [_catchUpMissedDigest]).
   Future<void> rescheduleAllForFarm(String farmId) async {
     // Make sure every Available, Own Palai and Wait on Delivery goat
     // carries the farm's current Health Reminder Settings before its
@@ -492,6 +495,15 @@ class HealthReminderScheduler {
   static const String _legacyCleanupPrefsKey = 'mgf_digest_migrated_v1';
   static const Duration _digestCooldown = Duration(minutes: 5);
 
+  /// Id of the "missed digest" notification shown on app open. Slot 9 of
+  /// day 0 is never used by a scheduled digest (3 slots a day) and is not
+  /// cancelled by [cancelDailyDigest], so a rebuild can't wipe it.
+  static const int _catchUpId = _digestIdBase + 9;
+
+  /// Prefs key prefix: '<prefix><yyyy-mm-dd>' = last slot index of that
+  /// day already delivered (or caught up).
+  static const String _catchUpPrefsPrefix = 'mgf_digest_caught_up_';
+
   Future<void>? _digestInFlight;
   bool _digestDirty = false;
   DateTime? _digestBuiltAt;
@@ -499,7 +511,8 @@ class HealthReminderScheduler {
 
   /// Rebuilds the scheduled digests for the next
   /// [NotificationSchedule.daysAhead] days from the farm's current health
-  /// records. Never shows a notification immediately.
+  /// records. Also shows today's latest missed digest right away (see
+  /// [_catchUpMissedDigest]).
   ///
   /// Overlapping calls share one rebuild (with one follow-up if something
   /// changed meanwhile). Without [force], a call within 5 minutes of the
@@ -581,6 +594,10 @@ class HealthReminderScheduler {
         final content = _digestContentFor(date, items);
         if (content == null) continue; // nothing to report that day
 
+        if (day == 0) {
+          await _catchUpMissedDigest(date: date, now: now, content: content);
+        }
+
         // Today's 3 random times (same every time for the same date).
         final minutes = NotificationSchedule.minutesFor(date);
         for (var slot = 0; slot < minutes.length; slot++) {
@@ -611,6 +628,112 @@ class HealthReminderScheduler {
       debugPrint('HealthReminderScheduler: digest rebuild failed: $e');
     }
   }
+
+  /// Opening the app after one of today's digest times: if that time's
+  /// notification never showed, show it now.
+  ///
+  ///  * Only the LATEST passed time is caught up, so opening the app in
+  ///    the evening gives one notification, not three.
+  ///  * Each time is caught up once: the slot is remembered per day in
+  ///    SharedPreferences, so reopening the app doesn't repeat it.
+  ///  * If the scheduled alarm did fire (its notification is still in the
+  ///    tray) nothing extra is shown.
+  ///  * Nothing during quiet hours; it is shown on the next open after
+  ///    6 AM instead (today's content then includes anything overdue).
+  /// Never throws.
+  Future<void> _catchUpMissedDigest({
+    required DateTime date,
+    required tz.TZDateTime now,
+    required _DigestContent content,
+  }) async {
+    try {
+      final minutes = NotificationSchedule.minutesFor(date);
+      var lastPassed = -1;
+      for (var slot = 0; slot < minutes.length; slot++) {
+        final when = tz.TZDateTime(tz.local, date.year, date.month, date.day,
+            minutes[slot] ~/ 60, minutes[slot] % 60);
+        if (!when.isAfter(now)) lastPassed = slot;
+      }
+      if (lastPassed < 0) return; // no digest time has passed yet today
+      if (NotificationSchedule.isQuietTime(now)) return;
+
+      final prefs = await SharedPreferences.getInstance();
+      final key = '$_catchUpPrefsPrefix${_dateKey(date)}';
+      final handled = prefs.getInt(key) ?? -1;
+      if (handled >= lastPassed) return; // already delivered / caught up
+
+      // Did the scheduled alarm already put it in the tray?
+      var alreadyShown = false;
+      try {
+        final active = await _plugin.getActiveNotifications();
+        final todaysIds = {
+          for (var slot = 0; slot <= lastPassed; slot++) _digestId(0, slot),
+          _catchUpId,
+        };
+        alreadyShown = active.any((n) => todaysIds.contains(n.id));
+      } catch (_) {
+        // Not supported on this platform/version: just show it.
+      }
+
+      if (!alreadyShown) {
+        // Keep it until 1 minute before the next digest time (or 11 PM).
+        final next = lastPassed + 1 < minutes.length
+            ? tz.TZDateTime(tz.local, date.year, date.month, date.day,
+            minutes[lastPassed + 1] ~/ 60, minutes[lastPassed + 1] % 60)
+            : tz.TZDateTime(tz.local, date.year, date.month, date.day,
+            NotificationSchedule.quietStartHour);
+        var visibleFor = next.difference(now) - const Duration(minutes: 1);
+        if (visibleFor < const Duration(minutes: 30)) {
+          visibleFor = const Duration(minutes: 30);
+        }
+
+        await _plugin.show(
+          _catchUpId,
+          content.title,
+          content.body,
+          _digestDetails(content.bigText, visibleFor),
+          payload: _digestPayload(),
+        );
+      }
+
+      await prefs.setInt(key, lastPassed);
+      await _forgetOldCatchUps(prefs, date);
+    } catch (e) {
+      debugPrint('HealthReminderScheduler: missed digest catch-up failed: $e');
+    }
+  }
+
+  String _dateKey(DateTime d) =>
+      '${d.year}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
+
+  /// Drops catch-up markers of earlier days so prefs don't grow forever.
+  Future<void> _forgetOldCatchUps(SharedPreferences prefs, DateTime today) async {
+    final keep = '$_catchUpPrefsPrefix${_dateKey(today)}';
+    for (final k in prefs.getKeys().toList()) {
+      if (k.startsWith(_catchUpPrefsPrefix) && k != keep) {
+        await prefs.remove(k);
+      }
+    }
+  }
+
+  NotificationDetails _digestDetails(String bigText, Duration visibleFor) {
+    return NotificationDetails(
+      android: AndroidNotificationDetails(
+        NotificationService.channelId,
+        NotificationService.channelName,
+        channelDescription: NotificationService.channelDescription,
+        importance: Importance.high,
+        priority: Priority.high,
+        styleInformation: BigTextStyleInformation(bigText),
+        // Auto-remove before the next one arrives (see callers).
+        timeoutAfter: visibleFor.inMilliseconds,
+      ),
+    );
+  }
+
+  String _digestPayload() => NotificationService.encodePayload(
+    {'category': 'health', 'type': 'health_digest'},
+  );
 
   /// Earlier versions scheduled up to 4 alarms per record, some at
   /// midnight. Remove them all once after updating so none of them can
@@ -689,22 +812,8 @@ class HealthReminderScheduler {
     required String body,
     required String bigText,
   }) async {
-    final details = NotificationDetails(
-      android: AndroidNotificationDetails(
-        NotificationService.channelId,
-        NotificationService.channelName,
-        channelDescription: NotificationService.channelDescription,
-        importance: Importance.high,
-        priority: Priority.high,
-        styleInformation: BigTextStyleInformation(bigText),
-        // Auto-remove before the next one arrives (see caller).
-        timeoutAfter: visibleFor.inMilliseconds,
-      ),
-    );
-
-    final payload = NotificationService.encodePayload(
-      {'category': 'health', 'type': 'health_digest'},
-    );
+    final details = _digestDetails(bigText, visibleFor);
+    final payload = _digestPayload();
 
     // flutter_local_notifications silently drops an exact schedule when
     // the exact-alarm permission is missing, so pick the mode up front.

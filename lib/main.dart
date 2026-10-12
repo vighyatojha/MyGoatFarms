@@ -9,6 +9,7 @@ import 'app_theme.dart';
 import 'firebase_options.dart';
 import 'services/firestore_service.dart';
 import 'services/locale_provider.dart';
+import 'services/background_refresh.dart';
 import 'services/notification_service.dart';
 import 'screens/splash_screen.dart';
 import 'screens/login_screen.dart';
@@ -165,12 +166,10 @@ class _AppBootstrapState extends State<_AppBootstrap> {
       options: DefaultFirebaseOptions.currentPlatform,
     );
 
-    // Must be registered as early as possible — before any notification
-    // can arrive — so Android can hand a background/terminated-state
-    // message to this isolate. Requesting permission and saving this
-    // device's token happens later, once a farmId is known (see
-    // MainShell._initPushNotifications).
-    NotificationService.registerBackgroundHandler();
+    // Registers the background job's entry point with Android
+    // WorkManager. The job itself is only scheduled once a user is
+    // logged in (see MainShell._initPushNotifications).
+    await BackgroundRefresh.initialize();
 
     // Needed before any HealthReminderScheduler.zonedSchedule() call —
     // safe/cheap to always run, not conditional on Firebase succeeding.

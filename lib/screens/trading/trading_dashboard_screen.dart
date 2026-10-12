@@ -26,6 +26,7 @@ import 'lots/lot_stock_screen.dart';
 import 'lots/receive_lot_screen.dart';
 import 'own_palai/own_palai_list_screen.dart';
 import 'purchase_goats/complete_receiving_screen.dart';
+import 'purchase_goats/individual_goat_purchase_screen.dart';
 import 'purchase_goats/purchase_goats_wizard_screen.dart';
 import 'sell_from_lot/sell_from_lot_wizard_screen.dart';
 import 'sell_goat/sell_goat_wizard_screen.dart';
@@ -364,6 +365,59 @@ class _TradingDashboardScreenState extends State<TradingDashboardScreen> {
     return _push(LotSalesListScreen(farmId: farmId));
   }
 
+  /// One "Purchase" entry point, two kinds:
+  ///  - Lot (wholesale)  -> Purchase Goats wizard (a purchase lot)
+  ///  - Single goat      -> Individual goat purchase (straight into stock)
+  Future<void> _openPurchaseSheet() async {
+    final choice = await showModalBottomSheet<String>(
+      context: context,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (ctx) {
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(16, 14, 16, 16),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('Purchase goats', style: AppTheme.heading(size: 16)),
+                const SizedBox(height: 12),
+                _SellSourceTile(
+                  icon: Icons.layers_outlined,
+                  color: AppColors.tradingBlue,
+                  title: 'Lot purchase (wholesale)',
+                  subtitle: 'Many goats from a supplier, as one lot',
+                  onTap: () => Navigator.of(ctx).pop('lot'),
+                ),
+                const SizedBox(height: 8),
+                _SellSourceTile(
+                  icon: GoatIcons.paw,
+                  color: AppColors.primaryGreen,
+                  title: 'Single goat',
+                  subtitle: 'One goat, registered straight into stock',
+                  onTap: () => Navigator.of(ctx).pop('single'),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+
+    if (!mounted || choice == null) return;
+
+    if (choice == 'lot') {
+      await _push(const PurchaseGoatsWizardScreen());
+    } else {
+      final farmId = _farmId;
+      if (farmId == null) return;
+      await _push(IndividualGoatPurchaseScreen(farmId: farmId));
+    }
+  }
+
   /// One "Sell" entry point. The source is chosen inside the flow:
   ///  - From Lot             -> Sell From Lot wizard
   ///  - From Available Stock -> Sell Goat wizard (registered goats and
@@ -647,6 +701,8 @@ class _TradingDashboardScreenState extends State<TradingDashboardScreen> {
           height: 116,
         ),
         const SizedBox(height: 10),
+        _tradeActions(s, lotOverview),
+        const SizedBox(height: 10),
         _sellOptions(lotOverview),
         const SizedBox(height: 10),
         _secondaryStats(s, lotOverview),
@@ -655,15 +711,54 @@ class _TradingDashboardScreenState extends State<TradingDashboardScreen> {
     );
   }
 
-  /// "Sell Goats" card: every sales entry point in one place, right under
-  /// the Wait on Delivery / Total Sold cards.
-  ///  - Sell Available Stock -> Sell Goat wizard (individually registered goats)
+  /// The two big PURCHASE and SELL cards, right under the Wait on Delivery
+  /// / Total Sold cards. Each opens a choice of two:
+  ///  - Purchase -> Lot purchase (wholesale) or Single goat
+  ///  - Sell     -> From Lot or From Available Stock
+  Widget _tradeActions(TradingSummary s, TradingLotOverview lotOverview) {
+    final registered = _availableCount;
+    final available = registered == null
+        ? null
+        : registered + lotOverview.farmAvailableQty;
+
+    return SizedBox(
+      height: 150,
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Expanded(
+            child: _BigActionCard(
+              icon: Icons.add_shopping_cart_rounded,
+              color: AppColors.tradingBlue,
+              title: 'Purchase',
+              subtitle: 'Lot or single goat',
+              badge: '${s.wholesalePurchased} head bought',
+              onTap: _openPurchaseSheet,
+            ),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: _BigActionCard(
+              icon: Icons.sell_outlined,
+              color: AppColors.primaryGreen,
+              title: 'Sell',
+              subtitle: 'From a lot or from stock',
+              badge: available == null ? '—' : '$available available',
+              onTap: _openSellSheet,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Lots, Own Palai, Lot Sales and Customers, under the Purchase / Sell
+  /// cards.
   ///  - Lot Management       -> Lot Management screen (lots, receiving,
   ///                            lot selling, supplier payments)
   ///  - Lot Sales            -> every sale made from a purchase lot
   Widget _sellOptions(TradingLotOverview lotOverview) {
     final availableInLots = lotOverview.farmAvailableQty;
-    final availableRegistered = _availableCount;
 
     const divider = Divider(
       height: 1,
@@ -684,27 +779,6 @@ class _TradingDashboardScreenState extends State<TradingDashboardScreen> {
         type: MaterialType.transparency,
         child: Column(
           children: [
-            _StripRow(
-              icon: GoatIcons.paw,
-              color: AppColors.primaryGreen,
-              title: 'Sell Goats',
-              subtitle: 'From a lot or from available stock',
-              onTap: _openSellSheet,
-              trailing: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  _Pill(
-                    availableRegistered == null
-                        ? '—'
-                        : '${availableRegistered + availableInLots} available',
-                    AppColors.primaryGreen,
-                  ),
-                  const SizedBox(width: 4),
-                  chevron(),
-                ],
-              ),
-            ),
-            divider,
             _StripRow(
               icon: Icons.layers_outlined,
               color: AppColors.tradingBlue,
@@ -789,31 +863,6 @@ class _TradingDashboardScreenState extends State<TradingDashboardScreen> {
         type: MaterialType.transparency,
         child: Column(
           children: [
-            _StripRow(
-              icon: Icons.shopping_cart_outlined,
-              color: AppColors.info,
-              title: 'Wholesale Purchased',
-              subtitle: '${s.wholesalePurchased} head • Purchase or sell from lots',
-              trailing: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  _CompactActionButton(
-                    label: 'Purchase',
-                    icon: Icons.add_shopping_cart_rounded,
-                    color: AppColors.primaryGreen,
-                    onTap: () => _push(const PurchaseGoatsWizardScreen()),
-                  ),
-                  const SizedBox(width: 6),
-                  _CompactActionButton(
-                    label: 'Sell',
-                    icon: Icons.sell_outlined,
-                    color: AppColors.tradingBlue,
-                    onTap: _openSellSheet,
-                  ),
-                ],
-              ),
-            ),
-            divider,
             _StripRow(
               icon: Icons.currency_rupee_rounded,
               color: AppColors.error,
@@ -1754,6 +1803,79 @@ class _CompactActionButton extends StatelessWidget {
   }
 }
 
+
+/// A big tappable card: icon, title, one line, and a small badge.
+class _BigActionCard extends StatelessWidget {
+  final IconData icon;
+  final Color color;
+  final String title;
+  final String subtitle;
+  final String badge;
+  final VoidCallback onTap;
+
+  const _BigActionCard({
+    required this.icon,
+    required this.color,
+    required this.title,
+    required this.subtitle,
+    required this.badge,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.white,
+      borderRadius: BorderRadius.circular(18),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(18),
+        child: Ink(
+          padding: const EdgeInsets.all(14),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(18),
+            border: Border.all(color: color.withValues(alpha: 0.35), width: 1.2),
+            gradient: LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: [color.withValues(alpha: 0.10), Colors.white],
+            ),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Container(
+                    width: 40,
+                    height: 40,
+                    decoration: BoxDecoration(
+                      color: color.withValues(alpha: 0.14),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Icon(icon, size: 22, color: color),
+                  ),
+                  const Spacer(),
+                  Icon(Icons.chevron_right_rounded, size: 20, color: color),
+                ],
+              ),
+              const Spacer(),
+              Text(title, style: AppTheme.heading(size: 18)),
+              Text(
+                subtitle,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: AppTheme.body(size: 11),
+              ),
+              const SizedBox(height: 6),
+              _Pill(badge, color),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
 
 class _SellSourceTile extends StatelessWidget {
   const _SellSourceTile({

@@ -14,6 +14,7 @@ import 'package:mygoatfarms/services/partner_access_service.dart';
 import 'package:mygoatfarms/services/sale_receipt_pdf_service.dart';
 import 'package:mygoatfarms/services/sales_service.dart';
 import 'package:mygoatfarms/widgets/sale_actions.dart';
+import 'package:mygoatfarms/widgets/lot_origin_card.dart';
 
 class SaleReceiptScreen extends StatefulWidget {
   final String farmId;
@@ -33,6 +34,9 @@ class _SaleReceiptScreenState extends State<SaleReceiptScreen> {
   Sale? _sale;
   FarmModel? _farm;
   BillSettings? _billSettings;
+
+  /// "LOT-0008 (Raju)" for a lot sale, once the lot is loaded.
+  String? _lotLabel;
 
   bool _loading = true;
   bool _pdfBusy = false;
@@ -71,10 +75,19 @@ class _SaleReceiptScreenState extends State<SaleReceiptScreen> {
         return;
       }
 
+      String? lotLabel;
+      if (sale.isLotSale) {
+        final lot = await LotOriginCard.lotFor(widget.farmId, sale.lotDocId);
+        lotLabel = LotIdText.label(lot, sale.lotDocId);
+      }
+
+      if (!mounted) return;
+
       setState(() {
         _sale = sale;
         _farm = farm;
         _billSettings = farm?.billSettings;
+        _lotLabel = lotLabel;
         _loading = false;
       });
     } catch (e) {
@@ -157,6 +170,7 @@ class _SaleReceiptScreenState extends State<SaleReceiptScreen> {
         sale: _sale!,
         billSettings: _billSettings ?? BillSettings(),
         farmLogo: _farm?.profileImage,
+        lotLabel: _lotLabel,
       ),
     );
   }
@@ -169,6 +183,7 @@ class _SaleReceiptScreenState extends State<SaleReceiptScreen> {
         sale: _sale!,
         billSettings: _billSettings ?? BillSettings(),
         farmLogo: _farm?.profileImage,
+        lotLabel: _lotLabel,
       ),
     );
   }
@@ -181,6 +196,7 @@ class _SaleReceiptScreenState extends State<SaleReceiptScreen> {
         sale: _sale!,
         billSettings: _billSettings ?? BillSettings(),
         farmLogo: _farm?.profileImage,
+        lotLabel: _lotLabel,
       );
 
       if (!mounted) return;
@@ -400,7 +416,10 @@ class _SaleReceiptScreenState extends State<SaleReceiptScreen> {
           [
             _row(
               sale.isLotSale ? 'Lot' : 'Goat(s)',
-              sale.goatsReceiptLabel,
+              sale.isLotSale && _lotLabel != null
+                  ? '$_lotLabel - ${sale.lotQuantity} '
+                  'goat${sale.lotQuantity == 1 ? '' : 's'}'
+                  : sale.goatsReceiptLabel,
             ),
             _row(
               'Selling Weight',

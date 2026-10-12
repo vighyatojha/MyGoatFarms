@@ -20,16 +20,15 @@ dependencies:
   firebase_storage: ^12.3.4
   intl: ^0.19.0
 
-  # Push notifications (Android-only for now — see
-  # lib/services/notification_service.dart). firebase_messaging delivers
-  # FCM data/notification messages; flutter_local_notifications is needed
-  # to show a heads-up notification while the app is in the FOREGROUND,
-  # since FCM does not auto-display notifications itself on Android when
-  # the app is open.
-  firebase_messaging: ^15.1.3
+  # Notifications (Android-only for now — see
+  # lib/services/notification_service.dart). Everything is on-device:
+  # flutter_local_notifications shows/schedules the notifications and
+  # workmanager runs lib/services/background_refresh.dart every few
+  # hours while the app is closed. No Firebase Cloud Messaging.
   flutter_local_notifications: ^18.0.1
   timezone: ^0.9.4
   cloud_functions: ^5.1.6
+  workmanager: ^0.10.10
 
   # Added for splash/login/register/home screen animations
   animate_do: ^3.3.4
