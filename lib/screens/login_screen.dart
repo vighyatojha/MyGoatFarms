@@ -1,7 +1,6 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart' show FirebaseException;
 import 'package:animate_do/animate_do.dart';
@@ -10,11 +9,9 @@ import '../app_theme.dart';
 import '../services/firestore_service.dart';
 import 'register_screen.dart';
 
-/// Login screen for farm owners and partners. Signs in with a password and
-/// either a 10-digit mobile number or an email (toggle at the top of the
-/// form). A mobile number is resolved to its linked email through
-/// [FirestoreService.findEmailByMobile] (owners first, then partners), then
-/// Firebase Auth signs in with email + password.
+/// Login screen for farm owners and partners. Signs in with email +
+/// password through Firebase Auth. (Mobile-number login was removed — it
+/// needed a Cloud Function to look up the email for a number.)
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
 
@@ -26,9 +23,6 @@ class _LoginScreenState extends State<LoginScreen> {
   final _formKey = GlobalKey<FormState>();
   final _identifierController = TextEditingController();
   final _passwordController = TextEditingController();
-
-  /// true = log in with mobile number, false = with email.
-  bool _useMobile = true;
 
   bool _obscurePassword = true;
   bool _rememberMe = false;
@@ -43,27 +37,11 @@ class _LoginScreenState extends State<LoginScreen> {
 
   String? _validateIdentifier(String? value) {
     final v = value?.trim() ?? '';
-    if (_useMobile) {
-      if (v.isEmpty) return 'Enter your mobile number';
-      if (!RegExp(r'^[0-9]{10}$').hasMatch(v)) {
-        return 'Enter a valid 10-digit mobile number';
-      }
-      return null;
-    }
     if (v.isEmpty) return 'Enter your email';
     if (!RegExp(r'^[\w\.\-]+@[\w\-]+\.[\w\-\.]+$').hasMatch(v)) {
       return 'Enter a valid email address';
     }
     return null;
-  }
-
-  void _setMode(bool useMobile) {
-    if (_useMobile == useMobile || _isLoading) return;
-    setState(() {
-      _useMobile = useMobile;
-      _identifierController.clear();
-    });
-    _formKey.currentState?.reset();
   }
 
   String? _validatePassword(String? value) {
@@ -76,23 +54,11 @@ class _LoginScreenState extends State<LoginScreen> {
     if (!_formKey.currentState!.validate()) return;
     setState(() => _isLoading = true);
 
-    final input = _identifierController.text.trim();
+    final email = _identifierController.text.trim();
     final password = _passwordController.text;
     final firestore = FirestoreService.instance;
 
     try {
-      String email = input;
-
-      // Mobile mode: resolve the linked email address from Firestore.
-      if (_useMobile) {
-        final linkedEmail = await firestore.findEmailByMobile(input);
-        if (linkedEmail == null) {
-          _showSnack('No account found with this mobile number');
-          return;
-        }
-        email = linkedEmail;
-      }
-
       await FirebaseAuth.instance
           .signInWithEmailAndPassword(email: email, password: password)
           .timeout(FirestoreService.timeout);
@@ -172,53 +138,6 @@ class _LoginScreenState extends State<LoginScreen> {
     );
   }
 
-  Widget _buildModeToggle() {
-    Widget segment(String label, IconData icon, bool selected, VoidCallback onTap) {
-      return Expanded(
-        child: GestureDetector(
-          onTap: onTap,
-          child: AnimatedContainer(
-            duration: const Duration(milliseconds: 180),
-            padding: const EdgeInsets.symmetric(vertical: 11),
-            decoration: BoxDecoration(
-              color: selected ? AppColors.primaryGreen : Colors.transparent,
-              borderRadius: BorderRadius.circular(26),
-            ),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Icon(icon, size: 18, color: selected ? Colors.white : AppColors.textGrey),
-                const SizedBox(width: 6),
-                Text(
-                  label,
-                  style: AppTheme.body(
-                    size: 14,
-                    color: selected ? Colors.white : AppColors.textGrey,
-                    weight: FontWeight.w600,
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
-      );
-    }
-
-    return Container(
-      padding: const EdgeInsets.all(4),
-      decoration: BoxDecoration(
-        color: AppColors.primaryGreen.withValues(alpha: 0.10),
-        borderRadius: BorderRadius.circular(30),
-      ),
-      child: Row(
-        children: [
-          segment('Mobile', Icons.phone_outlined, _useMobile, () => _setMode(true)),
-          segment('Email', Icons.email_outlined, !_useMobile, () => _setMode(false)),
-        ],
-      ),
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -279,29 +198,17 @@ class _LoginScreenState extends State<LoginScreen> {
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
                     FadeInUp(
-                      duration: const Duration(milliseconds: 250),
-                      child: _buildModeToggle(),
-                    ),
-                    const SizedBox(height: 16),
-                    FadeInUp(
                       delay: const Duration(milliseconds: 60),
                       duration: const Duration(milliseconds: 250),
                       child: TextFormField(
                         controller: _identifierController,
                         validator: _validateIdentifier,
-                        keyboardType: _useMobile
-                            ? TextInputType.phone
-                            : TextInputType.emailAddress,
-                        maxLength: _useMobile ? 10 : null,
-                        inputFormatters: _useMobile
-                            ? [FilteringTextInputFormatter.digitsOnly]
-                            : null,
-                        decoration: InputDecoration(
-                          hintText: _useMobile ? 'Mobile Number' : 'Email',
-                          counterText: '',
-                          prefixText: _useMobile ? '+91  ' : null,
+                        keyboardType: TextInputType.emailAddress,
+                        autocorrect: false,
+                        decoration: const InputDecoration(
+                          hintText: 'Email',
                           prefixIcon: Icon(
-                            _useMobile ? Icons.phone_outlined : Icons.email_outlined,
+                            Icons.email_outlined,
                             color: AppColors.primaryGreen,
                           ),
                         ),

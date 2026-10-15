@@ -138,24 +138,6 @@ class _RegisterScreenState extends State<RegisterScreen> {
     final password = _passwordController.text;
 
     try {
-      final mobileTaken =
-      await firestore.isMobileNumberTaken(mobileNumber);
-
-      if (mobileTaken) {
-        _showSnack(
-          'This mobile number is already registered',
-          isError: true,
-        );
-
-        if (mounted) {
-          setState(() {
-            _isLoading = false;
-          });
-        }
-
-        return;
-      }
-
       final credential = await FirebaseAuth.instance
           .createUserWithEmailAndPassword(
         email: email,

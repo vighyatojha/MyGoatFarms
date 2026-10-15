@@ -27,7 +27,7 @@
  *  2. scheduledHealthReminderSweep — the ONE thing the app never writes
  *     to Firestore at all is the 7-days-before / 1-day-before advance
  *     reminder (those exist purely as local OS alarms on the creating
- *     device). This runs every 30 minutes, re-derives the same "is
+ *     device). This runs every 8 hours, re-derives the same "is
  *     anything entering its 7-day/1-day window right now" check the
  *     Flutter app does client-side (HealthReminderScheduler /
  *     upcomingCustomerHealthReminders / upcomingTradingHealthReminders), and
@@ -43,7 +43,7 @@
  * swallows the ALREADY_EXISTS error. That guarantees each real-world
  * event (e.g. "vaccination X entered its 7-day window") triggers exactly
  * one Firestore CREATE — and therefore exactly one push — no matter how
- * many times the 30-minute sweep re-checks it afterward. The app's own
+ * many times the 8-hour sweep re-checks it afterward. The app's own
  * addNotification() calls for "recorded"/"due today"/"overdue" already
  * follow the same discipline (a merge-write to a fixed docId is only
  * ever a CREATE the first time), so onHealthNotificationCreated will not
@@ -58,7 +58,7 @@
  * Requires the Firebase project to be on the Blaze (pay-as-you-go) plan
  * — Cloud Scheduler (used by the `schedule` trigger below) isn't
  * available on the free Spark plan. Cost at this app's scale (a handful
- * of farms, a sweep every 30 minutes) is expected to stay within, or very
+ * of farms, a sweep every 8 hours) is expected to stay within, or very
  * close to, Firebase's free monthly quota for Functions/Scheduler.
  */
 
@@ -202,7 +202,7 @@ function isInStageWindow(dueDate, daysBefore) {
       due.getDate() === target.getDate();
 }
 
-exports.scheduledHealthReminderSweep = onSchedule('every 30 minutes', async () => {
+exports.scheduledHealthReminderSweep = onSchedule({schedule: 'every 8 hours', timeZone: 'Asia/Kolkata'}, async () => {
   const horizon = Timestamp.fromDate(new Date(Date.now() + 8 * 24 * 60 * 60 * 1000)); // 8 days out
 
   // -- Customer Palai: farms/{farmId}/palaiCustomers/{customerId}/goats/{goatId}/{type}Records/{recordId}
@@ -426,50 +426,10 @@ exports.deleteFarm = onCall(
     },
 );
 // ---------------------------------------------------------------------
-// 3. Owner-only notification delete
-//
-// Server-enforced — not just a hidden button in the UI. A partner
-// calling this directly (e.g. by reverse-engineering the app) gets a
-// `permission-denied` error no matter what, because the role check
-// happens here using the farm document's `authUid` field, which the
-// client never controls.
+// (REMOVED) deleteNotification — the app now deletes
+// farms/{farmId}/notifications/{id} directly from Firestore. The
+// Firestore rules already allow only the farm OWNER to delete.
 // ---------------------------------------------------------------------
-
-exports.deleteNotification = onCall(async (request) => {
-  const uid = request.auth && request.auth.uid;
-  if (!uid) {
-    throw new HttpsError('unauthenticated', 'Sign in required.');
-  }
-
-  const {farmId, notificationId} = request.data || {};
-  if (!farmId || !notificationId) {
-    throw new HttpsError('invalid-argument', 'farmId and notificationId are required.');
-  }
-
-  const farmSnap = await db.collection('farms').doc(farmId).get();
-  if (!farmSnap.exists) {
-    throw new HttpsError('not-found', 'Farm not found.');
-  }
-
-  const isOwner = farmSnap.data().authUid === uid;
-  if (!isOwner) {
-    throw new HttpsError(
-        'permission-denied',
-        'Only the farm owner can delete notifications.',
-    );
-  }
-
-  const notifRef = db.collection('farms').doc(farmId)
-      .collection('notifications').doc(notificationId);
-
-  const notifSnap = await notifRef.get();
-  if (!notifSnap.exists) {
-    throw new HttpsError('not-found', 'Notification not found.');
-  }
-
-  await notifRef.delete();
-  return {success: true};
-});
 
 // ---------------------------------------------------------------------
 // 4. One-time backfill: mobileIndex/{mobileNumber} -> {farmId}
@@ -582,72 +542,9 @@ exports.backfillMobileIndex = onCall(
     },
 );
 // ---------------------------------------------------------------------
-// 5. Login / sign-up lookups by mobile number (no sign-in required)
-//
-// Replace the public Firestore queries the app used before sign-in:
-//   farms.where('mobileNumber', ==, n).limit(1)
-//   collectionGroup('partners').where('mobileNumber', ==, n).limit(1)
-//   mobileIndex/{n}.get()
-// Those needed public security rules, and a public `list` rule can be
-// abused to page through every farm and partner document. These
-// functions run with admin access and return ONLY the single value the
-// login / sign-up screen needs — never the farm or partner document.
-//
-// The number must be an exact match (same as the old queries), and is
-// only accepted as 6–15 digits (an optional leading '+' is allowed), so
-// a caller cannot send ranges or wildcards.
+// (REMOVED) resolveLoginEmail / isMobileRegistered — the app no longer
+// logs in with a mobile number or checks whether a number is already
+// registered.
+// When deploying, `firebase deploy --only functions` will ask to delete
+// deleteNotification, resolveLoginEmail and isMobileRegistered — YES.
 // ---------------------------------------------------------------------
-
-const MOBILE_PATTERN = /^\+?[0-9]{6,15}$/;
-
-function readMobile(request) {
-  const raw = request.data && request.data.mobileNumber;
-  const mobile = typeof raw === 'string' ? raw.trim() : '';
-
-  if (!MOBILE_PATTERN.test(mobile)) {
-    throw new HttpsError('invalid-argument', 'Enter a valid mobile number.');
-  }
-
-  return mobile;
-}
-
-// Login: mobile number -> the email to sign in with, or null.
-// Owners first, then partners — exactly the order the app used before.
-exports.resolveLoginEmail = onCall(
-    {region: 'us-central1'},
-    async (request) => {
-      const mobile = readMobile(request);
-
-      const ownerSnap = await db.collection('farms')
-          .where('mobileNumber', '==', mobile)
-          .limit(1)
-          .get();
-
-      if (!ownerSnap.empty) {
-        const email = String(ownerSnap.docs[0].get('email') || '').trim();
-        if (email) return {email};
-      }
-
-      const partnerSnap = await db.collectionGroup('partners')
-          .where('mobileNumber', '==', mobile)
-          .limit(1)
-          .get();
-
-      if (!partnerSnap.empty) {
-        const email = String(partnerSnap.docs[0].get('email') || '').trim();
-        if (email) return {email};
-      }
-
-      return {email: null};
-    },
-);
-
-// Sign-up: is this mobile number already registered to a farm?
-exports.isMobileRegistered = onCall(
-    {region: 'us-central1'},
-    async (request) => {
-      const mobile = readMobile(request);
-      const snap = await db.collection('mobileIndex').doc(mobile).get();
-      return {registered: snap.exists};
-    },
-);

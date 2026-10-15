@@ -2,7 +2,6 @@ import 'dart:async';
 import 'dart:typed_data';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:cloud_functions/cloud_functions.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart';
 
@@ -424,27 +423,6 @@ class FirestoreService {
   // ---------------------------------------------------------------------
   // Farm — lookups
   // ---------------------------------------------------------------------
-
-  /// True if a farm is already registered with this mobile number.
-  Future<bool> isMobileNumberTaken(String mobileNumber) async {
-    final normalizedMobile = mobileNumber.trim();
-
-    if (normalizedMobile.isEmpty) {
-      return false;
-    }
-
-    // Runs before sign-up (not signed in), so it goes through the
-    // `isMobileRegistered` Cloud Function instead of reading mobileIndex
-    // directly — the security rules no longer let signed-out users read
-    // mobileIndex (it reveals farm ids).
-    final result = await FirebaseFunctions.instance
-        .httpsCallable('isMobileRegistered')
-        .call({'mobileNumber': normalizedMobile})
-        .timeout(timeout);
-
-    final data = result.data;
-    return data is Map && data['registered'] == true;
-  }
 
   Stream<List<Map<String, dynamic>>>
   customerPaymentHistoryStream(
@@ -1317,33 +1295,6 @@ class FirestoreService {
 
 
 
-  /// Resolves the email linked to a mobile number, used for mobile-number
-  /// login (Firebase Auth itself only signs in with email + password).
-  ///
-  /// Checks farm OWNER accounts first, then PARTNER accounts
-  /// (`farms/{farmId}/partners`). Returns null only when no account with a
-  /// usable email uses this number. Lookup failures (missing index,
-  /// security rules, network) are rethrown so the login screen can show
-  /// the real reason instead of a misleading "no account found".
-  Future<String?> findEmailByMobile(String mobileNumber) async {
-    final mobile = mobileNumber.trim();
-    if (mobile.isEmpty) return null;
-
-    // Runs before sign-in, so it goes through the `resolveLoginEmail`
-    // Cloud Function (owners first, then partners — same order as
-    // before). The old direct queries needed public `list` security
-    // rules that let anyone page through every farm and partner
-    // document; the function returns only the email.
-    final result = await FirebaseFunctions.instance
-        .httpsCallable('resolveLoginEmail')
-        .call({'mobileNumber': mobile})
-        .timeout(timeout);
-
-    final data = result.data;
-    final email = data is Map ? (data['email'] as String?)?.trim() : null;
-    return (email == null || email.isEmpty) ? null : email;
-  }
-
   Future<FarmModel?> getFarmByAuthUid(String uid) async {
     try {
       final query = await _farms
@@ -1555,27 +1506,17 @@ class FirestoreService {
     final indexRef =
     mobile.isEmpty ? null : _db.collection('mobileIndex').doc(mobile);
 
-    // The farm document and its mobileIndex entry are written together, so
-    // the "mobile number already registered" check in isMobileNumberTaken
-    // can never miss a farm, and two sign-ups racing for the same number
-    // cannot both succeed.
+    // The "mobile number already registered" check has been removed, so a
+    // number that is already in mobileIndex never blocks registration.
+    // The mobileIndex entry is only written when the number is not indexed
+    // yet (the security rules never allow overwriting an existing entry,
+    // so trying would make the whole registration fail).
     await _db.runTransaction((tx) async {
       var writeIndex = false;
 
       if (indexRef != null) {
         final existing = await tx.get(indexRef);
-        if (existing.exists) {
-          // Same account retrying its own setup is fine; anyone else is not.
-          if (existing.data()?['authUid'] != authUid) {
-            throw FirebaseException(
-              plugin: 'cloud_firestore',
-              code: 'already-exists',
-              message: 'This mobile number is already registered',
-            );
-          }
-        } else {
-          writeIndex = true;
-        }
+        writeIndex = !existing.exists;
       }
 
       tx.set(farmRef, {
@@ -3518,33 +3459,8 @@ class FirestoreService {
     required String email,
     required String authUid,
   }) async {
-    // Mobile-number login resolves the FIRST account that uses a number, so
-    // two accounts sharing one would make the second unable to log in with
-    // it. Reject a number that already belongs to a farm owner or to
-    // another partner of this farm.
-    final mobile = mobileNumber.trim();
-    if (mobile.isNotEmpty) {
-      final owner = await _db
-          .collection('mobileIndex')
-          .doc(mobile)
-          .get()
-          .timeout(timeout);
-      final samePartner = await _farms
-          .doc(farmId)
-          .collection('partners')
-          .where('mobileNumber', isEqualTo: mobile)
-          .limit(1)
-          .get()
-          .timeout(timeout);
-      if (owner.exists || samePartner.docs.isNotEmpty) {
-        throw FirebaseException(
-          plugin: 'cloud_firestore',
-          code: 'already-exists',
-          message: 'This mobile number is already registered',
-        );
-      }
-    }
-
+    // No "mobile number already registered" check: login is by email only,
+    // so two accounts may share a mobile number.
     final ref = _farms
         .doc(farmId)
         .collection('partners')
@@ -4368,27 +4284,21 @@ class FirestoreService {
 
   /// Deletes one notification — **owner only**.
   ///
-  /// This calls the `deleteNotification` Cloud Function (see
-  /// functions/index.js) rather than deleting the Firestore document
-  /// directly, because the role check has to happen somewhere the
-  /// client can't bypass. The function re-derives the caller's role
-  /// itself from the farm document's `authUid` field — it does not
-  /// trust anything this method sends about who's asking.
-  ///
-  /// Throws a [FirebaseFunctionsException] with code `permission-denied`
-  /// if the signed-in user isn't the farm owner. Callers (e.g.
-  /// NotificationScreen) should only present this action to owners in
-  /// the first place — hiding the button is the UX, this check is the
-  /// actual security boundary.
+  /// Deletes the Firestore document directly (no Cloud Function). The
+  /// owner-only check is enforced by the Firestore security rules
+  /// (`notifications` → `allow delete: if isOwner(farmId)`), so a partner
+  /// gets a [FirebaseException] with code `permission-denied`. Callers
+  /// (e.g. NotificationScreen) should only show this action to owners —
+  /// hiding the button is the UX, the rule is the security boundary.
   Future<void> deleteNotification(
       String farmId,
       String notificationId,
       ) async {
-    await FirebaseFunctions.instance
-        .httpsCallable('deleteNotification')
-        .call({
-      'farmId': farmId,
-      'notificationId': notificationId,
-    }).timeout(timeout);
+    await _farms
+        .doc(farmId)
+        .collection('notifications')
+        .doc(notificationId)
+        .delete()
+        .timeout(timeout);
   }
 }

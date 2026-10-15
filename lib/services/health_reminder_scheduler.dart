@@ -22,9 +22,9 @@ import 'notification_service.dart';
 /// IMMEDIATELY — which happened on every app open, because app start
 /// re-ran the scheduling for every due/overdue record.
 ///
-/// Now there is ONE combined "daily digest" notification, delivered 3
-/// times a day at RANDOM times picked by [NotificationSchedule.minutesFor]
-/// — anywhere between 6 AM and 11 PM, at least 4 hours apart. Each
+/// Now there is ONE combined "daily digest" notification, delivered
+/// EVERY 4 HOURS at the fixed times in [NotificationSchedule.minutesFor]
+/// — 6 AM, 10 AM, 2 PM, 6 PM and 10 PM. Each
 /// digest lists what is overdue, due today, tomorrow, in 2 days and in
 /// 7 days. Opening the app REBUILDS the upcoming digests from fresh
 /// data. If one of today's digest times has already passed and its
@@ -168,7 +168,7 @@ class HealthReminderScheduler {
   // ---------------------------------------------------------------------
 
   /// Called on app start (MainShell). Rebuilds the next
-  /// [NotificationSchedule.daysAhead] days of daily digests (3 a day, random times)
+  /// [NotificationSchedule.daysAhead] days of daily digests (every 4 hours)
   /// from fresh data. Also re-arms them after a reboot cleared the OS
   /// alarms.
   ///
@@ -484,7 +484,7 @@ class HealthReminderScheduler {
   }
 
   // ---------------------------------------------------------------------
-  // Daily digest: 3 notifications a day, random times 6 AM - 11 PM, 4 h apart
+  // Daily digest: every 4 hours, 6 AM - 10 PM (see NotificationSchedule)
   // ---------------------------------------------------------------------
 
   /// Notification ids reserved for the digest:
@@ -496,7 +496,7 @@ class HealthReminderScheduler {
   static const Duration _digestCooldown = Duration(minutes: 5);
 
   /// Id of the "missed digest" notification shown on app open. Slot 9 of
-  /// day 0 is never used by a scheduled digest (3 slots a day) and is not
+  /// day 0 is never used by a scheduled digest (5 slots a day) and is not
   /// cancelled by [cancelDailyDigest], so a rebuild can't wipe it.
   static const int _catchUpId = _digestIdBase + 9;
 
@@ -545,14 +545,44 @@ class HealthReminderScheduler {
   }
 
   /// Cancels every scheduled digest — call on logout.
-  Future<void> cancelDailyDigest() async {
+  ///
+  /// BUG FIX: `cancel(id)` also REMOVES a notification that is already
+  /// showing. The rebuild runs on every app open and every background
+  /// run, so it used to wipe a digest from the tray minutes after it
+  /// appeared. A rebuild now passes [keepShown] = true, which leaves any
+  /// digest that is currently in the tray alone (it has already fired, so
+  /// there is nothing pending under that id) and cancels the rest — they
+  /// are re-scheduled right after.
+  Future<void> cancelDailyDigest({bool keepShown = false}) async {
+    final shown = keepShown ? await _activeDigestIds() : const <int>{};
+
     for (var day = 0; day <= NotificationSchedule.daysAhead; day++) {
       for (var slot = 0; slot < NotificationSchedule.perDay; slot++) {
-        await _plugin.cancel(_digestId(day, slot));
+        final id = _digestId(day, slot);
+        if (shown.contains(id)) continue;
+        await _plugin.cancel(id);
       }
     }
     _digestBuiltAt = null;
   }
+
+  /// Ids of digest notifications currently showing in the tray (scheduled
+  /// ones and the catch-up). Empty if the platform can't tell.
+  Future<Set<int>> _activeDigestIds() async {
+    try {
+      final active = await _plugin.getActiveNotifications();
+      return {
+        for (final n in active)
+          if (n.id != null && _isDigestId(n.id!)) n.id!,
+      };
+    } catch (_) {
+      return const <int>{};
+    }
+  }
+
+  bool _isDigestId(int id) =>
+      id >= _digestIdBase &&
+          id < _digestIdBase + (NotificationSchedule.daysAhead + 1) * 10;
 
   Future<void> _rebuildDigest(String farmId) async {
     try {
@@ -584,7 +614,7 @@ class HealthReminderScheduler {
         debugPrint('HealthReminderScheduler: digest (trading) failed: $e');
       }
 
-      await cancelDailyDigest();
+      await cancelDailyDigest(keepShown: true);
 
       final now = tz.TZDateTime.now(tz.local);
       final today = DateTime(now.year, now.month, now.day);
@@ -598,7 +628,7 @@ class HealthReminderScheduler {
           await _catchUpMissedDigest(date: date, now: now, content: content);
         }
 
-        // Today's 3 random times (same every time for the same date).
+        // Today's digest times (every 4 hours, same every day).
         final minutes = NotificationSchedule.minutesFor(date);
         for (var slot = 0; slot < minutes.length; slot++) {
           final when = tz.TZDateTime(tz.local, date.year, date.month,
@@ -662,18 +692,11 @@ class HealthReminderScheduler {
       final handled = prefs.getInt(key) ?? -1;
       if (handled >= lastPassed) return; // already delivered / caught up
 
-      // Did the scheduled alarm already put it in the tray?
-      var alreadyShown = false;
-      try {
-        final active = await _plugin.getActiveNotifications();
-        final todaysIds = {
-          for (var slot = 0; slot <= lastPassed; slot++) _digestId(0, slot),
-          _catchUpId,
-        };
-        alreadyShown = active.any((n) => todaysIds.contains(n.id));
-      } catch (_) {
-        // Not supported on this platform/version: just show it.
-      }
+      // Did a scheduled alarm already put it in the tray? Digest ids shift
+      // by one every day (they are relative to the day they were
+      // scheduled), so any digest id in the tray counts — a digest never
+      // stays visible past 11 PM, so it can only be today's.
+      final alreadyShown = (await _activeDigestIds()).isNotEmpty;
 
       if (!alreadyShown) {
         // Keep it until 1 minute before the next digest time (or 11 PM).
