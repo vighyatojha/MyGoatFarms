@@ -172,6 +172,7 @@ class CustomerAccountService {
         goatCount: c.goatCount,
         bookingCount: c.sales.length,
         estimate: c.estimatedRemaining,
+        advancePaid: c.advanceTotal,
       ),
     )
         .toList();
@@ -190,6 +191,7 @@ class CustomerAccountService {
                 (sum, e) => sum + e.finalAmountAt(today),
           ),
         ),
+        advancePaid: c.bookingAmountTotal,
         mobile: c.mobile,
         address: c.address,
       ),

@@ -291,7 +291,8 @@ class _CustomerHubProfileScreenState extends State<CustomerHubProfileScreen> {
             title: 'Wait on Delivery',
             subtitle: waitCount == 0
                 ? 'No goats waiting for pickup'
-                : '${goats(a.waitGoats)} · ${bookings(waitCount)}',
+                : '${goats(a.waitGoats)} · ${bookings(waitCount)}'
+                '${a.waitAdvancePaid > 0 ? ' · ${hubMoney(a.waitAdvancePaid)} advance paid' : ''}',
             value: waitCount == 0 ? null : hubMoney(a.waitDue),
             valueNote: waitCount == 0 ? null : 'due (est.)',
             onTap: a.waitGroups.isEmpty ? null : () => unawaited(_openWait(a)),
@@ -302,7 +303,8 @@ class _CustomerHubProfileScreenState extends State<CustomerHubProfileScreen> {
             title: 'Booking & Holding',
             subtitle: holdCount == 0
                 ? 'No goats on hold'
-                : '${goats(a.holdingGoats)} · ${bookings(holdCount)}',
+                : '${goats(a.holdingGoats)} · ${bookings(holdCount)}'
+                '${a.holdingAdvancePaid > 0 ? ' · ${hubMoney(a.holdingAdvancePaid)} paid' : ''}',
             value: holdCount == 0 ? null : hubMoney(a.holdingDue),
             valueNote: holdCount == 0 ? null : 'due today (est.)',
             onTap: a.bookingGroups.isEmpty
@@ -419,11 +421,16 @@ class _CustomerHubProfileScreenState extends State<CustomerHubProfileScreen> {
                   color: a.goatSaleCredit > 0 ? HubColors.owes : null),
               HubFact('Advance held', hubMoney(a.goatSaleAdvance),
                   color: a.goatSaleAdvance > 0 ? AppColors.success : null),
+              HubFact('Paid on bookings', hubMoney(a.bookingAdvancePaid),
+                  color: a.bookingAdvancePaid > 0 ? AppColors.success : null),
             ],
           ),
           const SizedBox(height: 8),
           Text(
-            'Delivered goat sales only, same as Finance. Palai bills are not included.',
+            'Balance is delivered goat sales only, same as Finance. '
+            'Paid on bookings is the advance received on open Wait on '
+            'Delivery / Booking deals (already taken off the amount due). '
+            'Palai bills are not included.',
             style: AppTheme.body(size: 10),
           ),
         ],

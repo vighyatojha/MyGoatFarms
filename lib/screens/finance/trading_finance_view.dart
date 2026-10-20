@@ -104,6 +104,10 @@ class _TradingFinanceViewState
 
     final range = widget.preset.range;
 
+    // Older open Wait for Delivery bookings: put their advance into
+    // Finance (once) so it is part of Sales Revenue below. Never throws.
+    await SalesService.instance.recordMissingWaitAdvances(widget.farmId);
+
     try {
       final results = await Future.wait([
         FinanceService.instance.getTradingFinanceSummary(
