@@ -341,7 +341,7 @@ class _CustomerHubListScreenState extends State<CustomerHubListScreen> {
       physics: const BouncingScrollPhysics(),
       padding: const EdgeInsets.fromLTRB(16, 4, 16, 30),
       children: [
-        _summary(book),
+        _summary(book, sold: sold),
         const SizedBox(height: 14),
         if (_focus == null) ...[
           _chips(book),
@@ -492,7 +492,7 @@ class _CustomerHubListScreenState extends State<CustomerHubListScreen> {
       physics: const BouncingScrollPhysics(),
       padding: const EdgeInsets.fromLTRB(16, 4, 16, 30),
       children: [
-        _summary(book),
+        _summary(book, sold: sold),
         const SizedBox(height: 14),
         _salesTabs(),
         const SizedBox(height: 10),
@@ -945,8 +945,51 @@ class _CustomerHubListScreenState extends State<CustomerHubListScreen> {
   // SUMMARY
   // ---------------------------------------------------------------------------
 
-  Widget _summary(CustomerAccountBook book) {
+  /// The figures at the top follow the screen: the whole customer book on
+  /// the main Customers screen (Palai customers and their goats included),
+  /// but on a focused screen ONLY that group — e.g. Wait on Delivery counts
+  /// just the customers with goats waiting and just those goats, never
+  /// Palai boarding goats. The Finance receivable line below always stays
+  /// farm-wide, so its Matches / Check stays a true reconciliation.
+  Widget _summary(CustomerAccountBook book, {Map<String, int>? sold}) {
     const divider = Divider(height: 20, color: AppColors.divider);
+
+    final focus = _focus;
+    final scope = focus == null
+        ? book.accounts
+        : book.accounts.where((a) => _inFocus(a, sold)).toList();
+
+    int sumGoats(int Function(CustomerAccount a) of) =>
+        scope.fold<int>(0, (t, a) => t + of(a));
+    double sumMoney(double Function(CustomerAccount a) of) =>
+        Sale.roundMoney(scope.fold<double>(0, (t, a) => t + of(a)));
+
+    final (String goatLabel, int goats, double due) = switch (focus) {
+      null => (
+      'Goats with farm',
+      book.goatsWithFarm,
+      book.totalDueAtDelivery,
+      ),
+      HubFocus.waitOnDelivery => (
+      'Goats waiting',
+      sumGoats((a) => a.waitGoats),
+      sumMoney((a) => a.waitDue),
+      ),
+      HubFocus.bookingHolding => (
+      'Goats on hold',
+      sumGoats((a) => a.holdingGoats),
+      sumMoney((a) => a.holdingDue),
+      ),
+      HubFocus.sales => (
+      'Goats sold',
+      scope.fold<int>(0, (t, a) => t + (sold?[a.key] ?? 0)),
+      sumMoney((a) => a.dueAtDelivery),
+      ),
+    };
+
+    final pending = focus == null
+        ? book.totalSalePending
+        : sumMoney((a) => a.goatSaleCredit);
 
     return HubCard(
       padding: const EdgeInsets.fromLTRB(14, 14, 14, 6),
@@ -957,13 +1000,13 @@ class _CustomerHubListScreenState extends State<CustomerHubListScreen> {
               Expanded(
                 child: _Figure(
                   label: 'Customers',
-                  value: '${book.accounts.length}',
+                  value: '${scope.length}',
                 ),
               ),
               Expanded(
                 child: _Figure(
-                  label: 'Goats with farm',
-                  value: '${book.goatsWithFarm}',
+                  label: goatLabel,
+                  value: '$goats',
                 ),
               ),
             ],
@@ -974,19 +1017,15 @@ class _CustomerHubListScreenState extends State<CustomerHubListScreen> {
               Expanded(
                 child: _Figure(
                   label: 'Sale pending',
-                  value: hubMoney(book.totalSalePending),
-                  color: book.totalSalePending > 0
-                      ? HubColors.owes
-                      : AppColors.textDark,
+                  value: hubMoney(pending),
+                  color: pending > 0 ? HubColors.owes : AppColors.textDark,
                 ),
               ),
               Expanded(
                 child: _Figure(
                   label: 'Due on open bookings (est.)',
-                  value: hubMoney(book.totalDueAtDelivery),
-                  color: book.totalDueAtDelivery > 0
-                      ? HubColors.estimate
-                      : AppColors.textDark,
+                  value: hubMoney(due),
+                  color: due > 0 ? HubColors.estimate : AppColors.textDark,
                 ),
               ),
             ],
