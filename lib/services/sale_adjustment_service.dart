@@ -331,8 +331,10 @@ class SaleAdjustmentService {
   ///    the booking day. If all of it is kept, that entry simply stays.
   ///    Otherwise it is voided and only the kept part is recorded again
   ///    today, so Finance always shows exactly what the farm kept.
-  ///  * Wait for Delivery: the advance was never recorded (the final value
-  ///    was not known). Only the kept part, if any, is recorded today.
+  ///  * Wait for Delivery: the advance is recorded on the booking day too
+  ///    and is treated exactly like a Booking's. (Bookings made before
+  ///    that change have no entry, so only the kept part, if any, is
+  ///    recorded today.)
   ///
   /// Also: the Booking / Wait on Delivery count on the dashboard comes
   /// down, the customer's purchase count drops by one, the sale is moved
@@ -895,15 +897,16 @@ class SaleAdjustmentService {
         update['discount'] = newDiscount;
         update['totalSaleAmount'] = newTotal;
 
-        // A Booking's money was recorded as revenue on the booking day,
-        // capped at the goat value then. Keep it within the new value.
-        if (sale.isBooking) {
+        // A Booking's money (and a Wait for Delivery's advance) was
+        // recorded as revenue on the booking day, capped at the goat value
+        // then. Keep it within the new value.
+        if (sale.isBooking || sale.isWaitForDelivery) {
           final initial = revenueDocs.first;
 
           if (initial.exists && initial.data()?['status'] != 'voided') {
             final allowed = _round2(
               Sale.revenueFromPaid(
-                paid: sale.bookingAmount ?? 0,
+                paid: _advanceOf(sale),
                 revenueTotal: newTotal,
               ),
             );

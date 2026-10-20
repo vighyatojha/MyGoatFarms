@@ -20,12 +20,18 @@ class DeliveryGroupSummary {
   /// trading balance or of any Finance figure.
   final double estimate;
 
+  /// Money the customer already paid up front on these open bookings: the
+  /// Wait on Delivery advance or the Booking / Holding booking amount.
+  /// [estimate] is what is still due AFTER this.
+  final double advancePaid;
+
   const DeliveryGroupSummary({
     required this.key,
     required this.name,
     required this.goatCount,
     required this.bookingCount,
     required this.estimate,
+    this.advancePaid = 0,
     this.mobile = '',
     this.address = '',
   });
@@ -113,6 +119,20 @@ class CustomerAccount {
   double get holdingDue =>
       Sale.roundMoney(bookingGroups.fold(0.0, (s, g) => s + g.estimate));
   double get dueAtDelivery => Sale.roundMoney(waitDue + holdingDue);
+
+  /// Advance paid on open Wait on Delivery bookings.
+  double get waitAdvancePaid =>
+      Sale.roundMoney(waitGroups.fold(0.0, (s, g) => s + g.advancePaid));
+
+  /// Booking amount paid on open Booking / Holding bookings.
+  double get holdingAdvancePaid =>
+      Sale.roundMoney(bookingGroups.fold(0.0, (s, g) => s + g.advancePaid));
+
+  /// Everything paid up front on bookings not yet delivered. Already taken
+  /// off the "due" estimates, and not part of [net] (open bookings are not
+  /// in the trading balance).
+  double get bookingAdvancePaid =>
+      Sale.roundMoney(waitAdvancePaid + holdingAdvancePaid);
 
   /// Trading balance. Positive: customer owes. Negative: farm owes them.
   double get net => Sale.roundMoney(goatSaleCredit - goatSaleAdvance);

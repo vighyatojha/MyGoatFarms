@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:flutter/foundation.dart' show debugPrint;
 import 'package:firebase_core/firebase_core.dart' show FirebaseException;
 
 import '../models/activity_model.dart';
@@ -695,6 +696,70 @@ class SalesService {
         'createdAt': FieldValue.serverTimestamp(),
       },
     );
+  }
+
+  // -----------------------------------------------------------------------
+  // CATCH-UP — advance of OLD open Wait for Delivery bookings
+  // -----------------------------------------------------------------------
+  //
+  // Wait for Delivery advances used to reach Finance only at pickup. New
+  // bookings record them on the booking day (see _saveLotHold /
+  // saveWaitForDelivery). This gives every still-open older booking the
+  // same booking-day entry, so its advance shows in Sales Revenue now.
+  //
+  // Safe to run any number of times: the entry has a fixed id and is only
+  // created when missing (checked inside a transaction), so nothing is
+  // ever counted twice. The pickup later corrects this same entry.
+
+  final Set<String> _waitAdvanceCaughtUp = {};
+
+  Future<void> recordMissingWaitAdvances(String farmId) async {
+    if (!_waitAdvanceCaughtUp.add(farmId)) return;
+
+    try {
+      final snap = await _sales(farmId)
+          .where('status', isEqualTo: Sale.statusWaitForDelivery)
+          .get()
+          .timeout(_timeout);
+
+      for (final doc in snap.docs) {
+        final sale = Sale.fromDoc(doc);
+        final advance = sale.bookingAdvanceAmount ?? 0;
+
+        if (!sale.isWaitForDelivery || advance <= 0) continue;
+
+        final ref =
+        _transactions(farmId).doc(_saleRevenueDocId(sale.id, 'initial'));
+
+        await _db.runTransaction((transaction) async {
+          final existing = await transaction.get(ref);
+          if (existing.exists) return;
+
+          final saleNow = await transaction.get(doc.reference);
+          if (!saleNow.exists) return;
+
+          final fresh = Sale.fromDoc(saleNow);
+          if (fresh.status != Sale.statusWaitForDelivery) return;
+
+          _writeInitialRevenueInTransaction(
+            transaction: transaction,
+            farmId: farmId,
+            saleId: fresh.id,
+            paid: fresh.bookingAdvanceAmount ?? 0,
+            revenueTotal: fresh.totalSaleAmount,
+            date: fresh.saleDate ?? DateTime.now(),
+            customerName: fresh.customerName,
+            paymentMethod: _methodOrOther(fresh.paymentMethod),
+            lotId: fresh.lotDocId,
+            customerId: fresh.isLotSale ? fresh.customerId : '',
+          );
+        }).timeout(_timeout);
+      }
+    } catch (e) {
+      // Retried next time Finance opens; never blocks the screen.
+      _waitAdvanceCaughtUp.remove(farmId);
+      debugPrint('SalesService.recordMissingWaitAdvances: $e');
+    }
   }
 
   // -----------------------------------------------------------------------
@@ -1509,25 +1574,26 @@ class SalesService {
         SetOptions(merge: true),
       );
 
-      // Booking money is actually received on the booking day, so record
-      // that receipt in Finance now. Wait for Delivery is deliberately left
-      // alone here because its final goat value is not known until pickup.
-      // Recording its advance as goat revenue before pickup could overstate
-      // revenue if the pickup weight changes the final goat value.
-      if (!waitForDelivery) {
-        _writeInitialRevenueInTransaction(
-          transaction: transaction,
-          farmId: farmId,
-          saleId: saleId,
-          paid: draft.bookingAmount ?? 0,
-          revenueTotal: draft.totalSaleAmount,
-          date: DateTime.now(),
-          customerName: draft.customerName,
-          paymentMethod: _methodOrOther(draft.paymentMethod),
-          lotId: draft.lotDocId,
-          customerId: customerId,
-        );
-      }
+      // The booking amount (Booking / Holding) or the advance (Wait for
+      // Delivery) is money actually received on the booking day, so it is
+      // recorded in Finance now (`sale_<id>_initial`), capped at the goat
+      // value known today. A Wait for Delivery's final goat value is only
+      // known at pickup — completeWaitForDeliveryGroup rewrites this same
+      // entry then (keeping this date), so it is never counted twice.
+      _writeInitialRevenueInTransaction(
+        transaction: transaction,
+        farmId: farmId,
+        saleId: saleId,
+        paid: waitForDelivery
+            ? (draft.bookingAdvanceAmount ?? 0)
+            : (draft.bookingAmount ?? 0),
+        revenueTotal: draft.totalSaleAmount,
+        date: DateTime.now(),
+        customerName: draft.customerName,
+        paymentMethod: _methodOrOther(draft.paymentMethod),
+        lotId: draft.lotDocId,
+        customerId: customerId,
+      );
     }).timeout(_timeout * 2);
 
     return saleId;
@@ -1890,6 +1956,24 @@ class SalesService {
           FieldValue.increment(draft.selectedGoats.length),
         },
         SetOptions(merge: true),
+      );
+
+      // ---------------------------------------------------------------
+      // 6. The advance is money received today: record it in Finance now
+      //    (`sale_<id>_initial`), capped at the goat value at the booked
+      //    weight. The pickup rewrites this same entry with the final goat
+      //    value (keeping this date) — see completeWaitForDeliveryGroup.
+      // ---------------------------------------------------------------
+
+      _writeInitialRevenueInTransaction(
+        transaction: transaction,
+        farmId: farmId,
+        saleId: saleId,
+        paid: draft.bookingAdvanceAmount ?? 0,
+        revenueTotal: draft.totalSaleAmount,
+        date: DateTime.now(),
+        customerName: draft.customerName,
+        paymentMethod: _methodOrOther(draft.paymentMethod),
       );
     }).timeout(_timeout * 2);
 
@@ -3364,6 +3448,12 @@ class SalesService {
           excessAction: item.excessAction,
         );
 
+        // The advance entry written on the booking day (if any), so the
+        // pickup corrects it in place instead of adding a second one.
+        final initialRevenueRef = _transactions(farmId)
+            .doc(_saleRevenueDocId(saleId, 'initial'));
+        final initialRevenueSnap = await transaction.get(initialRevenueRef);
+
         plans.add(
           _WaitPickupPlan(
             item: item,
@@ -3376,6 +3466,8 @@ class SalesService {
             costOfGoodsSold: costOfGoodsSold,
             advance: advance,
             settlement: settlement,
+            initialRevenueRef: initialRevenueRef,
+            initialRevenueSnap: initialRevenueSnap,
           ),
         );
       }
@@ -3615,18 +3707,44 @@ class SalesService {
         // collected — see the FINANCE INTEGRATION note above.
         // ---------------------------------------------------------------
 
-        _writeInitialRevenueInTransaction(
-          transaction: transaction,
-          farmId: farmId,
-          saleId: saleId,
-          paid: paidBefore,
-          revenueTotal: goatValue,
-          date: now,
-          customerName: sale.customerName,
-          paymentMethod: _methodOrOther(sale.paymentMethod),
-          lotId: sale.lotDocId,
-          customerId: sale.isLotSale ? sale.customerId : '',
+        //
+        // Bookings made with this version already have the advance in
+        // Finance from the booking day: the same entry is rewritten with
+        // the final figure and KEEPS its booking-day date, so the money is
+        // counted once, in the period it was received. Older bookings have
+        // no entry yet, so it is created now (dated today, as before).
+        final initialSnap = plan.initialRevenueSnap;
+        final bookedDate = initialSnap.exists
+            ? (initialSnap.data()?['date'] as Timestamp?)?.toDate()
+            : null;
+
+        final advanceRevenue = SaleDraft.round2(
+          Sale.revenueFromPaid(paid: paidBefore, revenueTotal: goatValue),
         );
+
+        if (advanceRevenue > 0) {
+          _writeInitialRevenueInTransaction(
+            transaction: transaction,
+            farmId: farmId,
+            saleId: saleId,
+            paid: paidBefore,
+            revenueTotal: goatValue,
+            date: bookedDate ?? now,
+            customerName: sale.customerName,
+            paymentMethod: _methodOrOther(sale.paymentMethod),
+            lotId: sale.lotDocId,
+            customerId: sale.isLotSale ? sale.customerId : '',
+          );
+        } else if (initialSnap.exists &&
+            initialSnap.data()?['status'] != 'voided') {
+          // Nothing of the advance is revenue any more (e.g. all of it was
+          // moved to another booking): retire the booking-day entry.
+          transaction.update(plan.initialRevenueRef, {
+            'status': 'voided',
+            'voidedAt': FieldValue.serverTimestamp(),
+            'voidReason': 'Wait for Delivery picked up: advance not revenue',
+          });
+        }
       }
 
       // ---------------------------------------------------------------
@@ -4599,6 +4717,12 @@ class _WaitPickupPlan {
   /// The booking on its own, before any transfer between bookings.
   final SaleSettlement settlement;
 
+  /// The booking-day advance entry (`sale_<id>_initial`), read in this
+  /// transaction. Missing for bookings made before the advance was
+  /// recorded on the booking day.
+  final DocumentReference<Map<String, dynamic>> initialRevenueRef;
+  final DocumentSnapshot<Map<String, dynamic>> initialRevenueSnap;
+
   // Filled in once every booking has been read.
   late WaitDeliverySaleAllocation alloc;
   List<WaitDeliveryTransfer> transfersIn = const [];
@@ -4617,6 +4741,8 @@ class _WaitPickupPlan {
     required this.costOfGoodsSold,
     required this.advance,
     required this.settlement,
+    required this.initialRevenueRef,
+    required this.initialRevenueSnap,
   });
 }
 

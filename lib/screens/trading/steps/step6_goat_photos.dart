@@ -47,7 +47,6 @@ class Step6GoatPhotosState extends State<Step6GoatPhotos> {
   final List<TextEditingController> _ages = [];
   final List<TextEditingController> _weights = [];
 
-  bool _submitted = false;
   int? _pickingFor;
 
   SaleDraft get _draft => widget.draft;
@@ -93,11 +92,6 @@ class Step6GoatPhotosState extends State<Step6GoatPhotos> {
   Uint8List? _photoAt(int i) => _isLot
       ? _draft.lotGoatDetails[i].photo
       : _draft.photoFor(_draft.selectedGoats[i]);
-
-  bool _hasPhotoAt(int i) {
-    final p = _photoAt(i);
-    return p != null && p.isNotEmpty;
-  }
 
   String _labelAt(int i) =>
       _isLot ? 'Goat ${i + 1}' : _draft.selectedGoats[i].id;
@@ -151,31 +145,25 @@ class Step6GoatPhotosState extends State<Step6GoatPhotos> {
     }
   }
 
-  /// True when every goat has a photo, an age and (lot) a weight.
+  /// Photo, age and weight are all OPTIONAL — the sale can be confirmed
+  /// with none of them. They can be added later from the goat's profile on
+  /// the booking / Wait on Delivery list. Only a weight that was typed but
+  /// is not a valid number is rejected.
   bool validate() {
     FocusScope.of(context).unfocus();
-    setState(() => _submitted = true);
-
-    for (var i = 0; i < _count; i++) {
-      if (!_hasPhotoAt(i)) {
-        wizardSnack(context, 'Add a photo of ${_labelAt(i)}.', error: true);
-        return false;
-      }
-    }
 
     if (!(_formKey.currentState?.validate() ?? false)) return false;
 
     // The list builds lazily, so cards scrolled out of view are not
-    // checked by the Form — check every goat's values directly too.
-    for (var i = 0; i < _count; i++) {
-      if ((int.tryParse(_ages[i].text.trim()) ?? 0) <= 0) {
-        wizardSnack(context, 'Enter the age of ${_labelAt(i)}.', error: true);
-        return false;
-      }
-      if (_isLot && (double.tryParse(_weights[i].text.trim()) ?? 0) <= 0) {
-        wizardSnack(context, 'Enter the weight of ${_labelAt(i)}.',
-            error: true);
-        return false;
+    // checked by the Form — check typed weights directly too.
+    if (_isLot) {
+      for (var i = 0; i < _count; i++) {
+        final text = _weights[i].text.trim();
+        if (text.isNotEmpty && double.tryParse(text) == null) {
+          wizardSnack(context, 'Check the weight of ${_labelAt(i)}.',
+              error: true);
+          return false;
+        }
       }
     }
 
@@ -225,7 +213,8 @@ class Step6GoatPhotosState extends State<Step6GoatPhotos> {
       ),
       child: Text(
         '${_draft.isDeliverNow ? 'The customer is taking the goats now.' : 'These goats are being held for the customer.'} '
-            'Add a photo, the approximate age and the weight of each goat — '
+            'Optionally add a photo, the approximate age and the weight of each '
+            'goat (you can skip this and add them later) — '
             '${_draft.isDeliverNow ? '' : 'they are shown on the booking and '}'
             'kept in the customer\'s purchase history.$lotTotal',
         style: AppTheme.body(size: 11.5, color: AppColors.textDark),
@@ -235,14 +224,13 @@ class Step6GoatPhotosState extends State<Step6GoatPhotos> {
 
   Widget _goatCard(int i) {
     final photo = _photoAt(i);
-    final missing = _submitted && !_hasPhotoAt(i);
     final Goat? goat = _isLot ? null : _draft.selectedGoats[i];
 
     return Container(
       padding: const EdgeInsets.all(12),
       decoration: AppTheme.card(radius: 16).copyWith(
         border: Border.all(
-          color: missing ? AppColors.error : AppColors.divider,
+          color: AppColors.divider,
         ),
       ),
       child: Row(
@@ -267,7 +255,7 @@ class Step6GoatPhotosState extends State<Step6GoatPhotos> {
                 color: AppColors.primaryGreen.withValues(alpha: 0.08),
                 borderRadius: BorderRadius.circular(12),
                 border: Border.all(
-                  color: missing ? AppColors.error : AppColors.divider,
+                  color: AppColors.divider,
                 ),
               ),
               clipBehavior: Clip.antiAlias,
@@ -286,18 +274,14 @@ class Step6GoatPhotosState extends State<Step6GoatPhotos> {
                 children: [
                   Icon(
                     Icons.add_a_photo_outlined,
-                    color: missing
-                        ? AppColors.error
-                        : AppColors.primaryGreen,
+                    color: AppColors.primaryGreen,
                   ),
                   const SizedBox(height: 4),
                   Text(
                     'Photo',
                     style: AppTheme.body(
                       size: 10.5,
-                      color: missing
-                          ? AppColors.error
-                          : AppColors.darkGreen,
+                      color: AppColors.darkGreen,
                     ),
                   ),
                 ],
@@ -339,12 +323,8 @@ class Step6GoatPhotosState extends State<Step6GoatPhotos> {
                   keyboardType: TextInputType.number,
                   inputFormatters: [FilteringTextInputFormatter.digitsOnly],
                   style: AppTheme.body(size: 13, color: AppColors.textDark),
-                  decoration: _decoration('Approx. age (months)'),
+                  decoration: _decoration('Approx. age (months) — optional'),
                   onChanged: (v) => _setAge(i, v),
-                  validator: (v) {
-                    final n = int.tryParse((v ?? '').trim());
-                    return n == null || n <= 0 ? 'Enter the age' : null;
-                  },
                 ),
                 const SizedBox(height: 8),
                 if (_isLot)
@@ -356,11 +336,13 @@ class Step6GoatPhotosState extends State<Step6GoatPhotos> {
                       FilteringTextInputFormatter.allow(RegExp(r'[0-9.]')),
                     ],
                     style: AppTheme.body(size: 13, color: AppColors.textDark),
-                    decoration: _decoration('Weight (kg)'),
+                    decoration: _decoration('Weight (kg) — optional'),
                     onChanged: (v) => _setWeight(i, v),
                     validator: (v) {
-                      final n = double.tryParse((v ?? '').trim());
-                      return n == null || n <= 0 ? 'Enter the weight' : null;
+                      final t = (v ?? '').trim();
+                      return t.isNotEmpty && double.tryParse(t) == null
+                          ? 'Enter a valid weight'
+                          : null;
                     },
                   )
                 else

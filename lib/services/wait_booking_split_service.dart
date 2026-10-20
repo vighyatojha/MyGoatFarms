@@ -106,12 +106,11 @@ class WaitBookingSplitResult {
 /// Money is split by the share of goats being delivered (by weight when
 /// every goat has a weight, otherwise by count).
 ///
-///  * Wait for Delivery: the advance is not in Finance until delivery (see
-///    SalesService), so moving part of it to another booking needs no
-///    Finance entry to be rewritten.
-///  * Booking / Holding: the booking money WAS recorded in Finance on the
-///    booking day as one Sold Goat Revenue entry (`sale_<id>_initial`). It
-///    is split the same way: the original entry is lowered to the
+///  * Booking / Holding and Wait for Delivery: the money paid up front is
+///    recorded in Finance on the booking day as one Sold Goat Revenue entry
+///    (`sale_<id>_initial`). (Wait for Delivery bookings made before that
+///    change have no entry until pickup; nothing is rewritten for them.)
+///    It is split the same way: the original entry is lowered to the
 ///    delivered goats' share and the kept booking gets its own entry for
 ///    the rest, so Finance never counts the money twice or loses it.
 ///    Holding days keep counting from the original booking date on both.
@@ -518,12 +517,12 @@ class WaitBookingSplitService {
         }
       }
 
-      // ---- Booking / Holding: the booking-day Finance entry -----------
-      DocumentSnapshot<Map<String, dynamic>>? revenueSnap;
-
-      if (sale.isBooking) {
-        revenueSnap = await transaction.get(_txRefFor(farmId, saleId));
-      }
+      // ---- The booking-day Finance entry -------------------------------
+      // Booking / Holding always has one; Wait for Delivery has one for
+      // bookings made since its advance is recorded on the booking day
+      // (older ones have none, and get it at pickup).
+      final DocumentSnapshot<Map<String, dynamic>> revenueSnap =
+      await transaction.get(_txRefFor(farmId, saleId));
 
       // ---------------------------------------------------------------
       // 2. Money.
@@ -655,9 +654,8 @@ class WaitBookingSplitService {
         }
       }
 
-      // ---- Booking / Holding: split the booking-day revenue -------------
-      if (revenueSnap != null &&
-          revenueSnap.exists &&
+      // ---- Split the booking-day revenue (Booking or Wait) --------------
+      if (revenueSnap.exists &&
           revenueSnap.data()?['status'] != 'voided') {
         final data = revenueSnap.data() ?? const <String, dynamic>{};
         final recorded = _r2((data['amount'] as num?) ?? 0);
