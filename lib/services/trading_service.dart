@@ -2644,6 +2644,21 @@ class TradingService {
     final goatsSnapshot =
     await _tradingGoats(farmId).get().timeout(_timeout);
 
+    // Every sale, read once. A goat only counts as Booked / Wait on
+    // Delivery / Sold when the sale that put it there still exists (and,
+    // for an open deal, is still open). A sale removed straight from the
+    // database leaves its goats with a stale status; counting those made
+    // the dashboard show bookings / sales that no screen could open.
+    final salesSnapshot = await _sales(farmId).get().timeout(_timeout);
+    final salesById = <String, Sale>{
+      for (final doc in salesSnapshot.docs) doc.id: Sale.fromDoc(doc),
+    };
+
+    Sale? saleOf(Goat goat) {
+      final id = (goat.saleId ?? '').trim();
+      return id.isEmpty ? null : salesById[id];
+    }
+
     var onFarmGoats = 0;
     var totalSold = 0;
     var booking = 0;
@@ -2663,21 +2678,27 @@ class TradingService {
           onFarmGoats++;
           break;
 
+        // Still physically on the farm either way; only counted as a
+        // booking / wait when its sale is really still open.
         case Goat.statusBooked:
           onFarmGoats++;
-          booking++;
+          if (saleOf(goat)?.status == Sale.statusBooked) booking++;
           break;
 
         case Goat.statusWaitOnDelivery:
           onFarmGoats++;
-          waitOnDelivery++;
+          if (saleOf(goat)?.status == Sale.statusWaitForDelivery) {
+            waitOnDelivery++;
+          }
           break;
 
+        // Sold only while the sale exists (a sale deleted in the app moves
+        // its goats back, so a missing sale means it was removed directly).
         case Goat.statusSold: {
-          totalSold++;
-          final soldSaleId = (goat.saleId ?? '').trim();
-          if (soldSaleId.isNotEmpty) {
-            (soldGoatsBySaleId[soldSaleId] ??= []).add(goat);
+          final soldSale = saleOf(goat);
+          if (soldSale != null) {
+            totalSold++;
+            (soldGoatsBySaleId[soldSale.id] ??= []).add(goat);
           }
           break;
         }
@@ -2698,12 +2719,10 @@ class TradingService {
     var totalProfit = 0.0;
 
     for (final entry in soldGoatsBySaleId.entries) {
-      final saleSnap =
-      await _sales(farmId).doc(entry.key).get().timeout(_timeout);
+      final sale = salesById[entry.key];
 
-      if (!saleSnap.exists) continue;
+      if (sale == null) continue;
 
-      final sale = Sale.fromDoc(saleSnap);
       final revenue = sale.billGoatSale + sale.billHoldingCharges;
 
       // A goat carrying a cost snapshot came out of a lot (a Step 6
@@ -2730,13 +2749,8 @@ class TradingService {
     // `lotDocId` — see Sale.fromDoc/toMap).
     // ------------------------------------------------------------------
 
-    final lotSalesSnapshot = await _sales(farmId)
-        .where('lotId', isGreaterThan: '')
-        .get()
-        .timeout(_timeout);
-
-    for (final doc in lotSalesSnapshot.docs) {
-      final sale = Sale.fromDoc(doc);
+    for (final sale in salesById.values) {
+      if (!sale.isLotSale) continue;
 
       switch (sale.status) {
         case Sale.statusBooked:
