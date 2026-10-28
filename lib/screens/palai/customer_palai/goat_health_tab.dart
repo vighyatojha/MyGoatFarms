@@ -2,8 +2,10 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 
 import '../../../app_theme.dart';
+import '../../../models/activity_model.dart';
 import '../../../models/palai_models.dart';
 import '../../../services/firestore_service.dart';
+import '../../../services/activity_logger.dart';
 import '../../../services/image_service.dart';
 import 'goat_profile_screen.dart';
 
@@ -608,6 +610,14 @@ class _HealthUpdateFormScreenState extends State<_HealthUpdateFormScreen> {
           widget.customerId,
           widget.goat.id,
           entry,
+        );
+
+        ActivityLogger.log(
+          farmId: widget.farmId,
+          type: ActivityType.palaiHealthRecorded,
+          title: 'Health Update Recorded',
+          subtitle: ActivityLogger.join([widget.goat.goatCode, entry.healthStatus]),
+          module: 'palai',
         );
       }
 

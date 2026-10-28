@@ -2,8 +2,10 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 
 import '../../app_theme.dart';
+import '../../models/activity_model.dart';
 import '../../models/palai_models.dart';
 import '../../services/firestore_service.dart';
+import '../../services/activity_logger.dart';
 import '../../services/image_service.dart';
 import '../../widgets/image_source_sheet.dart';
 import '../../widgets/farm_not_linked_state.dart';
@@ -407,6 +409,14 @@ class _AddHealthRecordSheetState extends State<_AddHealthRecordSheet> {
     );
     try {
       await FirestoreService.instance.addHealthRecord(widget.farmId, widget.goat.customerId, widget.goat.id, entry);
+
+      ActivityLogger.log(
+        farmId: widget.farmId,
+        type: ActivityType.palaiHealthRecorded,
+        title: 'Health Check Recorded',
+        subtitle: ActivityLogger.join([widget.goat.goatCode, entry.healthStatus]),
+        module: 'palai',
+      );
       if (!mounted) return;
       Navigator.of(context).pop();
     } catch (e) {

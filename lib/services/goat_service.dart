@@ -3,10 +3,12 @@ import 'dart:typed_data';
 import 'package:cloud_firestore/cloud_firestore.dart';
 
 import '../models/goat_model.dart';
+import '../models/activity_model.dart';
 import '../models/lot_transfer_models.dart';
 import '../models/trading_goat_health_record.dart';
 import '../models/trading_goat_weight_entry.dart';
 import '../models/trading_purchase_model.dart';
+import 'activity_logger.dart';
 
 /// Handles the Trading module's Goat Registration and Goat Stock.
 ///
@@ -311,6 +313,14 @@ class GoatService {
         );
       },
     ).timeout(_timeout);
+
+    ActivityLogger.log(
+      farmId: farmId,
+      type: ActivityType.goatMovedToOwnPalai,
+      title: 'Goat Moved to Own Palai',
+      subtitle: goatId,
+      module: 'trading',
+    );
   }
 
   // -----------------------------------------------------------------------
@@ -335,6 +345,14 @@ class GoatService {
       },
     )
         .timeout(_timeout);
+
+    ActivityLogger.log(
+      farmId: farmId,
+      type: ActivityType.goatWeightRecorded,
+      title: 'Goat Weight Recorded',
+      subtitle: ActivityLogger.join([goatId, ActivityLogger.kg(entry.weight)]),
+      module: 'trading',
+    );
 
     return ref.id;
   }
@@ -401,6 +419,14 @@ class GoatService {
         // not-found (no schedule record) or transient — safe to ignore.
       }
     }
+
+    ActivityLogger.log(
+      farmId: farmId,
+      type: ActivityType.goatHealthRecorded,
+      title: '${record.type.label} Recorded',
+      subtitle: ActivityLogger.join([goatId, 'Own Palai']),
+      module: 'trading',
+    );
 
     return ref.id;
   }
@@ -773,6 +799,19 @@ class GoatService {
       },
     ).timeout(_timeout);
 
+    ActivityLogger.log(
+      farmId: farmId,
+      type: ActivityType.goatRegistered,
+      title: 'Goat Registered',
+      subtitle: ActivityLogger.join([
+        goat.id,
+        purchase.lotId,
+        breed.trim(),
+        ActivityLogger.kg(weight),
+      ]),
+      module: 'trading',
+    );
+
     return goat;
   }
 
@@ -985,7 +1024,7 @@ class GoatService {
     required String lotDocId,
     required List<LotTransferGoat> goats,
   }) async {
-    return _db.runTransaction<List<Goat>>(
+    final moved = await _db.runTransaction<List<Goat>>(
           (transaction) async {
         final prep = await prepareLotTransferInTransaction(
           transaction,
@@ -1003,6 +1042,19 @@ class GoatService {
         );
       },
     ).timeout(_timeout * 2);
+
+    ActivityLogger.log(
+      farmId: farmId,
+      type: ActivityType.goatMovedToOwnPalai,
+      title: 'Lot Goats Moved to Own Palai',
+      subtitle: ActivityLogger.join([
+        ActivityLogger.lotLabel(lotDocId),
+        ActivityLogger.goats(moved.length),
+      ]),
+      module: 'trading',
+    );
+
+    return moved;
   }
 
   // -----------------------------------------------------------------------

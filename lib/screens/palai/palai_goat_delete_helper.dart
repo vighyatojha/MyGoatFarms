@@ -2,8 +2,10 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 
 import '../../app_theme.dart';
+import '../../models/activity_model.dart';
 import '../../models/palai_models.dart';
 import '../../services/firestore_service.dart';
+import '../../services/activity_logger.dart';
 import '../../services/health_reminder_scheduler.dart';
 import 'customer_palai/goat_billing_notice.dart';
 
@@ -82,6 +84,14 @@ Future<void> deletePalaiGoatEverywhere(
     farmId,
     goat.customerId,
     goat.id,
+  );
+
+  ActivityLogger.log(
+    farmId: farmId,
+    type: ActivityType.palaiGoatDeleted,
+    title: 'Palai Goat Deleted',
+    subtitle: goat.goatCode,
+    module: 'palai',
   );
 
   // 3) Notification-feed entries (owner-only on the server → best-effort).

@@ -130,7 +130,13 @@ class ActivityTile extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(activity.title, style: AppTheme.heading(size: 13)),
-                  Text(activity.subtitle, style: AppTheme.body(size: 11)),
+                  if (activity.subtitle.trim().isNotEmpty)
+                    Text(
+                      activity.subtitle,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: AppTheme.body(size: 11),
+                    ),
                   if (activity.actorName != null &&
                       activity.actorName!.trim().isNotEmpty)
                     Text(
@@ -142,7 +148,24 @@ class ActivityTile extends StatelessWidget {
                 ],
               ),
             ),
-            Text(_timeLabel(activity.timestamp), style: AppTheme.body(size: 10)),
+            const SizedBox(width: 8),
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                Text(_timeLabel(activity.timestamp), style: AppTheme.body(size: 10)),
+                const SizedBox(height: 4),
+                // Which section the action came from (Trading, Palai...).
+                Text(
+                  activity.moduleLabel.toUpperCase(),
+                  style: TextStyle(
+                    fontSize: 8,
+                    fontWeight: FontWeight.w800,
+                    color: activity.color,
+                    letterSpacing: .4,
+                  ),
+                ),
+              ],
+            ),
           ],
         ),
       ),

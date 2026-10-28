@@ -4,6 +4,8 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 
 import 'package:mygoatfarms/models/stock_model.dart';
 import 'package:mygoatfarms/services/firestore_service.dart';
+import 'package:mygoatfarms/models/activity_model.dart';
+import 'package:mygoatfarms/services/activity_logger.dart';
 
 /// Edits an existing stock item (medicine or feed) from the Stock details
 /// sheet.
@@ -168,5 +170,16 @@ class StockEditService {
         kgAmount: appliedKg,
       ).toMap()).timeout(_timeout);
     }
+
+    ActivityLogger.log(
+      farmId: farmId,
+      type: ActivityType.stockItemEdited,
+      title: 'Stock Item Edited',
+      subtitle: ActivityLogger.join([
+        trimmedName,
+        if (appliedDelta.abs() > 0.000001) 'Quantity corrected',
+      ]),
+      module: 'stock',
+    );
   }
 }

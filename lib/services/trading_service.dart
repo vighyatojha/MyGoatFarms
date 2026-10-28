@@ -4,6 +4,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 
 import '../models/expense_categories.dart';
 import '../models/expense_model.dart';
+import '../models/activity_model.dart';
 import '../models/goat_model.dart';
 import '../models/legacy_conversion_plan.dart';
 import '../models/purchase_costing.dart';
@@ -15,6 +16,7 @@ import '../models/trading_lot_overview.dart';
 import '../models/trading_purchase_model.dart';
 import '../models/trading_summary_model.dart';
 import 'firestore_service.dart';
+import 'activity_logger.dart';
 import 'finance_service.dart';
 
 /// Handles the Trading module:
@@ -721,6 +723,18 @@ class TradingService {
       );
     }
 
+    ActivityLogger.log(
+      farmId: farmId,
+      type: ActivityType.lotPurchased,
+      title: 'Goats Purchased',
+      subtitle: ActivityLogger.join([
+        saved.lotId,
+        '${ActivityLogger.goats(totalGoats)} from ${sellerName.trim()}',
+        ActivityLogger.money(saved.grandTotal),
+      ]),
+      module: 'trading',
+    );
+
     return saved;
   }
 
@@ -1121,6 +1135,18 @@ class TradingService {
       );
     }).timeout(_timeout);
 
+    ActivityLogger.log(
+      farmId: farmId,
+      type: ActivityType.lotDeathRecorded,
+      title: 'Lot Goat Death Recorded',
+      subtitle: ActivityLogger.join([
+        ActivityLogger.lotLabel(lotDocId),
+        ActivityLogger.goats(qty),
+        reason.trim(),
+      ]),
+      module: 'trading',
+    );
+
     return event;
   }
 
@@ -1212,6 +1238,14 @@ class TradingService {
         SetOptions(merge: true),
       );
     }).timeout(_timeout);
+
+    ActivityLogger.log(
+      farmId: farmId,
+      type: ActivityType.lotDeathUndone,
+      title: 'Lot Goat Death Undone',
+      subtitle: ActivityLogger.lotLabel(lotDocId),
+      module: 'trading',
+    );
   }
 
   // -----------------------------------------------------------------------
@@ -1322,6 +1356,19 @@ class TradingService {
     );
 
     final saved = await paymentRef.get().timeout(_timeout);
+
+    ActivityLogger.log(
+      farmId: farmId,
+      type: ActivityType.supplierPaymentAdded,
+      title: 'Supplier Payment Made',
+      subtitle: ActivityLogger.join([
+        lot.lotId,
+        lot.sellerName,
+        ActivityLogger.money(rounded),
+        normalizedMethod,
+      ]),
+      module: 'trading',
+    );
 
     return LotPayment.fromDoc(saved);
   }
@@ -1435,6 +1482,18 @@ class TradingService {
       title: 'Supplier Payment ($lotLabel)',
       amount: voidedAmount,
       actor: actor,
+    );
+
+    ActivityLogger.log(
+      farmId: farmId,
+      type: ActivityType.supplierPaymentVoided,
+      title: 'Supplier Payment Voided',
+      subtitle: ActivityLogger.join([
+        lotLabel,
+        ActivityLogger.money(voidedAmount),
+        reason.trim(),
+      ]),
+      module: 'trading',
     );
   }
 
@@ -1754,6 +1813,18 @@ class TradingService {
       throw StateError('The lot was saved but could not be read back.');
     }
 
+    ActivityLogger.log(
+      farmId: farmId,
+      type: ActivityType.lotEdited,
+      title: 'Lot Edited',
+      subtitle: ActivityLogger.join([
+        updated.lotId,
+        updated.sellerName,
+        ActivityLogger.goats(updated.totalGoats),
+      ]),
+      module: 'trading',
+    );
+
     return updated;
   }
 
@@ -1912,6 +1983,18 @@ class TradingService {
     if (updated == null) {
       throw StateError('The deal was cancelled but the lot could not be read.');
     }
+
+    ActivityLogger.log(
+      farmId: farmId,
+      type: ActivityType.lotCancelled,
+      title: 'Lot Deal Cancelled',
+      subtitle: ActivityLogger.join([
+        updated.lotId,
+        updated.sellerName,
+        if (refundAmount > 0) 'Refund ${ActivityLogger.money(refundAmount)}',
+      ]),
+      module: 'trading',
+    );
 
     return updated;
   }
@@ -2102,6 +2185,18 @@ class TradingService {
         'Receiving was saved but the lot could not be read back.',
       );
     }
+
+    ActivityLogger.log(
+      farmId: farmId,
+      type: ActivityType.lotReceived,
+      title: 'Goats Received at Farm',
+      subtitle: ActivityLogger.join([
+        updated.lotId,
+        '${ActivityLogger.goats(arrivedQty)} arrived',
+        if (diedQty > 0) '$diedQty died on the way',
+      ]),
+      module: 'trading',
+    );
 
     return updated;
   }
@@ -2522,6 +2617,18 @@ class TradingService {
         'Receiving was updated but the purchase could not be read back.',
       );
     }
+
+    ActivityLogger.log(
+      farmId: farmId,
+      type: ActivityType.lotReceived,
+      title: 'Goats Received at Farm',
+      subtitle: ActivityLogger.join([
+        updated.lotId,
+        updated.sellerName,
+        if (mortality > 0) '$mortality died on the way',
+      ]),
+      module: 'trading',
+    );
 
     return updated;
   }

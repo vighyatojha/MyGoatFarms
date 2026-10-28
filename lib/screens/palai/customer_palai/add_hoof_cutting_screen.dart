@@ -5,10 +5,12 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 
 import '../../../app_theme.dart';
+import '../../../models/activity_model.dart';
 import '../../../models/health_reminder_settings_model.dart';
 import '../../../models/hoof_cutting_record.dart';
 import '../../../models/palai_models.dart';
 import '../../../services/firestore_service.dart';
+import '../../../services/activity_logger.dart';
 import '../../../services/health_reminder_scheduler.dart';
 import '../../../services/notification_service.dart';
 import '../../../widgets/reminder_cadence_selector.dart';
@@ -141,6 +143,14 @@ class _AddHoofCuttingScreenState extends State<AddHoofCuttingScreen> {
         ...record.toCreateMap(),
         'farmId': widget.farmId,
       });
+
+      ActivityLogger.log(
+        farmId: widget.farmId,
+        type: ActivityType.palaiHealthRecorded,
+        title: 'Hoof Cutting Recorded',
+        subtitle: widget.goat.goatCode,
+        module: 'palai',
+      );
 
       unawaited(
         FirestoreService.instance.addNotification(

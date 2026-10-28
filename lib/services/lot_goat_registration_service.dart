@@ -4,12 +4,14 @@ import 'dart:typed_data';
 import 'package:cloud_firestore/cloud_firestore.dart';
 
 import '../models/goat_model.dart';
+import '../models/activity_model.dart';
 import '../models/lot_transfer_models.dart';
 import '../models/purchase_costing.dart';
 import '../models/sale_model.dart';
 import '../models/trading_lot_receiving_model.dart';
 import '../models/trading_purchase_model.dart';
 import 'firestore_service.dart';
+import 'activity_logger.dart';
 import 'health_reminder_scheduler.dart';
 
 /// One goat's details, entered on the Register Goats screen before it is
@@ -178,7 +180,7 @@ class LotGoatRegistrationService {
   }) async {
     _check(goats);
 
-    return _db.runTransaction<List<Goat>>((transaction) async {
+    final registered = await _db.runTransaction<List<Goat>>((transaction) async {
       // ---- reads ----------------------------------------------------------
       final lotSnap = await transaction.get(_lotRef(farmId, lotDocId));
       if (!lotSnap.exists) throw StateError('Lot $lotDocId was not found.');
@@ -225,6 +227,19 @@ class LotGoatRegistrationService {
 
       return created;
     }).timeout(_timeout);
+
+    ActivityLogger.log(
+      farmId: farmId,
+      type: ActivityType.goatRegistered,
+      title: 'Lot Goats Registered',
+      subtitle: ActivityLogger.join([
+        ActivityLogger.lotLabel(lotDocId),
+        ActivityLogger.goats(registered.length),
+      ]),
+      module: 'trading',
+    );
+
+    return registered;
   }
 
   // ===========================================================================
@@ -409,6 +424,17 @@ class LotGoatRegistrationService {
         );
       }
     }
+
+    ActivityLogger.log(
+      farmId: farmId,
+      type: ActivityType.goatRegistered,
+      title: 'Booked Goats Registered',
+      subtitle: ActivityLogger.join([
+        'Sale $saleId',
+        ActivityLogger.goats(created.length),
+      ]),
+      module: 'trading',
+    );
 
     return created;
   }

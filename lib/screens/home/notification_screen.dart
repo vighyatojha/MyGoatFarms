@@ -18,6 +18,7 @@ import '../palai/customer_palai/goat_profile_screen.dart';
 import '../palai/goat_list_screen.dart';
 import '../stocks/stock_screen.dart';
 import '../trading/own_palai/own_palai_goat_profile_screen.dart';
+import '../trading/trading_dashboard_screen.dart';
 
 /// Notification center — reads from `farms/{farmId}/notifications`.
 ///
@@ -192,6 +193,9 @@ class _NotificationScreenState extends State<NotificationScreen> {
           // expenseAdded / expenseVoided, and any future finance type.
           destination = const ExpenseListScreen();
         }
+        break;
+      case 'trading':
+        destination = const TradingDashboardScreen();
         break;
       case 'ownFarm':
       // Legacy activities from the removed Own Farm module: expenses

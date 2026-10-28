@@ -3,10 +3,12 @@ import 'dart:typed_data';
 import 'package:flutter/material.dart';
 
 import '../../app_theme.dart';
+import '../../models/activity_model.dart';
 import '../../goat_icons.dart';
 import '../../models/bill_settings_model.dart';
 import '../../models/palai_models.dart';
 import '../../services/firestore_service.dart';
+import '../../services/activity_logger.dart';
 import '../../services/monthly_statement_engine.dart';
 import '../../utils/palai_proration.dart';
 import 'final_checkout_report_screen.dart';
@@ -515,6 +517,19 @@ class _CheckoutChargesPaymentScreenState
                           : null,
                     );
                   }
+
+                  ActivityLogger.log(
+                    farmId: widget.farmId,
+                    type: ActivityType.goatCheckOut,
+                    title: widget.goats.length == 1
+                        ? 'Goat Checked Out'
+                        : 'Goats Checked Out',
+                    subtitle: ActivityLogger.join([
+                      widget.goats.map((d) => d.goat.goatCode).join(', '),
+                      'Bill ${reserved.billNumber}',
+                    ]),
+                    module: 'palai',
+                  );
 
                   // Monthly bills need no separate closing step any more:
                   // createMonthlyBill above already applied the advance and

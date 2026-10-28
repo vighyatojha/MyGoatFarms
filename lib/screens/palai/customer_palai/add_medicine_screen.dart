@@ -5,9 +5,11 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 
 import '../../../app_theme.dart';
+import '../../../models/activity_model.dart';
 import '../../../models/medicine_record.dart';
 import '../../../models/palai_models.dart';
 import '../../../services/firestore_service.dart';
+import '../../../services/activity_logger.dart';
 import '../../../services/health_reminder_scheduler.dart';
 import '../../../services/notification_service.dart';
 
@@ -91,6 +93,14 @@ class _AddMedicineScreenState extends State<AddMedicineScreen> {
         recordedAt: DateTime.now(),
       );
       await reference.set(record.toCreateMap());
+
+      ActivityLogger.log(
+        farmId: widget.farmId,
+        type: ActivityType.palaiHealthRecorded,
+        title: 'Medicine Recorded',
+        subtitle: ActivityLogger.join([widget.goat.goatCode, record.medicineName]),
+        module: 'palai',
+      );
 
       unawaited(FirestoreService.instance.addNotification(
         farmId: widget.farmId,

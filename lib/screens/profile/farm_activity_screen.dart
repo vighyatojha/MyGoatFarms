@@ -248,8 +248,9 @@ class FarmActivityScreen extends StatelessWidget {
               ),
               const SizedBox(height: 7),
               Text(
-                'Actions across Palai, Stock, Customers and other '
-                    'farm sections will appear here.',
+                'Actions across Palai, Trading, Wait on Delivery, Stock, '
+                    'Finance, Customers and other farm sections will '
+                    'appear here.',
                 textAlign: TextAlign.center,
                 style: AppTheme.body(
                   size: 11,
@@ -275,22 +276,6 @@ class _ActivityTile extends StatelessWidget {
     required this.isLast,
   });
 
-  static String _moduleLabel(String module) {
-    switch (module) {
-      case 'palai':
-        return 'Palai';
-      case 'stock':
-        return 'Stock';
-      case 'trading':
-        return 'Trading';
-      case 'breeding':
-        return 'Breeding';
-      case 'home':
-      default:
-        return 'Farm';
-    }
-  }
-
   static String _formatDate(DateTime value) {
     final local = value.toLocal();
 
@@ -309,7 +294,7 @@ class _ActivityTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final module = _moduleLabel(activity.module);
+    final module = activity.moduleLabel;
 
     return Container(
       width: double.infinity,

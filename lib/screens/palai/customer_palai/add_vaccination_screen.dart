@@ -5,10 +5,12 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 
 import '../../../app_theme.dart';
+import '../../../models/activity_model.dart';
 import '../../../models/health_reminder_settings_model.dart';
 import '../../../models/palai_models.dart';
 import '../../../models/vaccination_record.dart';
 import '../../../services/firestore_service.dart';
+import '../../../services/activity_logger.dart';
 import '../../../services/health_reminder_scheduler.dart';
 import '../../../services/notification_service.dart';
 
@@ -154,6 +156,14 @@ class _AddVaccinationScreenState extends State<AddVaccinationScreen> {
         ...record.toCreateMap(),
         'farmId': widget.farmId,
       });
+
+      ActivityLogger.log(
+        farmId: widget.farmId,
+        type: ActivityType.palaiHealthRecorded,
+        title: 'Vaccination Recorded',
+        subtitle: ActivityLogger.join([widget.goat.goatCode, record.vaccineName]),
+        module: 'palai',
+      );
 
       unawaited(
         FirestoreService.instance.addNotification(

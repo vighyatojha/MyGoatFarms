@@ -17,6 +17,7 @@ import '../models/sale_settlement.dart';
 import '../models/trading_purchase_model.dart';
 import '../models/wait_delivery_group.dart';
 import 'firestore_service.dart';
+import 'activity_logger.dart';
 import 'goat_service.dart';
 import 'health_reminder_scheduler.dart';
 
@@ -965,6 +966,14 @@ class SalesService {
 
     _stopFarmHealthReminders(farmId, draft.selectedGoats);
 
+    _logSaleActivity(
+      farmId,
+      type: ActivityType.goatSold,
+      title: 'Goat Sold',
+      saleId: saleId,
+      draft: draft,
+    );
+
     return saleId;
   }
 
@@ -1374,6 +1383,14 @@ class SalesService {
       );
     }).timeout(_timeout * 2);
 
+    _logSaleActivity(
+      farmId,
+      type: ActivityType.goatSold,
+      title: 'Lot Goats Sold',
+      saleId: saleId,
+      draft: draft,
+    );
+
     return saleId;
   }
 
@@ -1596,6 +1613,16 @@ class SalesService {
       );
     }).timeout(_timeout * 2);
 
+    _logSaleActivity(
+      farmId,
+      type: waitForDelivery
+          ? ActivityType.waitForDeliveryCreated
+          : ActivityType.bookingCreated,
+      title: waitForDelivery ? 'Wait on Delivery Booked' : 'Booking Created',
+      saleId: saleId,
+      draft: draft,
+    );
+
     return saleId;
   }
 
@@ -1787,6 +1814,14 @@ class SalesService {
     }).timeout(_timeout * 2);
 
     _stopFarmHealthReminders(farmId, draft.selectedGoats);
+
+    _logSaleActivity(
+      farmId,
+      type: ActivityType.bookingCreated,
+      title: 'Booking Created',
+      saleId: saleId,
+      draft: draft,
+    );
 
     return saleId;
   }
@@ -1992,6 +2027,14 @@ class SalesService {
         ),
       );
     }
+
+    _logSaleActivity(
+      farmId,
+      type: ActivityType.waitForDeliveryCreated,
+      title: 'Wait on Delivery Booked',
+      saleId: saleId,
+      draft: draft,
+    );
 
     return saleId;
   }
@@ -2225,6 +2268,14 @@ class SalesService {
 
     _stopFarmHealthReminders(farmId, draft.selectedGoats);
 
+    _logSaleActivity(
+      farmId,
+      type: ActivityType.goatTransferredToPalai,
+      title: 'Moved to Customer Palai',
+      saleId: saleId,
+      draft: draft,
+    );
+
     return saleId;
   }
 
@@ -2439,6 +2490,15 @@ class SalesService {
         transaction.set(_palaiGoats(farmId, palaiCustomerId).doc(), data);
       }
     }).timeout(_timeout * 2);
+
+    _logSaleActivity(
+      farmId,
+      type: ActivityType.goatTransferredToPalai,
+      title: 'Lot Goats Moved to Customer Palai',
+      saleId: saleId,
+      draft: draft,
+      goatCount: goats.length,
+    );
 
     return saleId;
   }
@@ -2677,7 +2737,15 @@ class SalesService {
       deliveryDate.day,
     );
 
+    // For the Recent Activity entry written after the transaction.
+    // Plain vars (not late final): the closure can run more than once.
+    var activityCustomer = '';
+    var activityGoats = 0;
+
     await _db.runTransaction((transaction) async {
+      activityCustomer = '';
+      activityGoats = 0;
+
       // ---------------------------------------------------------------
       // 1. Reads first — a Firestore transaction requires every read
       //    to happen before any write, across ALL bookings.
@@ -2695,6 +2763,8 @@ class SalesService {
         }
 
         final sale = Sale.fromDoc(saleSnap);
+        activityCustomer = sale.customerName;
+        activityGoats += sale.goatCount;
 
         if (!sale.isBooking) {
           throw StateError('Sale $saleId is not a Booking sale.');
@@ -3180,6 +3250,18 @@ class SalesService {
         supplierDoneByLot,
       );
     }).timeout(_timeout * 2);
+
+    ActivityLogger.log(
+      farmId: farmId,
+      type: ActivityType.bookingDelivered,
+      title: 'Booking Delivered',
+      subtitle: ActivityLogger.join([
+        items.map((i) => i.saleId).join(', '),
+        activityCustomer,
+        ActivityLogger.goats(activityGoats),
+      ]),
+      module: 'trading',
+    );
   }
 
   // -----------------------------------------------------------------------
@@ -3327,8 +3409,14 @@ class SalesService {
     // contention, which would assign these more than once.
     var pickedUpGoatIds = <String>[];
 
+    // For the Recent Activity entry written after the transaction.
+    var activityCustomer = '';
+    var activityGoats = 0;
+
     await _db.runTransaction((transaction) async {
       pickedUpGoatIds = <String>[];
+      activityCustomer = '';
+      activityGoats = 0;
 
       // ---------------------------------------------------------------
       // 1. Reads first — a Firestore transaction requires every read
@@ -3347,6 +3435,8 @@ class SalesService {
         }
 
         final sale = Sale.fromDoc(saleSnap);
+        activityCustomer = sale.customerName;
+        activityGoats += sale.goatCount;
         pickedUpGoatIds.addAll(sale.goatIds);
 
         if (!sale.isWaitForDelivery) {
@@ -3793,6 +3883,18 @@ class SalesService {
         ),
       );
     }
+
+    ActivityLogger.log(
+      farmId: farmId,
+      type: ActivityType.waitForDeliveryPickedUp,
+      title: 'Wait on Delivery Picked Up',
+      subtitle: ActivityLogger.join([
+        items.map((i) => i.saleId).join(', '),
+        activityCustomer,
+        ActivityLogger.goats(activityGoats),
+      ]),
+      module: 'trading',
+    );
   }
 
   // -----------------------------------------------------------------------
@@ -3883,6 +3985,18 @@ class SalesService {
         when: DateTime.now(),
       );
     }).timeout(_timeout * 2);
+
+    ActivityLogger.log(
+      farmId: farmId,
+      type: ActivityType.balancePaymentReceived,
+      title: 'Sale Balance Received',
+      subtitle: ActivityLogger.join([
+        'Sale $saleId',
+        ActivityLogger.money(amount),
+        paymentMethod,
+      ]),
+      module: 'trading',
+    );
   }
 
   /// Voids ONE balance payment of a sale (entered by mistake). To correct
@@ -4874,4 +4988,29 @@ class GoatSaleSettlement {
   }
 
   bool get isEmpty => lines.isEmpty;
+}
+
+/// Recent Activity entry for a new sale / booking / Wait on Delivery /
+/// Palai transfer. Called after the sale has been saved; never throws.
+void _logSaleActivity(
+    String farmId, {
+      required ActivityType type,
+      required String title,
+      required String saleId,
+      required SaleDraft draft,
+      int? goatCount,
+    }) {
+  ActivityLogger.log(
+    farmId: farmId,
+    type: type,
+    title: title,
+    subtitle: ActivityLogger.join([
+      saleId,
+      draft.customerName.trim(),
+      if (draft.isLotSale) draft.lotDisplayId,
+      ActivityLogger.goats(goatCount ?? draft.saleGoatCount),
+      ActivityLogger.money(draft.totalSaleAmount),
+    ]),
+    module: 'trading',
+  );
 }
