@@ -2,7 +2,6 @@ import 'package:firebase_core/firebase_core.dart' show FirebaseOptions;
 import 'package:flutter/foundation.dart'
     show defaultTargetPlatform, kIsWeb, TargetPlatform;
 
-
 class DefaultFirebaseOptions {
   static FirebaseOptions get currentPlatform {
     if (kIsWeb) {
@@ -44,12 +43,11 @@ class DefaultFirebaseOptions {
 
   static const FirebaseOptions android = FirebaseOptions(
     apiKey: 'AIzaSyBgySo795nAnFphY8H7vXmdW7cUoT7UL-A',
-    appId: '1:694889896033:android:bf988055daf2eb739df220',
+    appId: '1:694889896033:android:cae4d40d3fad6d879df220',
     messagingSenderId: '694889896033',
     projectId: 'mygoatfarms-5813a',
     storageBucket: 'mygoatfarms-5813a.firebasestorage.app',
   );
-
   static const FirebaseOptions ios = FirebaseOptions(
     apiKey: 'AIzaSyAyctdOncmpR1vglGfTLNnISjjQgPzgd1g',
     appId: '1:694889896033:ios:b3581e7f226969e99df220',
