@@ -316,8 +316,20 @@ class LotGoatRegistrationService {
           (counterSnap.data()?['lastValue'] as num?)?.toInt() ?? 0;
 
       // Supplier goats arrive now: same checks as Receive Lot.
+      // Booked goats that were already received at the farm while their
+      // delivery was pending (Receive Lot now counts them) are NOT
+      // received a second time — only the rest arrive now.
+      final alreadyAtFarm = !atSupplier
+          ? 0
+          : (count < lot.reservedSupplierAtFarmQty
+          ? count
+          : lot.reservedSupplierAtFarmQty);
+      final toReceive = count - alreadyAtFarm;
+
       final arrivalWeight = PurchaseCosting.round2(
-        goats.fold<double>(0, (sum, g) => sum + g.weight),
+        goats.fold<double>(0, (sum, g) => sum + g.weight) *
+            toReceive /
+            count,
       );
       final newArrivalWeight = PurchaseCosting.round2(
         (lot.totalWeightAfterArrival ?? 0) + arrivalWeight,
@@ -349,21 +361,27 @@ class LotGoatRegistrationService {
       var receivedAliveAfter = lot.receivedAliveQty;
 
       if (atSupplier) {
-        receivedAliveAfter = lot.receivedAliveQty + count;
-        lotUpdate.addAll(
-          _receiveReservedSupplierGoatsFields(
-            transaction,
-            lotRef: lotRef,
-            lot: lot,
-            count: count,
-            arrivalWeight: arrivalWeight,
-            newArrivalWeight: newArrivalWeight,
-            date: arrivalDate ?? DateTime.now(),
-            saleId: saleId,
-            actorUid: actor?.uid,
-            actorName: actor?.name,
-          ),
-        );
+        receivedAliveAfter = lot.receivedAliveQty + toReceive;
+
+        if (toReceive > 0) {
+          lotUpdate.addAll(
+            _receiveReservedSupplierGoatsFields(
+              transaction,
+              lotRef: lotRef,
+              lot: lot,
+              count: toReceive,
+              arrivalWeight: arrivalWeight,
+              newArrivalWeight: newArrivalWeight,
+              date: arrivalDate ?? DateTime.now(),
+              saleId: saleId,
+              actorUid: actor?.uid,
+              actorName: actor?.name,
+            ),
+          );
+        }
+
+        // The whole booking gives back its supplier reservation.
+        lotUpdate['reservedSupplierQty'] = FieldValue.increment(-count);
       } else {
         lotUpdate['reservedFarmQty'] = FieldValue.increment(-count);
       }
@@ -385,8 +403,12 @@ class LotGoatRegistrationService {
       transaction.set(
         _summary(farmId),
         {
-          if (atSupplier) 'totalStock': FieldValue.increment(count),
-          if (!atSupplier) 'pendingRegistrations': FieldValue.increment(-count),
+          if (atSupplier && toReceive > 0)
+            'totalStock': FieldValue.increment(toReceive),
+          if (!atSupplier)
+            'pendingRegistrations': FieldValue.increment(-count),
+          if (atSupplier && alreadyAtFarm > 0)
+            'pendingRegistrations': FieldValue.increment(-alreadyAtFarm),
         },
         SetOptions(merge: true),
       );

@@ -2067,16 +2067,13 @@ class TradingService {
         );
       }
 
-      // Goats booked for a customer at the supplier (Booking / Wait for
-      // Delivery from the supplier) are handed over straight from there,
-      // so they are never received at the farm.
-      if (arrivedQty + diedQty > lot.supplierAvailableQty) {
+      // Goats booked / waiting for delivery at the supplier but NOT yet
+      // delivered are still part of the lot, so they can be received.
+      // Goats already delivered from the supplier are in
+      // soldFromSupplierQty and are not counted here.
+      if (arrivedQty + diedQty > lot.supplierReceivableQty) {
         throw ArgumentError(
-          lot.reservedSupplierQty > 0
-              ? 'Only ${lot.supplierAvailableQty} goats can be received — '
-              '${lot.reservedSupplierQty} at the supplier are booked for '
-              'customers and are delivered from there.'
-              : 'Only ${lot.supplierQty} goats are still at the supplier.',
+          'Only ${lot.supplierReceivableQty} goats are still at the supplier.',
         );
       }
 
@@ -2450,7 +2447,7 @@ class TradingService {
     final existing = await getPurchase(farmId, purchaseId);
 
     if (existing != null && existing.isLot) {
-      if (mortality >= existing.supplierAvailableQty) {
+      if (mortality >= existing.supplierReceivableQty) {
         throw ArgumentError(
           'At least one goat must survive — mortality cannot equal or '
               'exceed the goats still at the supplier.',
@@ -2460,7 +2457,7 @@ class TradingService {
       return receiveLotBatch(
         farmId: farmId,
         lotDocId: purchaseId,
-        arrivedQty: existing.supplierAvailableQty - mortality,
+        arrivedQty: existing.supplierReceivableQty - mortality,
         diedQty: mortality,
         arrivalWeight: totalWeightAfterArrival,
         date: dateReceivedAtFarm,

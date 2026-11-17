@@ -977,6 +977,29 @@ class SalesService {
     return saleId;
   }
 
+  /// Splits the delivery of [qty] goats of a supplier-sourced booking into
+  /// the part that is still at the supplier and the part that was already
+  /// received at the farm while the delivery was pending.
+  ///
+  /// Booked goats are anonymous inside the lot, so the split is derived
+  /// from the lot: [TradingPurchase.reservedSupplierAtFarmQty] says how
+  /// many supplier bookings are physically at the farm. [farmDoneByLot]
+  /// tracks what earlier bookings of the same transaction already took.
+  ({int fromFarm, int fromSupplier}) _splitSupplierHandover(
+      TradingPurchase? lotBefore,
+      Map<String, int> farmDoneByLot,
+      String lotDocId,
+      int qty,
+      ) {
+    final atFarm = lotBefore?.reservedSupplierAtFarmQty ?? 0;
+    final left = atFarm - (farmDoneByLot[lotDocId] ?? 0);
+    final fromFarm = left <= 0 ? 0 : (qty < left ? qty : left);
+
+    farmDoneByLot[lotDocId] = (farmDoneByLot[lotDocId] ?? 0) + fromFarm;
+
+    return (fromFarm: fromFarm, fromSupplier: qty - fromFarm);
+  }
+
   /// After supplier-held goats were handed over: a lot with nothing left
   /// at the supplier (and something already received) is fully received,
   /// same rule as a Deliver Now sale from the supplier.
@@ -2979,6 +3002,9 @@ class SalesService {
       // supplier-sourced booking): never farm stock.
       var supplierLotGoats = 0;
       final supplierDoneByLot = <String, int>{};
+      // Supplier-booked goats already handed over from the farm in this
+      // transaction, per lot (see _splitSupplierHandover).
+      final farmHandoverByLot = <String, int>{};
       final lotsBefore = <String, TradingPurchase>{};
       var totalProfit = 0.0;
 
@@ -3167,18 +3193,42 @@ class SalesService {
 
         if (sale.isLotSale) {
           if (sale.sourceLocation == Sale.sourceSupplier) {
-            // Held at the supplier: handed over straight from there. These
-            // goats were never farm stock, so totalStock /
-            // pendingRegistrations do not move for them.
+            // Held at the supplier. Goats that are still there are handed
+            // over straight from the supplier (never farm stock, so
+            // totalStock / pendingRegistrations do not move for them).
+            // Goats of this booking that were received at the farm while
+            // the delivery was pending are handed over from the farm.
+            final split = _splitSupplierHandover(
+              plan.lotBefore,
+              farmHandoverByLot,
+              sale.lotDocId,
+              sale.lotQuantity,
+            );
+
             transaction.update(plan.lotRef!, {
               'reservedSupplierQty': FieldValue.increment(-sale.lotQuantity),
-              'soldFromSupplierQty': FieldValue.increment(sale.lotQuantity),
+              if (split.fromSupplier > 0)
+                'soldFromSupplierQty': FieldValue.increment(split.fromSupplier),
+              if (split.fromFarm > 0)
+                ...{
+                  'soldFromFarmQty': FieldValue.increment(split.fromFarm),
+                  'pendingCount': FieldValue.increment(-split.fromFarm),
+                },
               'updatedAt': FieldValue.serverTimestamp(),
             });
 
-            supplierLotGoats += sale.lotQuantity;
+            if (split.fromFarm > 0) {
+              // Remembered on the sale so a later reversal puts the goats
+              // back where they came from.
+              transaction.update(plan.saleRef, {
+                'farmHandoverQty': split.fromFarm,
+              });
+              totalLotGoats += split.fromFarm;
+            }
+
+            supplierLotGoats += split.fromSupplier;
             supplierDoneByLot[sale.lotDocId] =
-                (supplierDoneByLot[sale.lotDocId] ?? 0) + sale.lotQuantity;
+                (supplierDoneByLot[sale.lotDocId] ?? 0) + split.fromSupplier;
             if (plan.lotBefore != null) {
               lotsBefore[sale.lotDocId] ??= plan.lotBefore!;
             }
@@ -3616,6 +3666,9 @@ class SalesService {
       // supplier-sourced booking): never farm stock.
       var supplierLotGoats = 0;
       final supplierDoneByLot = <String, int>{};
+      // Supplier-booked goats already handed over from the farm in this
+      // transaction, per lot (see _splitSupplierHandover).
+      final farmHandoverByLot = <String, int>{};
       final lotsBefore = <String, TradingPurchase>{};
       var totalProfit = 0.0;
 
@@ -3738,18 +3791,42 @@ class SalesService {
 
         if (sale.isLotSale) {
           if (sale.sourceLocation == Sale.sourceSupplier) {
-            // Held at the supplier: handed over straight from there. These
-            // goats were never farm stock, so totalStock /
-            // pendingRegistrations do not move for them.
+            // Held at the supplier. Goats that are still there are handed
+            // over straight from the supplier (never farm stock, so
+            // totalStock / pendingRegistrations do not move for them).
+            // Goats of this booking that were received at the farm while
+            // the delivery was pending are handed over from the farm.
+            final split = _splitSupplierHandover(
+              plan.lotBefore,
+              farmHandoverByLot,
+              sale.lotDocId,
+              sale.lotQuantity,
+            );
+
             transaction.update(plan.lotRef!, {
               'reservedSupplierQty': FieldValue.increment(-sale.lotQuantity),
-              'soldFromSupplierQty': FieldValue.increment(sale.lotQuantity),
+              if (split.fromSupplier > 0)
+                'soldFromSupplierQty': FieldValue.increment(split.fromSupplier),
+              if (split.fromFarm > 0)
+                ...{
+                  'soldFromFarmQty': FieldValue.increment(split.fromFarm),
+                  'pendingCount': FieldValue.increment(-split.fromFarm),
+                },
               'updatedAt': FieldValue.serverTimestamp(),
             });
 
-            supplierLotGoats += sale.lotQuantity;
+            if (split.fromFarm > 0) {
+              // Remembered on the sale so a later reversal puts the goats
+              // back where they came from.
+              transaction.update(plan.saleRef, {
+                'farmHandoverQty': split.fromFarm,
+              });
+              totalLotGoats += split.fromFarm;
+            }
+
+            supplierLotGoats += split.fromSupplier;
             supplierDoneByLot[sale.lotDocId] =
-                (supplierDoneByLot[sale.lotDocId] ?? 0) + sale.lotQuantity;
+                (supplierDoneByLot[sale.lotDocId] ?? 0) + split.fromSupplier;
             if (plan.lotBefore != null) {
               lotsBefore[sale.lotDocId] ??= plan.lotBefore!;
             }

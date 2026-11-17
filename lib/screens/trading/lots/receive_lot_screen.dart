@@ -13,8 +13,10 @@ import '../purchase_goats/purchase_wizard_widgets.dart';
 /// Receive Lot — records a batch of the lot's goats arriving at the farm.
 ///
 /// A lot can arrive in several batches. Each batch is checked live against
-/// the goats still at the supplier; goats already sold from the supplier
-/// are never received. Pops with true when a batch was saved.
+/// the goats still at the supplier. Goats already delivered from the
+/// supplier are never received; goats that are booked / waiting for
+/// delivery but NOT yet delivered still count and can be received.
+/// Pops with true when a batch was saved.
 ///
 /// The lot passed in is only a snapshot for the live numbers on screen —
 /// TradingService.receiveLotBatch re-checks everything inside its
@@ -80,7 +82,7 @@ class _ReceiveLotScreenState extends State<ReceiveLotScreen> {
   }
 
   void _receiveAllRemaining() {
-    _arrivedController.text = '${_lot.supplierAvailableQty}';
+    _arrivedController.text = '${_lot.supplierReceivableQty}';
     _diedController.text = '0';
     setState(() {});
   }
@@ -107,8 +109,8 @@ class _ReceiveLotScreenState extends State<ReceiveLotScreen> {
   String? _validateCounts() {
     if (_arrived + _died <= 0) return 'Enter at least one goat';
 
-    if (_arrived + _died > _lot.supplierAvailableQty) {
-      return 'Only ${_lot.supplierAvailableQty} goats are still at the supplier';
+    if (_arrived + _died > _lot.supplierReceivableQty) {
+      return 'Only ${_lot.supplierReceivableQty} goats are still at the supplier';
     }
 
     return null;
@@ -118,8 +120,7 @@ class _ReceiveLotScreenState extends State<ReceiveLotScreen> {
     if (_saving) return;
     if (!(_formKey.currentState?.validate() ?? false)) return;
 
-    final lastBatch = _arrived + _died == _lot.supplierAvailableQty &&
-        _lot.reservedSupplierQty == 0;
+    final lastBatch = _arrived + _died == _lot.supplierReceivableQty;
 
     final ok = await showWizardConfirm(
       context: context,
@@ -182,7 +183,7 @@ class _ReceiveLotScreenState extends State<ReceiveLotScreen> {
     final looksOff =
         avg > 0 && (avg < _minKgPerGoat || avg > _maxKgPerGoat);
 
-    final remainingAfter = lot.supplierAvailableQty - _arrived - _died;
+    final remainingAfter = lot.supplierReceivableQty - _arrived - _died;
 
     return PermissionGate(
       permission: PartnerPermissionKeys.tradingReceive,
@@ -222,15 +223,15 @@ class _ReceiveLotScreenState extends State<ReceiveLotScreen> {
                     label: 'Sold from supplier',
                     value: '${lot.soldFromSupplierQty}',
                   ),
-                if (lot.reservedSupplierQty > 0)
+                if (lot.reservedSupplierAtSupplierQty > 0)
                   WizardComputedRow(
-                    label: 'Booked at supplier (delivered from there)',
-                    value: '${lot.reservedSupplierQty}',
+                    label: 'Booked / waiting, not yet delivered (included)',
+                    value: '${lot.reservedSupplierAtSupplierQty}',
                   ),
                 const Divider(height: 18, color: AppColors.divider),
                 WizardComputedRow(
                   label: 'Available to receive',
-                  value: '${lot.supplierAvailableQty}',
+                  value: '${lot.supplierReceivableQty}',
                   emphasize: true,
                 ),
               ],
@@ -287,7 +288,7 @@ class _ReceiveLotScreenState extends State<ReceiveLotScreen> {
                 Align(
                   alignment: Alignment.centerLeft,
                   child: ActionChip(
-                    label: Text('Receive all ${lot.supplierAvailableQty} remaining'),
+                    label: Text('Receive all ${lot.supplierReceivableQty} remaining'),
                     backgroundColor: AppColors.lightGreen,
                     onPressed: _receiveAllRemaining,
                   ),
@@ -391,10 +392,11 @@ class _ReceiveLotScreenState extends State<ReceiveLotScreen> {
               const SizedBox(height: 10),
               WizardNote(
                 remainingAfter == 0
-                    ? (lot.reservedSupplierQty > 0
-                    ? 'This receives every goat that is not booked. The '
-                    '${lot.reservedSupplierQty} booked goats stay at the '
-                    'supplier until their delivery is completed.'
+                    ? (lot.reservedSupplierAtSupplierQty > 0
+                    ? 'This receives every goat left at the supplier, '
+                    'including the ${lot.reservedSupplierAtSupplierQty} that '
+                    'are booked and not yet delivered. Those bookings can '
+                    'still be delivered to the customers from the farm.'
                     : 'This receives every goat left at the supplier.')
                     : '$remainingAfter goats will still be at the supplier '
                     'after this batch.',

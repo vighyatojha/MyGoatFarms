@@ -358,12 +358,38 @@ class TradingPurchase {
     return v < 0 ? 0 : v;
   }
 
-  /// Supplier goats free for a new sale (not reserved for a customer) and
-  /// free to be received at the farm.
+  /// Supplier goats free for a new sale (not reserved for a customer).
+  ///
+  /// NOTE: this is no longer the number that can be received. Goats that
+  /// are booked / waiting for delivery but NOT yet delivered are still at
+  /// the supplier and still count as part of the lot, so they can be
+  /// received at the farm — see [supplierReceivableQty].
   int get supplierAvailableQty {
     final v = supplierQty - reservedSupplierQty;
     return v < 0 ? 0 : v;
   }
+
+  /// Goats that can be received at the farm right now: everything still at
+  /// the supplier, INCLUDING goats that are booked / waiting for delivery
+  /// but not yet delivered. Goats already delivered from the supplier are
+  /// in [soldFromSupplierQty] and are never receivable.
+  int get supplierReceivableQty => supplierQty;
+
+  /// Booked / waiting goats that were reserved at the supplier but have
+  /// since been received at the farm (their delivery was still pending
+  /// when the lot was received). They are physically at the farm now, so
+  /// they must not be offered for a new sale or transfer.
+  ///
+  /// 0 while every supplier booking is still physically at the supplier.
+  int get reservedSupplierAtFarmQty {
+    if (dealCancelled) return 0;
+    final v = reservedSupplierQty - supplierQty;
+    return v < 0 ? 0 : v;
+  }
+
+  /// Supplier-booked goats that are still physically at the supplier.
+  int get reservedSupplierAtSupplierQty =>
+      reservedSupplierQty - reservedSupplierAtFarmQty;
 
   /// Goats reserved for customers, at the supplier and at the farm.
   int get reservedQty => reservedSupplierQty + reservedFarmQty;
@@ -376,7 +402,7 @@ class TradingPurchase {
 
   /// Farm goats free for a new sale or transfer.
   int get farmAvailableQty {
-    final v = farmQty - reservedFarmQty;
+    final v = farmQty - reservedFarmQty - reservedSupplierAtFarmQty;
     return v < 0 ? 0 : v;
   }
 
@@ -451,7 +477,7 @@ class TradingPurchase {
   /// Fewest goats the lot can be edited down to: the goats that already
   /// left the supplier (sold from it, or received at the farm).
   int get minEditableTotalGoats =>
-      soldFromSupplierQty + receivedTotalQty + reservedSupplierQty;
+      soldFromSupplierQty + receivedTotalQty + reservedSupplierAtSupplierQty;
 
   // Weights ---------------------------------------------------------------
 

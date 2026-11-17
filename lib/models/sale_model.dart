@@ -130,6 +130,12 @@ class Sale {
   /// a sale of individual goats.
   final String sourceLocation;
 
+  /// For a supplier-sourced lot sale: how many of [lotQuantity] goats were
+  /// already received at the farm when the delivery was completed, so they
+  /// were handed over from the farm rather than the supplier. 0 otherwise.
+  /// Needed to reverse a delivered sale correctly.
+  final int farmHandoverQty;
+
   /// The lot's cost per goat at the moment of sale. Profit is worked out
   /// from this snapshot (x [lotQuantity]) so a later receiving or cost edit
   /// can never change the profit already recognised. Null for a sale of
@@ -424,6 +430,7 @@ class Sale {
     this.lotDocId = '',
     this.lotQuantity = 0,
     this.sourceLocation = '',
+    this.farmHandoverQty = 0,
     this.costPerGoatSnapshot,
   });
 
@@ -1011,6 +1018,7 @@ class Sale {
       lotDocId: (data['lotId'] ?? '').toString(),
       lotQuantity: nullableIntFrom('lotQuantity') ?? 0,
       sourceLocation: (data['sourceLocation'] ?? '').toString(),
+      farmHandoverQty: nullableIntFrom('farmHandoverQty') ?? 0,
       costPerGoatSnapshot: nullableNumFrom('costPerGoatSnapshot'),
 
       payments: (data['payments'] as List?)
@@ -1112,6 +1120,7 @@ class Sale {
       map['lotId'] = lotDocId;
       map['lotQuantity'] = lotQuantity;
       map['sourceLocation'] = sourceLocation;
+      if (farmHandoverQty > 0) map['farmHandoverQty'] = farmHandoverQty;
       putIfNotNull('costPerGoatSnapshot', costPerGoatSnapshot);
     }
 

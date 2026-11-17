@@ -1199,8 +1199,8 @@ class _LotDetailScreenState extends State<LotDetailScreen> {
                 lot.supplierAvailableQty,
                 lot.supplierQty == 0
                     ? 'All received'
-                    : lot.reservedSupplierQty > 0
-                    ? 'Not received · ${lot.reservedSupplierQty} booked'
+                    : lot.reservedSupplierAtSupplierQty > 0
+                    ? 'Not received · ${lot.reservedSupplierAtSupplierQty} booked'
                     : 'Not received yet',
                 supplier,
                 Icons.local_shipping_outlined,
@@ -1614,12 +1614,11 @@ class _LotDetailScreenState extends State<LotDetailScreen> {
         _ActionButton(
           icon: Icons.inventory_2_outlined,
           label: 'Receive Lot',
-          hint: lot.supplierAvailableQty > 0
-              ? '${lot.supplierAvailableQty} goats still at supplier'
-              : lot.reservedSupplierQty > 0
-              ? '${lot.reservedSupplierQty} at supplier are booked'
+          hint: lot.supplierReceivableQty > 0
+              ? '${lot.supplierReceivableQty} goats still at supplier'
+              '${lot.reservedSupplierAtSupplierQty > 0 ? ' (${lot.reservedSupplierAtSupplierQty} booked, not delivered)' : ''}'
               : 'Nothing left at the supplier',
-          enabled: lot.isLot && canReceive && lot.supplierAvailableQty > 0,
+          enabled: lot.isLot && canReceive && lot.supplierReceivableQty > 0,
           onTap: () => _receive(lot),
         ),
         _ActionButton(

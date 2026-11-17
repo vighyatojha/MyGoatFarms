@@ -775,13 +775,21 @@ class SaleAdjustmentService {
     if (sale.isLotSale) {
       final fromSupplier = sale.sourceLocation == Sale.sourceSupplier;
 
+      // A supplier-sourced sale may have been handed over partly (or
+      // wholly) from the farm, because its goats were received before the
+      // delivery was completed. Put each part back where it came from.
+      final backToFarm = fromSupplier
+          ? sale.farmHandoverQty.clamp(0, sale.lotQuantity).toInt()
+          : sale.lotQuantity;
+      final backToSupplier = sale.lotQuantity - backToFarm;
+
       transaction.update(_purchaseRef(farmId, sale.lotDocId), {
-        if (fromSupplier)
-          'soldFromSupplierQty': FieldValue.increment(-sale.lotQuantity)
-        else
+        if (backToSupplier > 0)
+          'soldFromSupplierQty': FieldValue.increment(-backToSupplier),
+        if (backToFarm > 0)
           ...{
-            'soldFromFarmQty': FieldValue.increment(-sale.lotQuantity),
-            'pendingCount': FieldValue.increment(sale.lotQuantity),
+            'soldFromFarmQty': FieldValue.increment(-backToFarm),
+            'pendingCount': FieldValue.increment(backToFarm),
           },
         'updatedAt': FieldValue.serverTimestamp(),
       });
@@ -791,9 +799,9 @@ class SaleAdjustmentService {
       transaction.set(
         _summaryRef(farmId),
         {
-          if (!fromSupplier) ...{
-            'totalStock': FieldValue.increment(goats),
-            'pendingRegistrations': FieldValue.increment(goats),
+          if (backToFarm > 0) ...{
+            'totalStock': FieldValue.increment(backToFarm),
+            'pendingRegistrations': FieldValue.increment(backToFarm),
           },
           'totalSold': FieldValue.increment(-goats),
           'totalProfit': FieldValue.increment(-profit),
